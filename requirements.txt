@@ -1,0 +1,8 @@
+uvicorn
+videosdk
+numpy
+httpx
+librosa
+aiohttp
+openai
+av
