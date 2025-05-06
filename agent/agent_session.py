@@ -1,0 +1,42 @@
+from __future__ import annotations
+
+from typing import Any
+
+from .agent import Agent
+from .conversation_flow import ConversationFlow
+from .pipeline import Pipeline
+
+class AgentSession:
+    """
+    Manages an agent session with its associated conversation flow and pipeline.
+    """
+    
+    def __init__(
+        self,
+        agent: Agent,
+        flow: ConversationFlow,
+        pipeline: Pipeline,
+    ) -> None:
+        """
+        Initialize an agent session.
+        
+        Args:
+            agent: Instance of an Agent class that handles the core logic
+            flow: ConversationFlow instance to manage conversation state
+            pipeline: Pipeline instance to process the agent's operations
+        """
+        self.agent = agent
+        self.flow = flow
+        self.pipeline = pipeline
+
+    async def start(self, **kwargs: Any) -> None:
+        """
+        Start the agent session.
+        This will:
+        1. Call the agent's on_enter hook
+        2. Start the pipeline processing
+        
+        Args:
+            **kwargs: Additional arguments to pass to the pipeline start method
+        """
+        
