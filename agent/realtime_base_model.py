@@ -53,7 +53,7 @@ class RealtimeBaseModel(EventEmitter[Union[BaseEventTypes, TEvent]], Generic[TEv
         self.config = config
 
     @abstractmethod
-    async def process(self, **kwargs: Any) -> Any:
+    async def process(self, **kwargs: Any) -> None:
         """Process data in realtime"""
         pass
 

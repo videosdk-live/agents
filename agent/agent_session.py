@@ -40,3 +40,5 @@ class AgentSession:
             **kwargs: Additional arguments to pass to the pipeline start method
         """
         
+        await self.pipeline.start()
+        

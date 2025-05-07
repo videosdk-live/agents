@@ -13,22 +13,38 @@ import aiohttp
 load_dotenv()
 
 from agent.realtime_base_model import RealtimeBaseModel
+from openai.types.beta.realtime.session import InputAudioTranscription, TurnDetection
 
 OPENAI_BASE_URL = "https://api.openai.com/v1"
 SAMPLE_RATE = 24000
 NUM_CHANNELS = 1
+
+DEFAULT_TEMPERATURE = 0.8
+DEFAULT_TURN_DETECTION = TurnDetection(
+    type="server_vad",
+    threshold=0.5,
+    prefix_padding_ms=300,
+    silence_duration_ms=200,
+    create_response=True,
+    interrupt_response=True,
+)
+DEFAULT_INPUT_AUDIO_TRANSCRIPTION = InputAudioTranscription(
+    model="gpt-4o-mini-transcribe",
+)
+DEFAULT_TOOL_CHOICE = "auto"
 
 OpenAIEventTypes = Literal[
     "response_created",
     "response_completed",
     "audio_generated"
 ]
+DEFAULT_VOICE = "alloy"
 
 @dataclass
 class OpenAISession:
     """Represents an OpenAI WebSocket session"""
     ws: aiohttp.ClientWebSocketResponse
-    msg_queue: asyncio.Queue
+    msg_queue: asyncio.Queue[Dict[str, Any]]
     tasks: list[asyncio.Task]
 
 class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
@@ -70,7 +86,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         
         self._session = await self._create_session(url, headers)
         await self._handle_websocket(self._session)
-    
+        await self.send_first_session_update()
     async def _update_session(self) -> None:
         """Send session update to OpenAI"""
         if not self._session:
@@ -134,10 +150,12 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
                 msg = await session.ws.receive()
                 
                 if msg.type == aiohttp.WSMsgType.CLOSED:
+                    print("WebSocket closed")
                     break
                 elif msg.type == aiohttp.WSMsgType.ERROR:
                     break
                 elif msg.type == aiohttp.WSMsgType.TEXT:
+                    print("Received message:", msg.data)
                     await self._handle_message(json.loads(msg.data))
         except asyncio.CancelledError:
             pass
@@ -239,27 +257,11 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         Process data in realtime.
         This will be called by the pipeline's start method.
         """
-        if self._config is None:
+        if self.config is None:
             raise RuntimeError("Config must be set via set_config before processing")
-
-        try:
-            # Create and store session
-            self._session = await self._create_session()
-            
-            # Start WebSocket handling
-            await self._handle_websocket(self._session)
-            
-            # Wait for tasks to complete
-            if self._session.tasks:
-                await asyncio.gather(*self._session.tasks)
-                
-        finally:
-            # Cleanup
-            if self._session:
-                await self._cleanup_session(self._session)
-            if self._http_session:
-                await self._http_session.close()
-
+    
+        await self.connect()
+        
     async def send_event(self, event: Dict[str, Any]) -> None:
         """Send an event to the WebSocket"""
         if self._session and not self._closing:
@@ -278,6 +280,42 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         if self._http_session and not self._http_session.closed:
             await self._http_session.close()
             
+    async def send_first_session_update(self) -> None:
+        """Send initial session update with default values after connection"""
+        if not self._session:
+            return
+        
+        config = self.config or {}
+
+        # Create session update as a plain dictionary
+        session_update = {
+            "type": "session.update",
+            "session": {
+                "model": self.model,
+                "voice": config.get("voice", DEFAULT_VOICE),
+                "instructions": config.get("instructions", "You are a helpful assistant that can answer questions and help with tasks."),
+                "temperature": config.get("temperature", DEFAULT_TEMPERATURE),
+                "turn_detection": config.get("turn_detection", DEFAULT_TURN_DETECTION.model_dump(
+                    by_alias=True,
+                    exclude_unset=True,
+                    exclude_defaults=True,
+                )),
+                "input_audio_transcription": config.get("input_audio_transcription", DEFAULT_INPUT_AUDIO_TRANSCRIPTION.model_dump(
+                    by_alias=True,
+                    exclude_unset=True,
+                    exclude_defaults=True,
+                )),
+                "tool_choice": config.get("tool_choice", DEFAULT_TOOL_CHOICE),
+                "tools": config.get("tools", []),
+                "modalities": config.get("modalities", ["text", "audio"]),
+                "input_audio_format": config.get("input_audio_format", "pcm16"),
+                "output_audio_format": config.get("output_audio_format", "pcm16")
+            }
+        }
+
+        # Send the event
+        await self.send_event(session_update)
+
     def process_base_url(self, url: str, model: str) -> str:
         if url.startswith("http"):
             url = url.replace("http", "ws", 1)
