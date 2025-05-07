@@ -36,7 +36,8 @@ DEFAULT_TOOL_CHOICE = "auto"
 OpenAIEventTypes = Literal[
     "response_created",
     "response_completed",
-    "audio_generated"
+    "audio_generated",
+    "instructions_updated"
 ]
 DEFAULT_VOICE = "alloy"
 
@@ -72,6 +73,9 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         self._http_session: Optional[aiohttp.ClientSession] = None
         self._session: Optional[OpenAISession] = None
         self._closing = False
+        self._instructions: Optional[str] = None
+
+        self.on("instructions_updated", self._handle_instructions_updated)
 
     def set_config(self, config: Dict[str, Any]) -> None:
         """Set configuration received from pipeline"""
@@ -252,15 +256,14 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
             except Exception:
                 pass
 
-    async def process(self, **kwargs: Any) -> None:
-        """
-        Process data in realtime.
-        This will be called by the pipeline's start method.
-        """
-        if self.config is None:
-            raise RuntimeError("Config must be set via set_config before processing")
-    
-        await self.connect()
+    async def start(self) -> None:
+        """Start the realtime connection"""
+        try:
+            await self.connect()
+        except Exception as e:
+            print(f"Error starting realtime connection: {e}")
+            await self.aclose()
+            raise
         
     async def send_event(self, event: Dict[str, Any]) -> None:
         """Send an event to the WebSocket"""
@@ -293,7 +296,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
             "session": {
                 "model": self.model,
                 "voice": config.get("voice", DEFAULT_VOICE),
-                "instructions": config.get("instructions", "You are a helpful assistant that can answer questions and help with tasks."),
+                "instructions": self._instructions or  "You are a helpful voice assistant that can answer questions and help with tasks.",
                 "temperature": config.get("temperature", DEFAULT_TEMPERATURE),
                 "turn_detection": config.get("turn_detection", DEFAULT_TURN_DETECTION.model_dump(
                     by_alias=True,
@@ -336,3 +339,9 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         new_url = urlunparse((parsed_url.scheme, parsed_url.netloc, path, "", new_query, ""))
 
         return new_url
+    
+    def _handle_instructions_updated(self, data: Dict[str, Any]) -> None:
+        """Handle instructions_updated event"""
+        self._instructions = data.get("instructions")
+        # Send session update with new instructions
+        asyncio.create_task(self._update_session())
