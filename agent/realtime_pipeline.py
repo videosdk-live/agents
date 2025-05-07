@@ -40,5 +40,3 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         Args:
             **kwargs: Additional arguments for pipeline configuration
         """
-        
-        await self.model.process()

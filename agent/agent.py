@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Any, Callable, List, Optional, Literal, Union
+from typing import Any, Callable, List, Optional, Literal, Union, Dict
 
 from .event_emitter import EventEmitter
 
@@ -14,82 +14,73 @@ class AgentState(str, Enum):
     IDLE = "IDLE"
 
 AgentEventTypes = Literal[
-    "state_changed",
     "instructions_updated",
-    "session_started",
-    "session_ended"
+    "state_updated",
+    "message_sent",
+    "message_received"
 ]
 
 class Agent(EventEmitter[AgentEventTypes], ABC):
     """
-    Base agent protocol that defines the interface for creating custom agents.
-    Provides hooks for session lifecycle and tool management.
-    Inherits from EventEmitter to provide event handling capabilities.
+    Abstract base class for creating custom agents.
+    Inherits from EventEmitter to handle agent events and state updates.
     """
-    
-    def __init__(
-        self,
-        instructions: str,
-        **kwargs: Any
-    ) -> None:
-        """
-        Initialize the agent with instructions and tools.
-        
-        Args:
-            instructions: System prompt defining the agent's personality
-            tools: Optional list of function tools the agent can use
-            **kwargs: Additional configuration options for extensibility
-        """
-        super().__init__()
+    def __init__(self, instructions: str):
+        super().__init__()  # Initialize EventEmitter
         self.instructions = instructions
-        self._state = AgentState.IDLE
-        self._state_callback: Optional[Callable[[AgentState], None]] = None
+        self._session: Optional["AgentSession"] = None
+        self._state = AgentState.IDLE  # Initialize with IDLE state
+        
+        if self._session:
+            self.on("state_changed", self._handle_state_event)
+
+    @property
+    def instructions(self) -> str:
+        return self._instructions
+
+    @instructions.setter
+    def instructions(self, value: str) -> None:
+        self._instructions = value
+        self.emit("instructions_updated", {"instructions": value})
+
+    @property
+    def state(self) -> AgentState:
+        return self._state
+
+    def _handle_state_event(self, data: Dict[str, Any]) -> None:
+        """Handle state change events from the session"""
+        self.update_state(data)
+        
+    def update_state(self, updates: Dict[str, Any]) -> None:
+        """Update state from internal events"""
+        old_state = self._state
+        self._state = AgentState(updates.get('state', self._state.value))
+        self.emit("state_updated", {"state": self._state.value})
+        self.on_state_changed(old_state, self._state)
+
+    async def on_state_changed(self, old_state: AgentState, new_state: AgentState) -> None:
+        """Callback for state changes"""
+        pass
+
+    @property
+    def session(self) -> "AgentSession":
+        """Get the agent's session"""
+        if self._session is None:
+            raise RuntimeError("Agent session not initialized. Make sure to call AgentSession.start() first")
+        return self._session
+
+    @session.setter
+    def session(self, session: "AgentSession") -> None:
+        """Set the agent's session"""
+        self._session = session
+        self.emit("instructions_updated", {"instructions": self._instructions})
 
     @abstractmethod
     async def on_enter(self) -> None:
-        """Hook called when the session starts."""
-        self.emit("session_started")
+        """Called when session starts"""
+        pass
 
-    @property
-    def system_instructions(self) -> str:
-        """Get the agent's system instructions."""
-        return self.instructions
-
-    async def update_instructions(self, new_instructions: str) -> None:
-        """
-        Update the agent's instructions.
-        
-        Args:
-            new_instructions: The new instructions to use
-        """
-        self.instructions = new_instructions
-        self.emit("instructions_updated", new_instructions)
-    
-    @property
-    def state(self) -> AgentState:
-        """Get the current state of the agent."""
-        return self._state
-
-    def on_state_change(self, callback: Callable[[AgentState], None]) -> None:
-        """
-        Register a callback for state changes.
-        
-        Args:
-            callback: Function to call when agent state changes
-        """
-        self._state_callback = callback
-        self.on("state_changed", callback)
-
-    def _set_state(self, new_state: AgentState) -> None:
-        """
-        Internal method to update the agent's state and trigger callback.
-        
-        Args:
-            new_state: The new state to set
-        """
-        if self._state != new_state:
-            old_state = self._state
-            self._state = new_state
-            self.emit("state_changed", new_state, old_state)
-            if self._state_callback:
-                self._state_callback(new_state)
+    async def send_message(self, message: str) -> None:
+        """Send a message"""
+        await self.session.say(message)
+        self.emit("message_sent", {"message": message})

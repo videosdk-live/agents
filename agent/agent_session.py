@@ -28,6 +28,7 @@ class AgentSession:
         self.agent = agent
         self.flow = flow
         self.pipeline = pipeline
+        self.agent.session = self
 
     async def start(self, **kwargs: Any) -> None:
         """
@@ -41,4 +42,5 @@ class AgentSession:
         """
         
         await self.pipeline.start()
+        await self.agent.on_enter()
         
