@@ -29,6 +29,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         super().__init__()
         self.model = model
         self.config = config
+        self.model.set_config(config)
         
 
     async def start(self, **kwargs: Any) -> None:
@@ -39,3 +40,5 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         Args:
             **kwargs: Additional arguments for pipeline configuration
         """
+        
+        await self.model.process()
