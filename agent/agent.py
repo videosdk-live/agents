@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Any, Callable, List, Optional, Literal
+from typing import Any, Callable, List, Optional, Literal, Union
+
+from .event_emitter import EventEmitter
 
 class AgentState(str, Enum):
     """Enum representing possible states of the agent"""
@@ -11,10 +13,18 @@ class AgentState(str, Enum):
     THINKING = "THINKING"
     IDLE = "IDLE"
 
-class Agent(ABC):
+AgentEventTypes = Literal[
+    "state_changed",
+    "instructions_updated",
+    "session_started",
+    "session_ended"
+]
+
+class Agent(EventEmitter[AgentEventTypes], ABC):
     """
     Base agent protocol that defines the interface for creating custom agents.
     Provides hooks for session lifecycle and tool management.
+    Inherits from EventEmitter to provide event handling capabilities.
     """
     
     def __init__(
@@ -30,15 +40,15 @@ class Agent(ABC):
             tools: Optional list of function tools the agent can use
             **kwargs: Additional configuration options for extensibility
         """
+        super().__init__()
         self.instructions = instructions
         self._state = AgentState.IDLE
         self._state_callback: Optional[Callable[[AgentState], None]] = None
 
-
     @abstractmethod
     async def on_enter(self) -> None:
         """Hook called when the session starts."""
-        pass
+        self.emit("session_started")
 
     @property
     def system_instructions(self) -> str:
@@ -53,6 +63,7 @@ class Agent(ABC):
             new_instructions: The new instructions to use
         """
         self.instructions = new_instructions
+        self.emit("instructions_updated", new_instructions)
     
     @property
     def state(self) -> AgentState:
@@ -67,6 +78,7 @@ class Agent(ABC):
             callback: Function to call when agent state changes
         """
         self._state_callback = callback
+        self.on("state_changed", callback)
 
     def _set_state(self, new_state: AgentState) -> None:
         """
@@ -76,6 +88,8 @@ class Agent(ABC):
             new_state: The new state to set
         """
         if self._state != new_state:
+            old_state = self._state
             self._state = new_state
+            self.emit("state_changed", new_state, old_state)
             if self._state_callback:
                 self._state_callback(new_state)
