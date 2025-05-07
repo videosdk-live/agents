@@ -2,14 +2,21 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from typing import Any, Dict, Optional, Literal
 from dataclasses import dataclass
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+from dotenv import load_dotenv
 
 import aiohttp
 
-from ...agent.realtime_base_model import RealtimeBaseModel
+load_dotenv()
+
+from agent.realtime_base_model import RealtimeBaseModel
 
 OPENAI_BASE_URL = "https://api.openai.com/v1"
+SAMPLE_RATE = 24000
+NUM_CHANNELS = 1
 
 OpenAIEventTypes = Literal[
     "response_created",
@@ -29,8 +36,9 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
     
     def __init__(
         self,
-        api_key: str,
-        base_url: str = OPENAI_BASE_URL,
+        model: str,
+        api_key: str | None = None,
+        base_url: str | None = None,
     ) -> None:
         """
         Initialize OpenAI realtime model.
@@ -39,22 +47,45 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
             api_key: OpenAI API key
             base_url: Base URL for OpenAI API
         """
-        self.api_key = api_key
-        self.base_url = base_url
-        self._config: Dict[str, Any] | None = None
-        self._session: Optional[OpenAISession] = None
+        super().__init__()
+        self.model = model
+        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+        self.base_url = base_url or OPENAI_BASE_URL
+        if not self.api_key:
+            raise ValueError("OpenAI API key must be provided or set in OPENAI_API_KEY environment variable")
         self._http_session: Optional[aiohttp.ClientSession] = None
+        self._session: Optional[OpenAISession] = None
         self._closing = False
 
     def set_config(self, config: Dict[str, Any]) -> None:
         """Set configuration received from pipeline"""
-        super().__init__(config)
-        self._config = config
+        super().set_config(config)
+    
+    async def connect(self) -> None:
+        headers = {"Agent": "VideoSDK Agents"}
+        headers["Authorization"] = f"Bearer {self.api_key}"
+        headers["OpenAI-Beta"] = "realtime=v1"
         
-        # Extract config values
-        self.response_modalities = config.get("response_modalities", ["audio"])
-        self.silence_threshold_ms = config.get("silence_threshold_ms", 500)
-        self.model = config.get("model", "gpt-4")
+        url = self.process_base_url(self.base_url, self.model)
+        
+        self._session = await self._create_session(url, headers)
+        await self._handle_websocket(self._session)
+    
+    async def _update_session(self) -> None:
+        """Send session update to OpenAI"""
+        if not self._session:
+            return
+
+        update_event = {
+            "type": "session.update",
+            "session": {
+                "model": self.model,
+                "voice": self.voice,
+                "temperature": self.temperature,
+                "modalities": self.response_modalities
+            }
+        }
+        await self._session.msg_queue.put(update_event)
 
     async def _ensure_http_session(self) -> aiohttp.ClientSession:
         """Ensure we have an HTTP session"""
@@ -62,22 +93,16 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
             self._http_session = aiohttp.ClientSession()
         return self._http_session
 
-    async def _create_session(self) -> OpenAISession:
+    async def _create_session(self, url: str, headers: dict) -> OpenAISession:
         """Create a new WebSocket session"""
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "OpenAI-Beta": "realtime=v1"
-        }
         
         http_session = await self._ensure_http_session()
-        ws = await http_session.ws_connect(
-            f"{self.base_url}/realtime",
-            headers=headers,
-            params={"model": self.model}
-        )
+        ws = await http_session.ws_connect(url, headers=headers)
         
         msg_queue: asyncio.Queue = asyncio.Queue()
         tasks: list[asyncio.Task] = []
+        
+        self._closing = False
         
         return OpenAISession(ws=ws, msg_queue=msg_queue, tasks=tasks)
 
@@ -121,13 +146,76 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
 
     async def _handle_message(self, data: dict) -> None:
         """Handle incoming WebSocket messages"""
-        event_type = data.get('type')
-        # Handle different event types based on your needs
-        # This will be called by the receive loop when messages arrive
-        pass
+        try:
+            event_type = data.get('type')
+
+            if event_type == "input_audio_buffer.speech_started":
+                await self._handle_speech_started(data)
+            
+            elif event_type == "input_audio_buffer.speech_stopped":
+                await self._handle_speech_stopped(data)
+
+            elif event_type == "response.created":
+                await self._handle_response_created(data)
+                
+            elif event_type == "response.output_item.added":
+                await self._handle_output_item_added(data)
+                
+            elif event_type == "response.content_part.added":
+                await self._handle_content_part_added(data)
+                
+            elif event_type == "response.audio.delta":
+                await self._handle_audio_delta(data)
+                
+            elif event_type == "response.audio_transcript.delta":
+                await self._handle_transcript_delta(data)
+                
+            elif event_type == "response.done":
+                await self._handle_response_done(data)
+
+            elif event_type == "error":
+                await self._handle_error(data)
+
+        except Exception as e:
+            self.emit_error(f"Error handling event {event_type}: {str(e)}")
+
+    async def _handle_speech_started(self, data: dict) -> None:
+        """Handle speech detection start"""
+        self.emit("input_speech_started")
+
+    async def _handle_speech_stopped(self, data: dict) -> None:
+        """Handle speech detection end"""
+        self.emit("input_speech_stopped")
+
+    async def _handle_response_created(self, data: dict) -> None:
+        """Handle initial response creation"""
+        response_id = data.get("response", {}).get("id")
+        
+        self.emit("response_created", {"response_id": response_id})
+
+    async def _handle_output_item_added(self, data: dict) -> None:
+        """Handle new output item addition"""
+
+    async def _handle_content_part_added(self, data: dict) -> None:
+        """Handle new content part"""
+
+    async def _handle_audio_delta(self, data: dict) -> None:
+        """Handle audio chunk"""
+
+    async def _handle_transcript_delta(self, data: dict) -> None:
+        """Handle transcript chunk"""
+
+    async def _handle_response_done(self, data: dict) -> None:
+        """Handle response completion"""
+
+    async def _handle_error(self, data: dict) -> None:
+        """Handle error events"""
 
     async def _cleanup_session(self, session: OpenAISession) -> None:
         """Clean up session resources"""
+        if self._closing:  # Prevent recursive cleanup
+            return
+            
         self._closing = True
         
         # Cancel all tasks
@@ -135,13 +223,16 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
             if not task.done():
                 task.cancel()
                 try:
-                    await task
-                except asyncio.CancelledError:
+                    await asyncio.wait_for(task, timeout=1.0)  # Add timeout
+                except (asyncio.CancelledError, asyncio.TimeoutError):
                     pass
 
         # Close WebSocket
         if not session.ws.closed:
-            await session.ws.close()
+            try:
+                await session.ws.close()
+            except Exception:
+                pass
 
     async def process(self, **kwargs: Any) -> None:
         """
@@ -176,8 +267,34 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
 
     async def aclose(self) -> None:
         """Cleanup all resources"""
+        if self._closing:  # Prevent recursive cleanup
+            return
+            
         self._closing = True
+        
         if self._session:
             await self._cleanup_session(self._session)
-        if self._http_session:
+        
+        if self._http_session and not self._http_session.closed:
             await self._http_session.close()
+            
+    def process_base_url(self, url: str, model: str) -> str:
+        if url.startswith("http"):
+            url = url.replace("http", "ws", 1)
+
+        parsed_url = urlparse(url)
+        query_params = parse_qs(parsed_url.query)
+
+        # ensure "/realtime" is added if the path is empty OR "/v1"
+        if not parsed_url.path or parsed_url.path.rstrip("/") in ["", "/v1", "/openai"]:
+            path = parsed_url.path.rstrip("/") + "/realtime"
+        else:
+            path = parsed_url.path
+
+        if "model" not in query_params:
+                query_params["model"] = [model]
+
+        new_query = urlencode(query_params, doseq=True)
+        new_url = urlunparse((parsed_url.scheme, parsed_url.netloc, path, "", new_query, ""))
+
+        return new_url
