@@ -44,3 +44,9 @@ class AgentSession:
         await self.pipeline.start()
         await self.agent.on_enter()
         
+    async def say(self, message: str) -> None:
+        """
+        Send a message to the agent.
+        """
+        await self.pipeline.send_message(message)
+        
