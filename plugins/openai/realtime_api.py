@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional, Literal
 from dataclasses import dataclass
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 from dotenv import load_dotenv
+import uuid
 
 import aiohttp
 
@@ -125,6 +126,30 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         self._closing = False
         
         return OpenAISession(ws=ws, msg_queue=msg_queue, tasks=tasks)
+    
+    async def send_message(self, message: str) -> None:
+        """Send a message to the OpenAI realtime API"""
+        await self.create_response()
+        
+    async def create_response(self) -> None:
+        """Create a response to the OpenAI realtime API"""
+        if not self._session:
+            raise RuntimeError("No active WebSocket session")
+            
+        # Create response event
+        response_event = {
+            "type": "response.create",
+            "event_id": str(uuid.uuid4()),  # Generate unique event ID
+            "response": {
+                "instructions": self._instructions,  # Use stored instructions if any
+                "metadata": {
+                    "client_event_id": str(uuid.uuid4())  # Generate unique client event ID
+                }
+            }
+        }
+        
+        # Send the event through our message queue
+        await self.send_event(response_event)
 
     async def _handle_websocket(self, session: OpenAISession) -> None:
         """Start WebSocket send/receive tasks"""

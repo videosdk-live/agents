@@ -25,3 +25,10 @@ class Pipeline(EventEmitter[Literal["start"]], ABC):
             **kwargs: Additional arguments that may be needed by specific pipeline implementations
         """
         pass
+    
+    @abstractmethod
+    async def send_message(self, message: str) -> None:
+        """
+        Send a message to the pipeline.
+        """
+        pass
