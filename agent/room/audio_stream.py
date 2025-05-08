@@ -14,7 +14,7 @@ class MediaStreamError(Exception):
     pass
 
 class CustomAudioStreamTrack(CustomAudioTrack):
-    def __init__(self, loop, handle_interruption: Optional[bool] = True):
+    def __init__(self, loop):
         super().__init__()
         self.loop = loop
         self._start = None
@@ -55,11 +55,11 @@ class CustomAudioStreamTrack(CustomAudioTrack):
     async def _process_audio(self):
         while True:
             try:
-                while True:
-                    if len(self.frame_buffer) > 0:
-                        await asyncio.sleep(0.1)
-                        continue
-                    break
+                    while True:
+                        if len(self.frame_buffer) > 0:
+                            await asyncio.sleep(0.1)
+                            continue
+                        break
             except Exception as e:
                 print("Error while updating chracter state", e)
 
@@ -77,7 +77,6 @@ class CustomAudioStreamTrack(CustomAudioTrack):
                             ]
                             audio_frame = self.buildAudioFrames(chunk)
                             self.frame_buffer.append(audio_frame)
-
                     except Exception as e:
                         print("Error while putting audio data stream", e)
             except Exception as e:
@@ -91,11 +90,9 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         return audio_frame
 
     def next_timestamp(self):
-        # Compute the next timestamp for the audio frame
         pts = int(self.frame_time)
         time_base = self.time_base_fraction
         self.frame_time += self.samples
-        # self.chunk_size / self.channels / self.sample_width
         return pts, time_base
 
     async def recv(self) -> AudioFrame:

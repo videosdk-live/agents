@@ -79,8 +79,3 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
     async def on_enter(self) -> None:
         """Called when session starts"""
         pass
-
-    async def send_message(self, message: str) -> None:
-        """Send a message"""
-        await self.session.say(message)
-        self.emit("message_sent", {"message": message})
