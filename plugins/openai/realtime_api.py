@@ -8,8 +8,12 @@ from dataclasses import dataclass
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 from dotenv import load_dotenv
 import uuid
-
+import base64
 import aiohttp
+from agent.room.audio_stream import CustomAudioStreamTrack
+import sounddevice as sd
+import numpy as np
+import traceback
 
 load_dotenv()
 
@@ -75,6 +79,8 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         self._session: Optional[OpenAISession] = None
         self._closing = False
         self._instructions: Optional[str] = None
+        self.loop = None
+        self.audio_track: Optional[CustomAudioStreamTrack] = None
 
         self.on("instructions_updated", self._handle_instructions_updated)
 
@@ -92,6 +98,18 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         self._session = await self._create_session(url, headers)
         await self._handle_websocket(self._session)
         await self.send_first_session_update()
+        
+    async def handle_audio_input(self, audio_data: bytes) -> None:
+        """Handle incoming audio data from the user"""
+        # print("###Audio input:")
+        if self._session and not self._closing:
+            base64_audio_data = base64.b64encode(audio_data).decode("utf-8")
+            audio_event = {
+                "type": "input_audio_buffer.append",
+                "audio": base64_audio_data
+            }
+            await self.send_event(audio_event)
+        
     async def _update_session(self) -> None:
         """Send session update to OpenAI"""
         if not self._session:
@@ -118,8 +136,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         """Create a new WebSocket session"""
         
         http_session = await self._ensure_http_session()
-        ws = await http_session.ws_connect(url, headers=headers)
-        
+        ws = await http_session.ws_connect(url, headers=headers, autoping=True, heartbeat=10, autoclose=False, timeout=30)
         msg_queue: asyncio.Queue = asyncio.Queue()
         tasks: list[asyncio.Task] = []
         
@@ -139,11 +156,11 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         # Create response event
         response_event = {
             "type": "response.create",
-            "event_id": str(uuid.uuid4()),  # Generate unique event ID
+            "event_id": str(uuid.uuid4()),
             "response": {
-                "instructions": self._instructions,  # Use stored instructions if any
+                "instructions": self._instructions, 
                 "metadata": {
-                    "client_event_id": str(uuid.uuid4())  # Generate unique client event ID
+                    "client_event_id": str(uuid.uuid4()) 
                 }
             }
         }
@@ -179,15 +196,15 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
                 msg = await session.ws.receive()
                 
                 if msg.type == aiohttp.WSMsgType.CLOSED:
-                    print("WebSocket closed")
+                    print("WebSocket closed with reason:", msg.extra)
                     break
                 elif msg.type == aiohttp.WSMsgType.ERROR:
+                    print("WebSocket error:", msg.data)
                     break
                 elif msg.type == aiohttp.WSMsgType.TEXT:
-                    print("Received message:", msg.data)
                     await self._handle_message(json.loads(msg.data))
-        except asyncio.CancelledError:
-            pass
+        except Exception as e:
+            print("WebSocket receive error:", str(e))
         finally:
             await self._cleanup_session(session)
 
@@ -228,10 +245,14 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
 
     async def _handle_speech_started(self, data: dict) -> None:
         """Handle speech detection start"""
+        print("###Speech started")
+        await self.interrupt()
         self.emit("input_speech_started")
 
     async def _handle_speech_stopped(self, data: dict) -> None:
         """Handle speech detection end"""
+        print("###Speech stopped")
+        # self.interrupt()
         self.emit("input_speech_stopped")
 
     async def _handle_response_created(self, data: dict) -> None:
@@ -248,7 +269,25 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
 
     async def _handle_audio_delta(self, data: dict) -> None:
         """Handle audio chunk"""
-
+        try:
+            base64_audio_data = base64.b64decode(data.get("delta"))
+            if base64_audio_data:
+                if self.audio_track and self.loop:
+                        self.loop.create_task(self.audio_track.add_new_bytes(iter([base64_audio_data])))
+        except Exception as e:
+            print(f"[ERROR] Error handling audio delta: {e}")
+            traceback.print_exc()
+    
+    async def interrupt(self) -> None:
+        """Interrupt the current response and flush audio"""
+        if self._session and not self._closing:
+            # Send cancel event to server
+            cancel_event = {
+                "type": "response.cancel",
+                "event_id": str(uuid.uuid4())
+            }
+            await self.send_event(cancel_event)
+            
     async def _handle_transcript_delta(self, data: dict) -> None:
         """Handle transcript chunk"""
 
@@ -260,7 +299,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
 
     async def _cleanup_session(self, session: OpenAISession) -> None:
         """Clean up session resources"""
-        if self._closing:  # Prevent recursive cleanup
+        if self._closing: 
             return
             
         self._closing = True
@@ -280,15 +319,6 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
                 await session.ws.close()
             except Exception:
                 pass
-
-    async def start(self) -> None:
-        """Start the realtime connection"""
-        try:
-            await self.connect()
-        except Exception as e:
-            print(f"Error starting realtime connection: {e}")
-            await self.aclose()
-            raise
         
     async def send_event(self, event: Dict[str, Any]) -> None:
         """Send an event to the WebSocket"""

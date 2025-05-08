@@ -1,26 +1,31 @@
 from videosdk import MeetingConfig, VideoSDK, Participant, Stream
-from rtc.videosdk.meeting_handler import MeetingHandler
-from rtc.videosdk.participant_handler import ParticipantHandler
-from audio_stream import CustomAudioStreamTrack
-
+from .meeting_event_handler import MeetingHandler
+from .participant_event_handler import ParticipantHandler
+from .audio_stream import CustomAudioStreamTrack
+from agent.pipeline import Pipeline
+from dotenv import load_dotenv
 import soundfile as sf
 import numpy as np
 import librosa
 import asyncio
 import os
+import sounddevice as sd
+from collections import deque
+from dataclasses import dataclass
+from time import time
+from asyncio import AbstractEventLoop
 
-auth_token = os.getenv("VIDEOSDK_AUTH_TOKEN")
-
-if not auth_token:
-    raise ValueError("VIDEOSDK_AUTH_TOKEN is not set")
-
+load_dotenv()
 
 class VideoSDKHandler:
-    def __init__(self, meeting_id: str, auth_token: str, name: str, loop=None):
-        self.loop = loop or asyncio.get_event_loop()
+    def __init__(self, *, meeting_id: str, auth_token: str | None = None, name: str, pipeline: Pipeline, loop: AbstractEventLoop):
+        self.loop = loop
         self.audio_track = CustomAudioStreamTrack(
-            loop=self.loop, handle_interruption=True
+            loop=self.loop
         )
+        auth_token = auth_token or os.getenv("VIDEOSDK_AUTH_TOKEN")
+        if not auth_token:
+            raise ValueError("VIDEOSDK_AUTH_TOKEN is not set")
         self.meeting_config = MeetingConfig(
             name=name,
             meeting_id=meeting_id,
@@ -29,8 +34,14 @@ class VideoSDKHandler:
             webcam_enabled=False,
             custom_microphone_audio_track=self.audio_track,
         )
+        self.pipeline = pipeline
         self.audio_listener_tasks = {}
         self.meeting = None
+
+        self.participants_data = {}
+
+    def init_meeting(self):
+        self.meeting = VideoSDK.init_meeting(**self.meeting_config)
         self.meeting.add_event_listener(
             MeetingHandler(
                 on_meeting_joined=self.on_meeting_joined,
@@ -39,13 +50,6 @@ class VideoSDKHandler:
                 on_participant_left=self.on_participant_left,
             )
         )
-
-        ## TODO: Init AgentSession
-
-        self.participants_data = {}
-
-    def init_meeting(self):
-        self.meeting = VideoSDK.init_meeting(**self.meeting_config)
 
     async def join(self):
         await self.meeting.async_join()
@@ -58,6 +62,7 @@ class VideoSDKHandler:
 
     def on_meeting_left(self, data):
         print(f"Meeting Left")
+        self.loop.create_task(self.cleanup())
 
     def on_participant_joined(self, participant: Participant):
         peer_name = participant.display_name
@@ -91,13 +96,10 @@ class VideoSDKHandler:
     def on_participant_left(self, participant: Participant):
         print("Participant left:", participant.display_name)
 
-    # listen to audio stream
     async def add_audio_listener(self, stream: Stream):
         while True:
             try:
                 await asyncio.sleep(0.01)
-                if not self.intelligence.ws:
-                    continue
 
                 frame = await stream.track.recv()
                 audio_data = frame.to_ndarray()[0]
@@ -113,9 +115,14 @@ class VideoSDKHandler:
                     .astype(np.int16)
                     .tobytes()
                 )
-
-                ## TODO: Send to Pipleline
+                await self.pipeline.on_audio_delta(pcm_frame)
 
             except Exception as e:
                 print("Audio processing error:", e)
                 break
+            
+    async def cleanup(self):
+        """Add cleanup method"""
+        
+        if hasattr(self, "audio_track"):
+            await self.audio_track.cleanup()

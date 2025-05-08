@@ -48,5 +48,6 @@ class AgentSession:
         """
         Send a message to the agent.
         """
-        await self.pipeline.send_message(message)
+        
+        await self.pipeline.send_message(message)   
         
