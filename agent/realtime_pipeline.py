@@ -36,7 +36,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         self.loop = asyncio.get_event_loop()
         self.room = VideoSDKHandler(
             meeting_id="s87z-lvsj-riwb",
-            name="uday",
+            name="Agent",
             pipeline=self,
             loop=self.loop
         )

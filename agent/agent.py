@@ -5,6 +5,7 @@ from enum import Enum
 from typing import Any, Callable, List, Optional, Literal, Union, Dict
 
 from .event_emitter import EventEmitter
+from .utils import FunctionTool, is_function_tool
 
 class AgentState(str, Enum):
     """Enum representing possible states of the agent"""
@@ -25,14 +26,16 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
     Abstract base class for creating custom agents.
     Inherits from EventEmitter to handle agent events and state updates.
     """
-    def __init__(self, instructions: str):
+    def __init__(self, instructions: str, tools: List[FunctionTool] = []):
         super().__init__()  # Initialize EventEmitter
         self.instructions = instructions
-        self._session: Optional["AgentSession"] = None
+        # self._session: Optional["AgentSession"] = None
         self._state = AgentState.IDLE  # Initialize with IDLE state
-        
-        if self._session:
-            self.on("state_changed", self._handle_state_event)
+        self._tools = []  # Initialize empty
+        if tools:  # Add any initial tools
+            self.register_tools(tools)
+        # if self._session:
+        #     self.on("state_changed", self._handle_state_event)
 
     @property
     def instructions(self) -> str:
@@ -42,6 +45,19 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
     def instructions(self, value: str) -> None:
         self._instructions = value
         self.emit("instructions_updated", {"instructions": value})
+
+    @property
+    def tools(self) -> List[FunctionTool]:
+        return self._tools
+
+    def register_tools(self, tools: List[FunctionTool]) -> None:
+        """Register new tools to the agent"""
+        for tool in tools:
+            if not is_function_tool(tool):
+                raise ValueError(f"Tool {tool.__name__ if hasattr(tool, '__name__') else tool} is not a valid FunctionTool")
+        
+        self._tools.extend(tools)
+        self.emit("tools_updated", {"tools": self._tools})
 
     @property
     def state(self) -> AgentState:
@@ -61,19 +77,6 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
     async def on_state_changed(self, old_state: AgentState, new_state: AgentState) -> None:
         """Callback for state changes"""
         pass
-
-    @property
-    def session(self) -> "AgentSession":
-        """Get the agent's session"""
-        if self._session is None:
-            raise RuntimeError("Agent session not initialized. Make sure to call AgentSession.start() first")
-        return self._session
-
-    @session.setter
-    def session(self, session: "AgentSession") -> None:
-        """Set the agent's session"""
-        self._session = session
-        self.emit("instructions_updated", {"instructions": self._instructions})
 
     @abstractmethod
     async def on_enter(self) -> None:
