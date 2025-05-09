@@ -41,7 +41,7 @@ class AgentSession:
             **kwargs: Additional arguments to pass to the pipeline start method
         """
         
-        await self.pipeline.start()
+        await self.pipeline.start(meeting_id="s87z-lvsj-riwb", name="Agent")
         await self.agent.on_enter()
         
     async def say(self, message: str) -> None:
