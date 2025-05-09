@@ -34,16 +34,9 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         self.config = config
         self.model.set_config(config)
         self.loop = asyncio.get_event_loop()
-        self.room = VideoSDKHandler(
-            meeting_id="s87z-lvsj-riwb",
-            name="Agent",
-            pipeline=self,
-            loop=self.loop
-        )
-        
-        self.room.init_meeting()
+        self.room = None
         self.model.loop = self.loop
-        self.model.audio_track = self.room.audio_track
+        self.model.audio_track = None
 
     async def start(self, **kwargs: Any) -> None:
         """
@@ -51,9 +44,25 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         Overrides the abstract start method from Pipeline base class.
         
         Args:
+            meeting_id: The meeting ID to join
+            name: The name of the agent in the meeting
             **kwargs: Additional arguments for pipeline configuration
         """
         try:
+            meeting_id = kwargs.get('meeting_id')
+            name = kwargs.get('name')
+            
+            self.room = VideoSDKHandler(
+                meeting_id=meeting_id,
+                name=name,
+                pipeline=self,
+                loop=self.loop
+            )
+            
+            self.room.init_meeting()
+            self.model.loop = self.loop
+            self.model.audio_track = self.room.audio_track
+            
             await self.model.connect()
             await self.room.join()
             
