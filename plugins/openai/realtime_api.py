@@ -167,7 +167,6 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
     
     async def send_message(self, message: str) -> None:
         """Send a message to the OpenAI realtime API"""
-        print("###Sending message", message)
         self.send_event({
             "type": "conversation.item.create",
             "item": {
@@ -283,6 +282,9 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
             
             elif event_type == "response.output_item.done":
                 await self._handle_output_item_done(data)
+            
+            elif event_type == "conversation.item.input_audio_transcription.completed":
+                await self._handle_input_audio_transcription_completed(data)
 
         except Exception as e:
             self.emit_error(f"Error handling event {event_type}: {str(e)}")
@@ -378,6 +380,11 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
             
     async def _handle_transcript_delta(self, data: dict) -> None:
         """Handle transcript chunk"""
+    
+    async def _handle_input_audio_transcription_completed(self, data: dict) -> None:
+        """Handle input audio transcription completion"""
+        if "transcript" in data:
+            self.emit("transcription_event", {"text": data["transcript"]})
 
     async def _handle_response_done(self, data: dict) -> None:
         """Handle response completion"""
