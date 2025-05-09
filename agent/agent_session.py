@@ -49,5 +49,11 @@ class AgentSession:
         Send a message to the agent.
         """
         
-        await self.pipeline.send_message(message)   
+        await self.pipeline.send_message(message)
+    
+    async def close(self) -> None:
+        """
+        Close the agent session.
+        """
+        await self.pipeline.cleanup()
         

@@ -21,4 +21,4 @@ class ConversationFlow(EventEmitter[Literal["transcription"]]):
         Args:
             callback: Function to call when transcription occurs, takes transcribed text as argument
         """
-        self.on("transcription", callback)  # Use EventEmitter's on() method
+        self.on("transcription_event", lambda data: callback(data["text"]))
