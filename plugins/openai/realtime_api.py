@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from typing import Any, Dict, Optional, Literal
+from typing import Any, Dict, Optional, Literal, List
 from dataclasses import dataclass
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 from dotenv import load_dotenv
@@ -14,6 +14,7 @@ from agent.room.audio_stream import CustomAudioStreamTrack
 import sounddevice as sd
 import numpy as np
 import traceback
+from agent.utils import FunctionTool, build_openai_schema, is_function_tool, get_tool_info
 
 load_dotenv()
 
@@ -42,7 +43,8 @@ OpenAIEventTypes = Literal[
     "response_created",
     "response_completed",
     "audio_generated",
-    "instructions_updated"
+    "instructions_updated",
+    "tools_updated"
 ]
 DEFAULT_VOICE = "alloy"
 
@@ -79,10 +81,13 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         self._session: Optional[OpenAISession] = None
         self._closing = False
         self._instructions: Optional[str] = None
+        self._tools: Optional[List[FunctionTool]] = None
         self.loop = None
         self.audio_track: Optional[CustomAudioStreamTrack] = None
+        self._formatted_tools: Optional[List[Dict[str, Any]]] = None
 
         self.on("instructions_updated", self._handle_instructions_updated)
+        self.on("tools_updated", self._handle_tools_updated) 
 
     def set_config(self, config: Dict[str, Any]) -> None:
         """Set configuration received from pipeline"""
@@ -101,7 +106,6 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         
     async def handle_audio_input(self, audio_data: bytes) -> None:
         """Handle incoming audio data from the user"""
-        # print("###Audio input:")
         if self._session and not self._closing:
             base64_audio_data = base64.b64encode(audio_data).decode("utf-8")
             audio_event = {
@@ -115,16 +119,33 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         if not self._session:
             return
 
+        config = self.config or {}
         update_event = {
             "type": "session.update",
+            "event_id": str(uuid.uuid4()),
             "session": {
                 "model": self.model,
-                "voice": self.voice,
+                "voice": config.get("voice", DEFAULT_VOICE),
+                "instructions": self._instructions,
+                "tools": config.get("tools", []),
                 "temperature": self.temperature,
-                "modalities": self.response_modalities
+                "modalities": self.response_modalities,
+                "input_audio_format": config.get("input_audio_format", "pcm16"),
+                "output_audio_format": config.get("output_audio_format", "pcm16"),
+                "turn_detection": config.get("turn_detection", DEFAULT_TURN_DETECTION.model_dump(
+                    by_alias=True,
+                    exclude_unset=True,
+                    exclude_defaults=True,
+                )),
+                "input_audio_transcription": config.get("input_audio_transcription", DEFAULT_INPUT_AUDIO_TRANSCRIPTION.model_dump(
+                    by_alias=True,
+                    exclude_unset=True,
+                    exclude_defaults=True,
+                )),
+                "tool_choice": config.get("tool_choice", DEFAULT_TOOL_CHOICE),
             }
         }
-        await self._session.msg_queue.put(update_event)
+        await self.send_event(update_event)
 
     async def _ensure_http_session(self) -> aiohttp.ClientSession:
         """Ensure we have an HTTP session"""
@@ -146,6 +167,20 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
     
     async def send_message(self, message: str) -> None:
         """Send a message to the OpenAI realtime API"""
+        print("###Sending message", message)
+        self.send_event({
+            "type": "conversation.item.create",
+            "item": {
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": message,
+                    }
+                ]
+            }
+        })
         await self.create_response()
         
     async def create_response(self) -> None:
@@ -239,6 +274,15 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
 
             elif event_type == "error":
                 await self._handle_error(data)
+            
+            elif event_type == "response.function_call_arguments.delta":
+                await self._handle_function_call_arguments_delta(data)
+            
+            elif event_type == "response.function_call_arguments.done":
+                await self._handle_function_call_arguments_done(data)
+            
+            elif event_type == "response.output_item.done":
+                await self._handle_output_item_done(data)
 
         except Exception as e:
             self.emit_error(f"Error handling event {event_type}: {str(e)}")
@@ -248,6 +292,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         print("###Speech started")
         await self.interrupt()
         self.emit("input_speech_started")
+        self.audio_track.interrupt()
 
     async def _handle_speech_stopped(self, data: dict) -> None:
         """Handle speech detection end"""
@@ -263,6 +308,49 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
 
     async def _handle_output_item_added(self, data: dict) -> None:
         """Handle new output item addition"""
+    
+    async def _handle_output_item_done(self, data: dict) -> None:
+        """Handle output item done"""
+        try:
+            item = data.get("item", {})
+            if item.get("type") == "function_call" and item.get("status") == "completed":
+                name = item.get("name")
+                arguments = json.loads(item.get("arguments", "{}"))
+                
+                if name and self._tools:
+                    for tool in self._tools:
+                        tool_info = get_tool_info(tool)
+                        if tool_info.name == name:
+                            try:
+                                # Execute the function with the arguments
+                                result = await tool(**arguments)
+                                # Send function result
+                                await self.send_event({
+                                    "type": "conversation.item.create",
+                                    "item": {
+                                        "type": "function_call_output",
+                                        "call_id": item.get("call_id"),
+                                        "output": json.dumps(result)
+                                    }
+                                })
+                                
+                                # Create new response to trigger model response
+                                await self.send_event({
+                                    "type": "response.create",
+                                    "event_id": str(uuid.uuid4()),
+                                    "response": {
+                                        "instructions": self._instructions,
+                                        "metadata": {
+                                            "client_event_id": str(uuid.uuid4())
+                                        }
+                                    }
+                                })
+                                
+                            except Exception as e:
+                                print(f"Error executing function {name}: {e}")
+                            break
+        except Exception as e:
+            print(f"Error handling output item done: {e}")
 
     async def _handle_content_part_added(self, data: dict) -> None:
         """Handle new content part"""
@@ -293,6 +381,12 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
 
     async def _handle_response_done(self, data: dict) -> None:
         """Handle response completion"""
+    
+    async def _handle_function_call_arguments_delta(self, data: dict) -> None:
+        """Handle function call arguments delta"""
+
+    async def _handle_function_call_arguments_done(self, data: dict) -> None:
+        """Handle function call arguments done"""
 
     async def _handle_error(self, data: dict) -> None:
         """Handle error events"""
@@ -364,7 +458,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
                     exclude_defaults=True,
                 )),
                 "tool_choice": config.get("tool_choice", DEFAULT_TOOL_CHOICE),
-                "tools": config.get("tools", []),
+                "tools": self._formatted_tools or [],
                 "modalities": config.get("modalities", ["text", "audio"]),
                 "input_audio_format": config.get("input_audio_format", "pcm16"),
                 "output_audio_format": config.get("output_audio_format", "pcm16")
@@ -398,5 +492,26 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
     def _handle_instructions_updated(self, data: Dict[str, Any]) -> None:
         """Handle instructions_updated event"""
         self._instructions = data.get("instructions")
-        # Send session update with new instructions
-        asyncio.create_task(self._update_session())
+
+    def _format_tools_for_session(self, tools: List[FunctionTool]) -> List[Dict[str, Any]]:
+        """Format tools for OpenAI session update"""
+        oai_tools = []
+        for tool in tools:
+            if not is_function_tool(tool):
+                continue
+                
+            try:
+                tool_schema = build_openai_schema(tool)
+                oai_tools.append(tool_schema)
+            except Exception as e:
+                print(f"Failed to format tool {tool}: {e}")
+                continue
+                
+        return oai_tools
+
+    def _handle_tools_updated(self, data: Dict[str, Any]) -> None:
+        """Handle tools_updated event"""
+        tools = data.get("tools", [])
+        self._tools = tools
+        formatted_tools = self._format_tools_for_session(tools)
+        self._formatted_tools = formatted_tools
