@@ -10,11 +10,16 @@ from dotenv import load_dotenv
 import uuid
 import base64
 import aiohttp
-from agent.room.audio_stream import CustomAudioStreamTrack
 import sounddevice as sd
 import numpy as np
 import traceback
-from agent.utils import FunctionTool, build_openai_schema, is_function_tool, get_tool_info
+from agent import (
+    FunctionTool,
+    is_function_tool,
+    get_tool_info,
+    build_openai_schema,
+    CustomAudioStreamTrack,
+)
 
 load_dotenv()
 
