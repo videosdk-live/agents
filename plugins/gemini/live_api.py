@@ -90,15 +90,17 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         self.loop = None
         self.audio_track = None
         
-        # Audio and activity tracking
+        # Audio handling
         self._buffered_audio = bytearray()
         self._is_speaking = False
         self._last_audio_time = 0.0
         self._silence_duration_ms = SILENCE_DURATION_MS
         self._automatic_activity_detection = True
         self._audio_processing_task = None
-        self._instructions = None
+        
+        # Tools and instructions
         self.tools = tools or []
+        self._instructions = None
         
         self.on("tools_updated", self._handle_tools_updated)
         self.on("instruction_updated", self._handle_instruction_updated)
@@ -424,95 +426,83 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         """Handle incoming audio data from the user"""
         if not self._session or self._closing:
             return
-        # await self._session.session.send_realtime_input(audio=Blob(data=audio_data, mime_type="audio/pcm")) 
-        # Buffer incoming audio 
-        # print("incoming audio")
+            
         self._buffered_audio.extend(audio_data)
+        self._last_audio_time = asyncio.get_event_loop().time()
         
-        # Process buffered audio in chunks
         if len(self._buffered_audio) >= AUDIO_BUFFER_MAX_SIZE:
             await self._process_audio_chunk()
             
-        # Update last audio time even if we haven't sent the audio yet
-        self._last_audio_time = asyncio.get_event_loop().time()
-        
-        # Start audio processing task if not already running
         if not self._audio_processing_task or self._audio_processing_task.done():
             self._audio_processing_task = asyncio.create_task(
-                self._process_audio_periodically(), 
-                name="gemini_audio_processing"
+                self._process_audio_periodically()
             )
-    
+
     async def _process_audio_periodically(self) -> None:
-        """Process audio in periodic intervals to ensure consistent streaming"""
+        """Process audio in periodic intervals"""
         try:
             while self._buffered_audio and not self._closing:
                 await self._process_audio_chunk()
-                await asyncio.sleep(0.05)  # Process in small intervals
+                await asyncio.sleep(0.05)
         except Exception as e:
             logger.error(f"Audio processing error: {e}")
-            traceback.print_exc()
-    
+
     async def _process_audio_chunk(self) -> None:
-        """Process a chunk of buffered audio data"""
-        if not self._buffered_audio or not self._session or self._closing:
+        """Process and send a chunk of audio data"""
+        if not self._buffered_audio or not self._session:
             return
             
-        # Take a chunk from the buffer
-        chunk_size = min(len(self._buffered_audio), AUDIO_BUFFER_MAX_SIZE)
-        chunk = bytes(self._buffered_audio[:chunk_size])
-        self._buffered_audio = self._buffered_audio[chunk_size:]
+        chunk = bytes(self._buffered_audio[:AUDIO_BUFFER_MAX_SIZE])
+        self._buffered_audio = self._buffered_audio[AUDIO_BUFFER_MAX_SIZE:]
         
         try:
-            # Send audio data to Gemini
             await self._session.session.send_realtime_input(
                 audio=Blob(data=chunk, mime_type=f"audio/pcm;rate={AUDIO_SAMPLE_RATE}")
             )
             
-            # Start speech if not already speaking
             if not self._is_speaking:
                 self._is_speaking = True
                 self.emit("input_speech_started")
-                
-                # Interrupt current response when user starts speaking
                 await self.interrupt()
-                
-                # Interrupt audio playback to prevent overlap
                 if self.audio_track:
                     self.audio_track.interrupt()
                     
-                logger.debug(f"Speech started - audio chunk size: {len(chunk)} bytes")
         except Exception as e:
             logger.error(f"Audio send error: {e}")
-            traceback.print_exc()
             await self._reconnect()
-    
+
     async def _check_silence(self) -> None:
-        """Check for silence to detect end of speech"""
+        """Check for speech silence"""
         if self._automatic_activity_detection or not self._is_speaking:
             return
-        
-        time_since_audio = (asyncio.get_event_loop().time() - self._last_audio_time) * 1000  # ms
-        
-        if time_since_audio > self._silence_duration_ms and self._is_speaking:
-            # Only signal end if we actually have a session
-            if self._session and self._session.session:
-                try:
-                    # If there's still buffered audio, process it first
-                    if self._buffered_audio and len(self._buffered_audio) > 0:
-                        await self._process_audio_chunk()
-                        
-                    # Now signal audio end
-                    logger.debug(f"Speech stopped after {time_since_audio}ms of silence")
-                    await self._session.session.send_realtime_input(audio_stream_end=True)
-                    self._is_speaking = False
-                    self.emit("input_speech_stopped")
-                except Exception as e:
-                    logger.error(f"Error signaling audio end: {e}")
-        
-        # Process any remaining audio periodically
-        if len(self._buffered_audio) > 0:
-            await self._process_audio_chunk()
+            
+        elapsed = (asyncio.get_event_loop().time() - self._last_audio_time) * 1000
+        if elapsed > self._silence_duration_ms and self._session:
+            try:
+                if self._buffered_audio:
+                    await self._process_audio_chunk()
+                    
+                await self._session.session.send_realtime_input(audio_stream_end=True)
+                self._is_speaking = False
+                self.emit("input_speech_stopped")
+            except Exception as e:
+                logger.error(f"Silence detection error: {e}")
+
+    async def interrupt(self) -> None:
+        """Interrupt current response"""
+        if not self._session or self._closing:
+            return
+            
+        try:
+            await self._session.session.send_client_content(
+                turns=Content(parts=[Part(text="stop")], role="user"),
+                turn_complete=True
+            )
+            if self.audio_track:
+                self.audio_track.interrupt()
+            self.emit("response_completed", {"response_id": "interrupted"})
+        except Exception as e:
+            logger.error(f"Interrupt error: {e}")
     
     async def send_message(self, message: str) -> None:
         """Send a text message to get audio response"""
@@ -538,26 +528,6 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         except Exception as e:
             logger.error(f"Error sending message: {e}")
             self._session_should_close.set()
-    
-    async def interrupt(self) -> None:
-        """Interrupt the current response"""
-        if not self._session or not self._session.session or self._closing:
-            return
-        
-        try:
-            # Send interrupt signal
-            await self._session.session.send_client_content(
-                turns=Content(parts=[Part(text="stop")], role="user"),
-                turn_complete=True
-            )
-            
-            # Reset active audio and clear buffers
-            if self.audio_track:
-                self.audio_track.interrupt()
-                
-            self.emit("response_completed", {"response_id": "interrupted"})
-        except Exception as e:
-            logger.error(f"Error interrupting: {e}")
     
     async def signal_audio_end(self) -> None:
         """Signal that audio input has ended"""
