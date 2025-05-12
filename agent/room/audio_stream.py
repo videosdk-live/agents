@@ -1,6 +1,5 @@
 import asyncio
 from fractions import Fraction
-import threading
 from time import time
 import traceback
 from typing import Iterator, Optional
@@ -28,65 +27,37 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         self.time_base_fraction = Fraction(1, self.sample_rate)
         self.samples = int(AUDIO_PTIME * self.sample_rate)
         self.chunk_size = int(self.samples * self.channels * self.sample_width)
-        self._process_audio_task_queue = asyncio.Queue()
-        self._process_audio_thread = threading.Thread(target=self.run_process_audio)
-        self._process_audio_thread.daemon = True
-        self._process_audio_thread.start()
-        self.skip_next_chunk = False
 
     def interrupt(self):
-        length = len(self.frame_buffer)
         self.frame_buffer.clear()
-        while not self._process_audio_task_queue.empty():
-            self.skip_next_chunk = True
-            self._process_audio_task_queue.get_nowait()
-            self._process_audio_task_queue.task_done()
+        self.audio_data_buffer.clear()
 
-        if length > 0:
-            self.skip_next_chunk = True
+    async def add_new_bytes(self, audio_data: bytes):
+        self.audio_data_buffer += audio_data
 
-    async def add_new_bytes(self, audio_data_stream: Iterator[bytes]):
-        # self.interrupt()
-        await self._process_audio_task_queue.put(audio_data_stream)
-
-    def run_process_audio(self):
-        asyncio.run(self._process_audio())
-
-    async def _process_audio(self):
-        while True:
+        while len(self.audio_data_buffer) >= self.chunk_size:
+            chunk = self.audio_data_buffer[:self.chunk_size]
+            self.audio_data_buffer = self.audio_data_buffer[self.chunk_size:]
             try:
-                    while True:
-                        if len(self.frame_buffer) > 0:
-                            await asyncio.sleep(0.1)
-                            continue
-                        break
+                audio_frame = self.buildAudioFrames(chunk)
+                self.frame_buffer.append(audio_frame)
             except Exception as e:
-                print("Error while updating chracter state", e)
-
-            try:
-                audio_data_stream = asyncio.run_coroutine_threadsafe(
-                    self._process_audio_task_queue.get(), self.loop
-                ).result()
-                for audio_data in audio_data_stream:
-                    try:
-                        self.audio_data_buffer += audio_data
-                        while len(self.audio_data_buffer) > self.chunk_size:
-                            chunk = self.audio_data_buffer[: self.chunk_size]
-                            self.audio_data_buffer = self.audio_data_buffer[
-                                self.chunk_size :
-                            ]
-                            audio_frame = self.buildAudioFrames(chunk)
-                            self.frame_buffer.append(audio_frame)
-                    except Exception as e:
-                        print("Error while putting audio data stream", e)
-            except Exception as e:
-                traceback.print_exc()
-                print("Error while process audio", e)
+                print(f"Error building audio frame: {e}")
+                break
 
     def buildAudioFrames(self, chunk: bytes) -> AudioFrame:
+        if len(chunk) != self.chunk_size:
+            print(f"Warning: Incorrect chunk size received {len(chunk)}, expected {self.chunk_size}")
+
         data = np.frombuffer(chunk, dtype=np.int16)
-        data = data.reshape(-1, 1)
-        audio_frame = AudioFrame.from_ndarray(data.T, format="s16", layout="mono")
+        expected_samples = self.samples * self.channels
+        if len(data) != expected_samples:
+            print(f"Warning: Incorrect number of samples in chunk {len(data)}, expected {expected_samples}")
+
+        data = data.reshape(-1, self.channels)
+        layout = "mono" if self.channels == 1 else "stereo"
+
+        audio_frame = AudioFrame.from_ndarray(data.T, format="s16", layout=layout)
         return audio_frame
 
     def next_timestamp(self):

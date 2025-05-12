@@ -34,6 +34,10 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
         if tools:
             self.register_tools(tools)
 
+        self.on("input_speech_started", self._handle_speech_started)
+        self.on("input_speech_stopped", self._handle_speech_stopped)
+        self.on("output_speech_started", self._handle_output_speech_started)
+
     @property
     def instructions(self) -> str:
         return self._instructions
@@ -48,7 +52,7 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
         return self._tools
 
     def register_tools(self, tools: List[FunctionTool]) -> None:
-        """Register new tools to the agent"""
+        """Register function tools for the agent"""
         for tool in tools:
             if not is_function_tool(tool):
                 raise ValueError(f"Tool {tool.__name__ if hasattr(tool, '__name__') else tool} is not a valid FunctionTool")
@@ -71,7 +75,7 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
         self.emit("state_updated", {"state": self._state.value})
         self.on_state_changed(old_state, self._state)
 
-    async def on_state_changed(self, old_state: AgentState, new_state: AgentState) -> None:
+    def on_state_changed(self, old_state: AgentState, new_state: AgentState) -> None:
         """Callback for state changes"""
         pass
 
@@ -79,3 +83,15 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
     async def on_enter(self) -> None:
         """Called when session starts"""
         pass
+
+    def _handle_speech_started(self, _: Any) -> None:
+        """Handle when user starts speaking"""
+        self.update_state({"state": AgentState.LISTENING})
+
+    def _handle_speech_stopped(self, _: Any) -> None:
+        """Handle when user stops speaking"""
+        self.update_state({"state": AgentState.THINKING})
+    
+    def _handle_output_speech_started(self, _: Any) -> None:
+        """Handle when agent starts speaking"""
+        self.update_state({"state": AgentState.SPEAKING})

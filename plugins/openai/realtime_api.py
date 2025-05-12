@@ -10,7 +10,6 @@ from dotenv import load_dotenv
 import uuid
 import base64
 import aiohttp
-import sounddevice as sd
 import numpy as np
 import traceback
 from agent import (
@@ -296,15 +295,13 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
 
     async def _handle_speech_started(self, data: dict) -> None:
         """Handle speech detection start"""
-        print("###Speech started")
         await self.interrupt()
         self.emit("input_speech_started")
         self.audio_track.interrupt()
 
     async def _handle_speech_stopped(self, data: dict) -> None:
         """Handle speech detection end"""
-        print("###Speech stopped")
-        # self.interrupt()
+        # await self.interrupt()
         self.emit("input_speech_stopped")
 
     async def _handle_response_created(self, data: dict) -> None:
@@ -318,6 +315,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
     
     async def _handle_output_item_done(self, data: dict) -> None:
         """Handle output item done"""
+        self.emit("output_speech_started")
         try:
             item = data.get("item", {})
             if item.get("type") == "function_call" and item.get("status") == "completed":
@@ -365,7 +363,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
             base64_audio_data = base64.b64decode(data.get("delta"))
             if base64_audio_data:
                 if self.audio_track and self.loop:
-                        self.loop.create_task(self.audio_track.add_new_bytes(iter([base64_audio_data])))
+                    self.loop.create_task(self.audio_track.add_new_bytes(base64_audio_data))
         except Exception as e:
             print(f"[ERROR] Error handling audio delta: {e}")
             traceback.print_exc()
@@ -506,7 +504,9 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
                 continue
                 
             try:
+                # Use the updated build_openai_schema that now uses Pydantic models
                 tool_schema = build_openai_schema(tool)
+                # OpenAI expects the schema in a specific format with "function" wrapper
                 oai_tools.append(tool_schema)
             except Exception as e:
                 print(f"Failed to format tool {tool}: {e}")
@@ -518,5 +518,4 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         """Handle tools_updated event"""
         tools = data.get("tools", [])
         self._tools = tools
-        formatted_tools = self._format_tools_for_session(tools)
-        self._formatted_tools = formatted_tools
+        self._formatted_tools = self._format_tools_for_session(tools)  # Format for OpenAI

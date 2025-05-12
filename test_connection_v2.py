@@ -2,7 +2,7 @@ import asyncio
 import os
 import signal
 from plugins.openai import OpenAIRealtime
-from agent import Agent, AgentSession, ConversationFlow, RealTimePipeline, function_tool
+from agent import Agent, AgentSession, ConversationFlow, RealTimePipeline, function_tool, AgentState
 import aiohttp
 import logging
 
@@ -16,10 +16,22 @@ class MyVoiceAgent(Agent):
         super().__init__(
             instructions="You are a helpful voice assistant that can answer questions and help with tasks.",
         )
-        # self.register_tools([self.get_weather, self.get_horoscope])
+        self.register_tools([self.get_weather, self.get_horoscope])
 
     async def on_enter(self) -> None:
         await self.session.say("👋 Hi there! How can I help you today?")
+
+    def on_state_changed(self, old_state: AgentState, new_state: AgentState) -> None:
+        """Handle state transitions"""
+        
+        if new_state == AgentState.LISTENING:
+            print("📢 Listening to user input...")
+        elif new_state == AgentState.THINKING:
+            print("🤔 Processing user input...")
+        elif new_state == AgentState.SPEAKING:
+            print("🗣️ Agent is speaking...")
+        elif new_state == AgentState.IDLE:
+            print("💤 Agent is idle...")
 
     @function_tool
     async def get_weather(
@@ -36,7 +48,7 @@ class MyVoiceAgent(Agent):
             longitude: The longitude of the location
         """
         print("###Getting weather for", latitude, longitude)
-        logger.info(f"getting weather for {latitude}, {longitude}")
+        # logger.info(f"getting weather for {latitude}, {longitude}")
         url = f"https://api.open-meteo.com/v1/forecast?latitude={latitude}&longitude={longitude}&current=temperature_2m"
         weather_data = {}
         async with aiohttp.ClientSession() as session:
