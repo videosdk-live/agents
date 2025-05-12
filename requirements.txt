@@ -12,6 +12,7 @@ grpcio
 protobuf
 sounddevice
 docstring_parser
+google-genai
 
 
 
