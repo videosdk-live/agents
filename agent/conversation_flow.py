@@ -11,7 +11,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]]):
     
     def __init__(self) -> None:
         """Initialize conversation flow with event emitter capabilities"""
-        super().__init__()  # Initialize the EventEmitter parent class
+        super().__init__() 
         self.transcription_callback: Callable[[str], None] | None = None
 
     def on_transcription(self, callback: Callable[[str], None]) -> None:
