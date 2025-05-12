@@ -18,7 +18,6 @@ class EventEmitter(Generic[T_contra]):
 
     def __init__(self, *args, **kwargs) -> None:
         """Initialize event emitter with empty event handlers dictionary"""
-        # No need to initialize _events here since it's a class variable
         pass
 
     def emit(self, event: T_contra, *args) -> None:

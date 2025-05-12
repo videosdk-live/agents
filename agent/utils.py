@@ -58,7 +58,6 @@ def build_openai_schema(function_tool: FunctionTool) -> dict[str, Any]:
     sig = signature(function_tool)
     docstring = parse(function_tool.__doc__ or "")
     
-    # Build param descriptions from docstring
     param_desc = {param.arg_name: param.description for param in docstring.params}
     
     parameters = {
@@ -72,7 +71,7 @@ def build_openai_schema(function_tool: FunctionTool) -> dict[str, Any]:
             continue
             
         parameters["properties"][name] = {
-            "type": "string",  # You might want to map Python types to JSON Schema types
+            "type": "string",
             "description": param_desc.get(name, f"Parameter: {name}")
         }
         

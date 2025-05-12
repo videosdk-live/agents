@@ -172,7 +172,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
     
     async def send_message(self, message: str) -> None:
         """Send a message to the OpenAI realtime API"""
-        self.send_event({
+        await self.send_event({
             "type": "conversation.item.create",
             "item": {
                 "type": "message",
@@ -329,9 +329,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
                         tool_info = get_tool_info(tool)
                         if tool_info.name == name:
                             try:
-                                # Execute the function with the arguments
                                 result = await tool(**arguments)
-                                # Send function result
                                 await self.send_event({
                                     "type": "conversation.item.create",
                                     "item": {
@@ -341,7 +339,6 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
                                     }
                                 })
                                 
-                                # Create new response to trigger model response
                                 await self.send_event({
                                     "type": "response.create",
                                     "event_id": str(uuid.uuid4()),
@@ -376,7 +373,6 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
     async def interrupt(self) -> None:
         """Interrupt the current response and flush audio"""
         if self._session and not self._closing:
-            # Send cancel event to server
             cancel_event = {
                 "type": "response.cancel",
                 "event_id": str(uuid.uuid4())
@@ -410,7 +406,6 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
             
         self._closing = True
         
-        # Cancel all tasks
         for task in session.tasks:
             if not task.done():
                 task.cancel()
@@ -433,7 +428,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
 
     async def aclose(self) -> None:
         """Cleanup all resources"""
-        if self._closing:  # Prevent recursive cleanup
+        if self._closing:
             return
             
         self._closing = True
@@ -451,7 +446,6 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         
         config = self.config or {}
 
-        # Create session update as a plain dictionary
         session_update = {
             "type": "session.update",
             "session": {
@@ -487,7 +481,6 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         parsed_url = urlparse(url)
         query_params = parse_qs(parsed_url.query)
 
-        # ensure "/realtime" is added if the path is empty OR "/v1"
         if not parsed_url.path or parsed_url.path.rstrip("/") in ["", "/v1", "/openai"]:
             path = parsed_url.path.rstrip("/") + "/realtime"
         else:

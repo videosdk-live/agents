@@ -16,6 +16,7 @@ class AgentSession:
         agent: Agent,
         flow: ConversationFlow,
         pipeline: Pipeline,
+        context: dict | None = None,
     ) -> None:
         """
         Initialize an agent session.
@@ -24,10 +25,12 @@ class AgentSession:
             agent: Instance of an Agent class that handles the core logic
             flow: ConversationFlow instance to manage conversation state
             pipeline: Pipeline instance to process the agent's operations
+            context: Dictionary containing session context (pid, meetingId, name)
         """
         self.agent = agent
         self.flow = flow
         self.pipeline = pipeline
+        self.context = context or {}
         self.agent.session = self
 
     async def start(self, **kwargs: Any) -> None:
@@ -39,9 +42,15 @@ class AgentSession:
         
         Args:
             **kwargs: Additional arguments to pass to the pipeline start method
+        Raises:
+        ValueError: If meetingId is not provided in the context
         """
+        if "meetingId" not in self.context:
+            raise ValueError("meetingId must be provided in the context")
+        meeting_id = self.context.get("meetingId")
+        name = self.context.get("name", "Agent")
         
-        await self.pipeline.start(meeting_id="s87z-lvsj-riwb", name="Agent")
+        await self.pipeline.start(meeting_id=meeting_id, name=name)
         await self.agent.on_enter()
         
     async def say(self, message: str) -> None:

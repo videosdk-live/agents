@@ -83,7 +83,12 @@ async def test_connection(jobctx):
     )
     pipeline = RealTimePipeline(model=model, config={"modalities": ["text", "audio"]})
     flow = ConversationFlow()
-    session = AgentSession(agent=MyVoiceAgent(), flow=flow, pipeline=pipeline)
+    session = AgentSession(
+        agent=MyVoiceAgent(), 
+        flow=flow, 
+        pipeline=pipeline,
+        context=jobctx
+    )
 
     try:
         await session.start()
@@ -103,7 +108,7 @@ def entryPoint(jobctx):
 if __name__ == "__main__":
 
     def make_context():
-        return {"pid": os.getpid(), "meetingId": "1234"}
+        return {"pid": os.getpid(), "meetingId": "pbow-6vec-vahn", "name": "Agent"}
 
     job = WorkerJob(job_func=entryPoint, jobctx=make_context)
     job.start()

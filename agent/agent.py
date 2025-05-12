@@ -27,15 +27,12 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
     Inherits from EventEmitter to handle agent events and state updates.
     """
     def __init__(self, instructions: str, tools: List[FunctionTool] = []):
-        super().__init__()  # Initialize EventEmitter
+        super().__init__()
         self.instructions = instructions
-        # self._session: Optional["AgentSession"] = None
-        self._state = AgentState.IDLE  # Initialize with IDLE state
-        self._tools = []  # Initialize empty
-        if tools:  # Add any initial tools
+        self._state = AgentState.IDLE
+        self._tools = [] 
+        if tools:
             self.register_tools(tools)
-        # if self._session:
-        #     self.on("state_changed", self._handle_state_event)
 
     @property
     def instructions(self) -> str:
