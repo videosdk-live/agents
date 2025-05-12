@@ -26,11 +26,15 @@ class EventEmitter(Generic[T_contra]):
         
         Args:
             event: The event type/name to emit
-            *args: Arguments to pass to the event handlers
+            *args: Arguments to pass to the event handlers. If no args provided, 
+                  an empty dict will be passed as default data
         """
         if event in self._events:
             # Create copy to avoid modification during iteration
             handlers = self._events[event].copy()
+            
+            if not args:
+                args = ({},)
             
             for handler in handlers:
                 try:

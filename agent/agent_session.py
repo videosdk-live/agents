@@ -55,7 +55,7 @@ class AgentSession:
         
     async def say(self, message: str) -> None:
         """
-        Send a message to the agent.
+        Send an initial message to the agent.
         """
         
         await self.pipeline.send_message(message)

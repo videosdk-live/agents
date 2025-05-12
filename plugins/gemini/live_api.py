@@ -11,6 +11,7 @@ import time
 from dotenv import load_dotenv
 from agent.room.audio_stream import CustomAudioStreamTrack
 from agent.realtime_base_model import RealtimeBaseModel
+from agent import CustomAudioStreamTrack, RealtimeBaseModel, build_gemini_schema, is_function_tool, FunctionTool, get_tool_info
 
 from google import genai
 from google.genai.live import AsyncSession
@@ -28,6 +29,7 @@ from google.genai.types import (
     AutomaticActivityDetection,
     ActivityHandling,
     FunctionResponse,
+    Tool,
 )
 
 load_dotenv()
@@ -95,8 +97,11 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         self._silence_duration_ms = SILENCE_DURATION_MS
         self._automatic_activity_detection = True
         self._audio_processing_task = None
-        
+        self._instructions = None
         self.tools = tools or []
+        
+        self.on("tools_updated", self._handle_tools_updated)
+        self.on("instruction_updated", self._handle_instruction_updated)
     
     def _init_client(self, api_key: str | None, service_account_path: str | None):
         if service_account_path:
@@ -182,8 +187,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                 ),
                 activity_handling=ActivityHandling.START_OF_ACTIVITY_INTERRUPTS
             ),
-            tools=self.tools,
-            input_audio_transcription={},
+            tools=self.formatted_tools or None,
             output_audio_transcription={}
         )
         
@@ -253,6 +257,36 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                 await asyncio.sleep(reconnect_delay)
                 self._session_should_close.clear()
     
+    async def _handle_tool_calls(self, response, active_response_id: str) -> None:
+        """Handle tool calls from Gemini"""
+        if not response.tool_call:
+            return
+        print("tools called")
+        for tool_call in response.tool_call.function_calls:
+
+            # Find and execute the matching function
+            if self.tools:
+                for tool in self.tools:
+                    if not is_function_tool(tool):
+                        continue
+                    tool_info = get_tool_info(tool)
+                    if tool_info.name == tool_call.name:
+                        try:
+                            # Execute the function with the provided arguments
+                            result = await tool(**tool_call.args)
+                            # Send the response back to Gemini
+                            await self.send_tool_response([
+                                FunctionResponse(
+                                    id=tool_call.id,
+                                    name=tool_call.name,
+                                    response=result
+                                )
+                            ])
+                        except Exception as e:
+                            logger.error(f"Error executing function {tool_call.name}: {e}")
+                            traceback.print_exc()
+                        break
+
     async def _receive_loop(self, session: GeminiSession) -> None:
         """Process incoming messages from Gemini"""
         try:
@@ -265,12 +299,15 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                         if self._closing:
                             break
                         
+                        if response.tool_call:
+                            await self._handle_tool_calls(response, active_response_id)
+                        
                         # Handle server content with null checks
                         if (server_content := response.server_content):
                             try:
                                 # Input transcription handling
                                 if (input_transcription := server_content.input_transcription):
-                                    logger.info(f"Input transcription: {input_transcription.text}")
+                                    # logger.info(f"Input transcription: {input_transcription.text}")
                                     if input_transcription.text:
                                         self.emit("input_transcription", {
                                             "text": input_transcription.text,
@@ -279,7 +316,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
 
                                 # Output transcription handling
                                 if (output_transcription := server_content.output_transcription):
-                                    logger.info(f"Output transcription: {output_transcription.text}")
+                                    # logger.info(f"Output transcription: {output_transcription.text}")
                                     if output_transcription.text:
                                         self.emit("output_transcription", {
                                             "text": output_transcription.text,
@@ -313,7 +350,6 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                 for part in model_turn.parts:
                                     if hasattr(part, 'inline_data') and part.inline_data:
                                         raw_audio = part.inline_data.data
-                                        
                                         # Skip empty chunks
                                         if not raw_audio or len(raw_audio) < 2:
                                             continue
@@ -324,11 +360,11 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                         # Send to audio track
                                         if self.audio_track and self.loop:
                                             # Ensure even length for 16-bit samples
-                                            if len(raw_audio) % 2 != 0:
+                                            if len(raw_audio) % 2 != 0: 
                                                 raw_audio += b'\x00'
                                             
                                             self.loop.create_task(
-                                                self.audio_track.add_new_bytes(iter([raw_audio])),
+                                                self.audio_track.add_new_bytes(raw_audio),
                                                 name=f"audio_chunk_{chunk_number}"
                                             )
                                             self.emit("audio_generated", {"bytes_sent": len(raw_audio)})
@@ -337,16 +373,6 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                             if server_content.turn_complete and active_response_id:
                                 self.emit("response_completed", {"response_id": active_response_id})
                                 active_response_id = None
-                
-                        # Handle tool calls
-                        if response.tool_call:
-                            for tool_call in response.tool_call.function_calls:
-                                self.emit("tool_call", {
-                                    "call_id": tool_call.id,
-                                    "name": tool_call.name,
-                                    "args": tool_call.args,
-                                    "response_id": active_response_id
-                                })
                 
                 except Exception as e:
                     if "1000 (OK)" in str(e):
@@ -398,8 +424,9 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         """Handle incoming audio data from the user"""
         if not self._session or self._closing:
             return
-            
+        # await self._session.session.send_realtime_input(audio=Blob(data=audio_data, mime_type="audio/pcm")) 
         # Buffer incoming audio 
+        # print("incoming audio")
         self._buffered_audio.extend(audio_data)
         
         # Process buffered audio in chunks
@@ -626,3 +653,29 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         except Exception as e:
             logger.error(f"Error sending tool response: {e}")
             self._session_should_close.set()
+
+    def _convert_tools_to_gemini_format(self, tools: List[FunctionTool]) -> List[Tool]:
+        """Convert tool definitions to Gemini's Tool format"""
+        function_declarations = []
+        
+        for tool in tools:
+            if not is_function_tool(tool):
+                continue
+            
+            try:
+                function_declaration = build_gemini_schema(tool)
+                function_declarations.append(function_declaration)
+            except Exception as e:
+                logger.error(f"Failed to format tool {tool}: {e}")
+                continue
+        return [Tool(function_declarations=function_declarations)] if function_declarations else []
+
+    def _handle_tools_updated(self, data: Dict[str, Any]) -> None:
+        """Handle tools updated event"""
+        tools = data.get("tools", [])
+        self.tools = tools
+        self.formatted_tools = self._convert_tools_to_gemini_format(tools)
+
+    def _handle_instruction_updated(self, data: Dict[str, Any]) -> None:
+        """Handle instruction updated event"""
+        self._instructions = data.get("instructions", "")
