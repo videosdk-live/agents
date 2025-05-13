@@ -10,7 +10,6 @@ from dotenv import load_dotenv
 import uuid
 import base64
 import aiohttp
-import numpy as np
 import traceback
 from agent import (
     FunctionTool,
@@ -44,9 +43,6 @@ DEFAULT_INPUT_AUDIO_TRANSCRIPTION = InputAudioTranscription(
 DEFAULT_TOOL_CHOICE = "auto"
 
 OpenAIEventTypes = Literal[
-    "response_created",
-    "response_completed",
-    "audio_generated",
     "instructions_updated",
     "tools_updated"
 ]
@@ -296,13 +292,10 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
     async def _handle_speech_started(self, data: dict) -> None:
         """Handle speech detection start"""
         await self.interrupt()
-        self.emit("input_speech_started")
         self.audio_track.interrupt()
 
     async def _handle_speech_stopped(self, data: dict) -> None:
         """Handle speech detection end"""
-        # await self.interrupt()
-        self.emit("input_speech_stopped")
 
     async def _handle_response_created(self, data: dict) -> None:
         """Handle initial response creation"""
@@ -315,7 +308,6 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
     
     async def _handle_output_item_done(self, data: dict) -> None:
         """Handle output item done"""
-        self.emit("output_speech_started")
         try:
             item = data.get("item", {})
             if item.get("type") == "function_call" and item.get("status") == "completed":

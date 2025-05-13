@@ -2,7 +2,6 @@ import asyncio
 from fractions import Fraction
 from time import time
 import traceback
-from typing import Iterator, Optional
 from av import AudioFrame
 import numpy as np
 from videosdk import CustomAudioTrack

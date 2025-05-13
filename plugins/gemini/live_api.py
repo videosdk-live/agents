@@ -45,14 +45,8 @@ AUDIO_BUFFER_MAX_SIZE = 8192  # Maximum size for buffered audio
 
 # Supported event types
 GeminiEventTypes = Literal[
-    "response_created",
-    "response_completed",
-    "audio_generated",
-    "input_speech_started",
-    "input_speech_stopped",
-    "tool_call",
-    "input_transcription",
-    "output_transcription"
+   "tools_updated",
+   "instructions_updated",
 ]
 
 @dataclass
@@ -103,7 +97,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         self._instructions = None
         
         self.on("tools_updated", self._handle_tools_updated)
-        self.on("instruction_updated", self._handle_instruction_updated)
+        self.on("instructions_updated", self._handle_instructions_updated)
     
     def _init_client(self, api_key: str | None, service_account_path: str | None):
         if service_account_path:
@@ -163,9 +157,6 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
             # Start the main processing loop
             if not self._main_task or self._main_task.done():
                 self._main_task = asyncio.create_task(self._session_loop(), name="gemini-main-loop")
-            
-            # Emit connected event
-            self.emit("connected")
             
         except Exception as e:
             logger.error(f"Error connecting to Gemini Live API: {e}")
@@ -243,8 +234,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
             # Start core tasks
             recv_task = asyncio.create_task(self._receive_loop(session), name="gemini_receive")
             keep_alive_task = asyncio.create_task(self._keep_alive(session), name="gemini_keepalive")
-            silence_task = asyncio.create_task(self._silence_checker_loop(), name="gemini_silence_check")
-            session.tasks.extend([recv_task, keep_alive_task, silence_task])
+            session.tasks.extend([recv_task, keep_alive_task])
             
             # Wait for session close signal
             try:
@@ -337,13 +327,11 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                             # Initialize response if needed
                             if not active_response_id:
                                 active_response_id = f"response_{id(response)}"
-                                self.emit("response_created", {"response_id": active_response_id})
                                 chunk_number = 0
                             
                             # Handle interruption
                             if server_content.interrupted:
                                 if active_response_id:
-                                    self.emit("response_completed", {"response_id": active_response_id, "interrupted": True})
                                     active_response_id = None
                                 # Clear audio buffer to stop playing interrupted audio
                                 if self.audio_track:
@@ -353,7 +341,6 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                             # Process audio content
                             if model_turn := server_content.model_turn:
                                 # Emit output speech started when model starts responding
-                                self.emit("output_speech_started")
                                 for part in model_turn.parts:
                                     if hasattr(part, 'inline_data') and part.inline_data:
                                         raw_audio = part.inline_data.data
@@ -374,11 +361,9 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                                 self.audio_track.add_new_bytes(raw_audio),
                                                 name=f"audio_chunk_{chunk_number}"
                                             )
-                                            self.emit("audio_generated", {"bytes_sent": len(raw_audio)})
                             
                             # Handle response completion
                             if server_content.turn_complete and active_response_id:
-                                self.emit("response_completed", {"response_id": active_response_id})
                                 active_response_id = None
                 
                 except Exception as e:
@@ -431,65 +416,10 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         """Handle incoming audio data from the user"""
         if not self._session or self._closing:
             return
-   
-        self._buffered_audio.extend(audio_data)
-        self._last_audio_time = asyncio.get_event_loop().time()
         
-        if len(self._buffered_audio) >= AUDIO_BUFFER_MAX_SIZE:
-            await self._process_audio_chunk()
-            
-        if not self._audio_processing_task or self._audio_processing_task.done():
-            self._audio_processing_task = asyncio.create_task(
-                self._process_audio_periodically()
-            )
-
-    async def _process_audio_periodically(self) -> None:
-        """Process audio in periodic intervals"""
-        try:
-            while self._buffered_audio and not self._closing:
-                await self._process_audio_chunk()
-                await asyncio.sleep(0.05)
-        except Exception as e:
-            logger.error(f"Audio processing error: {e}")
-
-    async def _process_audio_chunk(self) -> None:
-        """Process and send a chunk of audio data"""
-        if not self._buffered_audio or not self._session:
-            return
-            
-        chunk = bytes(self._buffered_audio[:AUDIO_BUFFER_MAX_SIZE])
-        self._buffered_audio = self._buffered_audio[AUDIO_BUFFER_MAX_SIZE:]
-        try:
-            self.emit("input_speech_started")
-            await self._session.session.send_realtime_input(
-                audio=Blob(data=chunk, mime_type=f"audio/pcm;rate={AUDIO_SAMPLE_RATE}")
-            )
-            if not self._is_speaking:
-                self._is_speaking = True
-                await self.interrupt()
-                if self.audio_track:
-                    self.audio_track.interrupt()
-            self.emit("input_speech_stopped")
-        
-        except Exception as e:
-            logger.error(f"Audio send error: {e}")
-            await self._reconnect()
-
-    async def _check_silence(self) -> None:
-        """Check for speech silence"""
-        if self._automatic_activity_detection or not self._is_speaking:
-            return
-            
-        elapsed = (asyncio.get_event_loop().time() - self._last_audio_time) * 1000
-        if elapsed > self._silence_duration_ms and self._session:
-            try:
-                if self._buffered_audio:
-                    await self._process_audio_chunk()
-                    
-                await self._session.session.send_realtime_input(audio_stream_end=True)
-                self._is_speaking = False
-            except Exception as e:
-                logger.error(f"Silence detection error: {e}")
+        await self._session.session.send_realtime_input(
+            audio=Blob(data=audio_data, mime_type=f"audio/pcm;rate={AUDIO_SAMPLE_RATE}")
+        )
 
     async def interrupt(self) -> None:
         """Interrupt current response"""
@@ -503,7 +433,6 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
             )
             if self.audio_track:
                 self.audio_track.interrupt()
-            self.emit("response_completed", {"response_id": "interrupted"})
         except Exception as e:
             logger.error(f"Interrupt error: {e}")
     
@@ -527,7 +456,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                 turns=Content(parts=[Part(text=message)], role="user"),
                 turn_complete=True
             )
-            await asyncio.sleep(0.1)  # Short delay for processing
+            await asyncio.sleep(0.1)
         except Exception as e:
             logger.error(f"Error sending message: {e}")
             self._session_should_close.set()
@@ -590,17 +519,6 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
             self._session = None
         self._session = await self._create_session()
 
-    async def _silence_checker_loop(self) -> None:
-        """Loop to continuously check for speech silence"""
-        try:
-            while not self._closing:
-                await self._check_silence()
-                await asyncio.sleep(0.1)
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            logger.error(f"Error in silence checker: {e}")
-
     async def send_tool_response(self, function_responses: List[FunctionResponse]) -> None:
         """Send tool responses back to Gemini"""
         if not self._session or not self._session.session:
@@ -636,6 +554,6 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         self.tools = tools
         self.formatted_tools = self._convert_tools_to_gemini_format(tools)
 
-    def _handle_instruction_updated(self, data: Dict[str, Any]) -> None:
+    def _handle_instructions_updated(self, data: Dict[str, Any]) -> None:
         """Handle instruction updated event"""
         self._instructions = data.get("instructions", "")

@@ -1,4 +1,4 @@
-from .agent import Agent, AgentState
+from .agent import Agent
 from .agent_session import AgentSession
 from .conversation_flow import ConversationFlow
 from .realtime_base_model import RealtimeBaseModel
@@ -20,5 +20,4 @@ __all__ = [
     'CustomAudioStreamTrack',
     'build_openai_schema',
     'build_gemini_schema',
-    'AgentState'
 ]

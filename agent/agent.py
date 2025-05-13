@@ -1,24 +1,14 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from enum import Enum
-from typing import Any, Callable, List, Optional, Literal, Union, Dict
+from typing import List, Literal
 
 from .event_emitter import EventEmitter
 from .utils import FunctionTool, is_function_tool
 
-class AgentState(str, Enum):
-    """Enum representing possible states of the agent"""
-    SPEAKING = "SPEAKING"
-    LISTENING = "LISTENING"
-    THINKING = "THINKING"
-    IDLE = "IDLE"
-
 AgentEventTypes = Literal[
     "instructions_updated",
-    "state_updated",
-    "message_sent",
-    "message_received"
+    "tools_updated",
 ]
 
 class Agent(EventEmitter[AgentEventTypes], ABC):
@@ -29,14 +19,9 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
     def __init__(self, instructions: str, tools: List[FunctionTool] = []):
         super().__init__()
         self.instructions = instructions
-        self._state = AgentState.IDLE
         self._tools = [] 
         if tools:
             self.register_tools(tools)
-
-        self.on("input_speech_started", self._handle_speech_started)
-        self.on("input_speech_stopped", self._handle_speech_stopped)
-        self.on("output_speech_started", self._handle_output_speech_started)
 
     @property
     def instructions(self) -> str:
@@ -60,38 +45,7 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
         self._tools.extend(tools)
         self.emit("tools_updated", {"tools": self._tools})
 
-    @property
-    def state(self) -> AgentState:
-        return self._state
-
-    def _handle_state_event(self, data: Dict[str, Any]) -> None:
-        """Handle state change events from the session"""
-        self.update_state(data)
-        
-    def update_state(self, updates: Dict[str, Any]) -> None:
-        """Update state from internal events"""
-        old_state = self._state
-        self._state = AgentState(updates.get('state', self._state.value))
-        self.emit("state_updated", {"state": self._state.value})
-        self.on_state_changed(old_state, self._state)
-
-    def on_state_changed(self, old_state: AgentState, new_state: AgentState) -> None:
-        """Callback for state changes"""
-        pass
-
     @abstractmethod
     async def on_enter(self) -> None:
         """Called when session starts"""
         pass
-
-    def _handle_speech_started(self, _: Any) -> None:
-        """Handle when user starts speaking"""
-        self.update_state({"state": AgentState.LISTENING})
-
-    def _handle_speech_stopped(self, _: Any) -> None:
-        """Handle when user stops speaking"""
-        self.update_state({"state": AgentState.THINKING})
-    
-    def _handle_output_speech_started(self, _: Any) -> None:
-        """Handle when agent starts speaking"""
-        self.update_state({"state": AgentState.SPEAKING})

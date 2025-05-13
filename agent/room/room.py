@@ -4,15 +4,10 @@ from .participant_event_handler import ParticipantHandler
 from .audio_stream import CustomAudioStreamTrack
 from agent.pipeline import Pipeline
 from dotenv import load_dotenv
-import soundfile as sf
 import numpy as np
 import librosa
 import asyncio
 import os
-import sounddevice as sd
-from collections import deque
-from dataclasses import dataclass
-from time import time
 from asyncio import AbstractEventLoop
 
 load_dotenv()
