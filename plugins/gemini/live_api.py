@@ -134,7 +134,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
             if "silence_duration_ms" in config:
                 self._silence_duration_ms = config["silence_duration_ms"]
             else:
-                self._silence_duration_ms = 800  # Default silence duration
+                self._silence_duration_ms = SILENCE_DURATION_MS  
     
     async def connect(self) -> None:
         """Connect to the Gemini Live API"""
@@ -175,32 +175,38 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
     async def _create_session(self) -> GeminiSession:
         """Create a new Gemini Live API session"""
         # Session configuration
+        response_modalities = self.config.get("response_modalities", [Modality.AUDIO]) if self.config else [Modality.AUDIO]
+        voice_name = self.config.get("voice", self.voice) if self.config else self.voice
+        automatic_activity_detection_disabled = not self.config.get("automatic_activity_detection", self._automatic_activity_detection) if self.config else not self._automatic_activity_detection
+        silence_duration_ms = self.config.get("silence_duration_ms", self._silence_duration_ms) if self.config else self._silence_duration_ms
+        output_audio_transcription = self.config.get("output_audio_transcription", {}) if self.config else {}
+        
         config = LiveConnectConfig(
-            response_modalities=[Modality.AUDIO],
+            response_modalities=response_modalities,
             speech_config=SpeechConfig(
                 voice_config=VoiceConfig(
-                    prebuilt_voice_config=PrebuiltVoiceConfig(voice_name=self.voice)
+                    prebuilt_voice_config=PrebuiltVoiceConfig(voice_name=voice_name)
                 )
             ),
             realtime_input_config=RealtimeInputConfig(
                 automatic_activity_detection=AutomaticActivityDetection(
-                    disabled=not self._automatic_activity_detection,
-                    silence_duration_ms=self._silence_duration_ms
+                    disabled=automatic_activity_detection_disabled,
+                    silence_duration_ms=silence_duration_ms
                 ),
                 activity_handling=ActivityHandling.START_OF_ACTIVITY_INTERRUPTS
             ),
             tools=self.formatted_tools or None,
-            output_audio_transcription={}
+            output_audio_transcription=output_audio_transcription
         )
         
         try:
             session_cm = self.client.aio.live.connect(model=self.model, config=config)
             session = await session_cm.__aenter__()
             
-            # Set initial instruction without requiring a response
-            # Use a non-triggering system instruction that won't cause immediate greeting
+            system_instruction = self.config.get("system_instruction", "[SYSTEM: Initialize the model with voice capabilities. Do not respond to this message.]") if self.config else "[SYSTEM: Initialize the model with voice capabilities. Do not respond to this message.]"
+            
             await session.send_client_content(
-                turns=Content(parts=[Part(text="[SYSTEM: Initialize the model with voice capabilities. Do not respond to this message.]")], role="user"),
+                turns=Content(parts=[Part(text=system_instruction)], role="user"),
                 turn_complete=False
             )
             
