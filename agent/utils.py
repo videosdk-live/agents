@@ -4,8 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable, Callable, Optional, get_type_hints, Annotated, get_origin, get_args
 from functools import wraps
 import inspect
-from inspect import signature, Parameter
-from docstring_parser import parse, parse_from_object
+from docstring_parser import parse_from_object
 from google.genai import types
 from pydantic import BaseModel, Field, create_model
 from pydantic_core import PydanticUndefined

@@ -8,10 +8,6 @@ from .event_emitter import EventEmitter
 
 # Base event types that all realtime models should support
 BaseEventTypes = Literal[
-    "input_speech_started",
-    "input_speech_stopped",
-    "input_audio_transcription_completed",
-    "generation_created",
     "error"
 ]
 

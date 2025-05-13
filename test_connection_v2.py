@@ -1,8 +1,7 @@
 import asyncio
 import os
-import signal
 from plugins.openai import OpenAIRealtime
-from agent import Agent, AgentSession, ConversationFlow, RealTimePipeline, function_tool, AgentState
+from agent import Agent, AgentSession, ConversationFlow, RealTimePipeline, function_tool
 import aiohttp
 import logging
 
@@ -20,18 +19,6 @@ class MyVoiceAgent(Agent):
 
     async def on_enter(self) -> None:
         await self.session.say("👋 Hi there! How can I help you today?")
-
-    def on_state_changed(self, old_state: AgentState, new_state: AgentState) -> None:
-        """Handle state transitions"""
-        
-        if new_state == AgentState.LISTENING:
-            print("📢 Listening to user input...")
-        elif new_state == AgentState.THINKING:
-            print("🤔 Processing user input...")
-        elif new_state == AgentState.SPEAKING:
-            print("🗣️ Agent is speaking...")
-        elif new_state == AgentState.IDLE:
-            print("💤 Agent is idle...")
 
     @function_tool
     async def get_weather(
