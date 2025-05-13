@@ -313,9 +313,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                         # Handle server content with null checks
                         if (server_content := response.server_content):
                             try:
-                                # Input transcription handling
                                 if (input_transcription := server_content.input_transcription):
-                                    # logger.info(f"Input transcription: {input_transcription.text}")
                                     if input_transcription.text:
                                         self.emit("input_transcription", {
                                             "text": input_transcription.text,
@@ -324,7 +322,6 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
 
                                 # Output transcription handling
                                 if (output_transcription := server_content.output_transcription):
-                                    # logger.info(f"Output transcription: {output_transcription.text}")
                                     if output_transcription.text:
                                         self.emit("output_transcription", {
                                             "text": output_transcription.text,
@@ -355,6 +352,8 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                             
                             # Process audio content
                             if model_turn := server_content.model_turn:
+                                # Emit output speech started when model starts responding
+                                self.emit("output_speech_started")
                                 for part in model_turn.parts:
                                     if hasattr(part, 'inline_data') and part.inline_data:
                                         raw_audio = part.inline_data.data
@@ -432,7 +431,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         """Handle incoming audio data from the user"""
         if not self._session or self._closing:
             return
-            
+   
         self._buffered_audio.extend(audio_data)
         self._last_audio_time = asyncio.get_event_loop().time()
         
@@ -460,19 +459,18 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
             
         chunk = bytes(self._buffered_audio[:AUDIO_BUFFER_MAX_SIZE])
         self._buffered_audio = self._buffered_audio[AUDIO_BUFFER_MAX_SIZE:]
-        
         try:
+            self.emit("input_speech_started")
             await self._session.session.send_realtime_input(
                 audio=Blob(data=chunk, mime_type=f"audio/pcm;rate={AUDIO_SAMPLE_RATE}")
             )
-            
             if not self._is_speaking:
                 self._is_speaking = True
-                self.emit("input_speech_started")
                 await self.interrupt()
                 if self.audio_track:
                     self.audio_track.interrupt()
-                    
+            self.emit("input_speech_stopped")
+        
         except Exception as e:
             logger.error(f"Audio send error: {e}")
             await self._reconnect()
@@ -490,7 +488,6 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                     
                 await self._session.session.send_realtime_input(audio_stream_end=True)
                 self._is_speaking = False
-                self.emit("input_speech_stopped")
             except Exception as e:
                 logger.error(f"Silence detection error: {e}")
 
