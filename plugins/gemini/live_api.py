@@ -532,19 +532,6 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
             logger.error(f"Error sending message: {e}")
             self._session_should_close.set()
     
-    async def signal_audio_end(self) -> None:
-        """Signal that audio input has ended"""
-        if not self._session or not self._session.session or not self._is_speaking:
-            return
-        
-        self._is_speaking = False
-        
-        try:
-            await self._session.session.send_realtime_input(audio_stream_end=True)
-            self.emit("input_speech_stopped")
-        except Exception as e:
-            logger.error(f"Error signaling audio end: {e}")
-    
     async def _cleanup_session(self, session: GeminiSession) -> None:
         """Clean up a session's resources"""
         # Cancel all tasks
