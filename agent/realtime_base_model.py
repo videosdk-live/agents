@@ -6,12 +6,10 @@ from typing import Any, Dict, Generic, Literal, TypeVar, Union
 
 from .event_emitter import EventEmitter
 
-# Base event types that all realtime models should support
 BaseEventTypes = Literal[
     "error"
 ]
 
-# Generic type var for additional events
 TEvent = TypeVar("TEvent")
 
 @dataclass
@@ -35,18 +33,6 @@ class RealtimeBaseModel(EventEmitter[Union[BaseEventTypes, TEvent]], Generic[TEv
     def __init__(self) -> None:
         """Initialize the realtime model"""
         super().__init__()
-        self.config: Dict[str, Any] | None = None
-
-    @abstractmethod
-    def set_config(self, config: Dict[str, Any]) -> None:
-        """
-        Set configuration for the realtime model.
-        Must be called before processing starts.
-        
-        Args:
-            config: Configuration dictionary for the model
-        """
-        self.config = config
 
     @abstractmethod
     async def aclose(self) -> None:

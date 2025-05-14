@@ -4,7 +4,7 @@ import asyncio
 import json
 import os
 from typing import Any, Dict, Optional, Literal, List
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 from dotenv import load_dotenv
 import uuid
@@ -17,6 +17,7 @@ from agent import (
     get_tool_info,
     build_openai_schema,
     CustomAudioStreamTrack,
+    ToolChoice
 )
 
 load_dotenv()
@@ -47,6 +48,35 @@ OpenAIEventTypes = Literal[
     "tools_updated"
 ]
 DEFAULT_VOICE = "alloy"
+DEFAULT_INPUT_AUDIO_FORMAT = "pcm16"
+DEFAULT_OUTPUT_AUDIO_FORMAT = "pcm16"
+
+@dataclass
+class OpenAIRealtimeConfig:
+    """Configuration for the OpenAI realtime API
+    
+    Args:
+        voice: Voice ID for audio output. Default is 'alloy'
+        temperature: Controls randomness in response generation. Higher values (e.g. 0.8) make output more random,
+                    lower values make it more deterministic. Default is 0.8
+        turn_detection: Configuration for detecting user speech turns. Contains settings for:
+                       - type: Detection type ('server_vad')
+                       - threshold: Voice activity detection threshold (0.0-1.0)
+                       - prefix_padding_ms: Padding before speech start (ms)
+                       - silence_duration_ms: Silence duration to mark end (ms)
+                       - create_response: Whether to generate response on turn
+                       - interrupt_response: Whether to allow interruption
+        input_audio_transcription: Configuration for audio transcription. Contains:
+                                 - model: Model to use for transcription
+        tool_choice: How tools should be selected ('auto' or 'none'). Default is 'auto'
+        modalities: List of enabled response types ["text", "audio"]. Default includes both
+    """
+    voice: str = DEFAULT_VOICE
+    temperature: float = DEFAULT_TEMPERATURE
+    turn_detection: TurnDetection | None = field(default_factory=lambda: DEFAULT_TURN_DETECTION)
+    input_audio_transcription: InputAudioTranscription | None = field(default_factory=lambda: DEFAULT_INPUT_AUDIO_TRANSCRIPTION)
+    tool_choice: ToolChoice | None = DEFAULT_TOOL_CHOICE
+    modalities: list[str] = field(default_factory=lambda: ["text", "audio"])
 
 @dataclass
 class OpenAISession:
@@ -60,7 +90,9 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
     
     def __init__(
         self,
+        *,
         model: str,
+        config: OpenAIRealtimeConfig | None = None,
         api_key: str | None = None,
         base_url: str | None = None,
     ) -> None:
@@ -68,8 +100,19 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         Initialize OpenAI realtime model.
         
         Args:
-            api_key: OpenAI API key
-            base_url: Base URL for OpenAI API
+            model: The OpenAI model identifier to use (e.g. 'gpt-4', 'gpt-3.5-turbo')
+            config: Optional configuration object for customizing model behavior. Contains settings for:
+                   - voice: Voice ID to use for audio output
+                   - temperature: Sampling temperature for responses
+                   - turn_detection: Settings for detecting user speech turns
+                   - input_audio_transcription: Settings for audio transcription
+                   - tool_choice: How tools should be selected ('auto' or 'none')
+                   - modalities: List of enabled modalities ('text', 'audio')
+            api_key: OpenAI API key. If not provided, will attempt to read from OPENAI_API_KEY env var
+            base_url: Base URL for OpenAI API. Defaults to 'https://api.openai.com/v1'
+        
+        Raises:
+            ValueError: If no API key is provided and none found in environment variables
         """
         super().__init__()
         self.model = model
@@ -85,13 +128,9 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         self.loop = None
         self.audio_track: Optional[CustomAudioStreamTrack] = None
         self._formatted_tools: Optional[List[Dict[str, Any]]] = None
-
+        self.config: OpenAIRealtimeConfig = config or OpenAIRealtimeConfig()
         self.on("instructions_updated", self._handle_instructions_updated)
         self.on("tools_updated", self._handle_tools_updated) 
-
-    def set_config(self, config: Dict[str, Any]) -> None:
-        """Set configuration received from pipeline"""
-        super().set_config(config)
     
     async def connect(self) -> None:
         headers = {"Agent": "VideoSDK Agents"}
@@ -113,39 +152,6 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
                 "audio": base64_audio_data
             }
             await self.send_event(audio_event)
-        
-    async def _update_session(self) -> None:
-        """Send session update to OpenAI"""
-        if not self._session:
-            return
-
-        config = self.config or {}
-        update_event = {
-            "type": "session.update",
-            "event_id": str(uuid.uuid4()),
-            "session": {
-                "model": self.model,
-                "voice": config.get("voice", DEFAULT_VOICE),
-                "instructions": self._instructions,
-                "tools": config.get("tools", []),
-                "temperature": self.temperature,
-                "modalities": self.response_modalities,
-                "input_audio_format": config.get("input_audio_format", "pcm16"),
-                "output_audio_format": config.get("output_audio_format", "pcm16"),
-                "turn_detection": config.get("turn_detection", DEFAULT_TURN_DETECTION.model_dump(
-                    by_alias=True,
-                    exclude_unset=True,
-                    exclude_defaults=True,
-                )),
-                "input_audio_transcription": config.get("input_audio_transcription", DEFAULT_INPUT_AUDIO_TRANSCRIPTION.model_dump(
-                    by_alias=True,
-                    exclude_unset=True,
-                    exclude_defaults=True,
-                )),
-                "tool_choice": config.get("tool_choice", DEFAULT_TOOL_CHOICE),
-            }
-        }
-        await self.send_event(update_event)
 
     async def _ensure_http_session(self) -> aiohttp.ClientSession:
         """Ensure we have an HTTP session"""
@@ -374,8 +380,8 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
     
     async def _handle_input_audio_transcription_completed(self, data: dict) -> None:
         """Handle input audio transcription completion"""
-        if "transcript" in data:
-            self.emit("transcription_event", {"text": data["transcript"]})
+        # if "transcript" in data:
+            # self.emit("transcription_event", {"text": data["transcript"]})
 
     async def _handle_response_done(self, data: dict) -> None:
         """Handle response completion"""
@@ -440,27 +446,26 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
             "type": "session.update",
             "session": {
                 "model": self.model,
-                "voice": config.get("voice", DEFAULT_VOICE),
+                "voice": config.voice,
                 "instructions": self._instructions or  "You are a helpful voice assistant that can answer questions and help with tasks.",
-                "temperature": config.get("temperature", DEFAULT_TEMPERATURE),
-                "turn_detection": config.get("turn_detection", DEFAULT_TURN_DETECTION.model_dump(
+                "temperature": config.temperature,
+                "turn_detection": config.turn_detection.model_dump(
                     by_alias=True,
                     exclude_unset=True,
                     exclude_defaults=True,
-                )),
-                "input_audio_transcription": config.get("input_audio_transcription", DEFAULT_INPUT_AUDIO_TRANSCRIPTION.model_dump(
+                ),
+                "input_audio_transcription": config.input_audio_transcription.model_dump(
                     by_alias=True,
                     exclude_unset=True,
                     exclude_defaults=True,
-                )),
-                "tool_choice": config.get("tool_choice", DEFAULT_TOOL_CHOICE),
+                ),
+                "tool_choice": config.tool_choice,
                 "tools": self._formatted_tools or [],
-                "modalities": config.get("modalities", ["text", "audio"]),
-                "input_audio_format": config.get("input_audio_format", "pcm16"),
-                "output_audio_format": config.get("output_audio_format", "pcm16")
+                "modalities": config.modalities,
+                "input_audio_format": DEFAULT_INPUT_AUDIO_FORMAT,
+                "output_audio_format": DEFAULT_OUTPUT_AUDIO_FORMAT
             }
         }
-
         # Send the event
         await self.send_event(session_update)
 
@@ -496,9 +501,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
                 continue
                 
             try:
-                # Use the updated build_openai_schema that now uses Pydantic models
                 tool_schema = build_openai_schema(tool)
-                # OpenAI expects the schema in a specific format with "function" wrapper
                 oai_tools.append(tool_schema)
             except Exception as e:
                 print(f"Failed to format tool {tool}: {e}")

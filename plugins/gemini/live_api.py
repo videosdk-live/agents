@@ -5,7 +5,7 @@ import os
 import logging
 import traceback
 from typing import Any, Dict, Optional, Literal, List
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import base64
 import time
 from dotenv import load_dotenv
@@ -24,24 +24,17 @@ from google.genai.types import (
     PrebuiltVoiceConfig,
     SpeechConfig,
     VoiceConfig,
-    HttpOptions,
-    RealtimeInputConfig,
-    AutomaticActivityDetection,
-    ActivityHandling,
     FunctionResponse,
     Tool,
+    GenerationConfig,
+    AudioTranscriptionConfig,
 )
 
 load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-# Default configurations
-DEFAULT_VOICE = "Leda"  # Loud, clear male voice
-SILENCE_DURATION_MS = 500  # 0.5 seconds of silence to end speech
 AUDIO_SAMPLE_RATE = 24000  # Match audio sample rate expected by Gemini
-AUDIO_CHUNK_MS = 100  # 100ms chunks for realtime audio
-AUDIO_BUFFER_MAX_SIZE = 8192  # Maximum size for buffered audio
 
 # Supported event types
 GeminiEventTypes = Literal[
@@ -49,11 +42,43 @@ GeminiEventTypes = Literal[
    "instructions_updated",
 ]
 
+Voice = Literal["Puck", "Charon", "Kore", "Fenrir", "Aoede"]
+
+@dataclass
+class GeminiLiveConfig:
+    """Configuration for the Gemini Live API
+    
+    Args:
+        voice: Voice ID for audio output. Options: 'Puck', 'Charon', 'Kore', 'Fenrir', 'Aoede'. Defaults to 'Puck'
+        language_code: Language code for speech synthesis. Defaults to 'en-US'
+        temperature: Controls randomness in response generation. Higher values (e.g. 0.8) make output more random, 
+                    lower values (e.g. 0.2) make it more focused. Defaults to None
+        top_p: Nucleus sampling parameter. Controls diversity via cumulative probability cutoff. Range 0-1. Defaults to None
+        top_k: Limits the number of tokens considered for each step of text generation. Defaults to None
+        candidate_count: Number of response candidates to generate. Defaults to 1
+        max_output_tokens: Maximum number of tokens allowed in model responses. Defaults to None
+        presence_penalty: Penalizes tokens based on their presence in the text so far. Range -2.0 to 2.0. Defaults to None
+        frequency_penalty: Penalizes tokens based on their frequency in the text so far. Range -2.0 to 2.0. Defaults to None
+        response_modalities: List of enabled response types. Options: ["TEXT", "AUDIO"]. Defaults to both
+        output_audio_transcription: Configuration for audio transcription features. Defaults to None
+    """
+    voice: Voice | None = "Puck"
+    language_code: str | None = "en-US"
+    temperature: float | None = None
+    top_p: float | None = None
+    top_k: float | None = None
+    candidate_count: int | None = 1
+    max_output_tokens: int | None = None
+    presence_penalty: float | None = None
+    frequency_penalty: float | None = None
+    response_modalities: List[Modality] | None = field(default_factory=lambda: ["TEXT", "AUDIO"])
+    output_audio_transcription: AudioTranscriptionConfig | None = None
+
 @dataclass
 class GeminiSession:
     """Represents a Gemini Live API session"""
     session: AsyncSession
-    session_cm: Any  # Context manager for the session
+    session_cm: Any
     tasks: list[asyncio.Task]
 
 class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
@@ -61,17 +86,39 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
     
     def __init__(
         self,
+        *,
         model: str,
+        config: GeminiLiveConfig | None = None,
         api_key: str | None = None,
         service_account_path: str | None = None,
-        tools: List[Dict] = None
     ) -> None:
-        """Initialize Gemini realtime model"""
+        """
+        Initialize Gemini realtime model.
+        
+        Args:
+            model: The Gemini model identifier to use (e.g. 'gemini-pro', 'gemini-pro-vision')
+            config: Optional configuration object for customizing model behavior. Contains settings for:
+                   - voice: Voice ID for audio output ('Puck', 'Charon', 'Kore', 'Fenrir', 'Aoede'). Defaults to 'Puck'
+                   - language_code: Language code for speech synthesis. Defaults to 'en-US'
+                   - temperature: Controls randomness in responses. Higher values (0.8) more random, lower (0.2) more focused
+                   - top_p: Nucleus sampling parameter. Controls diversity via probability cutoff. Range 0-1
+                   - top_k: Limits number of tokens considered for each generation step
+                   - candidate_count: Number of response candidates to generate. Defaults to 1
+                   - max_output_tokens: Maximum tokens allowed in model responses
+                   - presence_penalty: Penalizes token presence in text. Range -2.0 to 2.0
+                   - frequency_penalty: Penalizes token frequency in text. Range -2.0 to 2.0
+                   - response_modalities: List of enabled response types ["TEXT", "AUDIO"]. Defaults to both
+                   - output_audio_transcription: Configuration for audio transcription features
+            api_key: Gemini API key. If not provided, will attempt to read from GOOGLE_API_KEY env var
+            service_account_path: Path to Google service account JSON file. Alternative to api_key
+        
+        Raises:
+            ValueError: If neither api_key nor service_account_path is provided and no GOOGLE_API_KEY in env vars
+        """
         super().__init__()
         
         # Core configuration
         self.model = model
-        self.voice = DEFAULT_VOICE
         
         # Authentication setup
         self._init_client(api_key, service_account_path)
@@ -88,13 +135,12 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         self._buffered_audio = bytearray()
         self._is_speaking = False
         self._last_audio_time = 0.0
-        self._silence_duration_ms = SILENCE_DURATION_MS
-        self._automatic_activity_detection = True
         self._audio_processing_task = None
         
         # Tools and instructions
-        self.tools = tools or []
-        self._instructions = None
+        self.tools = []
+        self._instructions : str = "You are a helpful voice assistant that can answer questions and help with tasks."
+        self.config: GeminiLiveConfig = config or GeminiLiveConfig()
         
         self.on("tools_updated", self._handle_tools_updated)
         self.on("instructions_updated", self._handle_instructions_updated)
@@ -111,24 +157,6 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                 api_key=self.api_key,
                 http_options={"api_version": "v1beta"}
             )
-    
-    def set_config(self, config: Dict[str, Any]) -> None:
-        """Set configuration received from pipeline"""
-        super().set_config(config)
-        
-        if config:
-            # Voice configuration
-            if "voice" in config:
-                self.voice = config.get("voice", DEFAULT_VOICE)
-            
-            # Activity detection configuration    
-            if "automatic_activity_detection" in config:
-                self._automatic_activity_detection = config["automatic_activity_detection"]
-            
-            if "silence_duration_ms" in config:
-                self._silence_duration_ms = config["silence_duration_ms"]
-            else:
-                self._silence_duration_ms = SILENCE_DURATION_MS  
     
     async def connect(self) -> None:
         """Connect to the Gemini Live API"""
@@ -165,42 +193,31 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
     
     async def _create_session(self) -> GeminiSession:
         """Create a new Gemini Live API session"""
-        # Session configuration
-        response_modalities = self.config.get("response_modalities", [Modality.AUDIO]) if self.config else [Modality.AUDIO]
-        voice_name = self.config.get("voice", self.voice) if self.config else self.voice
-        automatic_activity_detection_disabled = not self.config.get("automatic_activity_detection", self._automatic_activity_detection) if self.config else not self._automatic_activity_detection
-        silence_duration_ms = self.config.get("silence_duration_ms", self._silence_duration_ms) if self.config else self._silence_duration_ms
-        output_audio_transcription = self.config.get("output_audio_transcription", {}) if self.config else {}
-        
         config = LiveConnectConfig(
-            response_modalities=response_modalities,
+            response_modalities=self.config.response_modalities,
+            generation_config=GenerationConfig(
+                candidate_count=self.config.candidate_count if self.config.candidate_count is not None else None,
+                temperature=self.config.temperature if self.config.temperature is not None else None,
+                top_p=self.config.top_p if self.config.top_p is not None else None,
+                top_k=self.config.top_k if self.config.top_k is not None else None,
+                max_output_tokens=self.config.max_output_tokens if self.config.max_output_tokens is not None else None,
+                presence_penalty=self.config.presence_penalty if self.config.presence_penalty is not None else None,
+                frequency_penalty=self.config.frequency_penalty if self.config.frequency_penalty is not None else None
+            ),
+            system_instruction= self._instructions,
             speech_config=SpeechConfig(
                 voice_config=VoiceConfig(
-                    prebuilt_voice_config=PrebuiltVoiceConfig(voice_name=voice_name)
-                )
-            ),
-            realtime_input_config=RealtimeInputConfig(
-                automatic_activity_detection=AutomaticActivityDetection(
-                    disabled=automatic_activity_detection_disabled,
-                    silence_duration_ms=silence_duration_ms
+                    prebuilt_voice_config=PrebuiltVoiceConfig(voice_name=self.config.voice)
                 ),
-                activity_handling=ActivityHandling.START_OF_ACTIVITY_INTERRUPTS
+                language_code=self.config.language_code
             ),
             tools=self.formatted_tools or None,
-            output_audio_transcription=output_audio_transcription
+            output_audio_transcription=self.config.output_audio_transcription if self.config.output_audio_transcription else None
         )
-        
         try:
+
             session_cm = self.client.aio.live.connect(model=self.model, config=config)
             session = await session_cm.__aenter__()
-            
-            system_instruction = self.config.get("system_instruction", "[SYSTEM: Initialize the model with voice capabilities. Do not respond to this message.]") if self.config else "[SYSTEM: Initialize the model with voice capabilities. Do not respond to this message.]"
-            
-            await session.send_client_content(
-                turns=Content(parts=[Part(text=system_instruction)], role="user"),
-                turn_complete=False
-            )
-            
             return GeminiSession(session=session, session_cm=session_cm, tasks=[])
         except Exception as e:
             logger.error(f"Connection error: {e}")
@@ -259,7 +276,6 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         """Handle tool calls from Gemini"""
         if not response.tool_call:
             return
-        print("tools called")
         for tool_call in response.tool_call.function_calls:
 
             # Find and execute the matching function
@@ -438,7 +454,6 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
     
     async def send_message(self, message: str) -> None:
         """Send a text message to get audio response"""
-        # Wait for an active session with retries
         retry_count = 0
         max_retries = 5
         while not self._session or not self._session.session:
@@ -448,12 +463,12 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
             await asyncio.sleep(1)
             retry_count += 1
         
-        # Add hint for clear audio
-        message += " (Please respond with clear audio)"
-        
         try:
             await self._session.session.send_client_content(
-                turns=Content(parts=[Part(text=message)], role="user"),
+                turns=[
+                    Content(parts=[Part(text=message)], role="model"),
+                    Content(parts=[Part(text=".")], role="user")
+                ],
                 turn_complete=True
             )
             await asyncio.sleep(0.1)
