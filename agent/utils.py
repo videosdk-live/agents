@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable, Callable, Optional, get_type_hints, Annotated, get_origin, get_args
+from typing import Any, Protocol, runtime_checkable, Callable, Optional, get_type_hints, Annotated, get_origin, get_args, Literal
 from functools import wraps
 import inspect
 from docstring_parser import parse_from_object
@@ -182,3 +182,5 @@ def build_gemini_schema(function_tool: FunctionTool) -> types.FunctionDeclaratio
         description=openai_schema["description"],
         parameters=json_schema
     )
+    
+ToolChoice = Literal["auto", "required", "none"]

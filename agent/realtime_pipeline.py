@@ -16,8 +16,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
     
     def __init__(
         self,
-        model: RealtimeBaseModel,
-        config: Dict[str, Any]
+        model: RealtimeBaseModel
     ) -> None:
         """
         Initialize the realtime pipeline.
@@ -30,8 +29,6 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         """
         super().__init__()
         self.model = model
-        self.config = config
-        self.model.set_config(config)
         self.loop = asyncio.get_event_loop()
         self.room = None
         self.model.loop = self.loop

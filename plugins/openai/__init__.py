@@ -1,5 +1,6 @@
-from .realtime_api import OpenAIRealtime
+from .realtime_api import OpenAIRealtime, OpenAIRealtimeConfig
 
 __all__ = [
-    'OpenAIRealtime'
+    'OpenAIRealtime',
+    'OpenAIRealtimeConfig'
 ]

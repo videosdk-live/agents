@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from .agent import Agent
-from .conversation_flow import ConversationFlow
+# from .conversation_flow import ConversationFlow
 from .pipeline import Pipeline
 
 class AgentSession:
@@ -14,7 +14,6 @@ class AgentSession:
     def __init__(
         self,
         agent: Agent,
-        flow: ConversationFlow,
         pipeline: Pipeline,
         context: dict | None = None,
     ) -> None:
@@ -28,7 +27,6 @@ class AgentSession:
             context: Dictionary containing session context (pid, meetingId, name)
         """
         self.agent = agent
-        self.flow = flow
         self.pipeline = pipeline
         self.context = context or {}
         self.agent.session = self

@@ -1,9 +1,12 @@
 import asyncio
 import os
-from plugins.openai import OpenAIRealtime
+from plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig
+from plugins.gemini import GeminiRealtime, GeminiLiveConfig
 from agent import Agent, AgentSession, ConversationFlow, RealTimePipeline, function_tool
+from google.genai.types import AudioTranscriptionConfig
 import aiohttp
 import logging
+from openai.types.beta.realtime.session import InputAudioTranscription, TurnDetection
 
 from job import WorkerJob
 
@@ -18,7 +21,7 @@ class MyVoiceAgent(Agent):
         self.register_tools([self.get_weather, self.get_horoscope])
 
     async def on_enter(self) -> None:
-        await self.session.say("👋 Hi there! How can I help you today?")
+        await self.session.say("Hi there! How can I help you today?")
 
     @function_tool
     async def get_weather(
@@ -79,12 +82,31 @@ async def test_connection(jobctx):
     
     model = OpenAIRealtime(
         model="gpt-4o-realtime-preview",
+        config=OpenAIRealtimeConfig(
+            modalities=["text", "audio"],
+            input_audio_transcription=InputAudioTranscription(
+                model="whisper-1"
+            ),
+            turn_detection=TurnDetection(
+                type="server_vad",
+                threshold=0.5,
+                prefix_padding_ms=300,
+                silence_duration_ms=200,
+            ),
+            tool_choice="auto"
+        )
     )
-    pipeline = RealTimePipeline(model=model, config={"modalities": ["text", "audio"]})
-    flow = ConversationFlow()
+    # model = GeminiRealtime(
+    #     model="gemini-2.0-flash-live-001",
+    #     config=GeminiLiveConfig(
+    #         response_modalities=["AUDIO"],
+    #         output_audio_transcription=AudioTranscriptionConfig(
+    #         )
+    #     )
+    # )
+    pipeline = RealTimePipeline(model=model)
     session = AgentSession(
         agent=MyVoiceAgent(), 
-        flow=flow, 
         pipeline=pipeline,
         context=jobctx
     )
@@ -92,7 +114,6 @@ async def test_connection(jobctx):
     try:
         await session.start()
         print("Connection established. Press Ctrl+C to exit.")
-        flow.on_transcription(lambda text: print(f"Transcribed: {text}"))
         await asyncio.Event().wait()
     except KeyboardInterrupt:
         print("\nShutting down gracefully...")
