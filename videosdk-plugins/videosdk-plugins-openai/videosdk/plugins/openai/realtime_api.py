@@ -123,7 +123,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         self._session: Optional[OpenAISession] = None
         self._closing = False
         self._instructions: Optional[str] = None
-        self._tools: Optional[List[FunctionTool]] = None
+        self._tools: Optional[List[FunctionTool]] = []
         self.loop = None
         self.audio_track: Optional[CustomAudioStreamTrack] = None
         self._formatted_tools: Optional[List[Dict[str, Any]]] = None
@@ -520,4 +520,5 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         """Handle tools_updated event"""
         tools = data.get("tools", [])
         self._tools = tools
-        self._formatted_tools = self._format_tools_for_session(tools)  # Format for OpenAI
+        self.tools_formatted = self._format_tools_for_session(tools)
+        self._formatted_tools = self.tools_formatted

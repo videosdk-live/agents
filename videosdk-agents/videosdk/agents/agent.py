@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from typing import List, Literal
+import inspect
 
 from .event_emitter import EventEmitter
 from .utils import FunctionTool, is_function_tool
@@ -19,9 +20,15 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
     def __init__(self, instructions: str, tools: List[FunctionTool] = []):
         super().__init__()
         self.instructions = instructions
-        self._tools = [] 
-        if tools:
-            self.register_tools(tools)
+        self._tools = tools
+        self._register_class_tools()
+        self.register_tools()
+
+    def _register_class_tools(self) -> None:
+        """Register all function tools defined in the class"""
+        for name, attr in inspect.getmembers(self):
+            if is_function_tool(attr):
+                self._tools.append(attr)
 
     @property
     def instructions(self) -> str:
@@ -36,15 +43,13 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
     def tools(self) -> List[FunctionTool]:
         return self._tools
 
-    def register_tools(self, tools: List[FunctionTool]) -> None:
-        """Register function tools for the agent"""
-        for tool in tools:
+    def register_tools(self) -> None:
+        """Register external function tools for the agent"""
+        for tool in self._tools:
             if not is_function_tool(tool):
                 raise ValueError(f"Tool {tool.__name__ if hasattr(tool, '__name__') else tool} is not a valid FunctionTool")
         
-        self._tools.extend(tools)
         self.emit("tools_updated", {"tools": self._tools})
-
     @abstractmethod
     async def on_enter(self) -> None:
         """Called when session starts"""
