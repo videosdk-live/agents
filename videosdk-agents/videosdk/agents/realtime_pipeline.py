@@ -79,10 +79,17 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         """
         await self.model.handle_audio_input(audio_data)
         
+    async def leave(self) -> None:
+        """
+        Leave the realtime pipeline.
+        """
+        await self.room.leave()
+        
 
     async def cleanup(self):
         """Cleanup resources"""
         if hasattr(self, 'room'):
+            await self.room.leave()
             await self.room.cleanup()
         if hasattr(self, 'model'):
             await self.model.aclose()

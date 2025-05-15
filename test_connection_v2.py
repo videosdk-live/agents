@@ -10,26 +10,11 @@ from openai.types.beta.realtime.session import InputAudioTranscription, TurnDete
 
 logger = logging.getLogger(__name__)
 
-
-class MyVoiceAgent(Agent):
-    def __init__(self):
-        super().__init__(
-            instructions="You are a helpful voice assistant that can answer questions and help with tasks.",
-        )
-        self.register_tools([self.get_weather, self.get_horoscope])
-
-    async def on_enter(self) -> None:
-        await self.session.say(" i am a voice assistant created by google. i'm here to help you with your meeting, if you have any questions or need help, please let me know.")
-    
-    async def on_exit(self) -> None:
-        await self.session.say("Goodbye!")
-
-    @function_tool
-    async def get_weather(
-        self,
-        latitude: str,
-        longitude: str,
-    ):
+@function_tool
+async def get_weather(
+    latitude: str,
+    longitude: str,
+):
         """Called when the user asks about the weather. This function will return the weather for
         the given location. When given a location, please estimate the latitude and longitude of the
         location and do not ask the user for them.
@@ -58,6 +43,20 @@ class MyVoiceAgent(Agent):
 
         return weather_data
 
+
+class MyVoiceAgent(Agent):
+    def __init__(self):
+        super().__init__(
+            instructions="You are a helpful voice assistant that can answer questions and help with tasks.",
+            tools=[get_weather]
+        )
+
+    async def on_enter(self) -> None:
+        await self.session.say("Hello, how can I help you today?")
+    
+    async def on_exit(self) -> None:
+        await self.session.say("Goodbye!")
+        
     # Static test function
     @function_tool
     async def get_horoscope(self, sign: str) -> dict:
@@ -75,36 +74,44 @@ class MyVoiceAgent(Agent):
             "sign": sign,
             "horoscope": horoscopes.get(sign, "The stars are aligned for you today!"),
         }
+    
+    @function_tool
+    async def end_call(self) -> None:
+        """End the call upon request by the user"""
+        await self.session.say("Goodbye!")
+        await asyncio.sleep(1)
+        await self.session.leave()
+        
 
 
 async def test_connection(jobctx):
     print("Starting connection test...")
     print(f"Job context: {jobctx}")
     
-    # model = OpenAIRealtime(
-    #     model="gpt-4o-realtime-preview",
-    #     config=OpenAIRealtimeConfig(
-    #         modalities=["text", "audio"],
-    #         input_audio_transcription=InputAudioTranscription(
-    #             model="whisper-1"
-    #         ),
-    #         turn_detection=TurnDetection(
-    #             type="server_vad",
-    #             threshold=0.5,
-    #             prefix_padding_ms=300,
-    #             silence_duration_ms=200,
-    #         ),
-    #         tool_choice="auto"
-    #     )
-    # )
-    model = GeminiRealtime(
-        model="gemini-2.0-flash-live-001",
-        config=GeminiLiveConfig(
-            response_modalities=["AUDIO"],
-            output_audio_transcription=AudioTranscriptionConfig(
-            )
+    model = OpenAIRealtime(
+        model="gpt-4o-realtime-preview",
+        config=OpenAIRealtimeConfig(
+            modalities=["text", "audio"],
+            input_audio_transcription=InputAudioTranscription(
+                model="whisper-1"
+            ),
+            turn_detection=TurnDetection(
+                type="server_vad",
+                threshold=0.5,
+                prefix_padding_ms=300,
+                silence_duration_ms=200,
+            ),
+            tool_choice="auto"
         )
     )
+    # model = GeminiRealtime(
+    #     model="gemini-2.0-flash-live-001",
+    #     config=GeminiLiveConfig(
+    #         response_modalities=["AUDIO"],
+    #         output_audio_transcription=AudioTranscriptionConfig(
+    #         )
+    #     )
+    # )
     pipeline = RealTimePipeline(model=model)
     session = AgentSession(
         agent=MyVoiceAgent(), 
@@ -131,7 +138,7 @@ def entryPoint(jobctx):
 if __name__ == "__main__":
 
     def make_context():
-        return {"meetingId": "pbow-6vec-vahn", "name": "Agent"}
+        return {"meetingId": "s87z-lvsj-riwb", "name": "Agent"}
 
     job = WorkerJob(job_func=entryPoint, jobctx=make_context)
     job.start()

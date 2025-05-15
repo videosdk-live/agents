@@ -62,6 +62,12 @@ class AgentSession:
         """
         Close the agent session.
         """
-        await self.agent.on_exit()
+        # await self.agent.on_exit()
         await self.pipeline.cleanup()
+    
+    async def leave(self) -> None:
+        """
+        Leave the agent session.
+        """
+        await self.pipeline.leave()
         
