@@ -1,0 +1,9 @@
+myenv/
+venv/
+env/
+__pycache__
+
+.env
+.env.local
+test_env/
+dist/

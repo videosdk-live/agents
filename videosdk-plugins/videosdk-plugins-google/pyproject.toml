@@ -1,0 +1,34 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "videosdk-plugins-google"
+dynamic = ["version"]
+description = "VideoSDK Agent Framework plugin for google services"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "videosdk"}]
+keywords = ["video", "audio", "ai", "google", "videosdk"]
+classifiers = [
+    "Intended Audience :: Developers",
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Communications :: Conferencing",
+    "Topic :: Multimedia :: Sound/Audio",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "videosdk-agents>=0.0.6",
+    "google-genai >= 1.14.0",
+]
+
+[tool.hatch.version]
+path = "videosdk/plugins/google/version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["videosdk"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/videosdk"]
