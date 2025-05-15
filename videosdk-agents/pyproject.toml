@@ -1,0 +1,53 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "videosdk-agents"
+dynamic = ["version"]
+description = "Video SDK Agents"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "videosdk" }]
+keywords = ["video", "audio", "ai", "agents", "videosdk", "webrtc", "realtime"]
+classifiers = [
+    "Intended Audience :: Developers",
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Communications :: Conferencing",
+    "Topic :: Multimedia :: Sound/Audio",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "uvicorn",
+    "videosdk>=0.1.0",
+    "numpy",
+    "httpx",
+    "librosa",
+    "aiohttp",
+    "openai",
+    "av",
+    "python-dotenv",
+    "pyee==11.1.0",
+    "grpcio",
+    "protobuf",
+    "docstring_parser",
+    "google-genai",
+    "pydantic>=2.0,<3",
+]
+
+[project.optional-dependencies]
+openai = ["videosdk-plugins-openai>=0.0.4"]
+google = ["videosdk-plugins-google>=0.0.2"]
+
+
+[tool.hatch.version]
+path = "videosdk/agents/version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["videosdk"]
+include = ["videosdk/agents/resources/*"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/videosdk"]
