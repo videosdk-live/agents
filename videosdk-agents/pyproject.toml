@@ -38,8 +38,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-openai = ["videosdk-plugins-openai>=0.0.3"]
-google = ["videosdk-plugins-google>=0.0.1"]
+openai = ["videosdk-plugins-openai>=0.0.4"]
+google = ["videosdk-plugins-google>=0.0.2"]
 
 
 [tool.hatch.version]
