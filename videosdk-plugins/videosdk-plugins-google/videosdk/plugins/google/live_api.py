@@ -213,7 +213,6 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
             output_audio_transcription=self.config.output_audio_transcription if self.config.output_audio_transcription else None
         )
         try:
-
             session_cm = self.client.aio.live.connect(model=self.model, config=config)
             session = await session_cm.__aenter__()
             return GeminiSession(session=session, session_cm=session_cm, tasks=[])
@@ -565,7 +564,8 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         """Handle tools updated event"""
         tools = data.get("tools", [])
         self.tools = tools
-        self.formatted_tools = self._convert_tools_to_gemini_format(tools)
+        self.tools_formatted = self._convert_tools_to_gemini_format(tools)
+        self.formatted_tools = self.tools_formatted
 
     def _handle_instructions_updated(self, data: Dict[str, Any]) -> None:
         """Handle instruction updated event"""

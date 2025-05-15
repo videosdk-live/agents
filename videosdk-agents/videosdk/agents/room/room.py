@@ -51,6 +51,8 @@ class VideoSDKHandler:
         await self.meeting.async_join()
 
     def leave(self):
+        for audio_task in self.audio_listener_tasks.values():
+            audio_task.cancel()
         self.meeting.leave()
 
     def on_meeting_joined(self, data):
@@ -93,7 +95,7 @@ class VideoSDKHandler:
         for audio_task in self.audio_listener_tasks.values():
             audio_task.cancel()
         self.leave()
-        sys.exit(0)
+        # sys.exit(0)
         
 
     async def add_audio_listener(self, stream: Stream):
