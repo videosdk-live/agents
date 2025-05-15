@@ -11,7 +11,7 @@ class WorkerJob:
         return self.jobctx() if callable(self.jobctx) else self.jobctx
 
     def start(self):
-        from worker import Worker
+        from .worker import Worker
 
         worker = Worker(self)
         worker.run()
