@@ -49,3 +49,8 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
     async def on_enter(self) -> None:
         """Called when session starts"""
         pass
+    
+    @abstractmethod
+    async def on_exit(self) -> None:
+        """Called when session ends"""
+        pass

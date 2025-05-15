@@ -9,9 +9,7 @@ from dataclasses import dataclass, field
 import base64
 import time
 from dotenv import load_dotenv
-from agent.room.audio_stream import CustomAudioStreamTrack
-from agent.realtime_base_model import RealtimeBaseModel
-from agent import CustomAudioStreamTrack, RealtimeBaseModel, build_gemini_schema, is_function_tool, FunctionTool, get_tool_info
+from videosdk.agents import CustomAudioStreamTrack, RealtimeBaseModel, build_gemini_schema, is_function_tool, FunctionTool, get_tool_info
 
 from google import genai
 from google.genai.live import AsyncSession
@@ -110,7 +108,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                    - response_modalities: List of enabled response types ["TEXT", "AUDIO"]. Defaults to both
                    - output_audio_transcription: Configuration for audio transcription features
             api_key: Gemini API key. If not provided, will attempt to read from GOOGLE_API_KEY env var
-            service_account_path: Path to Google service account JSON file. Alternative to api_key
+            service_account_path: Path to Google service account JSON file.
         
         Raises:
             ValueError: If neither api_key nor service_account_path is provided and no GOOGLE_API_KEY in env vars
@@ -466,7 +464,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         try:
             await self._session.session.send_client_content(
                 turns=[
-                    Content(parts=[Part(text=message)], role="model"),
+                    Content(parts=[Part(text="Repeat the user's exact message back to them [DO NOT ADD ANYTHING ELSE]:" + message)], role="model"),
                     Content(parts=[Part(text=".")], role="user")
                 ],
                 turn_complete=True

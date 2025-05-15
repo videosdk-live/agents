@@ -1,14 +1,12 @@
 import asyncio
 import os
-from plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig
-from plugins.gemini import GeminiRealtime, GeminiLiveConfig
-from agent import Agent, AgentSession, ConversationFlow, RealTimePipeline, function_tool
+from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig
+from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig
+from videosdk.agents import Agent, AgentSession, RealTimePipeline, function_tool, WorkerJob
 from google.genai.types import AudioTranscriptionConfig
 import aiohttp
 import logging
 from openai.types.beta.realtime.session import InputAudioTranscription, TurnDetection
-
-from job import WorkerJob
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +19,10 @@ class MyVoiceAgent(Agent):
         self.register_tools([self.get_weather, self.get_horoscope])
 
     async def on_enter(self) -> None:
-        await self.session.say("Hi there! How can I help you today?")
+        await self.session.say(" i am a voice assistant created by google. i'm here to help you with your meeting, if you have any questions or need help, please let me know.")
+    
+    async def on_exit(self) -> None:
+        await self.session.say("Goodbye!")
 
     @function_tool
     async def get_weather(
@@ -80,30 +81,30 @@ async def test_connection(jobctx):
     print("Starting connection test...")
     print(f"Job context: {jobctx}")
     
-    model = OpenAIRealtime(
-        model="gpt-4o-realtime-preview",
-        config=OpenAIRealtimeConfig(
-            modalities=["text", "audio"],
-            input_audio_transcription=InputAudioTranscription(
-                model="whisper-1"
-            ),
-            turn_detection=TurnDetection(
-                type="server_vad",
-                threshold=0.5,
-                prefix_padding_ms=300,
-                silence_duration_ms=200,
-            ),
-            tool_choice="auto"
-        )
-    )
-    # model = GeminiRealtime(
-    #     model="gemini-2.0-flash-live-001",
-    #     config=GeminiLiveConfig(
-    #         response_modalities=["AUDIO"],
-    #         output_audio_transcription=AudioTranscriptionConfig(
-    #         )
+    # model = OpenAIRealtime(
+    #     model="gpt-4o-realtime-preview",
+    #     config=OpenAIRealtimeConfig(
+    #         modalities=["text", "audio"],
+    #         input_audio_transcription=InputAudioTranscription(
+    #             model="whisper-1"
+    #         ),
+    #         turn_detection=TurnDetection(
+    #             type="server_vad",
+    #             threshold=0.5,
+    #             prefix_padding_ms=300,
+    #             silence_duration_ms=200,
+    #         ),
+    #         tool_choice="auto"
     #     )
     # )
+    model = GeminiRealtime(
+        model="gemini-2.0-flash-live-001",
+        config=GeminiLiveConfig(
+            response_modalities=["AUDIO"],
+            output_audio_transcription=AudioTranscriptionConfig(
+            )
+        )
+    )
     pipeline = RealTimePipeline(model=model)
     session = AgentSession(
         agent=MyVoiceAgent(), 
@@ -115,20 +116,22 @@ async def test_connection(jobctx):
         await session.start()
         print("Connection established. Press Ctrl+C to exit.")
         await asyncio.Event().wait()
+        # await asyncio.sleep(30)
     except KeyboardInterrupt:
         print("\nShutting down gracefully...")
     finally:
-        await pipeline.cleanup()
+        await session.close()
 
 
 def entryPoint(jobctx):
+    jobctx["pid"] = os.getpid()
     asyncio.run(test_connection(jobctx))
 
 
 if __name__ == "__main__":
 
     def make_context():
-        return {"pid": os.getpid(), "meetingId": "pbow-6vec-vahn", "name": "Agent"}
+        return {"meetingId": "pbow-6vec-vahn", "name": "Agent"}
 
     job = WorkerJob(job_func=entryPoint, jobctx=make_context)
     job.start()

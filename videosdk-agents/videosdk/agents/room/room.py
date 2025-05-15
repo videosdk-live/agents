@@ -2,13 +2,14 @@ from videosdk import MeetingConfig, VideoSDK, Participant, Stream
 from .meeting_event_handler import MeetingHandler
 from .participant_event_handler import ParticipantHandler
 from .audio_stream import CustomAudioStreamTrack
-from agent.pipeline import Pipeline
+from videosdk.agents.pipeline import Pipeline
 from dotenv import load_dotenv
 import numpy as np
 import librosa
 import asyncio
 import os
 from asyncio import AbstractEventLoop
+import sys
 
 load_dotenv()
 
@@ -53,12 +54,11 @@ class VideoSDKHandler:
         self.meeting.leave()
 
     def on_meeting_joined(self, data):
-        print("AI Joined the meeting")
+        print(f"Agent joined the meeting")
 
     def on_meeting_left(self, data):
-        print(f"Meeting Left")
-        self.loop.create_task(self.cleanup())
-
+        print(f"Meeting Left", data)
+        
     def on_participant_joined(self, participant: Participant):
         peer_name = participant.display_name
         self.participants_data[participant.id] = {
@@ -90,6 +90,11 @@ class VideoSDKHandler:
 
     def on_participant_left(self, participant: Participant):
         print("Participant left:", participant.display_name)
+        for audio_task in self.audio_listener_tasks.values():
+            audio_task.cancel()
+        self.leave()
+        sys.exit(0)
+        
 
     async def add_audio_listener(self, stream: Stream):
         while True:
