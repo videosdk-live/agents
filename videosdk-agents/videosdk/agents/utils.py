@@ -4,17 +4,21 @@ from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable, Callable, Optional, get_type_hints, Annotated, get_origin, get_args, Literal
 from functools import wraps
 import inspect
+import logging
 from docstring_parser import parse_from_object
 from google.genai import types
 from pydantic import BaseModel, Field, create_model
 from pydantic_core import PydanticUndefined
 from pydantic.fields import FieldInfo
 
+logger = logging.getLogger(__name__)
+
 @dataclass
 class FunctionToolInfo:
     """Metadata for a function tool"""
     name: str
     description: str | None
+    parameters_schema: Optional[dict] = None
 
 @runtime_checkable
 class FunctionTool(Protocol):
@@ -170,17 +174,116 @@ class _GeminiJsonSchema:
 
 def build_gemini_schema(function_tool: FunctionTool) -> types.FunctionDeclaration:
     """Build Gemini-compatible schema from a function tool"""
-    # Get OpenAI schema first
-    openai_schema = build_openai_schema(function_tool)
+    tool_info = get_tool_info(function_tool)
     
-    # Convert to Gemini format
-    json_schema = _GeminiJsonSchema(openai_schema["parameters"]).simplify()
-    
-    # Create FunctionDeclaration
+    parameter_json_schema_for_gemini: Optional[dict[str, Any]] = None
+
+    if tool_info.parameters_schema is not None:
+         if tool_info.parameters_schema and tool_info.parameters_schema.get("properties", True) is not None : # handles {} or {"type": "object"}
+            simplified_schema = _GeminiJsonSchema(tool_info.parameters_schema).simplify()
+            parameter_json_schema_for_gemini = simplified_schema
+            
+    else:
+
+        openai_schema = build_openai_schema(function_tool) 
+
+        if openai_schema.get("parameters") and openai_schema["parameters"].get("properties", True) is not None:
+             simplified_schema = _GeminiJsonSchema(openai_schema["parameters"]).simplify()
+             parameter_json_schema_for_gemini = simplified_schema
+
+
     return types.FunctionDeclaration(
-        name=openai_schema["name"],
-        description=openai_schema["description"],
-        parameters=json_schema
+        name=tool_info.name, 
+        description=tool_info.description or "", 
+        parameters=parameter_json_schema_for_gemini 
     )
     
 ToolChoice = Literal["auto", "required", "none"]
+
+def build_mcp_schema(function_tool: FunctionTool) -> dict:
+    """Convert function tool to MCP schema"""
+    tool_info = get_tool_info(function_tool)
+    return {
+        "name": tool_info.name,
+        "description": tool_info.description,
+        "parameters": function_arguments_to_pydantic_model(function_tool).model_json_schema()
+    }
+
+class ToolError(Exception):
+    """Exception raised when a tool execution fails"""
+    pass    
+
+class RawFunctionTool(Protocol):
+    """Protocol for raw function tool without framework wrapper"""
+    def __call__(self, *args: Any, **kwargs: Any) -> Any: ...
+
+def create_generic_mcp_adapter(
+    tool_name: str, 
+    tool_description: str | None, 
+    input_schema: dict,
+    client_call_function: Callable
+) -> FunctionTool:
+    """
+    Create a generic adapter that converts an MCP tool to a framework FunctionTool.
+    
+    Args:
+        tool_name: Name of the MCP tool
+        tool_description: Description of the MCP tool (if available)
+        input_schema: JSON schema for the tool's input parameters
+        client_call_function: Function to call the tool on the MCP server
+        
+    Returns:
+        A function tool that can be registered with the agent
+    """
+    # Extract required parameters from schema
+    required_params = input_schema.get('required', [])
+    
+    # Get parameter properties if available
+    param_properties = input_schema.get('properties', {})
+    
+    # Create docstring with parameters
+    docstring = tool_description or f"Call the {tool_name} tool"
+    if param_properties and "Args:" not in docstring:
+        param_docs = "\n\nArgs:\n"
+        for param_name, param_info in param_properties.items():
+            required = " (required)" if param_name in required_params else ""
+            description = param_info.get('description', f"Parameter for {tool_name}")
+            param_docs += f"    {param_name}{required}: {description}\n"
+        docstring += param_docs
+    
+    # Create tool function based on parameters
+    if not param_properties:
+        # No parameters needed
+        @function_tool(name=tool_name)
+        async def no_param_tool() -> Any:
+            return await client_call_function({})
+        no_param_tool.__doc__ = docstring
+        # Populate the parameters_schema from MCP's input_schema
+        tool_info_no_param = get_tool_info(no_param_tool)
+        tool_info_no_param.parameters_schema = input_schema
+        return no_param_tool
+    else:
+        # Parameters required - create a generic tool that accepts kwargs
+        @function_tool(name=tool_name) 
+        async def param_tool(**kwargs) -> Any:
+            # Check for required parameters
+            missing = [p for p in required_params if p not in kwargs]
+            if missing:
+                missing_str = ", ".join(missing)
+                param_details = []
+                for param in missing:
+                    param_info = param_properties.get(param, {})
+                    desc = param_info.get('description', f"Parameter for {tool_name}")
+                    param_details.append(f"'{param}': {desc}")
+                
+                param_help = "; ".join(param_details)
+                raise ToolError(
+                    f"Missing required parameters for {tool_name}: {missing_str}. "
+                    f"Required parameters: {param_help}"
+                )
+            return await client_call_function(kwargs)
+        param_tool.__doc__ = docstring
+        # Populate the parameters_schema from MCP's input_schema
+        tool_info_param = get_tool_info(param_tool)
+        tool_info_param.parameters_schema = input_schema
+        return param_tool
