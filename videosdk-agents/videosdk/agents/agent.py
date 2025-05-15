@@ -43,13 +43,17 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
     def tools(self) -> List[FunctionTool]:
         return self._tools
 
-    def register_tools(self) -> None:
+    def register_tools(self, tools: List[FunctionTool] | None = None) -> None:
         """Register external function tools for the agent"""
+        if tools:
+            self._tools.extend(tools)
+            
         for tool in self._tools:
             if not is_function_tool(tool):
                 raise ValueError(f"Tool {tool.__name__ if hasattr(tool, '__name__') else tool} is not a valid FunctionTool")
         
         self.emit("tools_updated", {"tools": self._tools})
+
     @abstractmethod
     async def on_enter(self) -> None:
         """Called when session starts"""
