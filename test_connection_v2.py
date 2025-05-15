@@ -1,20 +1,105 @@
+
 import asyncio
 import os
+import pathlib
+import sys
 from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig
 from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig
-from videosdk.agents import Agent, AgentSession, RealTimePipeline, function_tool, WorkerJob
+from videosdk.agents import Agent, AgentSession, ConversationFlow, RealTimePipeline, function_tool
+from videosdk.agents.mcp_integration import MCPToolManager
+from videosdk.agents.mcp_server import MCPServerStdio
 from google.genai.types import AudioTranscriptionConfig
 import aiohttp
 import logging
 from openai.types.beta.realtime.session import InputAudioTranscription, TurnDetection
+from videosdk.agents.job import WorkerJob
 
 logger = logging.getLogger(__name__)
 
-@function_tool
-async def get_weather(
-    latitude: str,
-    longitude: str,
-):
+
+class MyVoiceAgent(Agent):
+    def __init__(self):
+        super().__init__(
+            instructions="""
+            You are a helpful voice assistant that can answer questions and help with tasks.
+            
+            FINANCIAL TOOLS AVAILABLE:
+            - get_current_time: Shows the current time (no parameters needed)
+            - get_nifty50_price: Shows Nifty 50 index (no parameters needed)
+            - get_stock_quote: Gets stock price - requires symbol parameter
+            - get_exchange_rate: Gets currency exchange - requires from_currency and to_currency parameters
+            - get_company_info: Gets company details - requires symbol parameter
+            - search_with_time: Search with time context - requires query parameter
+            
+            For tools that require parameters, ALWAYS include them when calling the tool.
+            Examples:
+            - get_stock_quote(symbol="AAPL")
+            - get_exchange_rate(from_currency="USD", to_currency="EUR")
+            - get_company_info(symbol="MSFT")
+            - search_with_time(query="latest stock market news")
+            
+            If a tool call fails, carefully check the error message and try again with
+            the correct parameters. Make sure to include all required parameters.
+            """,
+        )
+        self.mcp_manager = MCPToolManager()
+        self.register_tools([self.get_weather, self.get_horoscope])
+        
+    async def initialize_mcp(self):
+        """Initialize MCP tools"""
+        # Try to find the MCP server example file in multiple paths
+        current_dir = pathlib.Path(__file__).parent
+        possible_paths = [
+            current_dir / "examples" / "mcp_server_example.py",  # If in examples folder
+            current_dir.parent / "examples" / "mcp_server_example.py",  # If in parent/examples folder
+            current_dir / "mcp_server_example.py"  # If in same directory
+        ]
+        
+        mcp_server_path = None
+        for path in possible_paths:
+            if path.exists():
+                mcp_server_path = path
+                break
+                
+        if not mcp_server_path:
+            logger.error("MCP server example not found. Checked paths:")
+            for path in possible_paths:
+                logger.error(f" - {path}")
+            return
+            
+        # Create and initialize MCP server connection
+        logger.info(f"Connecting to MCP server at {mcp_server_path}")
+        stdio_server = MCPServerStdio(
+            command=sys.executable,  # Use the current Python executable
+            args=[str(mcp_server_path)],
+            client_session_timeout_seconds=30
+        )
+        
+        try:
+            # Add the server to the manager
+            await self.mcp_manager.add_mcp_server(stdio_server)
+            
+            # Register MCP tools with the agent
+            await self.mcp_manager.register_mcp_tools(self)
+            
+            logger.info("MCP tools initialized and registered")
+        except Exception as e:
+            logger.error(f"Error initializing MCP tools: {e}")
+            # We don't want to fail the whole agent if MCP fails
+            # Just log the error and continue without MCP tools
+
+    async def on_enter(self) -> None:
+        await self.session.say("Hi there! I can help you with financial data and more. Try asking about the weather, your horoscope, stock prices, or exchange rates.")
+
+    async def on_exit(self) -> None:
+        await self.session.say("Goodbye!")
+        
+    @function_tool
+    async def get_weather(
+        self,
+        latitude: str,
+        longitude: str,
+    ):
         """Called when the user asks about the weather. This function will return the weather for
         the given location. When given a location, please estimate the latitude and longitude of the
         location and do not ask the user for them.
@@ -43,20 +128,6 @@ async def get_weather(
 
         return weather_data
 
-
-class MyVoiceAgent(Agent):
-    def __init__(self):
-        super().__init__(
-            instructions="You are a helpful voice assistant that can answer questions and help with tasks.",
-            tools=[get_weather]
-        )
-
-    async def on_enter(self) -> None:
-        await self.session.say("Hello, how can I help you today?")
-    
-    async def on_exit(self) -> None:
-        await self.session.say("Goodbye!")
-        
     # Static test function
     @function_tool
     async def get_horoscope(self, sign: str) -> dict:
@@ -74,14 +145,6 @@ class MyVoiceAgent(Agent):
             "sign": sign,
             "horoscope": horoscopes.get(sign, "The stars are aligned for you today!"),
         }
-    
-    @function_tool
-    async def end_call(self) -> None:
-        """End the call upon request by the user"""
-        await self.session.say("Goodbye!")
-        await asyncio.sleep(1)
-        await self.session.leave()
-        
 
 
 async def test_connection(jobctx):
@@ -113,8 +176,13 @@ async def test_connection(jobctx):
     #     )
     # )
     pipeline = RealTimePipeline(model=model)
+    
+    # Create agent and initialize MCP
+    agent = MyVoiceAgent()
+    await agent.initialize_mcp()
+    
     session = AgentSession(
-        agent=MyVoiceAgent(), 
+        agent=agent, 
         pipeline=pipeline,
         context=jobctx
     )
@@ -122,23 +190,29 @@ async def test_connection(jobctx):
     try:
         await session.start()
         print("Connection established. Press Ctrl+C to exit.")
+        print("\nExample queries to try:")
+        print("- \"What time is it?\"")
+        print("- \"What's the current Nifty 50 price?\"") 
+        print("- \"What's the price of AAPL stock?\"")
+        print("- \"What's the exchange rate from USD to EUR?\"")
+        print("- \"Tell me about the company with symbol MSFT\"")
+        print("- \"What's the weather in New York?\"")
+        print("- \"What's my Taurus horoscope?\"")
         await asyncio.Event().wait()
-        # await asyncio.sleep(30)
     except KeyboardInterrupt:
         print("\nShutting down gracefully...")
     finally:
-        await session.close()
+        await pipeline.cleanup()
 
 
 def entryPoint(jobctx):
-    jobctx["pid"] = os.getpid()
     asyncio.run(test_connection(jobctx))
 
 
 if __name__ == "__main__":
 
     def make_context():
-        return {"meetingId": "s87z-lvsj-riwb", "name": "Agent"}
+        return {"pid": os.getpid(), "meetingId": "obsk-dfh0-qmyb", "name": "Agent"}
 
-    job = WorkerJob(job_func=entryPoint, jobctx=make_context)
+    job = WorkerJob(job_func=entryPoint, jobctx=make_context())
     job.start()
