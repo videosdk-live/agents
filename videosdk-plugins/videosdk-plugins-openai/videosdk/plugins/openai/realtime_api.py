@@ -11,18 +11,17 @@ import uuid
 import base64
 import aiohttp
 import traceback
-from agent import (
+from videosdk.agents import (
     FunctionTool,
     is_function_tool,
     get_tool_info,
     build_openai_schema,
     CustomAudioStreamTrack,
-    ToolChoice
+    ToolChoice,
+    RealtimeBaseModel
 )
 
 load_dotenv()
-
-from agent.realtime_base_model import RealtimeBaseModel
 from openai.types.beta.realtime.session import InputAudioTranscription, TurnDetection
 
 OPENAI_BASE_URL = "https://api.openai.com/v1"
@@ -181,7 +180,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
                 "content": [
                     {
                         "type": "text",
-                        "text": message,
+                        "text": "Repeat the user's exact message back to them:" + message + "DO NOT ADD ANYTHING ELSE",
                     }
                 ]
             }
@@ -207,6 +206,15 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         
         # Send the event through our message queue
         await self.send_event(response_event)
+        
+        # session_update = {
+        #     "type": "session.update",
+        #     "session": {
+        #         "instructions": self._instructions
+        #     }
+        # }
+        
+        # await self.send_event(session_update)
 
     async def _handle_websocket(self, session: OpenAISession) -> None:
         """Start WebSocket send/receive tasks"""
@@ -439,31 +447,30 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         """Send initial session update with default values after connection"""
         if not self._session:
             return
-        
-        config = self.config or {}
 
         session_update = {
             "type": "session.update",
             "session": {
                 "model": self.model,
-                "voice": config.voice,
+                "voice": self.config.voice,
                 "instructions": self._instructions or  "You are a helpful voice assistant that can answer questions and help with tasks.",
-                "temperature": config.temperature,
-                "turn_detection": config.turn_detection.model_dump(
+                "temperature": self.config.temperature,
+                "turn_detection": self.config.turn_detection.model_dump(
                     by_alias=True,
                     exclude_unset=True,
                     exclude_defaults=True,
                 ),
-                "input_audio_transcription": config.input_audio_transcription.model_dump(
+                "input_audio_transcription": self.config.input_audio_transcription.model_dump(
                     by_alias=True,
                     exclude_unset=True,
                     exclude_defaults=True,
                 ),
-                "tool_choice": config.tool_choice,
+                "tool_choice": self.config.tool_choice,
                 "tools": self._formatted_tools or [],
-                "modalities": config.modalities,
+                "modalities": self.config.modalities,
                 "input_audio_format": DEFAULT_INPUT_AUDIO_FORMAT,
-                "output_audio_format": DEFAULT_OUTPUT_AUDIO_FORMAT
+                "output_audio_format": DEFAULT_OUTPUT_AUDIO_FORMAT,
+                "max_response_output_tokens": "inf"
             }
         }
         # Send the event

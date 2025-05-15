@@ -97,3 +97,7 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         except Exception as e:
             traceback.print_exc()
             print("error while creating tts->rtc frame", e)
+            
+    async def cleanup(self):
+        self.interrupt()
+        self.stop()

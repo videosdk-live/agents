@@ -62,5 +62,6 @@ class AgentSession:
         """
         Close the agent session.
         """
+        await self.agent.on_exit()
         await self.pipeline.cleanup()
         

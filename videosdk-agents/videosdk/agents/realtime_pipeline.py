@@ -47,7 +47,6 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         try:
             meeting_id = kwargs.get('meeting_id')
             name = kwargs.get('name')
-            
             self.room = VideoSDKHandler(
                 meeting_id=meeting_id,
                 name=name,
