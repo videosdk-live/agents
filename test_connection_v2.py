@@ -2,6 +2,7 @@ import asyncio
 import os
 from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig
 from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig
+from videosdk.plugins.aws import NovaSonicRealtime, NovaSonicConfig
 from videosdk.agents import Agent, AgentSession, RealTimePipeline, function_tool, WorkerJob
 from google.genai.types import AudioTranscriptionConfig
 import aiohttp
@@ -88,22 +89,22 @@ async def test_connection(jobctx):
     print("Starting connection test...")
     print(f"Job context: {jobctx}")
     
-    model = OpenAIRealtime(
-        model="gpt-4o-realtime-preview",
-        config=OpenAIRealtimeConfig(
-            modalities=["text", "audio"],
-            input_audio_transcription=InputAudioTranscription(
-                model="whisper-1"
-            ),
-            turn_detection=TurnDetection(
-                type="server_vad",
-                threshold=0.5,
-                prefix_padding_ms=300,
-                silence_duration_ms=200,
-            ),
-            tool_choice="auto"
-        )
-    )
+    # model = OpenAIRealtime(
+    #     model="gpt-4o-realtime-preview",
+    #     config=OpenAIRealtimeConfig(
+    #         modalities=["text", "audio"],
+    #         input_audio_transcription=InputAudioTranscription(
+    #             model="whisper-1"
+    #         ),
+    #         turn_detection=TurnDetection(
+    #             type="server_vad",
+    #             threshold=0.5,
+    #             prefix_padding_ms=300,
+    #             silence_duration_ms=200,
+    #         ),
+    #         tool_choice="auto"
+    #     )
+    # )
     # model = GeminiRealtime(
     #     model="gemini-2.0-flash-live-001",
     #     config=GeminiLiveConfig(
@@ -112,6 +113,16 @@ async def test_connection(jobctx):
     #         )
     #     )
     # )
+
+    model = NovaSonicRealtime(
+            model="amazon.nova-sonic-v1:0",
+            config=NovaSonicConfig(
+                voice="tiffany",      
+                temperature=0.7,      
+                top_p=0.9,            
+                max_tokens=1024       
+            )
+    )
     pipeline = RealTimePipeline(model=model)
     session = AgentSession(
         agent=MyVoiceAgent(), 
