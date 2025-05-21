@@ -138,7 +138,7 @@ def entryPoint(jobctx):
 if __name__ == "__main__":
 
     def make_context():
-        return {"meetingId": "s87z-lvsj-riwb", "name": "Agent"}
+        return {"meetingId": "s87z-lvsj-riwb", "name": "Sandbox Agent"}
 
     job = WorkerJob(job_func=entryPoint, jobctx=make_context)
     job.start()
