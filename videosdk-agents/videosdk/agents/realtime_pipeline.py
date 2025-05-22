@@ -45,9 +45,11 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
             **kwargs: Additional arguments for pipeline configuration
         """
         try:
+            videosdk_auth = kwargs.get('videosdk_auth')
             meeting_id = kwargs.get('meeting_id')
             name = kwargs.get('name')
             self.room = VideoSDKHandler(
+                auth_token=videosdk_auth,
                 meeting_id=meeting_id,
                 name=name,
                 pipeline=self,
