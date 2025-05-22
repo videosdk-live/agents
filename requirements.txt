@@ -12,7 +12,7 @@ grpcio
 protobuf
 docstring_parser
 google-genai
-
-
-
-
+rx>=3.2.0
+smithy-aws-core
+pytz
+aws_sdk_bedrock_runtime
