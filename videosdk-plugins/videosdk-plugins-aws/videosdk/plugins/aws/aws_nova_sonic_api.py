@@ -7,6 +7,8 @@ import json
 import uuid
 from typing import Optional, Literal, List, Dict, Any
 from dataclasses import dataclass
+import librosa
+import numpy as np
 
 
 from aws_sdk_bedrock_runtime.client import (
@@ -27,12 +29,8 @@ from smithy_aws_core.credentials_resolvers.environment import EnvironmentCredent
 from videosdk.agents import RealtimeBaseModel
 from videosdk.agents.utils import build_nova_sonic_schema, get_tool_info, is_function_tool, FunctionTool
 
-# Audio configuration
-INPUT_SAMPLE_RATE = 24000  
 NOVA_INPUT_SAMPLE_RATE = 16000  
 NOVA_OUTPUT_SAMPLE_RATE = 24000 
-CHANNELS = 1
-BYTES_PER_SAMPLE = 2 
 
 # Event types
 NovaSonicEventTypes = Literal[
@@ -62,36 +60,6 @@ class NovaSonicConfig:
 
 class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
     """Nova Sonic's realtime model implementation"""
-    
-    # Used event templates
-    CONTENT_END_EVENT = '''
-    {
-        "event": {
-            "contentEnd": {
-                "promptName": "%s",
-                "contentName": "%s"
-            }
-        }
-    }
-    '''
-    
-    PROMPT_END_EVENT = '''
-    {
-        "event": {
-            "promptEnd": {
-                "promptName": "%s"
-            }
-        }
-    }
-    '''
-    
-    SESSION_END_EVENT = '''
-    {
-        "event": {
-            "sessionEnd": {}
-        }
-    }
-    '''
     
     def __init__(
         self,
@@ -127,9 +95,7 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
         
         # For response handling
         self.is_active = False
-        self.role = "ASSISTANT"
         self.response_task = None
-        self.display_assistant_text = False
         
         # Initialize Bedrock client
         self._initialize_bedrock_client()
@@ -160,8 +126,6 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                 
         except Exception as e:
             print(f"Error initializing Bedrock client: {e}")
-            import traceback
-            traceback.print_exc()
             raise
 
     async def connect(self) -> None:
@@ -174,11 +138,6 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
         try:
             # Store loop reference for creating tasks
             self.loop = asyncio.get_event_loop()
-            
-            # Initialize audio track first
-            if not self.audio_track:
-                from videosdk import VideoSDKHandler
-                self.audio_track = VideoSDKHandler.create_audio_track()
             # Initialize Bedrock stream
             self.stream = await self.bedrock_client.invoke_model_with_bidirectional_stream(
                 InvokeModelWithBidirectionalStreamOperationInput(
@@ -188,21 +147,18 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             self.is_active = True
             
             # Step 1: Send session start event -            
-            session_start = f'''
-            {{
-              "event": {{
-                "sessionStart": {{
-                  "inferenceConfiguration": {{
-                    "maxTokens": {self.config.max_tokens},
-                    "topP": {self.config.top_p},
-                    "temperature": {self.config.temperature}
-                  }}
-                }}
-              }}
-            }}
-            '''
-            await self._send_event(session_start)
-            print("Session started")
+            session_start_payload = {
+              "event": {
+                "sessionStart": {
+                  "inferenceConfiguration": {
+                    "maxTokens": self.config.max_tokens,
+                    "topP": self.config.top_p,
+                    "temperature": self.config.temperature
+                  }
+                }
+              }
+            }
+            await self._send_event(json.dumps(session_start_payload))
             
             # Step 2: Send prompt start event -            
             prompt_start_event_dict = {
@@ -234,54 +190,47 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                 }
             
             await self._send_event(json.dumps(prompt_start_event_dict))
-            print("Prompt started")
             
             # Step 3: Send system content start -            
-            system_content_start = f'''
-            {{
-                "event": {{
-                    "contentStart": {{
-                        "promptName": "{self.prompt_name}",
-                        "contentName": "{self.system_content_name}",
+            system_content_start_payload = {
+                "event": {
+                    "contentStart": {
+                        "promptName": self.prompt_name,
+                        "contentName": self.system_content_name,
                         "type": "TEXT",
-                        "interactive": true,
+                        "interactive": True,
                         "role": "SYSTEM",
-                        "textInputConfiguration": {{
+                        "textInputConfiguration": {
                             "mediaType": "text/plain"
-                        }}
-                    }}
-                }}
-            }}
-            '''
-            await self._send_event(system_content_start)
+                        }
+                    }
+                }
+            }
+            await self._send_event(json.dumps(system_content_start_payload))
             
             # Step 4: Send system content text -            
             system_instructions = self._instructions or "You are a helpful voice assistant. Keep your responses short and conversational."
-            text_input = f'''
-            {{
-                "event": {{
-                    "textInput": {{
-                        "promptName": "{self.prompt_name}",
-                        "contentName": "{self.system_content_name}",
-                        "content": "{system_instructions}"
-                    }}
-                }}
-            }}
-            '''
-            await self._send_event(text_input)
+            text_input_payload = {
+                "event": {
+                    "textInput": {
+                        "promptName": self.prompt_name,
+                        "contentName": self.system_content_name,
+                        "content": system_instructions
+                    }
+                }
+            }
+            await self._send_event(json.dumps(text_input_payload))
             
             # Step 5: End system content -            
-            content_end = f'''
-            {{
-                "event": {{
-                    "contentEnd": {{
-                        "promptName": "{self.prompt_name}",
-                        "contentName": "{self.system_content_name}"
-                    }}
-                }}
-            }}
-            '''
-            await self._send_event(content_end)         
+            content_end_payload = {
+                "event": {
+                    "contentEnd": {
+                        "promptName": self.prompt_name,
+                        "contentName": self.system_content_name
+                    }
+                }
+            }
+            await self._send_event(json.dumps(content_end_payload))         
 
             # Start response processing task
             self.response_task = asyncio.create_task(self._process_responses())
@@ -309,8 +258,6 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             
         except Exception as e:
             print(f"Error sending event: {e}")
-            import traceback
-            traceback.print_exc()
 
     async def _start_audio_input(self):
         """Start audio input stream"""
@@ -318,28 +265,26 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             return
         
         # Create fresh audio content start event
-        audio_content_start = f"""
-        {{
-            "event": {{
-                "contentStart": {{
-                    "promptName": "{self.prompt_name}",
-                    "contentName": "{self.audio_content_name}",
+        audio_content_start_payload = {
+            "event": {
+                "contentStart": {
+                    "promptName": self.prompt_name,
+                    "contentName": self.audio_content_name,
                     "type": "AUDIO",
-                    "interactive": true,
+                    "interactive": True,
                     "role": "USER",
-                    "audioInputConfiguration": {{
+                    "audioInputConfiguration": {
                         "mediaType": "audio/lpcm",
-                        "sampleRateHertz": {NOVA_INPUT_SAMPLE_RATE},
+                        "sampleRateHertz": NOVA_INPUT_SAMPLE_RATE,
                         "sampleSizeBits": 16,
                         "channelCount": 1,
                         "audioType": "SPEECH",
                         "encoding": "base64"
-                    }}
-                }}
-            }}
-        }}
-        """
-        await self._send_event(audio_content_start)
+                    }
+                }
+            }
+        }
+        await self._send_event(json.dumps(audio_content_start_payload))
 
     async def handle_audio_input(self, audio_data: bytes) -> None:
         """Handle incoming 24kHz audio from VideoSDK"""
@@ -347,9 +292,6 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             return
             
         try:
-            import librosa
-            import numpy as np
-            
             # Get audio array from bytes
             audio_array = np.frombuffer(audio_data, dtype=np.int16)
             
@@ -367,25 +309,21 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             encoded_audio = base64.b64encode(resampled_bytes).decode('utf-8')
             
             # Format exactly as in the     
-            audio_event = f'''
-            {{
-                "event": {{
-                    "audioInput": {{
-                        "promptName": "{self.prompt_name}",
-                        "contentName": "{self.audio_content_name}",
-                        "content": "{encoded_audio}"
-                    }}
-                }}
-            }}
-            '''
+            audio_event_payload = {
+                "event": {
+                    "audioInput": {
+                        "promptName": self.prompt_name,
+                        "contentName": self.audio_content_name,
+                        "content": encoded_audio
+                    }
+                }
+            }
             
             # Send using the raw event
-            await self._send_event(audio_event)
+            await self._send_event(json.dumps(audio_event_payload))
 
         except Exception as e:
             print(f"Resampling error: {e}")
-            import traceback
-            traceback.print_exc()
 
     async def _process_responses(self):
         """Process responses from the bidirectional stream"""
@@ -406,31 +344,20 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                 
                                 if 'completionStart' in json_data['event']:
                                     completion_start = json_data['event']['completionStart']
-                                    print(f"Nova completionStart: {json.dumps(completion_start, indent=2)}")
-                                    # Potentially store session_id, completion_id if needed elsewhere
                                 
                                 # Handle content start - similar to     
                                 elif 'contentStart' in json_data['event']:
                                     content_start = json_data['event']['contentStart']
-                                    self.role = content_start.get('role', self.role)
  
                                     # Check for speculative content like in     
                                     if 'additionalModelFields' in content_start:
                                         try:
                                             additional_fields = json.loads(content_start['additionalModelFields'])
-                                            # print(f"Additional model fields: {json.dumps(additional_fields, indent=2)}")
-                                            if additional_fields.get('generationStage') == 'SPECULATIVE':
-                                                # print("Speculative content detected")
-                                                self.display_assistant_text = True
-                                            else:
-                                                self.display_assistant_text = False
                                         except (json.JSONDecodeError, KeyError) as e:
                                             print(f"Error parsing additionalModelFields: {e}")
-                                
-                                # # Handle text output -  
                                 elif 'textOutput' in json_data['event']:
-                                    pass 
-                                
+                                    pass
+
                                 elif 'audioOutput' in json_data['event']:                                    
                                     # Extract audio content -  
                                     audio_output = json_data['event']['audioOutput']
@@ -439,7 +366,6 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                     
                                     audio_content = audio_output['content']
                                     if not audio_content:
-                                        print("Empty audio content received")
                                         continue
                                     
                                     try:
@@ -452,24 +378,17 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
 
                                     except Exception as e:
                                         print(f"AUDIO PROCESSING ERROR: {e}")
-                                        import traceback
-                                        traceback.print_exc()
                                 
-                                elif 'contentEnd' in json_data['event']: # This is for output contentEnd events
-                                    content_end_output = json_data['event']['contentEnd']
-                                    # print(f"Nova output contentEnd: {json.dumps(content_end_output, indent=2)}")
-                                    # You might want to check content_end_output['type'] and content_end_output['stopReason']
+                                elif 'contentEnd' in json_data['event']: 
+                                    pass
 
                                 elif 'toolUse' in json_data['event']:
                                      tool_use = json_data['event']['toolUse']
-                                     print(f"Nova toolUse: {json.dumps(tool_use, indent=2)}")
-                                     # Handle tool use if tools are configured and used
                                      asyncio.create_task(self._execute_tool_and_send_result(tool_use))
 
                                 elif 'completionEnd' in json_data['event']:
                                      completion_end = json_data['event']['completionEnd']
                                      print(f"Nova completionEnd: {json.dumps(completion_end, indent=2)}")
-                                     # This signifies the end of the model's response for the current prompt turn
 
                                 # Handle other event types
                                 else:
@@ -483,15 +402,11 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                         
                 except Exception as e:
                     print(f"Error processing response: {e}")
-                    import traceback
-                    traceback.print_exc()
                     if not self.is_active or self._closing:
                         break
                         
         except Exception as e:
             print(f"Unexpected error in response processing: {e}")
-            import traceback
-            traceback.print_exc()
 
     async def send_message(self, message: str) -> None:
         """Send a text message to the model"""
@@ -499,64 +414,51 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             return
             
         try:
-            # Create a unique content name for this text message
             text_content_name = f"text_{str(uuid.uuid4())}"
             
             # Step 1: Start text content 
-            text_content_start = f'''
-            {{
-                "event": {{
-                    "contentStart": {{
-                        "promptName": "{self.prompt_name}",
-                        "contentName": "{text_content_name}",
+            text_content_start_payload = {
+                "event": {
+                    "contentStart": {
+                        "promptName": self.prompt_name,
+                        "contentName": text_content_name,
                         "type": "TEXT",
-                        "interactive": true,
+                        "interactive": True,
                         "role": "USER",
-                        "textInputConfiguration": {{
+                        "textInputConfiguration": {
                             "mediaType": "text/plain"
-                        }}
-                    }}
-                }}
-            }}
-            '''
-            print("Sending content start event...")
-            await self._send_event(text_content_start)
+                        }
+                    }
+                }
+            }
+            await self._send_event(json.dumps(text_content_start_payload))
             
             # Step 2: Send text input
-            text_input = f'''
-            {{
-                "event": {{
-                    "textInput": {{
-                        "promptName": "{self.prompt_name}",
-                        "contentName": "{text_content_name}",
-                        "content": "{message}"
-                    }}
-                }}
-            }}
-            '''
-            print("Sending text input event...")
-            await self._send_event(text_input)
+            text_input_payload = {
+                "event": {
+                    "textInput": {
+                        "promptName": self.prompt_name,
+                        "contentName": text_content_name,
+                        "content": message
+                    }
+                }
+            }
+            await self._send_event(json.dumps(text_input_payload))
             
             # Step 3: End text content
-            content_end = f'''
-            {{
-                "event": {{
-                    "contentEnd": {{
-                        "promptName": "{self.prompt_name}",
-                        "contentName": "{text_content_name}"
-                    }}
-                }}
-            }}
-            '''
-            print("Sending content end event...")
-            await self._send_event(content_end)
+            content_end_payload = {
+                "event": {
+                    "contentEnd": {
+                        "promptName": self.prompt_name,
+                        "contentName": text_content_name
+                    }
+                }
+            }
+            await self._send_event(json.dumps(content_end_payload))
             
-            print(f"Message sequence completed for: {message[:50]}{'...' if len(message) > 50 else ''}")
             
         except Exception as e:
             print(f"Error sending message: {e}")
-            import traceback
-            traceback.print_exc()
 
     async def emit(self, event_type: NovaSonicEventTypes, data: Dict[str, Any]) -> None:
         """Emit an event to subscribers"""
@@ -588,11 +490,15 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             self.audio_track.interrupt()
         
         # End the current audio content stream
-        content_end = self.CONTENT_END_EVENT % (
-            self.prompt_name,
-            self.audio_content_name
-        )
-        await self._send_event(content_end)
+        content_end_payload = {
+            "event": {
+                "contentEnd": {
+                    "promptName": self.prompt_name,
+                    "contentName": self.audio_content_name
+                }
+            }
+        }
+        await self._send_event(json.dumps(content_end_payload))
         print(f"Sent contentEnd for {self.audio_content_name}")
 
         # Generate new content name for fresh audio session
@@ -604,29 +510,39 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
         if not self.is_active:
             return
             
-        print("Starting Nova Sonic cleanup...")
         try:
             # End audio content
-            content_end = self.CONTENT_END_EVENT % (
-                self.prompt_name,
-                self.audio_content_name
-            )
-            await self._send_event(content_end)
-            print("Sent audio content end event")
+            audio_content_end_payload = {
+                "event": {
+                    "contentEnd": {
+                        "promptName": self.prompt_name,
+                        "contentName": self.audio_content_name
+                    }
+                }
+            }
+            await self._send_event(json.dumps(audio_content_end_payload))
             
             # End prompt
-            prompt_end = self.PROMPT_END_EVENT % (self.prompt_name)
-            await self._send_event(prompt_end)
-            print("Sent prompt end event")
+            prompt_end_payload = {
+                "event": {
+                    "promptEnd": {
+                        "promptName": self.prompt_name
+                    }
+                }
+            }
+            await self._send_event(json.dumps(prompt_end_payload))
             
             # End session
-            await self._send_event(self.SESSION_END_EVENT)
-            print("Sent session end event")
+            session_end_payload = {
+                "event": {
+                    "sessionEnd": {}
+                }
+            }
+            await self._send_event(json.dumps(session_end_payload))
             
             # Close the stream
             if self.stream and hasattr(self.stream, 'input_stream'):
                 await self.stream.input_stream.close()
-                print("Closed Nova Sonic stream")
         except Exception as e:
             print(f"Error during cleanup: {e}")
         finally:
@@ -662,7 +578,6 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                     print(f"Error cleaning up audio track: {e}")
             self.audio_track = None
         
-        print("Nova Sonic resources cleaned up")
 
     def _handle_instructions_updated(self, data: Dict[str, Any]) -> None:
         """Handle instructions updated event"""
@@ -703,10 +618,8 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             return
 
         try:
-            print(f"Executing tool: {tool_name} with args: {tool_input_args}")
             result = await target_tool(**tool_input_args)
             result_content_str = json.dumps(result)
-            print(f"Tool {tool_name} execution successful. Result: {result_content_str}")
 
             # Send the result back to Nova Sonic
             tool_content_name = f"tool_result_{str(uuid.uuid4())}"
@@ -745,14 +658,15 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             await self._send_event(json.dumps(tool_result_event_dict))
             
             # 3. Send contentEnd for tool result
-            tool_content_end = self.CONTENT_END_EVENT % (
-                self.prompt_name,
-                tool_content_name
-            )
-            await self._send_event(tool_content_end)
-            print(f"Sent tool result events for {tool_name} (toolUseId: {tool_use_id})")
+            tool_content_end_payload = {
+                "event": {
+                    "contentEnd": {
+                        "promptName": self.prompt_name,
+                        "contentName": tool_content_name
+                    }
+                }
+            }
+            await self._send_event(json.dumps(tool_content_end_payload))
 
         except Exception as e:
             print(f"Error executing tool {tool_name} or sending result: {e}")
-            import traceback
-            traceback.print_exc()
