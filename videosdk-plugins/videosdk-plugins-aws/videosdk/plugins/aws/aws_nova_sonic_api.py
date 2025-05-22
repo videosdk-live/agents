@@ -25,6 +25,7 @@ from aws_sdk_bedrock_runtime.config import (
 from smithy_aws_core.credentials_resolvers.environment import EnvironmentCredentialsResolver
 
 from videosdk.agents import RealtimeBaseModel
+from videosdk.agents.utils import build_nova_sonic_schema, get_tool_info, is_function_tool, FunctionTool
 
 # Audio configuration
 INPUT_SAMPLE_RATE = 24000  
@@ -115,6 +116,7 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
         self._closing = False
         self._instructions = "You are a helpful assistant. The user and you will engage in a spoken dialog exchanging the transcripts of a natural real-time conversation. Keep your responses short, generally two or three sentences for chatty scenarios."
         self._tools = []
+        self.tools_formatted = [] 
         self.loop = asyncio.get_event_loop()
         self.audio_track = None
         
@@ -131,6 +133,10 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
         
         # Initialize Bedrock client
         self._initialize_bedrock_client()
+
+        # Listen for agent events
+        self.on("instructions_updated", self._handle_instructions_updated)
+        self.on("tools_updated", self._handle_tools_updated)
 
     def _initialize_bedrock_client(self):
         """Initialize the Bedrock client with aws_sdk_bedrock_runtime."""
@@ -182,45 +188,52 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             self.is_active = True
             
             # Step 1: Send session start event -            
-            session_start = '''
-            {
-              "event": {
-                "sessionStart": {
-                  "inferenceConfiguration": {
-                    "maxTokens": 1024,
-                    "topP": 0.9,
-                    "temperature": 0.7
-                  }
-                }
-              }
-            }
-            '''
-            await self._send_event(session_start)
-            print("Session started")
-            
-            # Step 2: Send prompt start event -            
-            prompt_start = f'''
+            session_start = f'''
             {{
               "event": {{
-                "promptStart": {{
-                  "promptName": "{self.prompt_name}",
-                  "textOutputConfiguration": {{
-                    "mediaType": "text/plain"
-                  }},
-                  "audioOutputConfiguration": {{
-                    "mediaType": "audio/lpcm",
-                    "sampleRateHertz": {NOVA_OUTPUT_SAMPLE_RATE},
-                    "sampleSizeBits": 16,
-                    "channelCount": 1,
-                    "voiceId": "{self.config.voice}",
-                    "encoding": "base64",
-                    "audioType": "SPEECH"
+                "sessionStart": {{
+                  "inferenceConfiguration": {{
+                    "maxTokens": {self.config.max_tokens},
+                    "topP": {self.config.top_p},
+                    "temperature": {self.config.temperature}
                   }}
                 }}
               }}
             }}
             '''
-            await self._send_event(prompt_start)
+            await self._send_event(session_start)
+            print("Session started")
+            
+            # Step 2: Send prompt start event -            
+            prompt_start_event_dict = {
+              "event": {
+                "promptStart": {
+                  "promptName": self.prompt_name,
+                  "textOutputConfiguration": {
+                    "mediaType": "text/plain"
+                  },
+                  "audioOutputConfiguration": {
+                    "mediaType": "audio/lpcm",
+                    "sampleRateHertz": NOVA_OUTPUT_SAMPLE_RATE,
+                    "sampleSizeBits": 16,
+                    "channelCount": 1,
+                    "voiceId": self.config.voice,
+                    "encoding": "base64",
+                    "audioType": "SPEECH"
+                  }
+                }
+              }
+            }
+
+            if self.tools_formatted:
+                prompt_start_event_dict["event"]["promptStart"]["toolUseOutputConfiguration"] = {
+                    "mediaType": "application/json"
+                }
+                prompt_start_event_dict["event"]["promptStart"]["toolConfiguration"] = {
+                    "tools": self.tools_formatted
+                }
+            
+            await self._send_event(json.dumps(prompt_start_event_dict))
             print("Prompt started")
             
             # Step 3: Send system content start -            
@@ -417,19 +430,6 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                 # # Handle text output -  
                                 elif 'textOutput' in json_data['event']:
                                     pass 
-                                    # text = json_data['event']['textOutput']['content']
-                                    
-                                    # if self.role == "ASSISTANT" and self.display_assistant_text:
-                                    #     print(f"Assistant: {text}")
-                                    # elif self.role == "USER":
-                                    #     print(f"User: {text}")
-                                    
-                                    # Emit for agent system
-                                    # self._safe_emit("transcription", {"text": text})
-                                
-                                # Handle debugging events
-                                elif 'message' in json_data['event']: # This is likely a Bedrock informational message
-                                    print(f"MESSAGE FROM NOVA SERVICE: {json_data['event']['message']}")
                                 
                                 elif 'audioOutput' in json_data['event']:                                    
                                     # Extract audio content -  
@@ -464,6 +464,7 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                      tool_use = json_data['event']['toolUse']
                                      print(f"Nova toolUse: {json.dumps(tool_use, indent=2)}")
                                      # Handle tool use if tools are configured and used
+                                     asyncio.create_task(self._execute_tool_and_send_result(tool_use))
 
                                 elif 'completionEnd' in json_data['event']:
                                      completion_end = json_data['event']['completionEnd']
@@ -669,4 +670,89 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
 
     def _handle_tools_updated(self, data: Dict[str, Any]) -> None:
         """Handle tools updated event"""
-        self._tools = data.get("tools", [])
+        tools = data.get("tools", [])
+        self._tools = tools 
+        self.tools_formatted = [build_nova_sonic_schema(tool) for tool in tools if is_function_tool(tool)]
+        
+    async def _execute_tool_and_send_result(self, tool_use_event: Dict[str, Any]) -> None:
+        """Executes a tool and sends the result back to Nova Sonic."""
+        tool_name = tool_use_event.get("toolName")
+        tool_use_id = tool_use_event.get("toolUseId")
+        tool_input_str = tool_use_event.get("content", "{}")
+
+        if not tool_name or not tool_use_id:
+            print(f"Error: Missing toolName or toolUseId in toolUse event: {tool_use_event}")
+            return
+
+        try:
+            tool_input_args = json.loads(tool_input_str)
+        except json.JSONDecodeError as e:
+            print(f"Error decoding tool input JSON: {e}. Input string: {tool_input_str}")
+            return
+
+        target_tool: Optional[FunctionTool] = None
+        for tool in self._tools:
+            if is_function_tool(tool):
+                tool_info = get_tool_info(tool)
+                if tool_info.name == tool_name:
+                    target_tool = tool
+                    break
+        
+        if not target_tool:
+            print(f"Error: Tool '{tool_name}' not found in registered tools.")
+            return
+
+        try:
+            print(f"Executing tool: {tool_name} with args: {tool_input_args}")
+            result = await target_tool(**tool_input_args)
+            result_content_str = json.dumps(result)
+            print(f"Tool {tool_name} execution successful. Result: {result_content_str}")
+
+            # Send the result back to Nova Sonic
+            tool_content_name = f"tool_result_{str(uuid.uuid4())}"
+
+            # 1. Send contentStart for tool result
+            tool_content_start_dict = {
+                "event": {
+                    "contentStart": {
+                        "promptName": self.prompt_name,
+                        "contentName": tool_content_name,
+                        "interactive": False,
+                        "type": "TOOL",
+                        "role": "TOOL",
+                        "toolResultInputConfiguration": {
+                            "toolUseId": tool_use_id,
+                            "type": "TEXT", 
+                            "textInputConfiguration": {
+                                "mediaType": "text/plain"
+                            }
+                        }
+                    }
+                }
+            }
+            await self._send_event(json.dumps(tool_content_start_dict))
+
+            # 2. Send toolResult
+            tool_result_event_dict = {
+                "event": {
+                    "toolResult": {
+                        "promptName": self.prompt_name,
+                        "contentName": tool_content_name,
+                        "content": result_content_str
+                    }
+                }
+            }
+            await self._send_event(json.dumps(tool_result_event_dict))
+            
+            # 3. Send contentEnd for tool result
+            tool_content_end = self.CONTENT_END_EVENT % (
+                self.prompt_name,
+                tool_content_name
+            )
+            await self._send_event(tool_content_end)
+            print(f"Sent tool result events for {tool_name} (toolUseId: {tool_use_id})")
+
+        except Exception as e:
+            print(f"Error executing tool {tool_name} or sending result: {e}")
+            import traceback
+            traceback.print_exc()
