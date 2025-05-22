@@ -45,14 +45,12 @@ class NovaSonicConfig:
     
     Args:
         model_id: The Nova Sonic model ID to use. Default is 'amazon.nova-sonic-v1:0'
-        region: AWS region for Bedrock. Default is 'us-east-1'
         voice: Voice ID for audio output. Default is 'matthew'
         temperature: Controls randomness in responses. Default is 0.7
         top_p: Nucleus sampling parameter. Default is 0.9
         max_tokens: Maximum tokens in response. Default is 1024
     """
     model_id: str = "amazon.nova-sonic-v1:0"
-    region: str = "us-east-1"
     voice: str = "tiffany"
     temperature: float = 0.7
     top_p: float = 0.9
@@ -66,6 +64,9 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
         *,
         model: str,
         config: NovaSonicConfig | None = None,
+        region: str | None = None,
+        aws_access_key_id: str | None = None,
+        aws_secret_access_key: str | None = None,
     ) -> None:
         """
         Initialize Nova Sonic realtime model.
@@ -73,10 +74,22 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
         Args:
             model: The Nova Sonic model identifier
             config: Optional configuration object for customizing model behavior
+            region: AWS region for Bedrock
+            aws_access_key_id: AWS access key ID
+            aws_secret_access_key: AWS secret access key
         """
         super().__init__()
         self.model = model
         self.config = config or NovaSonicConfig()
+        self.region = region or os.getenv("AWS_DEFAULT_REGION")
+        self.aws_access_key_id = aws_access_key_id or os.getenv("AWS_ACCESS_KEY_ID")
+        self.aws_secret_access_key = aws_secret_access_key or os.getenv("AWS_SECRET_ACCESS_KEY")
+        
+        # Validate credentials
+        if not self.region:
+            raise ValueError("AWS region is required (pass as parameter or set AWS_DEFAULT_REGIONenvironment variable)")
+        if not self.aws_access_key_id or not self.aws_secret_access_key:
+            raise ValueError("AWS credentials required (pass as parameters or set AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY environment variables)")
         
         # Initialize state
         self.bedrock_client = None
@@ -105,25 +118,25 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
         self.on("tools_updated", self._handle_tools_updated)
 
     def _initialize_bedrock_client(self):
-        """Initialize the Bedrock client with aws_sdk_bedrock_runtime."""
+        """Initialize the Bedrock client with manual credential handling"""
         try:
+            # Only set env vars if credentials were passed explicitly
+            if self.region:
+                os.environ["AWS_REGION"] = self.region
+            if self.aws_access_key_id:
+                os.environ["AWS_ACCESS_KEY_ID"] = self.aws_access_key_id
+            if self.aws_secret_access_key:
+                os.environ["AWS_SECRET_ACCESS_KEY"] = self.aws_secret_access_key
+
             config = Config(
-                endpoint_uri=f"https://bedrock-runtime.{self.config.region}.amazonaws.com",
-                region=self.config.region,
+                endpoint_uri=f"https://bedrock-runtime.{self.region}.amazonaws.com",
+                region=self.region,
                 aws_credentials_identity_resolver=EnvironmentCredentialsResolver(),
                 http_auth_scheme_resolver=HTTPAuthSchemeResolver(),
                 http_auth_schemes={"aws.auth#sigv4": SigV4AuthScheme()}
             )
             self.bedrock_client = BedrockRuntimeClient(config=config)
             
-            # Check for AWS credentials
-            aws_vars = [k for k in os.environ.keys() if k.startswith('AWS_')]
-            if not aws_vars:
-                print("WARNING: No AWS environment variables found. Authentication may fail.")
-            else:
-                found_keys = ["AWS_ACCESS_KEY_ID" in os.environ, "AWS_SECRET_ACCESS_KEY" in os.environ]
-                print(f"AWS credential presence check: {', '.join([f'{k}: {v}' for k, v in zip(['ACCESS_KEY', 'SECRET_KEY'], found_keys)])}")
-                
         except Exception as e:
             print(f"Error initializing Bedrock client: {e}")
             raise
