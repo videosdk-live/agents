@@ -12,7 +12,6 @@ from .chat_context import ChatContext, ChatRole
 from ..utils import FunctionTool
 
 
-@dataclass
 class LLMResponse(BaseModel):
     """Dataclass to hold LLM response data"""
     content: str
