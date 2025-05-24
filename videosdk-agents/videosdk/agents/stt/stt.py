@@ -49,7 +49,7 @@ class STT(EventEmitter[Literal["error"]]):
     @abstractmethod
     async def process_audio(
         self,
-        audio_frames: AsyncIterator[bytes],
+        audio_frames: bytes,
         language: Optional[str] = None,
         **kwargs: Any
     ) -> AsyncIterator[STTResponse]:
