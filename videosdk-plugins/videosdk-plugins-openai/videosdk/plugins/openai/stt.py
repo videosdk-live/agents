@@ -17,6 +17,7 @@ from videosdk.agents.stt.stt import STT as BaseSTT, STTResponse, SpeechEventType
 class OpenAISTT(BaseSTT):
     def __init__(
         self,
+        *,
         api_key: str,
         model: str = "whisper-1",
         base_url: str | None = None,
