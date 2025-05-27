@@ -46,9 +46,10 @@ class AgentSession:
         if "meetingId" not in self.context:
             raise ValueError("meetingId must be provided in the context")
         meeting_id = self.context.get("meetingId")
+        videosdk_auth = self.context.get("videosdk_auth",None) 
         name = self.context.get("name", "Agent")
         
-        await self.pipeline.start(meeting_id=meeting_id, name=name)
+        await self.pipeline.start(meeting_id=meeting_id, name=name, videosdk_auth=videosdk_auth)
         await self.agent.on_enter()
         
     async def say(self, message: str) -> None:
