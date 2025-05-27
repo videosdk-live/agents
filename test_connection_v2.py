@@ -2,6 +2,14 @@ import asyncio
 import os
 import pathlib
 import sys
+import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
 from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig
 from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig
 from videosdk.agents import Agent, AgentSession, ConversationFlow, RealTimePipeline, function_tool
@@ -169,23 +177,23 @@ async def test_connection(jobctx):
     #         tool_choice="auto"
     #     )
     # )
-    # model = GeminiRealtime(
-    #     model="gemini-2.0-flash-live-001",
-    #     voice="Leda", # Puck, Charon, Kore, Fenrir, Aoede, Leda, Orus, and Zephyr.
-    #     config=GeminiLiveConfig(
-    #         response_modalities=["AUDIO"]
-    #     )
-    # )
-
-    model = NovaSonicRealtime(
-            model="amazon.nova-sonic-v1:0",
-            config=NovaSonicConfig(
-                voice="tiffany", #  "tiffany","matthew", "amy"   
-                temperature=0.7,      
-                top_p=0.9,            
-                max_tokens=1024       
-            )
+    model = GeminiRealtime(
+        model="gemini-2.0-flash-live-001",
+        config=GeminiLiveConfig(
+            voice="Leda", # Puck, Charon, Kore, Fenrir, Aoede, Leda, Orus, and Zephyr.
+            response_modalities=["AUDIO"]
+        )
     )
+
+    # model = NovaSonicRealtime(
+    #         model="amazon.nova-sonic-v1:0",
+    #         config=NovaSonicConfig(
+    #             voice="tiffany", #  "tiffany","matthew", "amy"   
+    #             temperature=0.7,      
+    #             top_p=0.9,            
+    #             max_tokens=1024       
+    #         )
+    # )
 
     pipeline = RealTimePipeline(model=model)
     

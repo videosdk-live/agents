@@ -176,28 +176,33 @@ class _GeminiJsonSchema:
 def build_gemini_schema(function_tool: FunctionTool) -> types.FunctionDeclaration:
     """Build Gemini-compatible schema from a function tool"""
     tool_info = get_tool_info(function_tool)
+    logger.info(f"Building Gemini schema for tool: {tool_info.name}")
     
     parameter_json_schema_for_gemini: Optional[dict[str, Any]] = None
 
     if tool_info.parameters_schema is not None:
-         if tool_info.parameters_schema and tool_info.parameters_schema.get("properties", True) is not None : # handles {} or {"type": "object"}
+         if tool_info.parameters_schema and tool_info.parameters_schema.get("properties", True) is not None:
+            logger.info(f"Using provided parameters schema for {tool_info.name}: {tool_info.parameters_schema}")
             simplified_schema = _GeminiJsonSchema(tool_info.parameters_schema).simplify()
             parameter_json_schema_for_gemini = simplified_schema
-            
+            logger.info(f"Simplified schema for {tool_info.name}: {simplified_schema}")
     else:
-
         openai_schema = build_openai_schema(function_tool) 
+        logger.info(f"Generated OpenAI schema for {tool_info.name}: {openai_schema}")
 
         if openai_schema.get("parameters") and openai_schema["parameters"].get("properties", True) is not None:
              simplified_schema = _GeminiJsonSchema(openai_schema["parameters"]).simplify()
              parameter_json_schema_for_gemini = simplified_schema
+             logger.info(f"Simplified schema from OpenAI for {tool_info.name}: {simplified_schema}")
 
-
-    return types.FunctionDeclaration(
+    # Log the generated FunctionDeclaration
+    func_declaration = types.FunctionDeclaration(
         name=tool_info.name, 
         description=tool_info.description or "", 
         parameters=parameter_json_schema_for_gemini 
     )
+    logger.info(f"Generated Gemini FunctionDeclaration for '{tool_info.name}': {func_declaration}")
+    return func_declaration
     
 ToolChoice = Literal["auto", "required", "none"]
 

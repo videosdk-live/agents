@@ -8,17 +8,11 @@ from typing import Any, Dict, List, Optional, Callable
 
 import logging
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
+from mcp import ClientSession, stdio_client
+from mcp.client.sse import sse_client
+from mcp.client.stdio import StdioServerParameters
+from mcp.types import JSONRPCMessage
 
-try:
-    from mcp import ClientSession, stdio_client
-    from mcp.client.sse import sse_client
-    from mcp.client.stdio import StdioServerParameters
-    from mcp.types import JSONRPCMessage
-except ImportError as e:
-    raise ImportError(
-        "The 'mcp' package is required to run the MCP server integration but is not installed.\n"
-        "To fix this, install the optional dependency: pip install 'livekit-agents[mcp]'"
-    ) from e
 
 
 from .utils import RawFunctionTool, ToolError, create_generic_mcp_adapter, FunctionTool
@@ -114,19 +108,27 @@ class MCPServer(ABC):
             # Call the tool
             result = await self._client.call_tool(tool_name, arguments)
             
+            # Log the raw response
+            logger.info(f"Raw response from MCP tool '{tool_name}': {result}")
+            
             # Handle error response
             if result.isError:
                 error_str = "\n".join(str(part) for part in result.content)
+                logger.error(f"Error in MCP tool '{tool_name}': {error_str}")
                 raise ToolError(f"Error in MCP tool '{tool_name}': {error_str}")
                 
             # Process successful response
             if not result.content:
+                logger.info(f"Empty response from MCP tool '{tool_name}'")
                 return {"result": None}
                 
             if len(result.content) == 1:
                 content = result.content[0]
+                logger.info(f"Processing single content response from '{tool_name}': {content}")
+                
                 # Handle text content - wrap it in dictionary for API compatibility
                 if hasattr(content, 'type') and content.type == 'text' and hasattr(content, 'text'):
+                    logger.info(f"Text content from '{tool_name}': {content.text}")
                     return {"result": content.text}
                 
                 # Try to parse JSON if possible
@@ -134,8 +136,10 @@ class MCPServer(ABC):
                     if hasattr(content, 'model_dump_json'):
                         json_str = content.model_dump_json()
                         json_obj = json.loads(json_str)
+                        logger.info(f"JSON content from '{tool_name}': {json_obj}")
                         return json_obj if isinstance(json_obj, dict) else {"result": json_obj}
-                except:
+                except Exception as e:
+                    logger.warning(f"Failed to parse JSON from '{tool_name}': {e}")
                     # Fallback - return as string
                     return {"result": str(content)}
             else:
@@ -146,12 +150,15 @@ class MCPServer(ABC):
                          else item.model_dump()) 
                         for item in result.content
                     ]
+                    logger.info(f"Multiple content items from '{tool_name}': {items}")
                     return {"result": items}
-                except:
+                except Exception as e:
+                    logger.warning(f"Failed to process multiple content items from '{tool_name}': {e}")
                     # Fallback if model_dump fails
                     return {"result": [str(item) for item in result.content]}
                 
         except Exception as e:
+            logger.error(f"Error in MCP tool '{tool_name}': {str(e)}")
             if not isinstance(e, ToolError):
                 raise ToolError(f"Error calling MCP tool '{tool_name}': {str(e)}")
             raise
