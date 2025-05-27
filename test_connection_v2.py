@@ -1,4 +1,3 @@
-
 import asyncio
 import os
 import pathlib
@@ -156,6 +155,7 @@ async def test_connection(jobctx):
     # model = OpenAIRealtime(
     #     model="gpt-4o-realtime-preview",
     #     config=OpenAIRealtimeConfig(
+    #         voice="alloy", # alloy, ash, ballad, coral, echo, fable, onyx, nova, sage, shimmer, and verse
     #         modalities=["text", "audio"],
     #         input_audio_transcription=InputAudioTranscription(
     #             model="whisper-1"
@@ -171,22 +171,22 @@ async def test_connection(jobctx):
     # )
     # model = GeminiRealtime(
     #     model="gemini-2.0-flash-live-001",
+    #     voice="Leda", # Puck, Charon, Kore, Fenrir, Aoede, Leda, Orus, and Zephyr.
     #     config=GeminiLiveConfig(
-    #         response_modalities=["AUDIO"],
-    #         output_audio_transcription=AudioTranscriptionConfig(
-    #         )
+    #         response_modalities=["AUDIO"]
     #     )
     # )
 
     model = NovaSonicRealtime(
             model="amazon.nova-sonic-v1:0",
             config=NovaSonicConfig(
-                voice="tiffany",      
+                voice="tiffany", #  "tiffany","matthew", "amy"   
                 temperature=0.7,      
                 top_p=0.9,            
                 max_tokens=1024       
             )
     )
+
     pipeline = RealTimePipeline(model=model)
     
     # Create agent and initialize MCP
@@ -224,7 +224,7 @@ def entryPoint(jobctx):
 if __name__ == "__main__":
 
     def make_context():
-        return {"pid": os.getpid(), "meetingId": "obsk-dfh0-qmyb", "name": "Agent"}
+        return {"pid": os.getpid(), "meetingId": "obsk-dfh0-qmyb", "name": "VideoSDK's Agent"}
 
     job = WorkerJob(job_func=entryPoint, jobctx=make_context())
     job.start()
