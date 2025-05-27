@@ -299,10 +299,13 @@ def build_nova_sonic_schema(function_tool: FunctionTool) -> dict[str, Any]:
     # Nova Sonic expects the inputSchema.json to be a string containing the JSON schema
     input_schema_json_string = json.dumps(parameters_schema)
 
+    # Ensure description is not empty
+    description = tool_info.description or tool_info.name
+
     return {
         "toolSpec": {
             "name": tool_info.name,
-            "description": tool_info.description or "",
+            "description": description,
             "inputSchema": {
                 "json": input_schema_json_string
             }
