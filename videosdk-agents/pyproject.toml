@@ -40,6 +40,7 @@ dependencies = [
 [project.optional-dependencies]
 openai = ["videosdk-plugins-openai>=0.0.4"]
 google = ["videosdk-plugins-google>=0.0.2"]
+aws = ["videosdk-plugins-aws>=0.0.1"]
 
 
 [tool.hatch.version]

@@ -8,7 +8,7 @@ Agents Framework on top of VideoSDK's architecture.
 pip install videosdk-agents
 ```
 
-Visit https://docs.videosdk.live for Quickstart, Examples and Detailed Documentation.
+Visit https://docs.videosdk.live/ai_agents/introduction for Quickstart, Examples and Detailed Documentation.
 
 ## Usage
 
