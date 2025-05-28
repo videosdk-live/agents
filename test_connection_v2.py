@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 @function_tool
 async def get_weather(latitude: str, longitude: str):
     """Called when the user asks about the weather.
+    do not ask user for latitude and longitude, estimate it.
 
     Args:
         latitude: The latitude of the location
@@ -44,15 +45,6 @@ async def get_weather(latitude: str, longitude: str):
 
 class MyVoiceAgent(Agent):
     def __init__(self):
-        super().__init__(
-            instructions="""
-            You are a helpful voice assistant that can answer questions and help with tasks.
-            """,
-            tools=[get_weather]
-        )
-        self.mcp_manager = MCPToolManager()
-
-    async def initialize_mcp(self):
         current_dir = pathlib.Path(__file__).parent
         possible_paths = [
             current_dir / "examples" / "mcp_server_example.py",
@@ -60,27 +52,45 @@ class MyVoiceAgent(Agent):
             current_dir / "mcp_server_example.py"
         ]
 
+        spath = [
+            current_dir / "examples" / "mcp_current_time_example.py",
+            current_dir.parent / "examples" / "mcp_current_time_example.py",
+            current_dir / "mcp_current_time_example.py"
+        ]
+
+
         mcp_server_path = next((p for p in possible_paths if p.exists()), None)
+        mcp_current_time_path = next((p for p in spath if p.exists()), None)
 
         if not mcp_server_path:
             logger.error("MCP server example not found. Checked paths:")
             for path in possible_paths:
                 logger.error(f" - {path}")
-            return
+            raise Exception("MCP server example not found")
+        
+        if not mcp_current_time_path:
+            logger.error("MCP current time example not found. Checked paths:")
+            for path in spath:
+                logger.error(f" - {path}")
+            raise Exception("MCP current time example not found")
 
         logger.info(f"Connecting to MCP server at {mcp_server_path}")
-        stdio_server = MCPServerStdio(
-            command=sys.executable,
-            args=[str(mcp_server_path)],
-            client_session_timeout_seconds=30
+        super().__init__(
+            instructions=""" You are a helpful voice assistant that can answer questions and help with tasks. """,
+            tools=[get_weather],
+            mcp_servers=[
+                MCPServerStdio(
+                    command=sys.executable,
+                    args=[str(mcp_server_path)],
+                    client_session_timeout_seconds=30
+                ),
+                MCPServerStdio(
+                    command=sys.executable,
+                    args=[str(mcp_current_time_path)],
+                    client_session_timeout_seconds=30
+                )
+            ]
         )
-
-        try:
-            await self.mcp_manager.add_mcp_server(stdio_server)
-            await self.mcp_manager.register_mcp_tools(self)
-            logger.info("MCP tools initialized and registered")
-        except Exception as e:
-            logger.error(f"Error initializing MCP tools: {e}")
 
     async def on_enter(self) -> None:
         await self.session.say("Hello, how can I help you today?")
@@ -146,7 +156,6 @@ async def main(context: dict):
 
     pipeline = RealTimePipeline(model=model)
     agent = MyVoiceAgent()
-    await agent.initialize_mcp()
 
     session = AgentSession(
         agent=agent,
