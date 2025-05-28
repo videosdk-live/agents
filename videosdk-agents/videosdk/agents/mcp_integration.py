@@ -74,8 +74,9 @@ class MCPToolManager:
             raise ValueError("Agent does not have a register_tools method")
 
         # Register all tools with the agent
-        agent.register_tools(self.tools)
-        logger.info(f"Registered {len(self.tools)} MCP tools with agent")
+        agent._tools.extend(self.tools)
+        agent.register_tools()
+        logger.info(f"Registered {len(self.tools)} MCP tools with agent by extending agent._tools and calling agent.register_tools()")
 
     async def cleanup(self) -> None:
         """Close all MCP servers and clear the tools list."""
