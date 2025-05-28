@@ -6,7 +6,6 @@ from functools import partial
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Callable
 
-import logging
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from mcp import ClientSession, stdio_client
 from mcp.client.sse import sse_client
@@ -17,9 +16,7 @@ from mcp.types import JSONRPCMessage
 
 from .utils import RawFunctionTool, ToolError, create_generic_mcp_adapter, FunctionTool
 
-logger = logging.getLogger(__name__)
-
-# Type alias for MCP tools 
+# MCPTool alias remains, as it's a type hint
 MCPTool = RawFunctionTool
 
 
@@ -38,11 +35,6 @@ class MCPServer(ABC):
     def initialized(self) -> bool:
         """Check if the server is initialized"""
         return self._client is not None
-
-    def invalidate_cache(self) -> None:
-        """Invalidate the tools cache"""
-        self._cache_dirty = True
-        self._tools_cache = None
 
     async def initialize(self) -> None:
         """Initialize the MCP server connection"""
@@ -72,16 +64,12 @@ class MCPServer(ABC):
         if not self._cache_dirty and self._tools_cache is not None:
             return self._tools_cache
 
-        # Get tools from MCP server
         mcp_tools_response = await self._client.list_tools()
         
-        # Convert MCP tools to framework tools
         framework_tools = []
         for tool in mcp_tools_response.tools:
-            # Create a closure for calling this specific tool
             tool_caller = partial(self._call_mcp_tool, tool.name)
             
-            # Create a framework tool adapter
             adapter = create_generic_mcp_adapter(
                 tool_name=tool.name,
                 tool_description=tool.description,
@@ -91,7 +79,6 @@ class MCPServer(ABC):
             
             framework_tools.append(adapter)
 
-        # Cache the tools
         self._tools_cache = framework_tools
         self._cache_dirty = False
         return framework_tools
@@ -102,63 +89,40 @@ class MCPServer(ABC):
             raise ToolError("MCP server not initialized")
             
         try:
-            # Log the call for debugging
-            logger.info(f"Calling MCP tool '{tool_name}' with arguments: {arguments}")
-            
-            # Call the tool
             result = await self._client.call_tool(tool_name, arguments)
             
-            # Log the raw response
-            logger.info(f"Raw response from MCP tool '{tool_name}': {result}")
-            
-            # Handle error response
             if result.isError:
                 error_str = "\n".join(str(part) for part in result.content)
-                logger.error(f"Error in MCP tool '{tool_name}': {error_str}")
                 raise ToolError(f"Error in MCP tool '{tool_name}': {error_str}")
                 
-            # Process successful response
             if not result.content:
-                logger.info(f"Empty response from MCP tool '{tool_name}'")
                 return {"result": None}
                 
             if len(result.content) == 1:
                 content = result.content[0]
-                logger.info(f"Processing single content response from '{tool_name}': {content}")
                 
-                # Handle text content - wrap it in dictionary for API compatibility
                 if hasattr(content, 'type') and content.type == 'text' and hasattr(content, 'text'):
-                    logger.info(f"Text content from '{tool_name}': {content.text}")
                     return {"result": content.text}
                 
-                # Try to parse JSON if possible
                 try:
                     if hasattr(content, 'model_dump_json'):
                         json_str = content.model_dump_json()
                         json_obj = json.loads(json_str)
-                        logger.info(f"JSON content from '{tool_name}': {json_obj}")
                         return json_obj if isinstance(json_obj, dict) else {"result": json_obj}
-                except Exception as e:
-                    logger.warning(f"Failed to parse JSON from '{tool_name}': {e}")
-                    # Fallback - return as string
+                except Exception:
                     return {"result": str(content)}
             else:
-                # Multiple content items - combine as array in result field
                 try:
                     items = [
                         (item.text if hasattr(item, 'type') and item.type == 'text' and hasattr(item, 'text') 
                          else item.model_dump()) 
                         for item in result.content
                     ]
-                    logger.info(f"Multiple content items from '{tool_name}': {items}")
                     return {"result": items}
-                except Exception as e:
-                    logger.warning(f"Failed to process multiple content items from '{tool_name}': {e}")
-                    # Fallback if model_dump fails
+                except Exception:
                     return {"result": [str(item) for item in result.content]}
                 
         except Exception as e:
-            logger.error(f"Error in MCP tool '{tool_name}': {str(e)}")
             if not isinstance(e, ToolError):
                 raise ToolError(f"Error calling MCP tool '{tool_name}': {str(e)}")
             raise

@@ -17,18 +17,6 @@ ALPHA_VANTAGE_API_KEY = "YOURAPIKEY"
 # and will be compatible with any MCP client, including our generic adapter
 mcp = FastMCP("FinancialDataServer")
 
-# Add a simple current time tool
-@mcp.tool()
-def get_current_time() -> str:
-    """Get the current time in the user's location"""
-    logger.info("Current time tool called")
-    
-    # Get current time
-    now = datetime.datetime.now()
-    
-    # Return a simple string
-    return f"The current time is {now.strftime('%H:%M:%S')} on {now.strftime('%Y-%m-%d')}"
-
 # Add a Nifty 50 search tool
 @mcp.tool()
 def get_nifty50_price() -> str:
