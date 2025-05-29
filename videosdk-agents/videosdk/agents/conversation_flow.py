@@ -27,6 +27,48 @@ class ConversationFlow(EventEmitter[Literal["transcription"]]):
             
         pass
     
+    # async def send_audio_delta(self, audio_data: bytes) -> None:
+    #     """
+    #     Send audio delta to the STT
+    #     """
+    #     if self.stt:
+    #         async for stt_response in self.stt.process_audio(audio_data):
+    #             if stt_response.event_type == SpeechEventType.FINAL:
+    #                 user_text = stt_response.data.text
+    #                 print(f"Transcription: {user_text}")
+                    
+    #                 self.agent.chat_context.add_message(
+    #                     role=ChatRole.USER,
+    #                     content=user_text
+    #                 )
+                    
+    #                 if self.llm:
+    #                     full_response = ""
+    #                     prev_content_length = 0
+    #                     print(f"Sending request to LLM: {self.agent.chat_context}")
+    #                     async for llm_chunk_resp in self.llm.chat(self.agent.chat_context):
+    #                         new_content = llm_chunk_resp.content[prev_content_length:]
+    #                         full_response = llm_chunk_resp.content
+    #                         prev_content_length = len(llm_chunk_resp.content)
+                        
+    #                     if self.tts and full_response:
+    #                         await self.tts.synthesize(full_response)
+                        
+    #                     if full_response:
+    #                         self.agent.chat_context.add_message(
+    #                             role=ChatRole.ASSISTANT,
+    #                             content=full_response
+    #                         )
+
+    def on_transcription(self, callback: Callable[[str], None]) -> None:
+        """
+        Set the callback for transcription events.
+        
+        Args:
+            callback: Function to call when transcription occurs, takes transcribed text as argument
+        """
+        self.on("transcription_event", lambda data: callback(data["text"]))
+
     async def send_audio_delta(self, audio_data: bytes) -> None:
         """
         Send audio delta to the STT
@@ -45,27 +87,26 @@ class ConversationFlow(EventEmitter[Literal["transcription"]]):
                     if self.llm:
                         full_response = ""
                         prev_content_length = 0
-                        
-                        async for llm_chunk_resp in self.llm.chat(self.agent.chat_context):
-                            new_content = llm_chunk_resp.content[prev_content_length:]
-                            print(f"LLM Response Chunk: {new_content}")
-                            full_response = llm_chunk_resp.content
-                            prev_content_length = len(llm_chunk_resp.content)
-                        
-                        if self.tts and full_response:
-                            await self.tts.synthesize(full_response)
+
+                        async def stream_new_content():
+                            nonlocal full_response, prev_content_length
+                            async for llm_chunk_resp in self.llm.chat(self.agent.chat_context):
+                                new_content = llm_chunk_resp.content[prev_content_length:]
+                                if new_content: 
+                                    print(f"LLM Response Chunk: {new_content}")
+                                    yield new_content
+                                full_response = llm_chunk_resp.content
+                                prev_content_length = len(llm_chunk_resp.content)
+
+                        if self.tts:
+                            await self.tts.synthesize(stream_new_content())
                         
                         if full_response:
                             self.agent.chat_context.add_message(
                                 role=ChatRole.ASSISTANT,
                                 content=full_response
                             )
-
-    def on_transcription(self, callback: Callable[[str], None]) -> None:
-        """
-        Set the callback for transcription events.
-        
-        Args:
-            callback: Function to call when transcription occurs, takes transcribed text as argument
-        """
-        self.on("transcription_event", lambda data: callback(data["text"]))
+                            
+    async def say(self, message: str) -> None:
+        if self.tts:
+            await self.tts.synthesize(message)
