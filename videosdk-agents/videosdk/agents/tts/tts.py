@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import asyncio
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from typing import Any, AsyncIterator, Literal, Optional
 
 from ..event_emitter import EventEmitter
-
 
 class TTS(EventEmitter[Literal["error"]]):
     """Base class for Text-to-Speech implementations"""

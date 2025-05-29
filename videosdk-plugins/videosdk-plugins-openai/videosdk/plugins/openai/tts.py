@@ -31,8 +31,7 @@ class OpenAITTS(TTS):
         instructions: str | None = None,
         api_key: str | None = None,
         base_url: str | None = None,
-        audio_track: CustomAudioStreamTrack | None = None,
-        response_format: str = "mp3"
+        response_format: str = "pcm"
     ) -> None:
         super().__init__(sample_rate=OPENAI_TTS_SAMPLE_RATE, num_channels=OPENAI_TTS_CHANNELS)
         
@@ -40,7 +39,8 @@ class OpenAITTS(TTS):
         self.voice = voice
         self.speed = speed
         self.instructions = instructions
-        self.audio_track = audio_track
+        self.audio_track = None
+        self.loop = None
         self.response_format = response_format
         
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
@@ -61,7 +61,7 @@ class OpenAITTS(TTS):
                 ),
             ),
         )
-
+    
     async def synthesize(
         self,
         text: AsyncIterator[str] | str,
@@ -69,7 +69,7 @@ class OpenAITTS(TTS):
         **kwargs: Any
     ) -> None:
         """
-        Convert text to speech using OpenAI's TTS API
+        Convert text to speech using OpenAI's TTS API and stream to audio track
         
         Args:
             text: Text to convert to speech
@@ -83,54 +83,27 @@ class OpenAITTS(TTS):
                     full_text += chunk
             else:
                 full_text = text
-            # TODO: Remove this temporary code
-            # Temporary for testing purposes
-            async def _play_sound():
-                try:
-                    async with self._client.audio.speech.with_streaming_response.create(
-                        model=self.model,
-                        voice=voice_id or self.voice,
-                        input=full_text,
-                        speed=self.speed,
-                        response_format=self.response_format,
-                        **({"instructions": self.instructions} if self.instructions else {})
-                    ) as response:
-                        if self.response_format == "pcm":
-                            audio_data = bytearray()
-                            async for chunk in response.iter_bytes():
-                                audio_data.extend(chunk)
-                            
-                            samples = np.frombuffer(audio_data, dtype=np.int16)
-                            
-                            sd.play(samples, OPENAI_TTS_SAMPLE_RATE)
-                            sd.wait()
-                        else:
-                            audio_data = bytearray()
-                            async for chunk in response.iter_bytes():
-                                audio_data.extend(chunk)
 
-                            audio_segment = AudioSegment.from_file(
-                                io.BytesIO(audio_data),
-                                format=self.response_format
-                            )
+            if not self.audio_track or not self.loop:
+                self.emit("error", "Audio track or event loop not set")
+                return
 
-                            samples = np.array(audio_segment.get_array_of_samples())
-                            if audio_segment.channels == 2:
-                                samples = samples.reshape((-1, 2))
-
-                            sd.play(samples, audio_segment.frame_rate)
-                            sd.wait()
-
-                except Exception as e:
-                    self.emit("error", f"Audio playback failed: {str(e)}")
-
-            await _play_sound()
+            async with self._client.audio.speech.with_streaming_response.create(
+                model=self.model,
+                voice=voice_id or self.voice,
+                input=full_text,
+                speed=self.speed,
+                response_format=self.response_format,
+                **({"instructions": self.instructions} if self.instructions else {})
+            ) as response:
+                async for chunk in response.iter_bytes():
+                    if chunk:
+                        self.loop.create_task(self.audio_track.add_new_bytes(chunk))
 
         except openai.APIError as e:
             self.emit("error", str(e))
         except Exception as e:
             self.emit("error", f"TTS synthesis failed: {str(e)}")
-
 
     async def aclose(self) -> None:
         """Cleanup resources"""

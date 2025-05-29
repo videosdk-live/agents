@@ -59,6 +59,8 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
                 )
 
             self.room.init_meeting()
+            self.tts.loop = self.loop
+            self.tts.audio_track = self.room.audio_track
 
             await self.room.join()
         except Exception as e:
