@@ -27,6 +27,13 @@ class Pipeline(EventEmitter[Literal["start"]], ABC):
         pass
     
     @abstractmethod
+    async def on_audio_delta(self, audio_data: bytes) -> None:
+        """
+        Handle incoming audio data from the user
+        """
+        pass
+    
+    @abstractmethod
     async def send_message(self, message: str) -> None:
         """
         Send a message to the pipeline.

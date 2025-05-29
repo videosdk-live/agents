@@ -9,7 +9,9 @@ from .llm.llm import LLM
 from .stt.stt import STT
 from .tts.tts import TTS
 from .vad import VAD
-
+from .conversation_flow import ConversationFlow
+from .agent import Agent
+from .room.room import VideoSDKHandler
 
 class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
     """
@@ -19,6 +21,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
     
     def __init__(
         self,
+        agent: Agent,
         stt: STT | None = None,
         llm: LLM | None = None,
         tts: TTS | None = None,
@@ -38,12 +41,40 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         self.tts = tts
         self.vad = vad
         self.loop = asyncio.get_event_loop()
-
+        self.room = None
+        self.agent = agent
+        
     async def start(self, **kwargs: Any) -> None:
-        pass
+        self.conversation_flow = ConversationFlow(self.agent, self.stt, self.llm, self.tts)
+        try:
+            meeting_id = kwargs.get('meeting_id')
+            name = kwargs.get('name')
+            token = kwargs.get('token')
+            self.room = VideoSDKHandler(
+                    meeting_id=meeting_id,
+                    auth_token=token,
+                    name=name,
+                    pipeline=self,
+                    loop=self.loop
+                )
+
+            self.room.init_meeting()
+
+            await self.room.join()
+        except Exception as e:
+            print(f"Error starting realtime connection: {e}")
+            await self.cleanup()
+            raise
 
     async def send_message(self, message: str) -> None:
         pass
+
+
+    async def on_audio_delta(self, audio_data: bytes) -> None:
+        """
+        Handle incoming audio data from the user
+        """
+        await self.conversation_flow.send_audio_delta(audio_data)
 
     async def cleanup(self) -> None:
         """Cleanup all pipeline components"""
