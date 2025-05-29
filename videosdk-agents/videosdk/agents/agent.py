@@ -8,7 +8,7 @@ from .event_emitter import EventEmitter
 from .llm.chat_context import ChatContext
 from .utils import FunctionTool, is_function_tool
 from .llm.llm import LLMResponse
-from .llm.chat_context import ChatContext
+from .llm.chat_context import ChatContext, ChatRole
 from .stt.stt import STTResponse
 
 AgentEventTypes = Literal[
@@ -23,12 +23,12 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
     """
     def __init__(self, instructions: str, tools: List[FunctionTool] = []):
         super().__init__()
-        self.instructions = instructions
         self._tools = tools
         self._llm = None
         self._stt = None
         self._tts = None
-        self.chat_context = ChatContext()
+        self.chat_context = ChatContext.empty()
+        self.instructions = instructions
         self._register_class_tools()
         self.register_tools()
 
@@ -45,6 +45,10 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
     @instructions.setter
     def instructions(self, value: str) -> None:
         self._instructions = value
+        self.chat_context.add_message(
+            role=ChatRole.SYSTEM,
+            content=value
+        )
         global_event_emitter.emit("instructions_updated", {"instructions": value})
 
     @property

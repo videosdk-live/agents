@@ -69,7 +69,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
             raise
 
     async def send_message(self, message: str) -> None:
-        pass
+        await self.conversation_flow.say(message)
 
 
     async def on_audio_delta(self, audio_data: bytes) -> None:

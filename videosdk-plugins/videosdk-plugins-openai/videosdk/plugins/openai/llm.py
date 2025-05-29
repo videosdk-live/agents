@@ -47,7 +47,6 @@ class OpenAILLM(LLM):
                 ),
             ),
         )
-        self.on("instructions_updated", self._handle_instructions_updated)
 
     async def chat(
         self,
@@ -81,7 +80,6 @@ class OpenAILLM(LLM):
             "max_tokens": self.max_completion_tokens,
             **kwargs
         }
-
         try:
             response_stream = await self._client.chat.completions.create(**completion_params)
             current_content = ""
@@ -106,8 +104,4 @@ class OpenAILLM(LLM):
     async def aclose(self) -> None:
         """Cleanup resources by closing the HTTP client"""
         if self._client:
-            await self._client.close()
-
-    def _handle_instructions_updated(self, data: Dict[str, Any]) -> None:
-        """Handle instructions_updated event"""
-        self._instructions = data.get("instructions")      
+            await self._client.close() 
