@@ -75,6 +75,16 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         """
         await self.model.send_message(message)
     
+    async def send_text_message(self, message: str) -> None:
+        """
+        Send a text message through the realtime model.
+        This method specifically handles text-only input when modalities is ["text"].
+        """
+        if hasattr(self.model, 'send_text_message'):
+            await self.model.send_text_message(message)
+        else:
+            await self.model.send_message(message)
+    
     async def on_audio_delta(self, audio_data: bytes):
         """
         Handle incoming audio data from the user
