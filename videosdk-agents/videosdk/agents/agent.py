@@ -3,11 +3,12 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, AsyncIterator, List, Literal, Optional
 import inspect
-
+from .event_bus import global_event_emitter, EventTypes
 from .event_emitter import EventEmitter
 from .llm.chat_context import ChatContext
 from .utils import FunctionTool, is_function_tool
 from .llm.llm import LLMResponse
+from .llm.chat_context import ChatContext
 from .stt.stt import STTResponse
 
 AgentEventTypes = Literal[
@@ -27,6 +28,7 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
         self._llm = None
         self._stt = None
         self._tts = None
+        self.chat_context = ChatContext()
         self._register_class_tools()
         self.register_tools()
 
@@ -43,7 +45,7 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
     @instructions.setter
     def instructions(self, value: str) -> None:
         self._instructions = value
-        self.emit("instructions_updated", {"instructions": value})
+        global_event_emitter.emit("instructions_updated", {"instructions": value})
 
     @property
     def tools(self) -> List[FunctionTool]:
@@ -54,8 +56,7 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
         for tool in self._tools:
             if not is_function_tool(tool):
                 raise ValueError(f"Tool {tool.__name__ if hasattr(tool, '__name__') else tool} is not a valid FunctionTool")
-        
-        self.emit("tools_updated", {"tools": self._tools})
+        global_event_emitter.emit("tools_updated", {"tools": self._tools})
     @abstractmethod
     async def on_enter(self) -> None:
         """Called when session starts"""

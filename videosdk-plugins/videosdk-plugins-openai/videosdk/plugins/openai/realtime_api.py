@@ -18,7 +18,9 @@ from videosdk.agents import (
     build_openai_schema,
     CustomAudioStreamTrack,
     ToolChoice,
-    RealtimeBaseModel
+    RealtimeBaseModel,
+    global_event_emitter,
+    EventTypes
 )
 
 load_dotenv()
@@ -128,8 +130,8 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         self.audio_track: Optional[CustomAudioStreamTrack] = None
         self._formatted_tools: Optional[List[Dict[str, Any]]] = None
         self.config: OpenAIRealtimeConfig = config or OpenAIRealtimeConfig()
-        self.on("instructions_updated", self._handle_instructions_updated)
-        self.on("tools_updated", self._handle_tools_updated) 
+        global_event_emitter.on("instructions_updated", self._handle_instructions_updated)
+        global_event_emitter.on("tools_updated", self._handle_tools_updated) 
     
     async def connect(self) -> None:
         headers = {"Agent": "VideoSDK Agents"}

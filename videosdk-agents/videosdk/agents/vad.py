@@ -63,7 +63,7 @@ class VAD(EventEmitter[Literal["error"]]):
     @abstractmethod
     async def process_audio(
         self,
-        audio_frames: AsyncIterator[bytes],
+        audio_frames: bytes,
         **kwargs: Any
     ) -> AsyncIterator[VADResponse]:
         """
