@@ -3,11 +3,12 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Dict, List
+import json
 
 import httpx
 import openai
 from videosdk.agents.llm.llm import LLM, LLMResponse
-from videosdk.agents.llm.chat_context import ChatContext, ChatRole, ChatMessage
+from videosdk.agents.llm.chat_context import ChatContext, ChatRole, ChatMessage, FunctionCall, FunctionCallOutput
 from videosdk.agents.utils import ToolChoice, FunctionTool, is_function_tool, build_openai_schema
 from videosdk.agents.llm.function_handler import FunctionHandler
 
@@ -70,27 +71,85 @@ class OpenAILLM(LLM):
             "messages": [
                 {
                     "role": msg.role.value,
-                    "content": msg.content
-                }
+                    "content": msg.content,
+                    **({"name": msg.name} if hasattr(msg, 'name') else {})
+                } if isinstance(msg, ChatMessage) else
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "function_call": {
+                        "name": msg.name,
+                        "arguments": msg.arguments
+                    }
+                } if isinstance(msg, FunctionCall) else
+                {
+                    "role": "function",
+                    "name": msg.name,
+                    "content": msg.output
+                } if isinstance(msg, FunctionCallOutput) else None
                 for msg in messages.items
-                if isinstance(msg, ChatMessage)
+                if msg is not None 
             ],
             "temperature": self.temperature,
             "stream": True,
             "max_tokens": self.max_completion_tokens,
-            **kwargs
         }
+
+        if tools:
+            formatted_tools = []
+            for tool in tools:
+                if not is_function_tool(tool):
+                    continue
+                try:
+                    tool_schema = build_openai_schema(tool)
+                    formatted_tools.append(tool_schema)
+                except Exception as e:
+                    print(f"Failed to format tool {tool}: {e}")
+                    continue
+            
+            if formatted_tools:
+                completion_params["functions"] = formatted_tools
+                completion_params["function_call"] = self.tool_choice
+
+        completion_params.update(kwargs)
         try:
             response_stream = await self._client.chat.completions.create(**completion_params)
             current_content = ""
+            current_function_call = None
 
             async for chunk in response_stream:
                 if not chunk.choices:
                     continue
                     
                 delta = chunk.choices[0].delta
+                if delta.function_call:
+                    if current_function_call is None:
+                        current_function_call = {
+                            "name": delta.function_call.name or "",
+                            "arguments": delta.function_call.arguments or ""
+                        }
+                    else:
+                        if delta.function_call.name:
+                            current_function_call["name"] += delta.function_call.name
+                        if delta.function_call.arguments:
+                            current_function_call["arguments"] += delta.function_call.arguments
+                elif current_function_call is not None:  
+                    try:
+                        args = json.loads(current_function_call["arguments"])
+                        current_function_call["arguments"] = args
+                        print(f"Complete function call: {current_function_call}")  
+                    except json.JSONDecodeError:
+                        print(f"Failed to parse function arguments: {current_function_call['arguments']}")
+                        current_function_call["arguments"] = {}
+                    
+                    yield LLMResponse(
+                        content="",
+                        role=ChatRole.ASSISTANT,
+                        metadata={"function_call": current_function_call}
+                    )
+                    current_function_call = None
                 
-                if delta.content is not None:
+                elif delta.content is not None:
                     current_content += delta.content
                     yield LLMResponse(
                         content=current_content,

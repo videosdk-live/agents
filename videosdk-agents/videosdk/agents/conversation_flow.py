@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from typing import Callable, Literal
+import time
+import json
 
 from .event_emitter import EventEmitter
 from .stt.stt import STT, STTResponse
 from .llm.llm import LLM, LLMResponse
 from .llm.chat_context import ChatRole, ChatContext, ChatMessage
+from .utils import is_function_tool, get_tool_info, FunctionTool, FunctionToolInfo
 from .tts.tts import TTS
 from .stt.stt import SpeechEventType
 from .agent import Agent
@@ -77,7 +80,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]]):
             async for stt_response in self.stt.process_audio(audio_data):
                 if stt_response.event_type == SpeechEventType.FINAL:
                     user_text = stt_response.data.text
-                    print(f"Transcription: {user_text}")
                     
                     self.agent.chat_context.add_message(
                         role=ChatRole.USER,
@@ -90,13 +92,52 @@ class ConversationFlow(EventEmitter[Literal["transcription"]]):
 
                         async def stream_new_content():
                             nonlocal full_response, prev_content_length
-                            async for llm_chunk_resp in self.llm.chat(self.agent.chat_context):
-                                new_content = llm_chunk_resp.content[prev_content_length:]
-                                if new_content: 
-                                    print(f"LLM Response Chunk: {new_content}")
-                                    yield new_content
-                                full_response = llm_chunk_resp.content
-                                prev_content_length = len(llm_chunk_resp.content)
+                            async for llm_chunk_resp in self.llm.chat(
+                                self.agent.chat_context,
+                                tools=self.agent._tools
+                            ):
+                                if llm_chunk_resp.metadata and "function_call" in llm_chunk_resp.metadata:
+                                    func_call = llm_chunk_resp.metadata["function_call"]
+                                    
+                                    self.agent.chat_context.add_function_call(
+                                        name=func_call["name"],
+                                        arguments=json.dumps(func_call["arguments"]),
+                                        call_id=func_call.get("call_id", f"call_{int(time.time())}")
+                                    )
+
+                                    try:
+                                        tool = next(
+                                            (t for t in self.agent.tools if hasattr(t, '_tool_info') and t._tool_info.name == func_call["name"]),
+                                            None
+                                        )
+                                    except Exception as e:
+                                        print(f"Error while selecting tool: {e}")
+
+                                    if tool:
+                                        try:
+                                            result = await tool(**func_call["arguments"])
+                                            
+                                            self.agent.chat_context.add_function_output(
+                                                name=func_call["name"],
+                                                output=json.dumps(result),
+                                                call_id=func_call.get("call_id", f"call_{int(time.time())}")
+                                            )
+                                            
+                                            async for new_resp in self.llm.chat(self.agent.chat_context):
+                                                new_content = new_resp.content[prev_content_length:]
+                                                if new_content:
+                                                    yield new_content
+                                                full_response = new_resp.content
+                                                prev_content_length = len(new_resp.content)
+                                        except Exception as e:
+                                            print(f"Error executing function {func_call['name']}: {e}")
+                                            continue
+                                else:
+                                    new_content = llm_chunk_resp.content[prev_content_length:]
+                                    if new_content: 
+                                        yield new_content
+                                    full_response = llm_chunk_resp.content
+                                    prev_content_length = len(llm_chunk_resp.content)
 
                         if self.tts:
                             await self.tts.synthesize(stream_new_content())
