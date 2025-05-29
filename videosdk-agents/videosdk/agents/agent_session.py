@@ -47,8 +47,9 @@ class AgentSession:
             raise ValueError("meetingId must be provided in the context")
         meeting_id = self.context.get("meetingId")
         name = self.context.get("name", "Agent")
+        token = self.context.get("token", None)
         
-        await self.pipeline.start(meeting_id=meeting_id, name=name)
+        await self.pipeline.start(meeting_id=meeting_id, name=name, token=token)
         await self.agent.on_enter()
         
     async def say(self, message: str) -> None:

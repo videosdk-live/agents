@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 import base64
 import time
 from dotenv import load_dotenv
-from videosdk.agents import CustomAudioStreamTrack, RealtimeBaseModel, build_gemini_schema, is_function_tool, FunctionTool, get_tool_info
+from videosdk.agents import CustomAudioStreamTrack, RealtimeBaseModel, build_gemini_schema, is_function_tool, FunctionTool, get_tool_info, global_event_emitter, EventTypes
 
 from google import genai
 from google.genai.live import AsyncSession
@@ -140,8 +140,8 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         self._instructions : str = "You are a helpful voice assistant that can answer questions and help with tasks."
         self.config: GeminiLiveConfig = config or GeminiLiveConfig()
         
-        self.on("tools_updated", self._handle_tools_updated)
-        self.on("instructions_updated", self._handle_instructions_updated)
+        global_event_emitter.on("tools_updated", self._handle_tools_updated)
+        global_event_emitter.on("instructions_updated", self._handle_instructions_updated)
     
     def _init_client(self, api_key: str | None, service_account_path: str | None):
         if service_account_path:

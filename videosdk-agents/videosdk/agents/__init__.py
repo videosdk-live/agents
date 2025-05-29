@@ -11,6 +11,8 @@ from .llm.llm import LLM, ChatContext, ChatRole, LLMResponse
 from .stt.stt import STT, STTResponse, SpeechEventType
 from .tts.tts import TTS
 from .vad import VAD, VADResponse, VADEventType
+from .event_bus import global_event_emitter, EventTypes
+from .cascading_pipeline import CascadingPipeline
 __all__ = [
     'Agent',
     'AgentSession',
@@ -39,4 +41,7 @@ __all__ = [
     'VADResponse',
     'VADEventType',
     'EventEmitter',
+    'global_event_emitter',
+    'EventTypes',
+    'CascadingPipeline',
 ]

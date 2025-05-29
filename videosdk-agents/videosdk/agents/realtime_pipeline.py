@@ -7,8 +7,13 @@ from .pipeline import Pipeline
 from .event_emitter import EventEmitter
 from .realtime_base_model import RealtimeBaseModel
 from .room.room import VideoSDKHandler
+from .agent import Agent
 
-class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtime_end","user_audio_input_data"]]):
+class RealTimePipeline(Pipeline, EventEmitter[Literal[
+    "realtime_start", 
+    "realtime_end",
+    "user_audio_input_data",
+]]):
     """
     RealTime pipeline implementation that processes data in real-time.
     Inherits from Pipeline base class and adds realtime-specific events.
@@ -33,6 +38,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         self.room = None
         self.model.loop = self.loop
         self.model.audio_track = None
+        self.agent = None
 
     async def start(self, **kwargs: Any) -> None:
         """
@@ -47,8 +53,10 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         try:
             meeting_id = kwargs.get('meeting_id')
             name = kwargs.get('name')
+            token = kwargs.get('token')
             self.room = VideoSDKHandler(
                 meeting_id=meeting_id,
+                auth_token=token,
                 name=name,
                 pipeline=self,
                 loop=self.loop
