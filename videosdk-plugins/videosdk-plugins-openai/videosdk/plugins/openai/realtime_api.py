@@ -44,7 +44,8 @@ DEFAULT_TOOL_CHOICE = "auto"
 
 OpenAIEventTypes = Literal[
     "instructions_updated",
-    "tools_updated"
+    "tools_updated",
+    "text_response"
 ]
 DEFAULT_VOICE = "alloy"
 DEFAULT_INPUT_AUDIO_FORMAT = "pcm16"
@@ -144,7 +145,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         
     async def handle_audio_input(self, audio_data: bytes) -> None:
         """Handle incoming audio data from the user"""
-        if self._session and not self._closing:
+        if self._session and not self._closing and "audio" in self.config.modalities:
             base64_audio_data = base64.b64encode(audio_data).decode("utf-8")
             audio_event = {
                 "type": "input_audio_buffer.append",
@@ -299,17 +300,23 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
             
             elif event_type == "conversation.item.input_audio_transcription.completed":
                 await self._handle_input_audio_transcription_completed(data)
+                
+            elif event_type == "response.text.done":
+                await self._handle_text_done(data)
 
         except Exception as e:
             self.emit_error(f"Error handling event {event_type}: {str(e)}")
 
     async def _handle_speech_started(self, data: dict) -> None:
         """Handle speech detection start"""
-        await self.interrupt()
-        self.audio_track.interrupt()
+        if "audio" in self.config.modalities:
+            await self.interrupt()
+            if self.audio_track:
+                self.audio_track.interrupt()
 
     async def _handle_speech_stopped(self, data: dict) -> None:
         """Handle speech detection end"""
+        pass
 
     async def _handle_response_created(self, data: dict) -> None:
         """Handle initial response creation"""
@@ -365,6 +372,9 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
 
     async def _handle_audio_delta(self, data: dict) -> None:
         """Handle audio chunk"""
+        if "audio" not in self.config.modalities:
+            return
+            
         try:
             base64_audio_data = base64.b64decode(data.get("delta"))
             if base64_audio_data:
@@ -448,31 +458,45 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         if not self._session:
             return
 
+        # Conditionally set turn detection and audio transcription based on modalities
+        turn_detection = None
+        input_audio_transcription = None
+        
+        if "audio" in self.config.modalities:
+            turn_detection = self.config.turn_detection.model_dump(
+                by_alias=True,
+                exclude_unset=True,
+                exclude_defaults=True,
+            ) if self.config.turn_detection else None
+            input_audio_transcription = self.config.input_audio_transcription.model_dump(
+                by_alias=True,
+                exclude_unset=True,
+                exclude_defaults=True,
+            ) if self.config.input_audio_transcription else None
+
         session_update = {
             "type": "session.update",
             "session": {
                 "model": self.model,
-                "voice": self.config.voice,
-                "instructions": self._instructions or  "You are a helpful voice assistant that can answer questions and help with tasks.",
+                "instructions": self._instructions or "You are a helpful assistant that can answer questions and help with tasks.",
                 "temperature": self.config.temperature,
-                "turn_detection": self.config.turn_detection.model_dump(
-                    by_alias=True,
-                    exclude_unset=True,
-                    exclude_defaults=True,
-                ),
-                "input_audio_transcription": self.config.input_audio_transcription.model_dump(
-                    by_alias=True,
-                    exclude_unset=True,
-                    exclude_defaults=True,
-                ),
                 "tool_choice": self.config.tool_choice,
                 "tools": self._formatted_tools or [],
                 "modalities": self.config.modalities,
-                "input_audio_format": DEFAULT_INPUT_AUDIO_FORMAT,
-                "output_audio_format": DEFAULT_OUTPUT_AUDIO_FORMAT,
                 "max_response_output_tokens": "inf"
             }
         }
+        
+        # Only add audio-related configurations if audio modality is enabled
+        if "audio" in self.config.modalities:
+            session_update["session"]["voice"] = self.config.voice
+            session_update["session"]["input_audio_format"] = DEFAULT_INPUT_AUDIO_FORMAT
+            session_update["session"]["output_audio_format"] = DEFAULT_OUTPUT_AUDIO_FORMAT
+            if turn_detection:
+                session_update["session"]["turn_detection"] = turn_detection
+            if input_audio_transcription:
+                session_update["session"]["input_audio_transcription"] = input_audio_transcription
+        
         # Send the event
         await self.send_event(session_update)
 
@@ -522,3 +546,32 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         self._tools = tools
         self.tools_formatted = self._format_tools_for_session(tools)
         self._formatted_tools = self.tools_formatted
+
+    async def send_text_message(self, message: str) -> None:
+        """Send a text message to the OpenAI realtime API"""
+        if not self._session:
+            raise RuntimeError("No active WebSocket session")
+            
+        await self.send_event({
+            "type": "conversation.item.create",
+            "item": {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": message
+                    }
+                ]
+            }
+        })
+        await self.create_response()
+
+    async def _handle_text_done(self, data: dict) -> None:
+        """Handle text response completion"""
+        try:
+            text_content = data.get("text", "")
+            if text_content:
+                self.emit("text_response", {"text": text_content, "type": "done"})
+        except Exception as e:
+            print(f"[ERROR] Error handling text done: {e}")
