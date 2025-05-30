@@ -35,7 +35,14 @@ dependencies = [
     "docstring_parser",
     "google-genai",
     "pydantic>=2.0,<3",
+    "requests>=2.25.0",
+    "rich>=10.0.0",
+    "click>=8.0.0",
 ]
+
+
+[project.scripts]
+videosdk = "videosdk.agents.cli:main"
 
 [project.optional-dependencies]
 openai = ["videosdk-plugins-openai>=0.0.4"]
@@ -52,3 +59,6 @@ include = ["videosdk/agents/resources/*"]
 
 [tool.hatch.build.targets.sdist]
 include = ["/videosdk"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
