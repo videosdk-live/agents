@@ -7,6 +7,7 @@ from .pipeline import Pipeline
 from .event_emitter import EventEmitter
 from .realtime_base_model import RealtimeBaseModel
 from .room.room import VideoSDKHandler
+from videosdk.agents.a2a.protocol import A2AMessage
 
 class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtime_end","user_audio_input_data"]]):
     """
@@ -16,7 +17,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
     
     def __init__(
         self,
-        model: RealtimeBaseModel
+        model: RealtimeBaseModel,
     ) -> None:
         """
         Initialize the realtime pipeline.
@@ -45,23 +46,27 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
             **kwargs: Additional arguments for pipeline configuration
         """
         try:
-            videosdk_auth = kwargs.get('videosdk_auth')
             meeting_id = kwargs.get('meeting_id')
             name = kwargs.get('name')
-            self.room = VideoSDKHandler(
-                auth_token=videosdk_auth,
-                meeting_id=meeting_id,
-                name=name,
-                pipeline=self,
-                loop=self.loop
-            )
-            
-            self.room.init_meeting()
-            self.model.loop = self.loop
-            self.model.audio_track = self.room.audio_track
-            
-            await self.model.connect()
-            await self.room.join()
+            join_meeting = kwargs.get('join_meeting',True)
+
+            if join_meeting:
+                self.room = VideoSDKHandler(
+                    meeting_id=meeting_id,
+                    name=name,
+                    pipeline=self,
+                    loop=self.loop
+                )
+                
+                self.room.init_meeting()
+                self.model.loop = self.loop
+                self.model.audio_track = self.room.audio_track
+                
+                await self.model.connect()
+                await self.room.join()
+            else:   
+                await self.model.connect()
+                
             
         except Exception as e:
             print(f"Error starting realtime connection: {e}")
@@ -73,7 +78,18 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         Send a message through the realtime model.
         Delegates to the model's send_message implementation.
         """
+
         await self.model.send_message(message)
+
+    async def send_text_message(self, message: str) -> None:
+        """
+        Send a text message through the realtime model.
+        This method specifically handles text-only input when modalities is ["text"].
+        """
+        if hasattr(self.model, 'send_text_message'):
+            await self.model.send_text_message(message)
+        else:
+            await self.model.send_message(message)
     
     async def on_audio_delta(self, audio_data: bytes):
         """
@@ -87,6 +103,10 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         """
         await self.room.leave()
         
+    async def send_a2a_message(self, message: A2AMessage) -> None:
+        """Send an A2A message through the pipeline"""
+        formatted_message = self._format_a2a_message(message)
+        await self.model.send_message(formatted_message)
 
     async def cleanup(self):
         """Cleanup resources"""

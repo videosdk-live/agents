@@ -8,17 +8,10 @@ logger = logging.getLogger(__name__)
 T_contra = TypeVar("T_contra", contravariant=True)
 
 class EventEmitter(Generic[T_contra]):
-    _instance = None
-    _events: Dict[T_contra, Set[Callable]] = {}
-
-    def __new__(cls, *args, **kwargs):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
 
     def __init__(self, *args, **kwargs) -> None:
         """Initialize event emitter with empty event handlers dictionary"""
-        pass
+        self._events: Dict[T_contra, Set[Callable]] = {}
 
     def emit(self, event: T_contra, *args) -> None:
         """
@@ -32,19 +25,19 @@ class EventEmitter(Generic[T_contra]):
         if event in self._events:
             # Create copy to avoid modification during iteration
             handlers = self._events[event].copy()
-            
+
             if not args:
                 args = ({},)
-            
+
             for handler in handlers:
                 try:
                     # Get handler signature
                     sig = inspect.signature(handler)
                     params = sig.parameters.values()
-                    
+
                     # Check if handler accepts variable args
                     has_varargs = any(p.kind == p.VAR_POSITIONAL for p in params)
-                    
+
                     if has_varargs:
                         # Pass all args if handler accepts them
                         handler(*args)
@@ -57,7 +50,7 @@ class EventEmitter(Generic[T_contra]):
                         num_params = len(positional_params)
                         handler_args = args[:num_params]
                         handler(*handler_args)
-                        
+
                 except Exception as e:
                     logger.error(f"Error in event handler for {event}: {e}")
 
@@ -79,7 +72,7 @@ class EventEmitter(Generic[T_contra]):
                 raise ValueError(
                     "Async event handlers are not supported. Use asyncio.create_task in a sync wrapper instead."
                 )
-            
+
             if event not in self._events:
                 self._events[event] = set()
             self._events[event].add(handler)
@@ -88,7 +81,7 @@ class EventEmitter(Generic[T_contra]):
         # Used as decorator
         if callback is None:
             return register
-        
+
         # Used as regular method
         return register(callback)
 
@@ -116,7 +109,7 @@ class EventEmitter(Generic[T_contra]):
                 self.on(event, wrapped)
                 return handler
             return decorator
-        
+
         # Used as regular method
         wrapped = create_once_handler(callback)
         return self.on(event, wrapped)

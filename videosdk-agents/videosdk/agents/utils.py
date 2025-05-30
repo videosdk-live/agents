@@ -9,7 +9,6 @@ from google.genai import types
 from pydantic import BaseModel, Field, create_model
 from pydantic_core import PydanticUndefined
 from pydantic.fields import FieldInfo
-import json
 
 @dataclass
 class FunctionToolInfo:
@@ -185,24 +184,3 @@ def build_gemini_schema(function_tool: FunctionTool) -> types.FunctionDeclaratio
     )
     
 ToolChoice = Literal["auto", "required", "none"]
-
-def build_nova_sonic_schema(function_tool: FunctionTool) -> dict[str, Any]:
-    """Build Amazon Nova Sonic-compatible schema from a function tool"""
-    model = function_arguments_to_pydantic_model(function_tool)
-    tool_info = get_tool_info(function_tool)
-
-    # Get JSON schema from model and ensure it's stringified for Nova Sonic
-    parameters_schema = model.model_json_schema()
-    
-    # Nova Sonic expects the inputSchema.json to be a string containing the JSON schema
-    input_schema_json_string = json.dumps(parameters_schema)
-
-    return {
-        "toolSpec": {
-            "name": tool_info.name,
-            "description": tool_info.description or "",
-            "inputSchema": {
-                "json": input_schema_json_string
-            }
-        }
-    }
