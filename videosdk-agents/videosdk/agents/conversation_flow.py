@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Callable, Literal
 import time
 import json
-
+import asyncio
 from .event_emitter import EventEmitter
 from .stt.stt import STT, STTResponse
 from .llm.llm import LLM, LLMResponse
@@ -12,6 +12,7 @@ from .utils import is_function_tool, get_tool_info, FunctionTool, FunctionToolIn
 from .tts.tts import TTS
 from .stt.stt import SpeechEventType
 from .agent import Agent
+from .event_bus import global_event_emitter
 
 class ConversationFlow(EventEmitter[Literal["transcription"]]):
     """
@@ -26,9 +27,10 @@ class ConversationFlow(EventEmitter[Literal["transcription"]]):
         self.llm = llm
         self.tts = tts
         self.agent = agent
+        
     async def start(self) -> None:
-            
-        pass
+        global_event_emitter.on("speech_started", self.on_speech_started)
+        global_event_emitter.on("speech_stopped", self.on_speech_stopped)
     
     # async def send_audio_delta(self, audio_data: bytes) -> None:
     #     """
@@ -80,6 +82,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]]):
             async for stt_response in self.stt.process_audio(audio_data):
                 if stt_response.event_type == SpeechEventType.FINAL:
                     user_text = stt_response.data.text
+                    print("Transcription: ", user_text)
                     user_text = await self.agent.process_stt_output(user_text)
                     self.agent.chat_context.add_message(
                         role=ChatRole.USER,
@@ -153,3 +156,10 @@ class ConversationFlow(EventEmitter[Literal["transcription"]]):
     async def say(self, message: str) -> None:
         if self.tts:
             await self.tts.synthesize(message)
+
+    def on_speech_started(self) -> None:
+        if self.tts:
+            asyncio.create_task(self.tts.interrupt())
+
+    def on_speech_stopped(self) -> None:
+        print("Speech stopped")

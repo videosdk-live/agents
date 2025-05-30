@@ -46,6 +46,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         
     async def start(self, **kwargs: Any) -> None:
         self.conversation_flow = ConversationFlow(self.agent, self.stt, self.llm, self.tts)
+        await self.conversation_flow.start()
         try:
             meeting_id = kwargs.get('meeting_id')
             name = kwargs.get('name')

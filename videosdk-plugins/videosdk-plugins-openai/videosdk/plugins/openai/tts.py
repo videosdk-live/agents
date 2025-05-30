@@ -102,3 +102,8 @@ class OpenAITTS(TTS):
         """Cleanup resources"""
         await self._client.close()
         await super().aclose()
+
+    async def interrupt(self) -> None:
+        """Interrupt the TTS process"""
+        if self.audio_track:
+            self.audio_track.interrupt()

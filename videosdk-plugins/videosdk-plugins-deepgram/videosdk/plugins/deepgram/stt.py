@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-import base64
-import json
-import os
+import time
 from typing import Any, AsyncIterator, Optional
+import os
 from urllib.parse import urlencode
-import numpy as np
 import aiohttp
-from videosdk.agents import STT as BaseSTT, STTResponse, SpeechEventType, SpeechData
+from videosdk.agents import STT as BaseSTT, STTResponse, SpeechEventType, SpeechData, global_event_emitter
 
 class DeepgramSTT(BaseSTT):
     def __init__(
@@ -21,7 +19,7 @@ class DeepgramSTT(BaseSTT):
         punctuate: bool = True,
         smart_format: bool = True,
         sample_rate: int = 24000,
-        endpointing: int = 100,
+        endpointing: int = 50,
         filler_words: bool = True,
         base_url: str = "wss://api.deepgram.com/v1/listen",
     ) -> None:
@@ -44,6 +42,9 @@ class DeepgramSTT(BaseSTT):
         # WebSocket session for streaming
         self._session: Optional[aiohttp.ClientSession] = None
         self._ws: Optional[aiohttp.ClientWebSocketResponse] = None
+        
+        self._last_speech_event_time = 0.0
+        self._previous_speech_event_time = 0.0
         
     async def process_audio(
         self,
@@ -95,6 +96,8 @@ class DeepgramSTT(BaseSTT):
             "channels": 1,
             "endpointing": self.endpointing,
             "filler_words": str(self.filler_words).lower(),
+            "vad_events": "true",
+            "no_delay": "true",
         }
         headers = {
             "Authorization": f"Token {self.api_key}",
@@ -112,8 +115,20 @@ class DeepgramSTT(BaseSTT):
     def _handle_ws_message(self, msg: dict) -> list[STTResponse]:
         """Handle incoming WebSocket messages and generate STT responses"""
         responses = []
-        
         try:
+            if msg["type"] == "SpeechStarted":
+                current_time = time.time()
+        
+                if self._last_speech_event_time == 0.0:
+                    self._last_speech_event_time = current_time
+                    return
+
+                if current_time - self._last_speech_event_time < 1.0:
+                    global_event_emitter.emit("speech_started")
+
+                self._previous_speech_event_time = self._last_speech_event_time
+                self._last_speech_event_time = current_time
+            
             if msg["type"] == "Results":
                 channel = msg["channel"]
                 alternatives = channel["alternatives"]
