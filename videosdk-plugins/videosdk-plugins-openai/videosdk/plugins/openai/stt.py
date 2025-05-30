@@ -12,7 +12,7 @@ import httpx
 import openai
 from openai.types.beta.realtime.transcription_session_update_param import SessionTurnDetection
 
-from videosdk.agents.stt.stt import STT as BaseSTT, STTResponse, SpeechEventType, SpeechData
+from videosdk.agents import STT as BaseSTT, STTResponse, SpeechEventType, SpeechData
 
 class OpenAISTT(BaseSTT):
     def __init__(
@@ -23,7 +23,7 @@ class OpenAISTT(BaseSTT):
         base_url: str | None = None,
         prompt: str | None = None,
         language: str = "en",
-        sample_rate: int = 16000,
+        sample_rate: int = 24000,
         turn_detection: dict | None = None,
     ) -> None:
         super().__init__()
@@ -140,7 +140,6 @@ class OpenAISTT(BaseSTT):
             
         try:
             self._ws = await self._session.ws_connect(ws_url, headers=headers)
-            print(f"Connected to WebSocket at {ws_url}")
             
             await self._ws.send_json(config)
             

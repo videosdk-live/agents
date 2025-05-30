@@ -7,8 +7,9 @@ from .utils import function_tool, is_function_tool, get_tool_info, FunctionTool,
 from .room.audio_stream import CustomAudioStreamTrack
 from .event_emitter import EventEmitter
 from .job import WorkerJob
-from .llm.llm import LLM, ChatContext, ChatRole, LLMResponse
-from .stt.stt import STT, STTResponse, SpeechEventType
+from .llm.llm import LLM, LLMResponse
+from .llm.chat_context import ChatContext, ChatRole, ChatMessage, FunctionCall, FunctionCallOutput
+from .stt.stt import STT, STTResponse, SpeechEventType, SpeechData
 from .tts.tts import TTS
 from .vad import VAD, VADResponse, VADEventType
 from .event_bus import global_event_emitter, EventTypes
@@ -32,10 +33,14 @@ __all__ = [
     'LLM',
     'ChatContext',
     'ChatRole',
+    'ChatMessage',
+    'FunctionCall',
+    'FunctionCallOutput',
     'LLMResponse',
     'STT',
     'STTResponse',
     'SpeechEventType',
+    'SpeechData',
     'TTS',
     'VAD',
     'VADResponse',
