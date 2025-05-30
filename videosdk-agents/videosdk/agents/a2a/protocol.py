@@ -87,6 +87,7 @@ class A2AProtocol:
         self._message_handlers: Dict[str, List[Callable]] = {}
         self._running = False
         self._last_sender = None
+        self._handled_responses = set()  # Track handled responses
         # global_event_emitter.on("text_response", on_model_response)
 
 
@@ -98,9 +99,15 @@ class A2AProtocol:
         #     asyncio.create_task(self._process_messages())
 
     async def unregister(self) -> None:
-        """Unregister the agent"""
-        self.registry.unregister_agent(self.agent.id)
+        """Unregister the agent and clean up event handlers"""
+        # Clean up event handlers
+        for message_type in list(self._message_handlers.keys()):
+            for handler in self._message_handlers[message_type]:
+                self.off_message(message_type, handler)
+        
+        await self.registry.unregister_agent(self.agent.id)
         self._running = False
+        self._handled_responses.clear()  # Clear handled responses
     
     # def on_message(self, message_type: str, handler: Callable[[A2AMessage], None]) -> None:
     #     """Register a message handler"""
@@ -147,8 +154,15 @@ class A2AProtocol:
                 model = self.agent.session.pipeline.model
                 if model and hasattr(model, 'on'):
                     def on_model_response(data):
-                        print(">>> on_model_response::",data)
                         response = data.get('text', '')
+                        response_id = f"{self.agent.id}_{response}"  # Create unique response ID
+                        
+                        # Check if we've already handled this response
+                        if response_id in self._handled_responses:
+                            return
+                            
+                        self._handled_responses.add(response_id)
+                        
                         # Create A2A message for the response
                         message = A2AMessage(
                             from_agent=self.agent.id,

@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 import base64
 import time
 from dotenv import load_dotenv
-from videosdk.agents import CustomAudioStreamTrack, RealtimeBaseModel, build_gemini_schema, is_function_tool, FunctionTool, get_tool_info, global_event_emitter
+from videosdk.agents import CustomAudioStreamTrack, RealtimeBaseModel, build_gemini_schema, is_function_tool, FunctionTool, get_tool_info, global_event_emitter, Agent
 
 from google import genai
 from google.genai.live import AsyncSession
@@ -141,8 +141,14 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         self._instructions : str = "You are a helpful voice assistant that can answer questions and help with tasks."
         self.config: GeminiLiveConfig = config or GeminiLiveConfig()
         
-        global_event_emitter.on("tools_updated", self._handle_tools_updated)
-        global_event_emitter.on("instructions_updated", self._handle_instructions_updated)
+        # global_event_emitter.on("tools_updated", self._handle_tools_updated)
+        # global_event_emitter.on("instructions_updated", self._handle_instructions_updated)
+
+    def set_agent(self, agent: Agent) -> None:
+        self._instructions = agent.instructions
+        self._tools = agent.tools
+        self.tools_formatted = self._convert_tools_to_gemini_format(self._tools)
+        self.formatted_tools = self.tools_formatted
     
     def _init_client(self, api_key: str | None, service_account_path: str | None):
         if service_account_path:
@@ -389,7 +395,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                             if server_content.turn_complete and active_response_id:
                                 # Emit completion for text responses with accumulated text
                                 if "TEXT" in self.config.response_modalities:
-                                    global_event_emitter("text_response", {
+                                    global_event_emitter.emit("text_response", {
                                         "type": "done",
                                         "text": accumulated_text
                                     })

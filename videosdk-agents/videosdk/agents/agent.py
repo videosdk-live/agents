@@ -8,6 +8,8 @@ from .event_emitter import EventEmitter
 from .utils import FunctionTool, is_function_tool
 from .a2a.protocol import A2AProtocol
 from .a2a.card import AgentCard
+from .room.audio_stream import CustomAudioStreamTrack
+import uuid
 
 AgentEventTypes = Literal[
     "instructions_updated",
@@ -42,7 +44,7 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
     @instructions.setter
     def instructions(self, value: str) -> None:
         self._instructions = value
-        global_event_emitter.emit("instructions_updated", {"instructions": value})
+        # global_event_emitter.emit("instructions_updated", {"instructions": value})
 
     @property
     def tools(self) -> List[FunctionTool]:
@@ -54,7 +56,7 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
             if not is_function_tool(tool):
                 raise ValueError(f"Tool {tool.__name__ if hasattr(tool, '__name__') else tool} is not a valid FunctionTool")
         
-        global_event_emitter.emit("tools_updated", {"tools": self._tools})
+        # global_event_emitter.emit("tools_updated", {"tools": self._tools})
 
     async def on_enter(self) -> None:
         """Called when session starts"""

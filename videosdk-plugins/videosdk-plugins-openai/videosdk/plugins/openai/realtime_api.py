@@ -19,7 +19,8 @@ from videosdk.agents import (
     CustomAudioStreamTrack,
     ToolChoice,
     RealtimeBaseModel,
-    global_event_emitter
+    global_event_emitter,
+    Agent
 )
 
 load_dotenv()
@@ -130,9 +131,15 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         self.audio_track: Optional[CustomAudioStreamTrack] = None
         self._formatted_tools: Optional[List[Dict[str, Any]]] = None
         self.config: OpenAIRealtimeConfig = config or OpenAIRealtimeConfig()
-        global_event_emitter.on("instructions_updated", self._handle_instructions_updated)
-        global_event_emitter.on("tools_updated", self._handle_tools_updated) 
-        global_event_emitter.on("text_response", self._handle_text_done) 
+        # global_event_emitter.on("instructions_updated", self._handle_instructions_updated)
+        # global_event_emitter.on("tools_updated", self._handle_tools_updated) 
+        global_event_emitter.on("text_response", self._handle_text_done)
+
+    def set_agent(self, agent: Agent) -> None:
+        self._instructions = agent.instructions
+        self._tools = agent.tools
+        self.tools_formatted = self._format_tools_for_session(self._tools)
+        self._formatted_tools = self.tools_formatted 
     
     async def connect(self) -> None:
         headers = {"Agent": "VideoSDK Agents"}
@@ -392,6 +399,8 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
                 "event_id": str(uuid.uuid4())
             }
             await self.send_event(cancel_event)
+        if self.audio_track:
+            self.audio_track.interrupt()
             
     async def _handle_transcript_delta(self, data: dict) -> None:
         """Handle transcript chunk"""

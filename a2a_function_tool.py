@@ -47,9 +47,12 @@ class CustomerServiceAgent(Agent):
 
     async def handle_specialist_response(self, message: A2AMessage) -> None:
         """Handle response from specialist agent"""
-        print(">>> handle_specialist_response::",message)
         response = message.content.get("response")
-        await self.session.say(f"I've received the following information: {response}")
+        if response:
+            print("Response from specialist:", response)
+            await self.session.pipeline.model.interrupt()
+            await asyncio.sleep(1)
+            await self.session.say(f"I've received the following information: car loans bad")
 
     async def on_exit(self) -> None:
         print("Customer agent Left the meeting")
@@ -78,49 +81,49 @@ class LoanAgent(Agent):
                 "You are a specialized loan agent that handles all loan-related queries. "
                 "You can provide information about different types of loans, interest rates, "
                 "eligibility criteria, and loan application processes. "
-                "You have access to a function tool `get_loan_details` that can provide specific loan information. "
-                "When customers ask about loan details, use this tool to provide accurate information."
+                # "You have access to a function tool `get_loan_details` that can provide specific loan information. "
+                "When customers ask about loan details, give a hypothetical answer."
             ),
         )
 
-    @function_tool
-    async def get_loan_details(self, loan_type: str) -> Dict[str, Any]:
-        """Get details about different types of loans.
+    # @function_tool
+    # async def get_loan_details(self, loan_type: str) -> Dict[str, Any]:
+    #     """Get details about different types of loans.
         
-        Args:
-            loan_type: The type of loan (e.g., "personal", "home", "car", "business")
-        """
-        # Simulated loan data
-        loan_data = {
-            "personal": {
-                "interest_rate": "8.5%",
-                "term": "1-5 years",
-                "min_amount": "5000",
-                "max_amount": "50000"
-            },
-            "home": {
-                "interest_rate": "6.2%",
-                "term": "15-30 years",
-                "min_amount": "100000",
-                "max_amount": "2000000"
-            },
-            "car": {
-                "interest_rate": "7.8%",
-                "term": "3-7 years",
-                "min_amount": "10000",
-                "max_amount": "100000"
-            },
-            "business": {
-                "interest_rate": "9.2%",
-                "term": "1-10 years",
-                "min_amount": "25000",
-                "max_amount": "1000000"
-            }
-        }
+    #     Args:
+    #         loan_type: The type of loan (e.g., "personal", "home", "car", "business")
+    #     """
+    #     # Simulated loan data
+    #     loan_data = {
+    #         "personal": {
+    #             "interest_rate": "8.5%",
+    #             "term": "1-5 years",
+    #             "min_amount": "5000",
+    #             "max_amount": "50000"
+    #         },
+    #         "home": {
+    #             "interest_rate": "6.2%",
+    #             "term": "15-30 years",
+    #             "min_amount": "100000",
+    #             "max_amount": "2000000"
+    #         },
+    #         "car": {
+    #             "interest_rate": "7.8%",
+    #             "term": "3-7 years",
+    #             "min_amount": "10000",
+    #             "max_amount": "100000"
+    #         },
+    #         "business": {
+    #             "interest_rate": "9.2%",
+    #             "term": "1-10 years",
+    #             "min_amount": "25000",
+    #             "max_amount": "1000000"
+    #         }
+    #     }
         
-        return loan_data.get(loan_type.lower(), {
-            "error": f"No information available for {loan_type} loans"
-        })
+    #     return loan_data.get(loan_type.lower(), {
+    #         "error": f"No information available for {loan_type} loans"
+    #     })
         
 
     async def on_enter(self) -> None:
@@ -156,6 +159,12 @@ async def main():
             response_modalities=["TEXT"]
         )
     )
+    # technical_model = OpenAIRealtime(
+    #     model="gpt-4o-realtime-preview",
+    #     config=OpenAIRealtimeConfig(
+    #         modalities=["text"],
+    #     ),
+    # )
 
     customer_pipeline = RealTimePipeline(model=customer_model)
     technical_pipeline = RealTimePipeline(model=technical_model)
@@ -167,9 +176,9 @@ async def main():
         pipeline=customer_pipeline,
         context={
             "name": "Customer Service Assistant",
-            "meetingId": "t5ln-txyc-x47k",
+            "meetingId": "pbow-6vec-vahn",
             "join_meeting":True,
-            "videosdk_auth": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhcGlrZXkiOiJlYzM0NzIyZC0yZDc5LTRhMGQtYTQ0YS1jZDgwNTA2MjE0ZDAiLCJwZXJtaXNzaW9ucyI6WyJhbGxvd19qb2luIl0sImlhdCI6MTc0NzczMDkzOSwiZXhwIjoxNzc5MjY2OTM5fQ.8M1Q1z2l6feQKZuohVQvHwy-OpUf5NJZiHwWwtZ0UCM"
+            "videosdk_auth": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhcGlrZXkiOiI0N2M3ZTJlYy01NzY5LTQ3OWQtYjdjNS0zYjU5MDcxYzhhMDkiLCJwZXJtaXNzaW9ucyI6WyJhbGxvd19qb2luIl0sImlhdCI6MTY3MjgwOTcxMywiZXhwIjoxODMwNTk3NzEzfQ.KeXr1cxORdq6X7-sxBLLV7MsUnwuJGLaG8_VTyTFBig"
         }
     )
 
@@ -191,7 +200,7 @@ async def main():
     agentCard = AgentCard(
             id="specialist_1",
             name="Technical Specialist",
-            domain="technical",
+            domain="loan",
             capabilities=["technical_support", "problem_solving"],
             description="Handles technical queries and problems"
     )
