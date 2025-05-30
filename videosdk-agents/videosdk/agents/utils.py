@@ -113,17 +113,26 @@ def function_arguments_to_pydantic_model(func: Callable) -> type[BaseModel]:
 
 def build_openai_schema(function_tool: FunctionTool) -> dict[str, Any]:
     """Build OpenAI-compatible schema from a function tool"""
-    # Convert function to Pydantic model
-    model = function_arguments_to_pydantic_model(function_tool)
     tool_info = get_tool_info(function_tool)
     
-    # Get JSON schema from model
-    schema = model.model_json_schema()
+    params_schema_to_use: Optional[dict] = None
+
+    # Prioritize parameters_schema if it's set on the tool_info (populated for MCP tools)
+    if tool_info.parameters_schema is not None:
+        # This schema comes directly from the MCP tool's input_schema
+        params_schema_to_use = tool_info.parameters_schema
+    else:
+        # Fallback for standard @function_tool decorated functions
+        model = function_arguments_to_pydantic_model(function_tool)
+        params_schema_to_use = model.model_json_schema()
+
+    final_params_schema = params_schema_to_use if params_schema_to_use is not None else {"type": "object", "properties": {}}
+
 
     return {
             "name": tool_info.name,
             "description": tool_info.description or "",
-            "parameters": schema,
+            "parameters": final_params_schema,
             "type": "function",
     }
         
@@ -272,8 +281,17 @@ def create_generic_mcp_adapter(
         # Parameters required - create a generic tool that accepts kwargs
         @function_tool(name=tool_name) 
         async def param_tool(**kwargs) -> Any:
+            actual_kwargs = kwargs.copy() # Work with a copy
+
+            if 'instructions' in required_params and 'instructions' not in actual_kwargs:
+                # Check if any other parameter defined in the tool's properties was provided.
+                other_params_provided = any(p in actual_kwargs for p in param_properties if p != 'instructions')
+                if other_params_provided:
+                    actual_kwargs['instructions'] = f"Execute tool {tool_name} with the provided parameters."
+
+            
             # Check for required parameters
-            missing = [p for p in required_params if p not in kwargs]
+            missing = [p for p in required_params if p not in actual_kwargs]
             if missing:
                 missing_str = ", ".join(missing)
                 param_details = []
@@ -287,22 +305,31 @@ def create_generic_mcp_adapter(
                     f"Missing required parameters for {tool_name}: {missing_str}. "
                     f"Required parameters: {param_help}"
                 )
-            return await client_call_function(kwargs)
+            return await client_call_function(actual_kwargs)
         param_tool.__doc__ = docstring
         # Populate the parameters_schema from MCP's input_schema
         tool_info_param = get_tool_info(param_tool)
         tool_info_param.parameters_schema = input_schema
         return param_tool
+
 def build_nova_sonic_schema(function_tool: FunctionTool) -> dict[str, Any]:
     """Build Amazon Nova Sonic-compatible schema from a function tool"""
-    model = function_arguments_to_pydantic_model(function_tool)
     tool_info = get_tool_info(function_tool)
 
-    # Get JSON schema from model and ensure it's stringified for Nova Sonic
-    parameters_schema = model.model_json_schema()
+    params_schema_to_use: Optional[dict] = None
+
+    # Prioritize parameters_schema if it's set on the tool_info (populated for MCP tools)
+    if tool_info.parameters_schema is not None:
+        # This schema comes directly from the MCP tool's input_schema
+        params_schema_to_use = tool_info.parameters_schema
+    else:
+        # Fallback for standard @function_tool decorated functions
+        model = function_arguments_to_pydantic_model(function_tool)
+        params_schema_to_use = model.model_json_schema()
     
-    # Nova Sonic expects the inputSchema.json to be a string containing the JSON schema
-    input_schema_json_string = json.dumps(parameters_schema)
+
+    final_params_schema_for_nova = params_schema_to_use if params_schema_to_use is not None else {"type": "object", "properties": {}}
+    input_schema_json_string = json.dumps(final_params_schema_for_nova)
 
     # Ensure description is not empty
     description = tool_info.description or tool_info.name

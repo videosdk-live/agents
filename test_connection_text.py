@@ -125,20 +125,20 @@ async def main(context: dict):
     logger.info("Starting voice agent with MCP support...")
     
 
-    # model = OpenAIRealtime(
-    #         model="gpt-4o-realtime-preview",
-    #         config=OpenAIRealtimeConfig(
-    #             modalities=["text"],
-    #             tool_choice="auto"
-    #         )
-    # )
-
-    model = GeminiRealtime(
-        model="gemini-2.0-flash-live-001",
-        config=GeminiLiveConfig(
-            response_modalities=["TEXT"]
-        )
+    model = OpenAIRealtime(
+            model="gpt-4o-realtime-preview",
+            config=OpenAIRealtimeConfig(
+                modalities=["text"],
+                tool_choice="auto"
+            )
     )
+
+    # model = GeminiRealtime(
+    #     model="gemini-2.0-flash-live-001",
+    #     config=GeminiLiveConfig(
+    #         response_modalities=["TEXT"]
+    #     )
+    # )
 
     def handle_text_response(data):
         if data.get("type") == "done":
