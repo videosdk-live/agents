@@ -80,7 +80,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]]):
             async for stt_response in self.stt.process_audio(audio_data):
                 if stt_response.event_type == SpeechEventType.FINAL:
                     user_text = stt_response.data.text
-                    
+                    user_text = await self.agent.process_stt_output(user_text)
                     self.agent.chat_context.add_message(
                         role=ChatRole.USER,
                         content=user_text
@@ -126,6 +126,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]]):
                                             async for new_resp in self.llm.chat(self.agent.chat_context):
                                                 new_content = new_resp.content[prev_content_length:]
                                                 if new_content:
+                                                    # new_content = await self.agent.process_llm_output(new_content)
                                                     yield new_content
                                                 full_response = new_resp.content
                                                 prev_content_length = len(new_resp.content)
@@ -135,6 +136,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]]):
                                 else:
                                     new_content = llm_chunk_resp.content[prev_content_length:]
                                     if new_content: 
+                                        new_content = await self.agent.process_llm_output(new_content)
                                         yield new_content
                                     full_response = llm_chunk_resp.content
                                     prev_content_length = len(llm_chunk_resp.content)
