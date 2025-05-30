@@ -12,7 +12,7 @@ import httpx
 import openai
 from openai.types.beta.realtime.transcription_session_update_param import SessionTurnDetection
 
-from videosdk.agents import STT as BaseSTT, STTResponse, SpeechEventType, SpeechData
+from videosdk.agents import STT as BaseSTT, STTResponse, SpeechEventType, SpeechData, global_event_emitter
 
 class OpenAISTT(BaseSTT):
     def __init__(
@@ -155,7 +155,6 @@ class OpenAISTT(BaseSTT):
         
         try:
             msg_type = msg.get("type")
-            
             if msg_type == "conversation.item.input_audio_transcription.delta":
                 delta = msg.get("delta", "")
                 if delta:
@@ -185,6 +184,12 @@ class OpenAISTT(BaseSTT):
                         metadata={"model": self.model}
                     ))
                     self._current_text = ""
+            
+            elif msg_type == "input_audio_buffer.speech_started":
+                global_event_emitter.emit("speech_started")
+            
+            elif msg_type == "input_audio_buffer.speech_stopped":
+                global_event_emitter.emit("speech_stopped")
                 
         except Exception as e:
             print(f"Error handling WebSocket message: {str(e)}")

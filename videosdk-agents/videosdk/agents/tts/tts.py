@@ -53,6 +53,11 @@ class TTS(EventEmitter[Literal["error"]]):
         """
         raise NotImplementedError
 
+    @abstractmethod
+    async def interrupt(self) -> None:
+        """Interrupt the TTS process"""
+        raise NotImplementedError
+
     async def aclose(self) -> None:
         """Cleanup resources"""
         pass
