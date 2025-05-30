@@ -145,3 +145,29 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
             voice_id=voice_id,
             **kwargs
         )
+
+    async def process_stt_output(self, text: str) -> str:
+        """
+        Process STT output before it goes to LLM.
+        Override this method to add custom processing.
+        
+        Args:
+            text: The text from STT
+            
+        Returns:
+            Processed text
+        """
+        return text
+
+    async def process_llm_output(self, text: str) -> str:
+        """
+        Process LLM output before it goes to TTS.
+        Override this method to add custom processing.
+        
+        Args:
+            text: The text from LLM
+            
+        Returns:
+            Processed text
+        """
+        return text

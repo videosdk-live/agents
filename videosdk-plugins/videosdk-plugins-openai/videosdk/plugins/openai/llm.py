@@ -1,16 +1,12 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
-from typing import Any, AsyncIterator, Dict, List
+from typing import Any, AsyncIterator
 import json
 
 import httpx
 import openai
-from videosdk.agents.llm.llm import LLM, LLMResponse
-from videosdk.agents.llm.chat_context import ChatContext, ChatRole, ChatMessage, FunctionCall, FunctionCallOutput
-from videosdk.agents.utils import ToolChoice, FunctionTool, is_function_tool, build_openai_schema
-from videosdk.agents.llm.function_handler import FunctionHandler
+from videosdk.agents import LLM, LLMResponse, ChatContext, ChatRole, ChatMessage, FunctionCall, FunctionCallOutput, ToolChoice, FunctionTool, is_function_tool, build_openai_schema
 
 class OpenAILLM(LLM):
     
@@ -137,7 +133,6 @@ class OpenAILLM(LLM):
                     try:
                         args = json.loads(current_function_call["arguments"])
                         current_function_call["arguments"] = args
-                        print(f"Complete function call: {current_function_call}")  
                     except json.JSONDecodeError:
                         print(f"Failed to parse function arguments: {current_function_call['arguments']}")
                         current_function_call["arguments"] = {}

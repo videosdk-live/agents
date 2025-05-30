@@ -1,18 +1,11 @@
 from __future__ import annotations
 
-import asyncio
-from dataclasses import dataclass
 from typing import Any, AsyncIterator, Literal, Optional, Union
 import httpx
 import os
 import openai
-import sounddevice as sd
-import numpy as np
-import io
-from pydub import AudioSegment
 
-from videosdk.agents.tts.tts import TTS
-from videosdk.agents import CustomAudioStreamTrack
+from videosdk.agents import TTS
 
 OPENAI_TTS_SAMPLE_RATE = 24000
 OPENAI_TTS_CHANNELS = 1
