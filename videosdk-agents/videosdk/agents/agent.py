@@ -6,8 +6,9 @@ import inspect
 
 from .event_emitter import EventEmitter
 from .utils import FunctionTool, is_function_tool
-from .mcp_integration import MCPToolManager
-from .mcp_server import MCPServer
+from .mcp.mcp_manager import MCPToolManager
+from .mcp.mcp_server import MCPServer
+
 
 AgentEventTypes = Literal[
     "instructions_updated",
