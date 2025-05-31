@@ -95,13 +95,15 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         """
         Leave the realtime pipeline.
         """
-        await self.room.leave()
+        if self.room is not None:
+            await self.room.leave()
         
 
     async def cleanup(self):
         """Cleanup resources"""
-        if hasattr(self, 'room'):
+        if hasattr(self, 'room') and self.room is not None:
             await self.room.leave()
-            await self.room.cleanup()
+            if hasattr(self.room, 'cleanup'):
+                await self.room.cleanup()
         if hasattr(self, 'model'):
             await self.model.aclose()

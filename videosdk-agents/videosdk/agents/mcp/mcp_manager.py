@@ -2,7 +2,7 @@ import asyncio
 from typing import Any, Dict, List, Optional
 
 # from videosdk.agents.agent import Agent 
-from videosdk.agents.mcp_server import MCPServer
+from videosdk.agents.mcp.mcp_server import MCPServer
 from videosdk.agents.utils import FunctionTool, ToolError
 
 

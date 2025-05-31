@@ -395,6 +395,9 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                 elif 'contentEnd' in json_data['event']: 
                                     pass
 
+                                elif 'usageEvent' in json_data['event']:
+                                    pass
+
                                 elif 'toolUse' in json_data['event']:
                                      tool_use = json_data['event']['toolUse']
                                      asyncio.create_task(self._execute_tool_and_send_result(tool_use))

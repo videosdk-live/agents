@@ -15,7 +15,7 @@ from mcp.types import JSONRPCMessage
 from mcp.client.streamable_http import streamablehttp_client
 
 
-from .utils import RawFunctionTool, ToolError, create_generic_mcp_adapter, FunctionTool
+from ..utils import RawFunctionTool, ToolError, create_generic_mcp_adapter, FunctionTool
 
 # MCPTool alias remains, as it's a type hint
 MCPTool = RawFunctionTool
