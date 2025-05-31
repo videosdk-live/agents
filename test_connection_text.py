@@ -1,24 +1,20 @@
 import asyncio
-import logging
 import os
 import pathlib
 import sys
+import logging
 
 import aiohttp
 from videosdk.agents import Agent, AgentSession, RealTimePipeline, function_tool
-from videosdk.agents.mcp_integration import MCPToolManager
-from videosdk.agents.mcp_server import MCPServerStdio,MCPServerHTTP
+from videosdk.agents.mcp.mcp_manager import MCPToolManager
+from videosdk.agents.mcp.mcp_server import MCPServerStdio,MCPServerHTTP
 from videosdk.plugins.aws import NovaSonicRealtime, NovaSonicConfig
 from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig
 from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig
 from openai.types.beta.realtime.session import  TurnDetection
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
+# Suppress all external library logging
+logging.getLogger().setLevel(logging.CRITICAL)
 
 @function_tool
 async def get_weather(latitude: str, longitude: str):
@@ -29,7 +25,6 @@ async def get_weather(latitude: str, longitude: str):
         latitude: The latitude of the location
         longitude: The longitude of the location
     """
-    logger.info(f"Getting weather for {latitude}, {longitude}")
     url = f"https://api.open-meteo.com/v1/forecast?latitude={latitude}&longitude={longitude}&current=temperature_2m"
     async with aiohttp.ClientSession() as session:
         async with session.get(url) as response:
@@ -63,18 +58,16 @@ class MyVoiceAgent(Agent):
         mcp_current_time_path = next((p for p in spath if p.exists()), None)
 
         if not mcp_server_path:
-            logger.error("MCP server example not found. Checked paths:")
             for path in possible_paths:
-                logger.error(f" - {path}")
+                print(f"MCP server example not found. Checked path: {path}")
             raise Exception("MCP server example not found")
         
         if not mcp_current_time_path:
-            logger.error("MCP current time example not found. Checked paths:")
             for path in spath:
-                logger.error(f" - {path}")
+                print(f"MCP current time example not found. Checked path: {path}")
             raise Exception("MCP current time example not found")
 
-        logger.info(f"Connecting to MCP server at {mcp_server_path}")
+        print(f"Connecting to MCP server at {mcp_server_path}")
         super().__init__(
             instructions=""" You are a helpful voice assistant that can answer questions and help with tasks. """,
             tools=[get_weather],
@@ -122,23 +115,23 @@ class MyVoiceAgent(Agent):
 
 
 async def main(context: dict):
-    logger.info("Starting voice agent with MCP support...")
+    print("Starting voice agent with MCP support...")
     
 
-    model = OpenAIRealtime(
-            model="gpt-4o-realtime-preview",
-            config=OpenAIRealtimeConfig(
-                modalities=["text"],
-                tool_choice="auto"
-            )
-    )
-
-    # model = GeminiRealtime(
-    #     model="gemini-2.0-flash-live-001",
-    #     config=GeminiLiveConfig(
-    #         response_modalities=["TEXT"]
-    #     )
+    # model = OpenAIRealtime(
+    #         model="gpt-4o-realtime-preview",
+    #         config=OpenAIRealtimeConfig(
+    #             modalities=["text"],
+    #             tool_choice="auto"
+    #         )
     # )
+
+    model = GeminiRealtime(
+        model="gemini-2.0-flash-live-001",
+        config=GeminiLiveConfig(
+            response_modalities=["TEXT"]
+        )
+    )
 
     def handle_text_response(data):
         if data.get("type") == "done":
@@ -152,8 +145,8 @@ async def main(context: dict):
 
     try:
         await session.start()
-        logger.info("Session started. TEXT-ONLY MODE.")
-        logger.info("You can now type messages! Type 'quit' to exit.\n")
+        print("Session started. TEXT-ONLY MODE.")
+        print("You can now type messages! Type 'quit' to exit.\n")
 
         async def get_user_input():
             import sys
@@ -162,20 +155,20 @@ async def main(context: dict):
                     loop = asyncio.get_event_loop()
                     user_message = await loop.run_in_executor(None, input, "\n> ")
                     if user_message.lower().strip() in ['quit', 'exit', 'bye']:
-                        logger.info("Exiting...")
+                        print("Exiting...")
                         break
                     if user_message.strip():
                         await pipeline.send_text_message(user_message)
                 except (EOFError, KeyboardInterrupt):
-                    logger.info("Goodbye!")
+                    print("Goodbye!")
                     break
                 except Exception as e:
-                    logger.error(f"Input error: {e}")
+                    print(f"Input error: {e}")
 
         await get_user_input()
 
     except KeyboardInterrupt:
-        logger.info("Shutting down...")
+        print("Shutting down...")
     finally:
         await session.close()
         await pipeline.cleanup()

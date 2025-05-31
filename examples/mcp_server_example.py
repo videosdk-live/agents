@@ -1,16 +1,11 @@
 from mcp.server.fastmcp import FastMCP
-import logging
 import datetime
 import json
 import urllib.request
 import urllib.parse
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
 # Alpha Vantage API key
-ALPHA_VANTAGE_API_KEY = "YOURAPIKEY"
+ALPHA_VANTAGE_API_KEY = "4YAE7GJ9TDEY8M46"
 
 # Create the MCP server
 # This FastMCP implementation follows the Model Context Protocol standard
@@ -21,7 +16,6 @@ mcp = FastMCP("FinancialDataServer")
 @mcp.tool()
 def get_nifty50_price() -> str:
     """Get the current Nifty 50 index price from India's stock market"""
-    logger.info("Nifty 50 price tool called")
     
     try:
         # Get current time
@@ -42,7 +36,6 @@ def get_nifty50_price() -> str:
                 # If we hit API limits or other issues, use a fallback example price
                 return f"The Nifty 50 was around ₹21,500 to ₹22,500 as of {time_str} (sample data - couldn't fetch real-time price)"
     except Exception as e:
-        logger.error(f"Error getting Nifty 50 price: {e}")
         # Return a fallback message with the time
         return f"I couldn't retrieve the Nifty 50 price at this time. The current time is {time_str}"
 
@@ -54,7 +47,6 @@ def get_stock_quote(symbol: str) -> str:
     Args:
         symbol: The stock symbol to look up (e.g., AAPL, MSFT, GOOGL)
     """
-    logger.info(f"Stock quote tool called for symbol: {symbol}")
     
     try:
         # Get current time
@@ -76,7 +68,6 @@ def get_stock_quote(symbol: str) -> str:
             else:
                 return f"Unable to retrieve data for {symbol} at {time_str}. This may be due to an invalid symbol or API rate limits."
     except Exception as e:
-        logger.error(f"Error getting stock quote for {symbol}: {e}")
         return f"I couldn't retrieve the stock quote for {symbol} at this time ({time_str})."
 
 # Add currency exchange rate tool
@@ -88,7 +79,6 @@ def get_exchange_rate(from_currency: str, to_currency: str) -> str:
         from_currency: The source currency code (e.g., USD, EUR, GBP)
         to_currency: The target currency code (e.g., JPY, INR, CAD)
     """
-    logger.info(f"Exchange rate tool called: {from_currency} to {to_currency}")
     
     try:
         # Get current time
@@ -111,7 +101,6 @@ def get_exchange_rate(from_currency: str, to_currency: str) -> str:
             else:
                 return f"Unable to retrieve exchange rate for {from_currency} to {to_currency} at {time_str}. This may be due to invalid currency codes or API rate limits."
     except Exception as e:
-        logger.error(f"Error getting exchange rate for {from_currency} to {to_currency}: {e}")
         return f"I couldn't retrieve the exchange rate at this time ({time_str})."
 
 # Add company overview tool
@@ -122,7 +111,6 @@ def get_company_info(symbol: str) -> str:
     Args:
         symbol: The stock symbol of the company (e.g., AAPL, MSFT, GOOGL)
     """
-    logger.info(f"Company info tool called for symbol: {symbol}")
     
     try:
         # Get current time
@@ -155,7 +143,6 @@ def get_company_info(symbol: str) -> str:
             else:
                 return f"Unable to retrieve company information for {symbol} at {time_str}. This may be due to an invalid symbol or API rate limits."
     except Exception as e:
-        logger.error(f"Error getting company info for {symbol}: {e}")
         return f"I couldn't retrieve the company information for {symbol} at this time ({time_str})."
 
 # Add a general search tool that combines search results with time
@@ -166,7 +153,6 @@ def search_with_time(query: str) -> str:
     Args:
         query: The search query (what to search for)
     """
-    logger.info(f"Search tool called with query: {query}")
     
     # Get current time
     now = datetime.datetime.now()
@@ -201,5 +187,4 @@ def search_with_time(query: str) -> str:
 
 if __name__ == "__main__":
     # Run the server
-    logger.info("Starting Financial Data MCP server...")
     mcp.run(transport="stdio")  # Use stdio for direct process communication 
