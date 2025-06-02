@@ -6,6 +6,7 @@ from .realtime_pipeline import RealTimePipeline
 from .utils import function_tool, is_function_tool, get_tool_info, FunctionTool, FunctionToolInfo, build_openai_schema, build_gemini_schema, ToolChoice, build_nova_sonic_schema
 from .room.audio_stream import CustomAudioStreamTrack
 from .job import WorkerJob
+from .mcp.mcp_server import MCPServerStdio, MCPServerHTTP
 
 __all__ = [
     'Agent',
@@ -24,4 +25,6 @@ __all__ = [
     'ToolChoice',
     'WorkerJob',
     'build_nova_sonic_schema',
+    'MCPServerStdio',
+    'MCPServerHTTP',
 ]
