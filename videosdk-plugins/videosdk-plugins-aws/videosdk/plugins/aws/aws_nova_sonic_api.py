@@ -26,8 +26,7 @@ from aws_sdk_bedrock_runtime.config import (
 )
 from smithy_aws_core.credentials_resolvers.environment import EnvironmentCredentialsResolver
 
-from videosdk.agents import RealtimeBaseModel
-from videosdk.agents.utils import build_nova_sonic_schema, get_tool_info, is_function_tool, FunctionTool
+from videosdk.agents import Agent, RealtimeBaseModel, build_nova_sonic_schema, get_tool_info, is_function_tool, FunctionTool
 
 NOVA_INPUT_SAMPLE_RATE = 16000  
 NOVA_OUTPUT_SAMPLE_RATE = 24000 
@@ -114,8 +113,14 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
         self._initialize_bedrock_client()
 
         # Listen for agent events
-        self.on("instructions_updated", self._handle_instructions_updated)
-        self.on("tools_updated", self._handle_tools_updated)
+        # self.on("instructions_updated", self._handle_instructions_updated)
+        # self.on("tools_updated", self._handle_tools_updated)
+
+    def set_agent(self, agent: Agent) -> None:
+        self._instructions = agent.instructions
+        self._tools = agent.tools
+        self.tools_formatted = [build_nova_sonic_schema(tool) for tool in self._tools if is_function_tool(tool)]
+        self.formatted_tools = self.tools_formatted
 
     def _initialize_bedrock_client(self):
         """Initialize the Bedrock client with manual credential handling"""

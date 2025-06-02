@@ -7,7 +7,7 @@ from .pipeline import Pipeline
 from .event_emitter import EventEmitter
 from .realtime_base_model import RealtimeBaseModel
 from .room.room import VideoSDKHandler
-
+from .agent import Agent
 class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtime_end","user_audio_input_data"]]):
     """
     RealTime pipeline implementation that processes data in real-time.
@@ -33,6 +33,11 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         self.room = None
         self.model.loop = self.loop
         self.model.audio_track = None
+    
+    def set_agent(self, agent: Agent) -> None:
+        self.agent = agent
+        if hasattr(self.model, 'set_agent'):
+            self.model.set_agent(agent) 
 
     async def start(self, **kwargs: Any) -> None:
         """
