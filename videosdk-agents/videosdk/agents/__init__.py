@@ -14,6 +14,8 @@ from .tts.tts import TTS
 from .vad import VAD, VADResponse, VADEventType
 from .event_bus import global_event_emitter, EventTypes
 from .cascading_pipeline import CascadingPipeline
+from .mcp.mcp_server import MCPServerStdio, MCPServerHTTP
+
 __all__ = [
     'Agent',
     'AgentSession',
@@ -50,4 +52,6 @@ __all__ = [
     'EventTypes',
     'CascadingPipeline',
     'build_nova_sonic_schema',
+    'MCPServerStdio',
+    'MCPServerHTTP',
 ]
