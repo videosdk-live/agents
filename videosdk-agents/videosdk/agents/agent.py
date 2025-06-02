@@ -27,7 +27,7 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
         self._mcp_servers = mcp_servers if mcp_servers else [] # Store for async initialization
         self._mcp_initialized = False
         self._register_class_tools()
-        self.register_tools()
+        # self.register_tools()
         self.mcp_manager = MCPToolManager()
 
     def _register_class_tools(self) -> None:
@@ -43,7 +43,7 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
     @instructions.setter
     def instructions(self, value: str) -> None:
         self._instructions = value
-        self.emit("instructions_updated", {"instructions": value})
+        # self.emit("instructions_updated", {"instructions": value})
 
     @property
     def tools(self) -> List[FunctionTool]:
@@ -55,7 +55,7 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
             if not is_function_tool(tool):
                 raise ValueError(f"Tool {tool.__name__ if hasattr(tool, '__name__') else tool} is not a valid FunctionTool")
         
-        self.emit("tools_updated", {"tools": self._tools})
+        # self.emit("tools_updated", {"tools": self._tools})
     
     async def initialize_mcp(self) -> None:
         """Initialize the agent, including any MCP server if provided."""
@@ -68,7 +68,7 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
         """Initialize the MCP server and register the tools"""
         await self.mcp_manager.add_mcp_server(mcp_server)
         self._tools.extend(self.mcp_manager.tools)
-        self.register_tools()
+        # self.register_tools()
     
     @abstractmethod
     async def on_enter(self) -> None:
