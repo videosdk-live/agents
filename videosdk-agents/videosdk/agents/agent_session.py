@@ -30,6 +30,9 @@ class AgentSession:
         self.pipeline = pipeline
         self.context = context or {}
         self.agent.session = self
+        
+        if hasattr(self.pipeline, 'set_agent'):
+            self.pipeline.set_agent(self.agent)
 
     async def start(self, **kwargs: Any) -> None:
         """
@@ -48,7 +51,6 @@ class AgentSession:
         meeting_id = self.context.get("meetingId")
         videosdk_auth = self.context.get("videosdk_auth",None) 
         name = self.context.get("name", "Agent")
-        token = self.context.get("token", None)
         
         await self.pipeline.start(meeting_id=meeting_id, name=name, videosdk_auth=videosdk_auth)
         await self.agent.on_enter()

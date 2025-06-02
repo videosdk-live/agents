@@ -4,8 +4,8 @@ import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, AsyncIterator, List, Literal, Optional
-from pydantic import BaseModel
+from typing import Any, AsyncIterator, Awaitable, Callable, List, Literal, Optional
+from pydantic import BaseModel  
 from ..event_emitter import EventEmitter
 
 
@@ -40,11 +40,16 @@ class STT(EventEmitter[Literal["error"]]):
     ) -> None:
         super().__init__()
         self._label = f"{type(self).__module__}.{type(self).__name__}"
+        self._transcript_callback: Optional[Callable[[STTResponse], Awaitable[None]]] = None
         
     @property
     def label(self) -> str:
         """Get the STT provider label"""
         return self._label
+
+    def on_stt_transcript(self, callback: Callable[[STTResponse], Awaitable[None]]) -> None:
+        """Set callback for receiving STT transcripts"""
+        self._transcript_callback = callback
 
     @abstractmethod
     async def process_audio(

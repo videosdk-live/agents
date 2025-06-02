@@ -49,7 +49,7 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
             role=ChatRole.SYSTEM,
             content=value
         )
-        global_event_emitter.emit("instructions_updated", {"instructions": value})
+        # global_event_emitter.emit("instructions_updated", {"instructions": value})
 
     @property
     def tools(self) -> List[FunctionTool]:
@@ -60,7 +60,7 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
         for tool in self._tools:
             if not is_function_tool(tool):
                 raise ValueError(f"Tool {tool.__name__ if hasattr(tool, '__name__') else tool} is not a valid FunctionTool")
-        global_event_emitter.emit("tools_updated", {"tools": self._tools})
+        # global_event_emitter.emit("tools_updated", {"tools": self._tools})
     @abstractmethod
     async def on_enter(self) -> None:
         """Called when session starts"""
