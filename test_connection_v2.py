@@ -4,9 +4,7 @@ import pathlib
 import sys
 import logging
 import aiohttp
-from videosdk.agents import Agent, AgentSession, RealTimePipeline, function_tool
-from videosdk.agents.mcp.mcp_manager import MCPToolManager
-from videosdk.agents.mcp.mcp_server import MCPServerStdio,MCPServerHTTP
+from videosdk.agents import Agent, AgentSession, RealTimePipeline, function_tool, MCPServerStdio, MCPServerHTTP
 from videosdk.plugins.aws import NovaSonicRealtime, NovaSonicConfig
 from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig
 from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig
