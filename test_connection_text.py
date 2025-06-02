@@ -3,16 +3,16 @@ import os
 import pathlib
 import sys
 import logging
+
 import aiohttp
 from videosdk.agents import Agent, AgentSession, RealTimePipeline, function_tool, MCPServerStdio, MCPServerHTTP
-from videosdk.plugins.aws import NovaSonicRealtime, NovaSonicConfig
+# from videosdk.plugins.aws import NovaSonicRealtime, NovaSonicConfig
 from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig
 from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig
 from openai.types.beta.realtime.session import  TurnDetection
 
 # Suppress all external library logging
 logging.getLogger().setLevel(logging.CRITICAL)
-
 
 @function_tool
 async def get_weather(latitude: str, longitude: str):
@@ -65,6 +65,7 @@ class MyVoiceAgent(Agent):
                 print(f"MCP current time example not found. Checked path: {path}")
             raise Exception("MCP current time example not found")
 
+        print(f"Connecting to MCP server at {mcp_server_path}")
         super().__init__(
             instructions=""" You are a helpful voice assistant that can answer questions and help with tasks. """,
             tools=[get_weather],
@@ -112,54 +113,58 @@ class MyVoiceAgent(Agent):
 
 
 async def main(context: dict):
+    print("Starting voice agent with MCP support...")
     
 
-    # model = OpenAIRealtime(
-    #     model="gpt-4o-realtime-preview",
-    #     config=OpenAIRealtimeConfig(
-    #         voice="alloy", # alloy, ash, ballad, coral, echo, fable, onyx, nova, sage, shimmer, and verse
-    #         modalities=["text", "audio"],
-    #         turn_detection=TurnDetection(
-    #             type="server_vad",
-    #             threshold=0.5,
-    #             prefix_padding_ms=300,
-    #             silence_duration_ms=200,
-    #         ),
-    #         tool_choice="auto"
-    #     )
-    # )
-
-    model = GeminiRealtime(
-        model="gemini-2.0-flash-live-001",
-        config=GeminiLiveConfig(
-            voice="Leda", # Puck, Charon, Kore, Fenrir, Aoede, Leda, Orus, and Zephyr.
-            response_modalities=["AUDIO"]
-        )
+    model = OpenAIRealtime(
+            model="gpt-4o-realtime-preview",
+            config=OpenAIRealtimeConfig(
+                modalities=["text"],
+                tool_choice="auto"
+            )
     )
 
-    # model = NovaSonicRealtime(
-    #     model="amazon.nova-sonic-v1:0",
-    #     config=NovaSonicConfig(
-    #         voice="tiffany",
-    #         temperature=0.7,
-    #         top_p=0.9,
-    #         max_tokens=1024
+    # model = GeminiRealtime(
+    #     model="gemini-2.0-flash-live-001",
+    #     config=GeminiLiveConfig(
+    #         response_modalities=["TEXT"]
     #     )
     # )
+
+    def handle_text_response(data):
+        if data.get("type") == "done":
+            print(f"\nText response complete: {data.get('text', '')}")
+
+    model.on("text_response", handle_text_response)
 
     pipeline = RealTimePipeline(model=model)
     agent = MyVoiceAgent()
-
-    session = AgentSession(
-        agent=agent,
-        pipeline=pipeline,
-        context=context
-    )
+    session = AgentSession(agent=agent, pipeline=pipeline, context=context)
 
     try:
         await session.start()
-        print("Voice session started. Awaiting interaction...")
-        await asyncio.Event().wait()
+        print("Session started. TEXT-ONLY MODE.")
+        print("You can now type messages! Type 'quit' to exit.\n")
+
+        async def get_user_input():
+            import sys
+            while True:
+                try:
+                    loop = asyncio.get_event_loop()
+                    user_message = await loop.run_in_executor(None, input, "\n> ")
+                    if user_message.lower().strip() in ['quit', 'exit', 'bye']:
+                        print("Exiting...")
+                        break
+                    if user_message.strip():
+                        await pipeline.send_text_message(user_message)
+                except (EOFError, KeyboardInterrupt):
+                    print("Goodbye!")
+                    break
+                except Exception as e:
+                    print(f"Input error: {e}")
+
+        await get_user_input()
+
     except KeyboardInterrupt:
         print("Shutting down...")
     finally:
