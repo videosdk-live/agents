@@ -4,14 +4,14 @@ import asyncio
 import base64
 import json
 import os
-from typing import Any, AsyncIterator, Optional
+from typing import Any, Optional
 from urllib.parse import urlencode
-
+from scipy import signal
 import aiohttp
 import httpx
 import openai
 from openai.types.beta.realtime.transcription_session_update_param import SessionTurnDetection
-
+import numpy as np
 from videosdk.agents import STT as BaseSTT, STTResponse, SpeechEventType, SpeechData, global_event_emitter
 
 class OpenAISTT(BaseSTT):
@@ -23,7 +23,6 @@ class OpenAISTT(BaseSTT):
         base_url: str | None = None,
         prompt: str | None = None,
         language: str = "en",
-        sample_rate: int = 24000,
         turn_detection: dict | None = None,
     ) -> None:
         super().__init__()
@@ -34,7 +33,6 @@ class OpenAISTT(BaseSTT):
         
         self.model = model
         self.language = language
-        self.sample_rate = sample_rate
         self.prompt = prompt
         self.turn_detection = turn_detection or {
             "type": "server_vad",
@@ -58,45 +56,73 @@ class OpenAISTT(BaseSTT):
             ),
         )
         
-        # WebSocket session for streaming
         self._session: Optional[aiohttp.ClientSession] = None
         self._ws: Optional[aiohttp.ClientWebSocketResponse] = None
+        self._ws_task: Optional[asyncio.Task] = None
         self._current_text = ""
         self._last_interim_at = 0
+    
+        self.input_sample_rate = 48000
+        self.target_sample_rate = 16000
         
     async def process_audio(
         self,
         audio_frames: bytes,
         language: Optional[str] = None,
         **kwargs: Any
-    ) -> AsyncIterator[STTResponse]:
-        """Process audio frames and convert to text using OpenAI's Realtime API"""
+    ) -> None:
+        """Process audio frames and send to OpenAI's Realtime API"""
         
         if not self._ws:
             await self._connect_ws()
+            self._ws_task = asyncio.create_task(self._listen_for_responses())
             
         try:
-            audio_data = base64.b64encode(audio_frames).decode('utf-8')
-                
-            await self._ws.send_json({
+            audio_data = np.frombuffer(audio_frames, dtype=np.int16)
+            audio_data = signal.resample(audio_data, int(len(audio_data) * self.target_sample_rate / self.input_sample_rate))
+            audio_data = audio_data.astype(np.int16).tobytes()
+            audio_data = base64.b64encode(audio_data).decode("utf-8")
+            message = {
                 "type": "input_audio_buffer.append",
                 "audio": audio_data,
-            })
-                
-            while True:
-                try:
-                    msg = await asyncio.wait_for(self._ws.receive_json(), timeout=0.1)
-                    responses = self._handle_ws_message(msg)
-                    for response in responses:
-                        yield response
-                except asyncio.TimeoutError:
-                    break 
-                except Exception as e:
-                    self.emit("error", str(e))
-                    return
-                
+            }
+            await self._ws.send_json(message)
         except Exception as e:
+            print(f"Error in process_audio: {str(e)}")
             self.emit("error", str(e))
+            if self._ws:
+                await self._ws.close()
+                self._ws = None
+                if self._ws_task:
+                    self._ws_task.cancel()
+                    self._ws_task = None
+
+    async def _listen_for_responses(self) -> None:
+        """Background task to listen for WebSocket responses"""
+        if not self._ws:
+            return
+            
+        try:
+            async for msg in self._ws:
+                if msg.type == aiohttp.WSMsgType.TEXT:
+                    data = msg.json()
+                    responses = self._handle_ws_message(data)
+                    for response in responses:
+                        if self._transcript_callback:
+                            await self._transcript_callback(response)
+                elif msg.type == aiohttp.WSMsgType.ERROR:
+                    error = f"WebSocket error: {self._ws.exception()}"
+                    print(error)
+                    self.emit("error", error)
+                    break
+                elif msg.type == aiohttp.WSMsgType.CLOSED:
+                    print("WebSocket connection closed")
+                    break
+        except Exception as e:
+            error = f"Error in WebSocket listener: {str(e)}"
+            print(error)
+            self.emit("error", error)
+        finally:
             if self._ws:
                 await self._ws.close()
                 self._ws = None
@@ -137,16 +163,27 @@ class OpenAISTT(BaseSTT):
         ws_url = f"{base_url}/realtime?{urlencode(query_params)}"
         if ws_url.startswith("http"):
             ws_url = ws_url.replace("http", "ws", 1)
-            
+
         try:
             self._ws = await self._session.ws_connect(ws_url, headers=headers)
             
+            initial_response = await self._ws.receive_json()
+            
+            if initial_response.get("type") != "transcription_session.created":
+                raise Exception(f"Expected session creation, got: {initial_response}")
+            
             await self._ws.send_json(config)
             
-            response = await self._ws.receive_json()
+            update_response = await self._ws.receive_json()
+            
+            if update_response.get("type") != "transcription_session.updated":
+                raise Exception(f"Configuration update failed: {update_response}")
             
         except Exception as e:
             print(f"Error connecting to WebSocket: {str(e)}")
+            if self._ws:
+                await self._ws.close()
+                self._ws = None
             raise
         
     def _handle_ws_message(self, msg: dict) -> list[STTResponse]:
@@ -198,6 +235,14 @@ class OpenAISTT(BaseSTT):
 
     async def aclose(self) -> None:
         """Cleanup resources"""
+        if self._ws_task:
+            self._ws_task.cancel()
+            try:
+                await self._ws_task
+            except asyncio.CancelledError:
+                pass
+            self._ws_task = None
+            
         if self._ws:
             await self._ws.close()
             self._ws = None
