@@ -7,7 +7,7 @@ from .pipeline import Pipeline
 from .event_emitter import EventEmitter
 from .realtime_base_model import RealtimeBaseModel
 from .room.room import VideoSDKHandler
-
+from .agent import Agent
 class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtime_end","user_audio_input_data"]]):
     """
     RealTime pipeline implementation that processes data in real-time.
@@ -33,6 +33,11 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         self.room = None
         self.model.loop = self.loop
         self.model.audio_track = None
+    
+    def set_agent(self, agent: Agent) -> None:
+        self.agent = agent
+        if hasattr(self.model, 'set_agent'):
+            self.model.set_agent(agent) 
 
     async def start(self, **kwargs: Any) -> None:
         """
@@ -75,6 +80,16 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         """
         await self.model.send_message(message)
     
+    async def send_text_message(self, message: str) -> None:
+        """
+        Send a text message through the realtime model.
+        This method specifically handles text-only input when modalities is ["text"].
+        """
+        if hasattr(self.model, 'send_text_message'):
+            await self.model.send_text_message(message)
+        else:
+            await self.model.send_message(message)
+    
     async def on_audio_delta(self, audio_data: bytes):
         """
         Handle incoming audio data from the user
@@ -85,13 +100,15 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         """
         Leave the realtime pipeline.
         """
-        await self.room.leave()
+        if self.room is not None:
+            await self.room.leave()
         
 
     async def cleanup(self):
         """Cleanup resources"""
-        if hasattr(self, 'room'):
+        if hasattr(self, 'room') and self.room is not None:
             await self.room.leave()
-            await self.room.cleanup()
+            if hasattr(self.room, 'cleanup'):
+                await self.room.cleanup()
         if hasattr(self, 'model'):
             await self.model.aclose()
