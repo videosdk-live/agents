@@ -26,7 +26,7 @@ from aws_sdk_bedrock_runtime.config import (
 )
 from smithy_aws_core.credentials_resolvers.environment import EnvironmentCredentialsResolver
 
-from videosdk.agents import Agent, RealtimeBaseModel, build_nova_sonic_schema, get_tool_info, is_function_tool, FunctionTool, global_event_emitter
+from videosdk.agents import Agent, RealtimeBaseModel, build_nova_sonic_schema, get_tool_info, is_function_tool, FunctionTool
 
 NOVA_INPUT_SAMPLE_RATE = 16000  
 NOVA_OUTPUT_SAMPLE_RATE = 24000 
@@ -397,6 +397,9 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                         print(f"AUDIO PROCESSING ERROR: {e}")
                                 
                                 elif 'contentEnd' in json_data['event']: 
+                                    pass
+
+                                elif 'usageEvent' in json_data['event']:
                                     pass
 
                                 elif 'toolUse' in json_data['event']:

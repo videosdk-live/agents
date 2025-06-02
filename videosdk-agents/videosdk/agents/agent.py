@@ -10,6 +10,9 @@ from .utils import FunctionTool, is_function_tool
 from .llm.llm import LLMResponse
 from .llm.chat_context import ChatContext, ChatRole
 from .stt.stt import STTResponse
+from .mcp.mcp_manager import MCPToolManager
+from .mcp.mcp_server import MCPServer
+
 
 AgentEventTypes = Literal[
     "instructions_updated",
@@ -21,7 +24,7 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
     Abstract base class for creating custom agents.
     Inherits from EventEmitter to handle agent events and state updates.
     """
-    def __init__(self, instructions: str, tools: List[FunctionTool] = []):
+    def __init__(self, instructions: str, tools: List[FunctionTool] = [], mcp_servers: List[MCPServer] = None):
         super().__init__()
         self._tools = tools
         self._llm = None
@@ -29,8 +32,12 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
         self._tts = None
         self.chat_context = ChatContext.empty()
         self.instructions = instructions
+        self._tools = list(tools)
+        self._mcp_servers = mcp_servers if mcp_servers else []
+        self._mcp_initialized = False
         self._register_class_tools()
-        self.register_tools()
+        # self.register_tools()
+        self.mcp_manager = MCPToolManager()
 
     def _register_class_tools(self) -> None:
         """Register all function tools defined in the class"""
@@ -61,6 +68,20 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
             if not is_function_tool(tool):
                 raise ValueError(f"Tool {tool.__name__ if hasattr(tool, '__name__') else tool} is not a valid FunctionTool")
         # global_event_emitter.emit("tools_updated", {"tools": self._tools})
+    
+    async def initialize_mcp(self) -> None:
+        """Initialize the agent, including any MCP server if provided."""
+        if self._mcp_servers and not self._mcp_initialized:
+            for server in self._mcp_servers:
+                await self.add_server(server)
+            self._mcp_initialized = True
+    
+    async def add_server(self, mcp_server: MCPServer) -> None:
+        """Initialize the MCP server and register the tools"""
+        await self.mcp_manager.add_mcp_server(mcp_server)
+        self._tools.extend(self.mcp_manager.tools)
+        # self.register_tools()
+    
     @abstractmethod
     async def on_enter(self) -> None:
         """Called when session starts"""
