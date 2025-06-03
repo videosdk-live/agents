@@ -34,13 +34,18 @@ class AgentSession:
         if hasattr(self.pipeline, 'set_agent'):
             self.pipeline.set_agent(self.agent)
 
+        
+        if hasattr(self.pipeline, 'set_agent'):
+            self.pipeline.set_agent(self.agent)
+
 
     async def start(self, **kwargs: Any) -> None:
         """
         Start the agent session.
         This will:
-        1. Call the agent's on_enter hook
-        2. Start the pipeline processing
+        1. Initialize the agent (including MCP tools if configured)
+        2. Call the agent's on_enter hook
+        3. Start the pipeline processing
         
         Args:
             **kwargs: Additional arguments to pass to the pipeline start method
@@ -55,6 +60,12 @@ class AgentSession:
         name = self.context.get("name", "Agent")
         join_meeting = self.context.get("join_meeting",True)
         
+        # Initialize the agent (including MCP tools if configured)
+        await self.agent.initialize_mcp()
+        if hasattr(self.pipeline, 'set_agent'):
+            self.pipeline.set_agent(self.agent)
+        
+        await self.pipeline.start(meeting_id=meeting_id, name=name, videosdk_auth=videosdk_auth)
         await self.pipeline.start(meeting_id=meeting_id, name=name, join_meeting=join_meeting)
         await self.agent.on_enter()
         

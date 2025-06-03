@@ -19,7 +19,6 @@ from videosdk.agents import (
     CustomAudioStreamTrack,
     ToolChoice,
     RealtimeBaseModel,
-    global_event_emitter,
     Agent
 )
 
@@ -131,15 +130,14 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         self.audio_track: Optional[CustomAudioStreamTrack] = None
         self._formatted_tools: Optional[List[Dict[str, Any]]] = None
         self.config: OpenAIRealtimeConfig = config or OpenAIRealtimeConfig()
-        # global_event_emitter.on("instructions_updated", self._handle_instructions_updated)
-        # global_event_emitter.on("tools_updated", self._handle_tools_updated) 
-        global_event_emitter.on("text_response", self._handle_text_done)
+        # self.on("instructions_updated", self._handle_instructions_updated)
+        # self.on("tools_updated", self._handle_tools_updated) 
 
     def set_agent(self, agent: Agent) -> None:
         self._instructions = agent.instructions
         self._tools = agent.tools
         self.tools_formatted = self._format_tools_for_session(self._tools)
-        self._formatted_tools = self.tools_formatted 
+        self._formatted_tools = self.tools_formatted
     
     async def connect(self) -> None:
         headers = {"Agent": "VideoSDK Agents"}
@@ -576,11 +574,11 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         })
         await self.create_response()
 
-    def _handle_text_done(self, data: dict) -> None:
+    async def _handle_text_done(self, data: dict) -> None:
         """Handle text response completion"""
         try:
             text_content = data.get("text", "")
             if text_content:
-                global_event_emitter.emit("text_response", {"text": text_content, "type": "done"})
+                self.emit("text_response", {"text": text_content, "type": "done"})
         except Exception as e:
             print(f"[ERROR] Error handling text done: {e}")
