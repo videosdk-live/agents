@@ -9,6 +9,7 @@ from typing import Optional, Literal, List, Dict, Any
 from dataclasses import dataclass
 import librosa
 import numpy as np
+from scipy import signal
 
 
 from aws_sdk_bedrock_runtime.client import (
@@ -111,6 +112,9 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
         
         # Initialize Bedrock client
         self._initialize_bedrock_client()
+        
+        self.input_sample_rate = 48000
+        self.target_sample_rate = 16000
 
         # global_event_emitter.on("instructions_updated", self._handle_instructions_updated)
         # global_event_emitter.on("tools_updated", self._handle_tools_updated)
@@ -309,19 +313,22 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             return
             
         try:
-            # Get audio array from bytes
+            # # Get audio array from bytes
+            # audio_array = np.frombuffer(audio_data, dtype=np.int16)
+            
+            # # Resample from 24kHz to 16kHz
+            # resampled = librosa.resample(
+            #     audio_array.astype(np.float32),
+            #     orig_sr=48000,
+            #     target_sr=16000
+            # ).astype(np.int16)
+            
+            # # Convert to bytes
+            # resampled_bytes = resampled.tobytes()
+
             audio_array = np.frombuffer(audio_data, dtype=np.int16)
-            
-            # Resample from 24kHz to 16kHz
-            resampled = librosa.resample(
-                audio_array.astype(np.float32),
-                orig_sr=24000,
-                target_sr=16000
-            ).astype(np.int16)
-            
-            # Convert to bytes
-            resampled_bytes = resampled.tobytes()
-            
+            resampled = signal.resample(audio_array, int(len(audio_array) * self.target_sample_rate / self.input_sample_rate))
+            resampled_bytes = resampled.astype(np.int16).tobytes()
             # Encode in base64 as expected by Nova Sonic
             encoded_audio = base64.b64encode(resampled_bytes).decode('utf-8')
             
