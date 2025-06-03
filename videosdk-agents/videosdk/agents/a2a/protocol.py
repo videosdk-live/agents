@@ -215,18 +215,30 @@ class A2AProtocol:
             print(f"Target agent {to_agent} not found")
             return
 
-        # If target agent has a model, forward directly to it
-        if hasattr(target_agent, 'session') and hasattr(target_agent.session, 'pipeline') and hasattr(target_agent.session.pipeline, 'model'):
-            await target_agent.session.pipeline.send_text_message(content.get("query", ""))
-            # target_model = target_agent.session.pipeline.model
-            # print(">>> target_model::",target_model)
-            # Store the sender for response handling
-            # if hasattr(target_agent, 'a2a'):
-            #     target_agent.a2a._last_sender = self.agent.id
-            
-            # print(">>> target_model content::",content.get("query", ""))
+        # Create A2A message
+        message = A2AMessage(
+            from_agent=self.agent.id,
+            to_agent=to_agent,
+            type=message_type,
+            content=content,
+            metadata=metadata
+        )
 
-            # Forward directly to target agent's model
-            # await target_model.send_message(content.get("query", ""))
+        # Store the sender for response handling in target agent
+        if hasattr(target_agent, 'a2a'):
+            target_agent.a2a._last_sender = self.agent.id
+
+        # Check if target agent has handlers for this message type
+        if hasattr(target_agent, 'a2a') and message_type in target_agent.a2a._message_handlers:
+            handlers = target_agent.a2a._message_handlers[message_type]
+            for handler in handlers:
+                try:
+                    await handler(message)
+                except Exception as e:
+                    print(f"Error in message handler: {e}")
+
+        # If target agent has a model and this is a specialist_query, forward directly to it
+        elif message_type == "specialist_query" and hasattr(target_agent, 'session') and hasattr(target_agent.session, 'pipeline') and hasattr(target_agent.session.pipeline, 'model'):
+            await target_agent.session.pipeline.send_text_message(content.get("query", ""))
             return
 

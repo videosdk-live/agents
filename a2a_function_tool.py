@@ -13,12 +13,13 @@ class CustomerServiceAgent(Agent):
         super().__init__(
             agent_id="customer_service_1",
             instructions=(
-                "You are a helpful bank customer service agent that can assist customers with general banking queries. "
-                "You can handle questions about account balances, transactions, general banking services, and basic banking information. "
-                "You have access to a function tool `forward_to_specialist(query: str, domain: str)`. "
-                "If the customer asks about loans, interest rates, loan eligibility, or any loan-related queries, "
-                "do NOT answer directly—instead, call the function `forward_to_specialist` with the full user query "
-                "and domain set to \"loan\", and return only that function call."
+                "You are a helpful bank customer service agent. "
+                "For general banking queries (account balances, transactions, basic services), answer directly. "
+                "For ANY loan-related queries, questions, or follow-ups, ALWAYS use the forward_to_specialist function "
+                "with domain set to 'loan'. This includes initial loan questions AND all follow-up questions about loans. "
+                "Do NOT attempt to answer loan questions yourself - always forward them to the specialist. "
+                "When you receive responses from specialists, relay them naturally to the customer. "
+                "Continue forwarding any subsequent loan-related questions or clarifications to the specialist."
             )
         )
         
@@ -43,16 +44,39 @@ class CustomerServiceAgent(Agent):
             content={"query": query}
         )
         
-        return {"status": "forwarded", "specialist": "ahmed"}
+        return {"status": "forwarded", "specialist": id_of_target_agent, "message": "Your question has been forwarded to our loan specialist."}
 
     async def handle_specialist_response(self, message: A2AMessage) -> None:
         """Handle response from specialist agent"""
         response = message.content.get("response")
         if response:
             print("Response from specialist:", response)
-            await self.session.pipeline.model.interrupt()
-            await asyncio.sleep(1)
-            await self.session.say(f"I've received the following information: car loans bad")
+            try:
+                # Wait a moment for any current speaking to finish
+                await asyncio.sleep(0.5)
+                print("About to speak the specialist response...")
+                
+                # Use send_text_message to trigger a natural response from the model
+                prompt = f"Please relay this information to the customer: {response}"
+                await self.session.pipeline.send_text_message(prompt)
+                print("Successfully sent specialist response via pipeline send_text_message!")
+                
+            except Exception as e:
+                print(f"Error while trying to send specialist response via pipeline: {e}")
+                # Try alternative approach with model send_message
+                try:
+                    print("Trying alternative approach with model send_message...")
+                    await self.session.pipeline.model.send_message(response)
+                    print("Successfully sent via model send_message!")
+                except Exception as e2:
+                    print(f"Model send_message also failed: {e2}")
+                    # Last resort - try session.say
+                    try:
+                        print("Trying last resort with session.say...")
+                        await self.session.say(response)
+                        print("Successfully sent via session.say!")
+                    except Exception as e3:
+                        print(f"All methods failed: {e3}")
 
     async def on_exit(self) -> None:
         print("Customer agent Left the meeting")
@@ -68,9 +92,10 @@ class CustomerServiceAgent(Agent):
         )
         await self.register_a2a(card)
         
-        await self.session.say("Hello! i am customer service agent")
-                # Register message handlers
-        self.a2a.on_message("model_response", self.handle_specialist_response)
+        await self.session.say("Hello! I am customer service agent. How can I help you today?")
+        
+        # Register message handlers
+        self.a2a.on_message("specialist_response", self.handle_specialist_response)
 
 
 class LoanAgent(Agent):
@@ -78,57 +103,53 @@ class LoanAgent(Agent):
         super().__init__(
             agent_id="specialist_1", 
             instructions=(
-                "You are a specialized loan agent that handles all loan-related queries. "
-                "You can provide information about different types of loans, interest rates, "
-                "eligibility criteria, and loan application processes. "
-                # "You have access to a function tool `get_loan_details` that can provide specific loan information. "
-                "When customers ask about loan details, give a hypothetical answer."
+                "You are a specialized loan expert at a bank. "
+                "Provide detailed, helpful information about loans including interest rates, terms, and requirements. "
+                "Give complete answers with specific details when possible. "
+                "You can discuss personal loans, car loans, home loans, and business loans. "
+                "Provide helpful guidance and next steps for loan applications. "
+                "Be friendly and professional in your responses."
             ),
         )
 
-    # @function_tool
-    # async def get_loan_details(self, loan_type: str) -> Dict[str, Any]:
-    #     """Get details about different types of loans.
+    async def handle_specialist_query(self, message: A2AMessage) -> None:
+        """Handle incoming queries from other agents"""
+        query = message.content.get("query")
+        print(f"LoanAgent received query: {query}")
         
-    #     Args:
-    #         loan_type: The type of loan (e.g., "personal", "home", "car", "business")
-    #     """
-    #     # Simulated loan data
-    #     loan_data = {
-    #         "personal": {
-    #             "interest_rate": "8.5%",
-    #             "term": "1-5 years",
-    #             "min_amount": "5000",
-    #             "max_amount": "50000"
-    #         },
-    #         "home": {
-    #             "interest_rate": "6.2%",
-    #             "term": "15-30 years",
-    #             "min_amount": "100000",
-    #             "max_amount": "2000000"
-    #         },
-    #         "car": {
-    #             "interest_rate": "7.8%",
-    #             "term": "3-7 years",
-    #             "min_amount": "10000",
-    #             "max_amount": "100000"
-    #         },
-    #         "business": {
-    #             "interest_rate": "9.2%",
-    #             "term": "1-10 years",
-    #             "min_amount": "25000",
-    #             "max_amount": "1000000"
-    #         }
-    #     }
-        
-    #     return loan_data.get(loan_type.lower(), {
-    #         "error": f"No information available for {loan_type} loans"
-    #     })
-        
+        if query:
+            # Process the query with the model
+            await self.session.pipeline.send_text_message(query)
+
+    async def handle_model_response(self, message: A2AMessage) -> None:
+        """Handle model responses and send them back to the requesting agent"""
+        response = message.content.get("response")
+        if response and message.to_agent:
+            print(f"LoanAgent sending response back to {message.to_agent}: {response}")
+            
+            # Send response back to the requesting agent
+            await self.a2a.send_message(
+                to_agent=message.to_agent,
+                message_type="specialist_response",
+                content={"response": response}
+            )
 
     async def on_enter(self) -> None:
         print("LoanAgent agent join the meeting")
-
+        
+        # Register the agent for A2A communication
+        card = AgentCard(
+            id="specialist_1",
+            name="Loan Specialist Agent",
+            domain="loan",
+            capabilities=["loan_consultation", "loan_information", "interest_rates"],
+            description="Specialized agent for handling loan-related queries and providing loan information"
+        )
+        await self.register_a2a(card)
+        
+        # Register message handlers
+        self.a2a.on_message("specialist_query", self.handle_specialist_query)
+        self.a2a.on_message("model_response", self.handle_model_response)
         
     async def on_exit(self) -> None:
         print("LoanAgent agent Left the meeting")
@@ -159,11 +180,20 @@ async def main():
             response_modalities=["TEXT"]
         )
     )
-    # technical_model = OpenAIRealtime(
-    #     model="gpt-4o-realtime-preview",
-    #     config=OpenAIRealtimeConfig(
-    #         modalities=["text"],
-    #     ),
+
+    # customer_model = GeminiRealtime(
+    #     model="gemini-2.0-flash-live-001",
+    #     config=GeminiLiveConfig(
+    #         response_modalities=["AUDIO"]
+    #     )
+    # )
+
+    # technical_model = GeminiRealtime(
+    #     model="gemini-2.0-flash-live-001",
+    #     api_key="AIzaSyACeIOnCtJvfrLOe-js6VBlic-y2BgstHA",
+    #     config=GeminiLiveConfig(
+    #         response_modalities=["TEXT"]
+    #     )
     # )
 
     customer_pipeline = RealTimePipeline(model=customer_model)
@@ -176,7 +206,7 @@ async def main():
         pipeline=customer_pipeline,
         context={
             "name": "Customer Service Assistant",
-            "meetingId": "pbow-6vec-vahn",
+            "meetingId": "re2o-30kc-tbqt",
             "join_meeting":True,
             "videosdk_auth": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhcGlrZXkiOiI0N2M3ZTJlYy01NzY5LTQ3OWQtYjdjNS0zYjU5MDcxYzhhMDkiLCJwZXJtaXNzaW9ucyI6WyJhbGxvd19qb2luIl0sImlhdCI6MTY3MjgwOTcxMywiZXhwIjoxODMwNTk3NzEzfQ.KeXr1cxORdq6X7-sxBLLV7MsUnwuJGLaG8_VTyTFBig"
         }
@@ -197,17 +227,6 @@ async def main():
         }
     )
 
-    agentCard = AgentCard(
-            id="specialist_1",
-            name="Technical Specialist",
-            domain="loan",
-            capabilities=["technical_support", "problem_solving"],
-            description="Handles technical queries and problems"
-    )
-
-
-    await specialist_agent.register_a2a(agentCard)
-    
     try:
         await customer_session.start()
         await specialist_session.start()
@@ -221,4 +240,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
