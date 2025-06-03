@@ -10,6 +10,7 @@ import base64
 import time
 from dotenv import load_dotenv
 from videosdk.agents import Agent,CustomAudioStreamTrack, RealtimeBaseModel, build_gemini_schema, is_function_tool, FunctionTool, get_tool_info
+from videosdk.agents.event_bus import global_event_emitter
 
 from google import genai
 from google.genai.live import AsyncSession
