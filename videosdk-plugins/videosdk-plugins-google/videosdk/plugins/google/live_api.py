@@ -401,7 +401,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                     })
                                 # Emit completion for text responses with accumulated text
                                 if "TEXT" in self.config.response_modalities:
-                                    self.emit("text_response", {
+                                    global_event_emitter.emit("text_response", {
                                         "type": "done",
                                         "text": accumulated_text
                                     })

@@ -24,8 +24,7 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
     Abstract base class for creating custom agents.
     Inherits from EventEmitter to handle agent events and state updates.
     """
-    def __init__(self, instructions: str, tools: List[FunctionTool] = [],agent_id: str = None):
-    def __init__(self, instructions: str, tools: List[FunctionTool] = [], mcp_servers: List[MCPServer] = None):
+    def __init__(self, instructions: str, tools: List[FunctionTool] = [],agent_id: str = None, mcp_servers: List[MCPServer] = None):
         super().__init__()
         self.instructions = instructions
         self._tools = list(tools)  # Create a copy to avoid mutable default argument issues

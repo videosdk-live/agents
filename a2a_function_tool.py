@@ -18,8 +18,9 @@ class CustomerServiceAgent(Agent):
                 "For ANY loan-related queries, questions, or follow-ups, ALWAYS use the forward_to_specialist function "
                 "with domain set to 'loan'. This includes initial loan questions AND all follow-up questions about loans. "
                 "Do NOT attempt to answer loan questions yourself - always forward them to the specialist. "
-                "When you receive responses from specialists, relay them naturally to the customer. "
-                "Continue forwarding any subsequent loan-related questions or clarifications to the specialist."
+                "After forwarding a loan query, stay engaged and automatically relay any response you receive from the specialist. "
+                "Do not wait for the customer to ask if you received a response - automatically provide it when you get it. "
+                "When you receive responses from specialists, immediately relay them naturally to the customer."
             )
         )
         
@@ -44,7 +45,7 @@ class CustomerServiceAgent(Agent):
             content={"query": query}
         )
         
-        return {"status": "forwarded", "specialist": id_of_target_agent, "message": "Your question has been forwarded to our loan specialist."}
+        return {"status": "forwarded", "specialist": id_of_target_agent, "message": "Let me get that information for you from our loan specialist..."}
 
     async def handle_specialist_response(self, message: A2AMessage) -> None:
         """Handle response from specialist agent"""
@@ -57,7 +58,7 @@ class CustomerServiceAgent(Agent):
                 print("About to speak the specialist response...")
                 
                 # Use send_text_message to trigger a natural response from the model
-                prompt = f"Please relay this information to the customer: {response}"
+                prompt = f"The loan specialist has responded. Please provide this information to the customer: {response}"
                 await self.session.pipeline.send_text_message(prompt)
                 print("Successfully sent specialist response via pipeline send_text_message!")
                 

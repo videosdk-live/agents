@@ -9,7 +9,6 @@ from .realtime_base_model import RealtimeBaseModel
 from .room.room import VideoSDKHandler
 from videosdk.agents.a2a.protocol import A2AMessage
 from .agent import Agent
-from .agent import Agent
 class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtime_end","user_audio_input_data"]]):
     """
     RealTime pipeline implementation that processes data in real-time.

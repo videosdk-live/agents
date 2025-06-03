@@ -19,6 +19,7 @@ from videosdk.agents import (
     CustomAudioStreamTrack,
     ToolChoice,
     RealtimeBaseModel,
+    global_event_emitter,
     Agent
 )
 
@@ -130,8 +131,9 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         self.audio_track: Optional[CustomAudioStreamTrack] = None
         self._formatted_tools: Optional[List[Dict[str, Any]]] = None
         self.config: OpenAIRealtimeConfig = config or OpenAIRealtimeConfig()
-        # self.on("instructions_updated", self._handle_instructions_updated)
-        # self.on("tools_updated", self._handle_tools_updated) 
+        # global_event_emitter.on("instructions_updated", self._handle_instructions_updated)
+        # global_event_emitter.on("tools_updated", self._handle_tools_updated) 
+        global_event_emitter.on("text_response", self._handle_text_done)
 
     def set_agent(self, agent: Agent) -> None:
         self._instructions = agent.instructions
@@ -579,6 +581,6 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         try:
             text_content = data.get("text", "")
             if text_content:
-                self.emit("text_response", {"text": text_content, "type": "done"})
+                global_event_emitter.emit("text_response", {"text": text_content, "type": "done"})
         except Exception as e:
             print(f"[ERROR] Error handling text done: {e}")
