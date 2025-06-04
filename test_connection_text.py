@@ -5,9 +5,7 @@ import sys
 import logging
 
 import aiohttp
-from videosdk.agents import Agent, AgentSession, RealTimePipeline, function_tool
-from videosdk.agents.mcp.mcp_manager import MCPToolManager
-from videosdk.agents.mcp.mcp_server import MCPServerStdio,MCPServerHTTP
+from videosdk.agents import Agent, AgentSession, RealTimePipeline, function_tool, MCPServerStdio, MCPServerHTTP
 # from videosdk.plugins.aws import NovaSonicRealtime, NovaSonicConfig
 from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig
 from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig
@@ -118,20 +116,20 @@ async def main(context: dict):
     print("Starting voice agent with MCP support...")
     
 
-    # model = OpenAIRealtime(
-    #         model="gpt-4o-realtime-preview",
-    #         config=OpenAIRealtimeConfig(
-    #             modalities=["text"],
-    #             tool_choice="auto"
-    #         )
-    # )
-
-    model = GeminiRealtime(
-        model="gemini-2.0-flash-live-001",
-        config=GeminiLiveConfig(
-            response_modalities=["TEXT"]
-        )
+    model = OpenAIRealtime(
+            model="gpt-4o-realtime-preview",
+            config=OpenAIRealtimeConfig(
+                modalities=["text"],
+                tool_choice="auto"
+            )
     )
+
+    # model = GeminiRealtime(
+    #     model="gemini-2.0-flash-live-001",
+    #     config=GeminiLiveConfig(
+    #         response_modalities=["TEXT"]
+    #     )
+    # )
 
     def handle_text_response(data):
         if data.get("type") == "done":
