@@ -37,7 +37,9 @@ class CustomerServiceAgent(Agent):
         # (you could round-robin, pick the first, broadcast to all, etc.)
         id_of_target_agent = specialists[0] if specialists else None
         if not id_of_target_agent:
-            return {"error": "no specialist found for domain " + domain}
+            error_msg = "no specialist found for domain " + domain
+            print(f" Error: {error_msg}")
+            return {"error": error_msg}
 
         await self.a2a.send_message(
             to_agent=id_of_target_agent,
@@ -110,13 +112,13 @@ class LoanAgent(Agent):
                 "You can discuss personal loans, car loans, home loans, and business loans. "
                 "Provide helpful guidance and next steps for loan applications. "
                 "Be friendly and professional in your responses."
+                "And make sure all of this will cover within 5-7 lines and short and understandable response"
             ),
         )
 
     async def handle_specialist_query(self, message: A2AMessage) -> None:
         """Handle incoming queries from other agents"""
         query = message.content.get("query")
-        print(f"LoanAgent received query: {query}")
         
         if query:
             # Process the query with the model
@@ -125,12 +127,14 @@ class LoanAgent(Agent):
     async def handle_model_response(self, message: A2AMessage) -> None:
         """Handle model responses and send them back to the requesting agent"""
         response = message.content.get("response")
-        if response and message.to_agent:
-            print(f"LoanAgent sending response back to {message.to_agent}: {response}")
+        requesting_agent = message.to_agent
+        
+        
+        if response and requesting_agent:
             
             # Send response back to the requesting agent
             await self.a2a.send_message(
-                to_agent=message.to_agent,
+                to_agent=requesting_agent,
                 message_type="specialist_response",
                 content={"response": response}
             )
@@ -157,7 +161,9 @@ class LoanAgent(Agent):
 
 # Usage 
 async def main():
-    # Initialize the customer service agent with WebRTC
+    print(" Starting main function")
+    
+
     customer_model = OpenAIRealtime(
         model="gpt-4o-realtime-preview",
         config=OpenAIRealtimeConfig(
@@ -174,28 +180,31 @@ async def main():
         ),
     )
 
-    technical_model = GeminiRealtime(
-        model="gemini-2.0-flash-live-001",
-        api_key="AIzaSyACeIOnCtJvfrLOe-js6VBlic-y2BgstHA",
-        config=GeminiLiveConfig(
-            response_modalities=["TEXT"]
-        )
-    )
+
+    # technical_model = OpenAIRealtime(
+    #         model="gpt-4o-realtime-preview",
+    #         config=OpenAIRealtimeConfig(
+    #             modalities=["text"],
+    #             tool_choice="auto"
+    #         )
+    # )
+
 
     # customer_model = GeminiRealtime(
     #     model="gemini-2.0-flash-live-001",
     #     config=GeminiLiveConfig(
+    #         voice="Leda",
     #         response_modalities=["AUDIO"]
     #     )
     # )
 
-    # technical_model = GeminiRealtime(
-    #     model="gemini-2.0-flash-live-001",
-    #     api_key="AIzaSyACeIOnCtJvfrLOe-js6VBlic-y2BgstHA",
-    #     config=GeminiLiveConfig(
-    #         response_modalities=["TEXT"]
-    #     )
-    # )
+    # Configure technical model with TEXT response modality to ensure text_response events
+    technical_model = GeminiRealtime(
+        model="gemini-2.0-flash-live-001",
+        config=GeminiLiveConfig(
+            response_modalities=["TEXT"]
+        )
+    )
 
     customer_pipeline = RealTimePipeline(model=customer_model)
     technical_pipeline = RealTimePipeline(model=technical_model)
@@ -213,12 +222,11 @@ async def main():
         }
     )
 
-    
     # Create the specialist agent (no WebRTC needed)
     specialist_agent = LoanAgent()
 
-    print("specialist_agent::",specialist_agent)
-    print("customer_agent::",customer_agent)
+    print(" Specialist agent::", specialist_agent)
+    print(" Customer agent::", customer_agent)
 
     specialist_session = AgentSession(
         agent=specialist_agent,
@@ -229,13 +237,18 @@ async def main():
     )
 
     try:
+        print(" Starting sessions...")
         await customer_session.start()
         await specialist_session.start()
+        print(" Both sessions started successfully")
         await asyncio.Event().wait()
     except KeyboardInterrupt:
-        print("\nShutting down...")
+        print("\n Shutting down...")
+    except Exception as e:
+        print(f" Error in main: {e}")
     finally:
         await customer_session.close()
+        await specialist_session.close()
         await customer_agent.unregister_a2a()
         await specialist_agent.unregister_a2a()
 

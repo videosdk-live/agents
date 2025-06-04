@@ -134,12 +134,6 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         # global_event_emitter.on("instructions_updated", self._handle_instructions_updated)
         # global_event_emitter.on("tools_updated", self._handle_tools_updated) 
         
-        # Create a sync wrapper for the async _handle_text_done method
-        def text_done_wrapper(data):
-            asyncio.create_task(self._handle_text_done(data))
-        
-        global_event_emitter.on("text_response", text_done_wrapper)
-
     def set_agent(self, agent: Agent) -> None:
         self._instructions = agent.instructions
         self._tools = agent.tools
