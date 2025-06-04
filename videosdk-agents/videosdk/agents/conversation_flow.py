@@ -34,39 +34,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]]):
     async def start(self) -> None:
         global_event_emitter.on("speech_started", self.on_speech_started)
         global_event_emitter.on("speech_stopped", self.on_speech_stopped)
-    
-    # async def send_audio_delta(self, audio_data: bytes) -> None:
-    #     """
-    #     Send audio delta to the STT
-    #     """
-    #     if self.stt:
-    #         async for stt_response in self.stt.process_audio(audio_data):
-    #             if stt_response.event_type == SpeechEventType.FINAL:
-    #                 user_text = stt_response.data.text
-    #                 print(f"Transcription: {user_text}")
-                    
-    #                 self.agent.chat_context.add_message(
-    #                     role=ChatRole.USER,
-    #                     content=user_text
-    #                 )
-                    
-    #                 if self.llm:
-    #                     full_response = ""
-    #                     prev_content_length = 0
-    #                     print(f"Sending request to LLM: {self.agent.chat_context}")
-    #                     async for llm_chunk_resp in self.llm.chat(self.agent.chat_context):
-    #                         new_content = llm_chunk_resp.content[prev_content_length:]
-    #                         full_response = llm_chunk_resp.content
-    #                         prev_content_length = len(llm_chunk_resp.content)
-                        
-    #                     if self.tts and full_response:
-    #                         await self.tts.synthesize(full_response)
-                        
-    #                     if full_response:
-    #                         self.agent.chat_context.add_message(
-    #                             role=ChatRole.ASSISTANT,
-    #                             content=full_response
-    #                         )
 
     def on_transcription(self, callback: Callable[[str], None]) -> None:
         """
@@ -87,7 +54,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]]):
     async def on_stt_transcript(self, stt_response: STTResponse) -> None:
         if stt_response.event_type == SpeechEventType.FINAL:
             user_text = stt_response.data.text
-            print("Transcription: ", user_text)
             self.agent.chat_context.add_message(
                         role=ChatRole.USER,
                         content=user_text
