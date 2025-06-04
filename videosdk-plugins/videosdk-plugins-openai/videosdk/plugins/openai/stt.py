@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import json
 import os
 from typing import Any, Optional
 from urllib.parse import urlencode
@@ -10,7 +9,6 @@ from scipy import signal
 import aiohttp
 import httpx
 import openai
-from openai.types.beta.realtime.transcription_session_update_param import SessionTurnDetection
 import numpy as np
 from videosdk.agents import STT as BaseSTT, STTResponse, SpeechEventType, SpeechData, global_event_emitter
 
