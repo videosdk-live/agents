@@ -10,6 +10,8 @@ from dotenv import load_dotenv
 import uuid
 import base64
 import aiohttp
+import numpy as np
+from scipy import signal
 import traceback
 from videosdk.agents import (
     FunctionTool,
@@ -27,8 +29,6 @@ load_dotenv()
 from openai.types.beta.realtime.session import InputAudioTranscription, TurnDetection
 
 OPENAI_BASE_URL = "https://api.openai.com/v1"
-SAMPLE_RATE = 24000
-NUM_CHANNELS = 1
 
 DEFAULT_TEMPERATURE = 0.8
 DEFAULT_TURN_DETECTION = TurnDetection(
@@ -132,8 +132,11 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         self._formatted_tools: Optional[List[Dict[str, Any]]] = None
         self.config: OpenAIRealtimeConfig = config or OpenAIRealtimeConfig()
         # global_event_emitter.on("instructions_updated", self._handle_instructions_updated)
-        # global_event_emitter.on("tools_updated", self._handle_tools_updated) 
+        # global_event_emitter.on("tools_updated", self._handle_tools_updated)
         
+        self.input_sample_rate = 48000
+        self.target_sample_rate = 16000
+    
     def set_agent(self, agent: Agent) -> None:
         self._instructions = agent.instructions
         self._tools = agent.tools
@@ -154,6 +157,9 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
     async def handle_audio_input(self, audio_data: bytes) -> None:
         """Handle incoming audio data from the user"""
         if self._session and not self._closing and "audio" in self.config.modalities:
+            audio_data = np.frombuffer(audio_data, dtype=np.int16)
+            audio_data = signal.resample(audio_data, int(len(audio_data) * self.target_sample_rate / self.input_sample_rate))
+            audio_data = audio_data.astype(np.int16).tobytes()
             base64_audio_data = base64.b64encode(audio_data).decode("utf-8")
             audio_event = {
                 "type": "input_audio_buffer.append",

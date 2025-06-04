@@ -8,7 +8,6 @@ logger = logging.getLogger(__name__)
 T_contra = TypeVar("T_contra", contravariant=True)
 
 class EventEmitter(Generic[T_contra]):
-
     def __init__(self, *args, **kwargs) -> None:
         """Initialize event emitter with empty event handlers dictionary"""
         self._events: Dict[T_contra, Set[Callable]] = {}

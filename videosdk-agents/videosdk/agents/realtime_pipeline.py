@@ -34,11 +34,12 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         self.room = None
         self.model.loop = self.loop
         self.model.audio_track = None
+        self.agent = None
     
     def set_agent(self, agent: Agent) -> None:
         self.agent = agent
         if hasattr(self.model, 'set_agent'):
-            self.model.set_agent(agent) 
+            self.model.set_agent(agent)
 
     def set_agent(self, agent: Agent) -> None:
         self.agent = agent
@@ -56,6 +57,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
             **kwargs: Additional arguments for pipeline configuration
         """
         try:
+            videosdk_auth = kwargs.get('videosdk_auth')
             meeting_id = kwargs.get('meeting_id')
             name = kwargs.get('name')
             join_meeting = kwargs.get('join_meeting',True)
@@ -63,6 +65,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
             if join_meeting:
                 self.room = VideoSDKHandler(
                     meeting_id=meeting_id,
+                    auth_token=videosdk_auth,
                     name=name,
                     pipeline=self,
                     loop=self.loop
@@ -74,9 +77,6 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
                 
                 await self.model.connect()
                 await self.room.join()
-            else:   
-                await self.model.connect()
-                
             
         except Exception as e:
             print(f"Error starting realtime connection: {e}")

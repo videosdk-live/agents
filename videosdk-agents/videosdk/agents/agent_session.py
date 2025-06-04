@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from .agent import Agent
+from .llm.chat_context import ChatMessage, ChatRole
 # from .conversation_flow import ConversationFlow
 from .pipeline import Pipeline
 
@@ -68,7 +69,7 @@ class AgentSession:
         """
         Send an initial message to the agent.
         """
-        
+        self.agent.chat_context.add_message(role=ChatRole.ASSISTANT, content=message)
         await self.pipeline.send_message(message)
     
     async def close(self) -> None:
