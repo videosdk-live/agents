@@ -1,6 +1,6 @@
 VideoSDK Deepgram Plugin
 
-Agent Framework plugin for realtime services from Deepgram.
+Agent Framework plugin for stt services from Deepgram.
 
 ## Installation
 
