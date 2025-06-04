@@ -42,13 +42,24 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         self.loop = asyncio.get_event_loop()
         self.room = None
         self.agent = None
-    
+        self.conversation_flow = None
+        
     def set_agent(self, agent: Agent) -> None:
         self.agent = agent
+    
+    def set_conversation_flow(self, conversation_flow: ConversationFlow) -> None:
+        self.conversation_flow = conversation_flow
+        self.conversation_flow.stt = self.stt
+        self.conversation_flow.llm = self.llm
+        self.conversation_flow.tts = self.tts
+        self.conversation_flow.agent = self.agent
+        
+        if self.conversation_flow.stt:
+            self.conversation_flow.stt.on_stt_transcript(self.conversation_flow.on_stt_transcript)
         
     async def start(self, **kwargs: Any) -> None:
-        self.conversation_flow = ConversationFlow(self.agent, self.stt, self.llm, self.tts)
-        await self.conversation_flow.start()
+        if self.conversation_flow:
+            await self.conversation_flow.start()
         try:
             meeting_id = kwargs.get('meeting_id')
             name = kwargs.get('name')

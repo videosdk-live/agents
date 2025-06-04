@@ -4,7 +4,7 @@ from typing import Any
 
 from .agent import Agent
 from .llm.chat_context import ChatMessage, ChatRole
-# from .conversation_flow import ConversationFlow
+from .conversation_flow import ConversationFlow
 from .pipeline import Pipeline
 
 class AgentSession:
@@ -16,6 +16,7 @@ class AgentSession:
         self,
         agent: Agent,
         pipeline: Pipeline,
+        conversation_flow: ConversationFlow,
         context: dict | None = None,
     ) -> None:
         """
@@ -29,11 +30,14 @@ class AgentSession:
         """
         self.agent = agent
         self.pipeline = pipeline
+        self.conversation_flow = conversation_flow
         self.context = context or {}
         self.agent.session = self
         
         if hasattr(self.pipeline, 'set_agent'):
             self.pipeline.set_agent(self.agent)
+        if hasattr(self.pipeline, 'set_conversation_flow'):
+            self.pipeline.set_conversation_flow(self.conversation_flow)
 
     async def start(self, **kwargs: Any) -> None:
         """
