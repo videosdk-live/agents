@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Literal
+from typing import Any, Literal
 import asyncio
 
 from .pipeline import Pipeline
 from .event_emitter import EventEmitter
 from .realtime_base_model import RealtimeBaseModel
 from .room.room import VideoSDKHandler
-from videosdk.agents.a2a.protocol import A2AMessage
 from .agent import Agent
 class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtime_end","user_audio_input_data"]]):
     """
@@ -98,16 +97,6 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         else:
             await self.model.send_message(message)
     
-    async def send_text_message(self, message: str) -> None:
-        """
-        Send a text message through the realtime model.
-        This method specifically handles text-only input when modalities is ["text"].
-        """
-        if hasattr(self.model, 'send_text_message'):
-            await self.model.send_text_message(message)
-        else:
-            await self.model.send_message(message)
-    
     async def on_audio_delta(self, audio_data: bytes):
         """
         Handle incoming audio data from the user
@@ -120,11 +109,6 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         """
         if self.room is not None:
             await self.room.leave()
-        
-    async def send_a2a_message(self, message: A2AMessage) -> None:
-        """Send an A2A message through the pipeline"""
-        formatted_message = self._format_a2a_message(message)
-        await self.model.send_message(formatted_message)
 
     async def cleanup(self):
         """Cleanup resources"""

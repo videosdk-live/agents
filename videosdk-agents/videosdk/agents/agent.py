@@ -1,19 +1,15 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, AsyncIterator, List, Literal, Optional
+from typing import List, Literal
 import inspect
-from .event_bus import global_event_emitter, EventTypes
 from .event_emitter import EventEmitter
 from .llm.chat_context import ChatContext
 from .utils import FunctionTool, is_function_tool
 from .a2a.protocol import A2AProtocol
 from .a2a.card import AgentCard
-from .room.audio_stream import CustomAudioStreamTrack
 import uuid
-from .llm.llm import LLMResponse
 from .llm.chat_context import ChatContext, ChatRole
-from .stt.stt import STTResponse
 from .mcp.mcp_manager import MCPToolManager
 from .mcp.mcp_server import MCPServer
 
@@ -41,10 +37,9 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
         self._mcp_initialized = False
         self._register_class_tools()
         self.register_tools()
-        self.a2a = A2AProtocol(self)  # Initialize A2A protocol
-        self._agent_card = None # Store the agent card
+        self.a2a = A2AProtocol(self)
+        self._agent_card = None 
         self.id = agent_id or str(uuid.uuid4())
-        # self.register_tools()
         self.mcp_manager = MCPToolManager()
 
     def _register_class_tools(self) -> None:
@@ -93,10 +88,7 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
     @abstractmethod
     async def on_enter(self) -> None:
         """Called when session starts"""
-        if not self.audio_track and hasattr(self.session, 'pipeline'):
-            self.audio_track = CustomAudioStreamTrack(loop=self.session.pipeline.loop)
-            self.session.pipeline.model.audio_track = self.audio_track
-    
+        pass
 
     async def register_a2a(self, card: AgentCard) -> None:
         """Register the agent for A2A communication"""
@@ -107,10 +99,6 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
         """Unregister the agent from A2A communication"""
         await self.a2a.unregister()
         self._agent_card = None
-
-    def send_a2a_message(self, message: str) -> None:
-        """Send a message to the agent"""
-        self.a2a.send_message(message)
 
     @abstractmethod
     async def on_exit(self) -> None:
