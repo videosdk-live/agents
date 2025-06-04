@@ -24,7 +24,6 @@ class CustomerServiceAgent(Agent):
             )
         )
         
-
     @function_tool
     async def forward_to_specialist(self, query: str, domain: str) -> Dict[str, Any]:
         """Forward a query to a specialist agent"""
@@ -54,32 +53,31 @@ class CustomerServiceAgent(Agent):
         response = message.content.get("response")
         if response:
             print("Response from specialist:", response)
-            try:
-                # Wait a moment for any current speaking to finish
-                await asyncio.sleep(0.5)
-                print("About to speak the specialist response...")
-                
-                # Use send_text_message to trigger a natural response from the model
-                prompt = f"The loan specialist has responded. Please provide this information to the customer: {response}"
-                await self.session.pipeline.send_text_message(prompt)
-                print("Successfully sent specialist response via pipeline send_text_message!")
-                
-            except Exception as e:
-                print(f"Error while trying to send specialist response via pipeline: {e}")
-                # Try alternative approach with model send_message
+            
+            # Wait a moment for any current speaking to finish
+            await asyncio.sleep(0.5)
+            
+            prompt = f"The loan specialist has responded. Please provide this information to the customer: {response}"
+            
+            methods_to_try = [
+                (self.session.pipeline.send_text_message, prompt),
+                (self.session.pipeline.model.send_message, response),
+                (self.session.say, response)
+            ]
+            
+            sent_successfully = False
+            for method, arg in methods_to_try:
                 try:
-                    print("Trying alternative approach with model send_message...")
-                    await self.session.pipeline.model.send_message(response)
-                    print("Successfully sent via model send_message!")
-                except Exception as e2:
-                    print(f"Model send_message also failed: {e2}")
-                    # Last resort - try session.say
-                    try:
-                        print("Trying last resort with session.say...")
-                        await self.session.say(response)
-                        print("Successfully sent via session.say!")
-                    except Exception as e3:
-                        print(f"All methods failed: {e3}")
+                    print(f"Attempting to send specialist response via {method.__name__}...")
+                    await method(arg)
+                    print(f"Successfully sent specialist response via {method.__name__}!")
+                    sent_successfully = True
+                    break
+                except Exception as e:
+                    print(f"Error sending specialist response via {method.__name__}: {e}")
+            
+            if not sent_successfully:
+                print("All methods to send specialist response failed.")
 
     async def on_exit(self) -> None:
         print("Customer agent Left the meeting")
@@ -198,7 +196,6 @@ async def main():
     #     )
     # )
 
-    # Configure technical model with TEXT response modality to ensure text_response events
     technical_model = GeminiRealtime(
         model="gemini-2.0-flash-live-001",
         config=GeminiLiveConfig(
@@ -225,8 +222,6 @@ async def main():
     # Create the specialist agent (no WebRTC needed)
     specialist_agent = LoanAgent()
 
-    print(" Specialist agent::", specialist_agent)
-    print(" Customer agent::", customer_agent)
 
     specialist_session = AgentSession(
         agent=specialist_agent,
@@ -237,10 +232,10 @@ async def main():
     )
 
     try:
-        print(" Starting sessions...")
+        print(" Starting agent sessions...")
         await customer_session.start()
         await specialist_session.start()
-        print(" Both sessions started successfully")
+        print(" Both agent sessions started successfully.")
         await asyncio.Event().wait()
     except KeyboardInterrupt:
         print("\n Shutting down...")

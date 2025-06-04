@@ -8,36 +8,33 @@ import asyncio
 from ..event_bus import global_event_emitter
 
 @dataclass
-class AgentCapability:
-    domain: str
-    capabilities: List[str]
-    description: str
-
-
-@dataclass
 class A2AMessage:
     """Message format for agent-to-agent communication"""
     from_agent: str
     to_agent: str
     type: str
     content: Dict[str, Any]
-    id: str = str(uuid.uuid4())
-    timestamp: float = time.time()
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    timestamp: float = field(default_factory=time.time)
     metadata: Optional[Dict[str, Any]] = None
 
 
 @dataclass
 class AgentRegistry:
     _instance = None
-    agents: Dict[str, List[AgentCard]] = field(default_factory=dict)
-    agent_instances: Dict[str, 'Agent'] = field(default_factory=dict)  # Store agent instances
+    agents: Dict[str, AgentCard] = field(default_factory=dict)  
+    agent_instances: Dict[str, 'Agent'] = field(default_factory=dict)  
 
     
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super(AgentRegistry, cls).__new__(cls)
-            cls._instance.agents = {}
-            cls._instance.agent_instances = {}
+            # Ensure these are initialized here if not relying solely on default_factory
+            # For this structure, default_factory handles it if _instance is new
+            if not hasattr(cls._instance, 'agents'):
+                 cls._instance.agents = {}
+            if not hasattr(cls._instance, 'agent_instances'):
+                 cls._instance.agent_instances = {}
         return cls._instance
 
     def register_agent(self, card: AgentCard, agent_instance: 'Agent' = None):
@@ -55,7 +52,6 @@ class AgentRegistry:
     
     def find_agents_by_domain(self, domain: str) -> List[str]:
         """Find all agents that handle a specific domain"""
-        print("Finding agents by domain::",domain,self.agents)
         return [
             agent_id for agent_id, card in self.agents.items()
             if card.domain == domain
@@ -63,7 +59,6 @@ class AgentRegistry:
     
     def get_all_agents(self) -> Dict[str, AgentCard]:
         """Get all registered agents"""
-        print(f"Getting all registered agents: {self.agents}")
         return self.agents
     
     def get_agent_instance(self, agent_id: str) -> Optional['Agent']:
@@ -85,36 +80,23 @@ class A2AProtocol:
         self.agent = agent
         self.registry = AgentRegistry()
         self._message_handlers: Dict[str, List[Callable]] = {}
-        self._running = False
         self._last_sender = None
-        self._handled_responses = set()  # Track handled responses
-        self._global_event_handler = None  # Track global event handler
-        # global_event_emitter.on("text_response", on_model_response)
+        self._handled_responses = set()  
+        self._global_event_handler = None  
 
 
     async def register(self, card: AgentCard) -> None:
         """Register the agent with the registry"""
         self.registry.register_agent(card,self.agent)
-        # if not self._running:
-        #     self._running = True
-        #     asyncio.create_task(self._process_messages())
 
     async def unregister(self) -> None:
         """Unregister the agent and clean up event handlers"""
-        # Clean up event handlers
         for message_type in list(self._message_handlers.keys()):
             for handler in self._message_handlers[message_type]:
                 self.off_message(message_type, handler)
         
         await self.registry.unregister_agent(self.agent.id)
-        self._running = False
-        self._handled_responses.clear()  # Clear handled responses
-    
-    # def on_message(self, message_type: str, handler: Callable[[A2AMessage], None]) -> None:
-    #     """Register a message handler"""
-    #     if message_type not in self._message_handlers:
-    #         self._message_handlers[message_type] = []
-    #     self._message_handlers[message_type].append(handler)
+        self._handled_responses.clear()
 
     def on_message(self, message_type: str, handler: Callable[[A2AMessage], None]) -> None:
         """Register a message handler for specific message types
@@ -122,13 +104,6 @@ class A2AProtocol:
         Args:
             message_type: Type of message to handle (e.g., "model_query", "model_response")
             handler: Async function to handle the message
-            
-        Example:
-            # Register handler for model responses
-            self.a2a.on_message("model_response", self.handle_model_response)
-            
-            # Register handler for specialist queries
-            self.a2a.on_message("specialist_query", self.handle_specialist_query)
         """
         if not callable(handler):
             raise ValueError("Handler must be a callable function")
@@ -139,91 +114,57 @@ class A2AProtocol:
         if message_type not in self._message_handlers:
             self._message_handlers[message_type] = []
 
-        # Check if handler is already registered
         if handler not in self._message_handlers[message_type]:
             self._message_handlers[message_type].append(handler)
-            print(f"Registered handler for message type: {message_type}")
 
-            
-            # If this is a model_response handler, set up model response handling
             if message_type == "model_response" and hasattr(self.agent, 'session') and hasattr(self.agent.session, 'pipeline'):
-                model = self.agent.session.pipeline.model
                 
                 def on_model_response(data):
                     response = data.get('text', '')
-                    print(f"🔔 Global event received for agent {self.agent.id}: {response}")
                     
-                    # Only process if this agent has a last_sender (meaning it received a query)
                     if not self._last_sender:
-                        print(f"⚠️  Agent {self.agent.id} has no last_sender, skipping response")
                         return
                         
-                    response_id = f"{self.agent.id}_{response}"  # Create unique response ID
+                    response_id = f"{self.agent.id}_{self._last_sender}_{response}" 
                     
-                    # Check if we've already handled this response
                     if response_id in self._handled_responses:
-                        print(f"⚠️  Response already handled: {response_id}")
                         return
                         
                     self._handled_responses.add(response_id)
                     
-                    # Create A2A message for the response
                     message = A2AMessage(
                         from_agent=self.agent.id,
                         to_agent=self._last_sender,
                         type="model_response",
                         content={"response": response}
                     )
-                    print(f"📨 Creating A2A message from {self.agent.id} to {self._last_sender}")
-                    # Call the handler with the message
                     asyncio.create_task(handler(message))
                 
-                # Store the handler reference for cleanup
                 self._global_event_handler = on_model_response
-                
-                # Always register with global event emitter for text_response events
-                # Both OpenAI and Gemini models emit text_response events to global_event_emitter
-                print(f"Registering text_response handler on global_event_emitter for agent: {self.agent.id}")
                 global_event_emitter.on("text_response", on_model_response)
-                print(f"Registered model response handler on global_event_emitter for agent: {self.agent.id}")
 
     def off_message(self, message_type: str, handler: Callable[[A2AMessage], None]) -> None:
-        """Unregister a message handler
-        
-        Args:
-            message_type: Type of message to unregister
-            handler: Handler function to remove
-        """
+        """Unregister a message handler"""
         if message_type in self._message_handlers:
             if handler in self._message_handlers[message_type]:
                 self._message_handlers[message_type].remove(handler)
-                print(f"Unregistered handler for message type: {message_type}")
                 
-                # If this was the last handler for this message type, remove the type
                 if not self._message_handlers[message_type]:
                     del self._message_handlers[message_type]
                     
-                # Clean up global event handler if this was a model_response handler
                 if message_type == "model_response" and self._global_event_handler:
-                    # Always remove from global event emitter
                     global_event_emitter.off("text_response", self._global_event_handler)
-                    print(f"Unregistered model response handler from global_event_emitter for agent: {self.agent.id}")
                     self._global_event_handler = None
 
 
     async def send_message(self, to_agent: str, message_type: str, content: Dict[str, Any], metadata: Optional[Dict[str, Any]] = None) -> None:
         """Send a message to another agent"""
-        
-        # Get target agent from registry
         target_agent = self.registry.get_agent_instance(to_agent)
 
-        print(">>> target_agent::",target_agent)
-
         if not target_agent:
-            print(f"Target agent {to_agent} not found")
+            print(f"Target agent {to_agent} not found in registry.")
             return
 
-        # Create A2A message
         message = A2AMessage(
             from_agent=self.agent.id,
             to_agent=to_agent,
@@ -232,23 +173,18 @@ class A2AProtocol:
             metadata=metadata
         )
 
-        # Store the sender for response handling in target agent
         if hasattr(target_agent, 'a2a'):
             target_agent.a2a._last_sender = self.agent.id
-            print(f"🔗 Set last_sender for {to_agent} to {self.agent.id}")
 
-        # Check if target agent has handlers for this message type
         if hasattr(target_agent, 'a2a') and message_type in target_agent.a2a._message_handlers:
             handlers = target_agent.a2a._message_handlers[message_type]
-            for handler in handlers:
+            for handler_func in handlers: # Renamed to avoid conflict
                 try:
-                    await handler(message)
+                    await handler_func(message)
                 except Exception as e:
-                    print(f"Error in message handler: {e}")
+                    print(f"Error in message handler for {message_type} on agent {to_agent}: {e}")
 
-        # If target agent has a model and this is a specialist_query, forward directly to it
         elif message_type == "specialist_query" and hasattr(target_agent, 'session') and hasattr(target_agent.session, 'pipeline') and hasattr(target_agent.session.pipeline, 'model'):
-            print(f"🚀 Forwarding specialist_query directly to model for agent {to_agent}")
             await target_agent.session.pipeline.send_text_message(content.get("query", ""))
             return
 
