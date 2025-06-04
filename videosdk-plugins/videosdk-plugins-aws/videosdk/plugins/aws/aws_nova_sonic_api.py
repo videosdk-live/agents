@@ -313,23 +313,20 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             return
             
         try:
-            # # Get audio array from bytes
-            # audio_array = np.frombuffer(audio_data, dtype=np.int16)
-            
-            # # Resample from 24kHz to 16kHz
-            # resampled = librosa.resample(
-            #     audio_array.astype(np.float32),
-            #     orig_sr=48000,
-            #     target_sr=16000
-            # ).astype(np.int16)
-            
-            # # Convert to bytes
-            # resampled_bytes = resampled.tobytes()
-
             audio_array = np.frombuffer(audio_data, dtype=np.int16)
-            resampled = signal.resample(audio_array, int(len(audio_array) * self.target_sample_rate / self.input_sample_rate))
-            resampled_bytes = resampled.astype(np.int16).tobytes()
-            # Encode in base64 as expected by Nova Sonic
+            
+            # convert stereo to mono (AWS NOVA SONIC ONLY SUPPORTS MONO AUDIO)
+            if len(audio_array) % 2 == 0: 
+                audio_array = audio_array.reshape(-1, 2)
+                audio_array = np.mean(audio_array, axis=1).astype(np.int16) 
+            
+            target_length = int(len(audio_array) * self.target_sample_rate / self.input_sample_rate)
+            resampled_float = signal.resample(audio_array.astype(np.float32), target_length)
+            
+            resampled_int16 = np.clip(resampled_float, -32768, 32767).astype(np.int16)
+            resampled_bytes = resampled_int16.tobytes()
+            
+            
             encoded_audio = base64.b64encode(resampled_bytes).decode('utf-8')
             
             # Format exactly as in the     
@@ -397,8 +394,8 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                         audio_bytes = base64.b64decode(audio_content)
                                         
                                         # Queue for playback
-                                        if self.audio_track and not self._closing:
-                                            await self.audio_track.add_new_bytes(audio_bytes)
+                                        if self.audio_track and self.loop and not self._closing:
+                                            self.loop.create_task(self.audio_track.add_new_bytes(audio_bytes))
 
                                     except Exception as e:
                                         print(f"AUDIO PROCESSING ERROR: {e}")
