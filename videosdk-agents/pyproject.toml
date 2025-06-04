@@ -39,9 +39,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-openai = ["videosdk-plugins-openai>=0.0.5"]
-google = ["videosdk-plugins-google>=0.0.3"]
-aws = ["videosdk-plugins-aws>=0.0.2"]
+openai = ["videosdk-plugins-openai>=0.0.6"]
+google = ["videosdk-plugins-google>=0.0.4"]
+aws = ["videosdk-plugins-aws>=0.0.3"]
+deepgram = ["videosdk-plugins-deepgram>=0.0.1"]
 
 
 [tool.hatch.version]

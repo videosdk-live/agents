@@ -33,11 +33,12 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         self.room = None
         self.model.loop = self.loop
         self.model.audio_track = None
+        self.agent = None
     
     def set_agent(self, agent: Agent) -> None:
         self.agent = agent
         if hasattr(self.model, 'set_agent'):
-            self.model.set_agent(agent) 
+            self.model.set_agent(agent)
 
     async def start(self, **kwargs: Any) -> None:
         """
@@ -53,9 +54,10 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
             videosdk_auth = kwargs.get('videosdk_auth')
             meeting_id = kwargs.get('meeting_id')
             name = kwargs.get('name')
+  
             self.room = VideoSDKHandler(
-                auth_token=videosdk_auth,
                 meeting_id=meeting_id,
+                auth_token=videosdk_auth,
                 name=name,
                 pipeline=self,
                 loop=self.loop

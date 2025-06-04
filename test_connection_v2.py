@@ -169,6 +169,6 @@ async def main(context: dict):
 
 if __name__ == "__main__":
     def make_context():
-        return {"meetingId": "obsk-dfh0-qmyb", "name": "VideoSDK Voice Agent"}
+        return {"meetingId": "s87z-lvsj-riwb", "name": "Sandbox Agent"}
 
     asyncio.run(main(context=make_context()))
