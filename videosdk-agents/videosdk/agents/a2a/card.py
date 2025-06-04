@@ -1,4 +1,3 @@
-# videosdk/agents/a2a/card.py
 from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
 import uuid

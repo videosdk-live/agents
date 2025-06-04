@@ -1,10 +1,8 @@
 # example_usage.py
 import asyncio
-from videosdk.agents.a2a.card import AgentCard
-from videosdk.agents.a2a.protocol import A2AMessage
 from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig
 from openai.types.beta.realtime.session import  TurnDetection
-from videosdk.agents import Agent, AgentSession, RealTimePipeline, function_tool
+from videosdk.agents import Agent, AgentSession, RealTimePipeline, function_tool, AgentCard, A2AMessage
 from typing import Dict, Any
 from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig
 

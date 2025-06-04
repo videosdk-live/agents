@@ -1,4 +1,3 @@
-# videosdk/agents/a2a/protocol.py
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Callable, Any
 import time
@@ -71,8 +70,6 @@ class AgentRegistry:
             agent_id for agent_id, card in self.agents.items()
             if capability in card.capabilities
         ]
-
-
 
 class A2AProtocol:
     """Handles agent-to-agent communication"""

@@ -41,11 +41,6 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         if hasattr(self.model, 'set_agent'):
             self.model.set_agent(agent)
 
-    def set_agent(self, agent: Agent) -> None:
-        self.agent = agent
-        if hasattr(self.model, 'set_agent'):
-            self.model.set_agent(agent)
-
     async def start(self, **kwargs: Any) -> None:
         """
         Start the realtime pipeline processing.
