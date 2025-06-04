@@ -5,7 +5,7 @@ import sys
 import logging
 
 import aiohttp
-from videosdk.agents import Agent, AgentSession, RealTimePipeline, function_tool, MCPServerStdio, MCPServerHTTP
+from videosdk.agents import Agent, AgentSession, RealTimePipeline, function_tool, MCPServerStdio, MCPServerHTTP, global_event_emitter
 # from videosdk.plugins.aws import NovaSonicRealtime, NovaSonicConfig
 from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig
 from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig
@@ -135,7 +135,7 @@ async def main(context: dict):
         if data.get("type") == "done":
             print(f"\nText response complete: {data.get('text', '')}")
 
-    model.on("text_response", handle_text_response)
+    global_event_emitter.on("text_response", handle_text_response)
 
     pipeline = RealTimePipeline(model=model)
     agent = MyVoiceAgent()
