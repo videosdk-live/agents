@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import List, Literal
+from typing import Any, AsyncIterator, List, Literal, Optional
 import inspect
-
+from .event_bus import global_event_emitter, EventTypes
 from .event_emitter import EventEmitter
+from .llm.chat_context import ChatContext
 from .utils import FunctionTool, is_function_tool
+from .llm.llm import LLMResponse
+from .llm.chat_context import ChatContext, ChatRole
+from .stt.stt import STTResponse
 from .mcp.mcp_manager import MCPToolManager
 from .mcp.mcp_server import MCPServer
 
@@ -22,9 +26,14 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
     """
     def __init__(self, instructions: str, tools: List[FunctionTool] = [], mcp_servers: List[MCPServer] = None):
         super().__init__()
+        self._tools = tools
+        self._llm = None
+        self._stt = None
+        self._tts = None
+        self.chat_context = ChatContext.empty()
         self.instructions = instructions
-        self._tools = list(tools)  # Create a copy to avoid mutable default argument issues
-        self._mcp_servers = mcp_servers if mcp_servers else [] # Store for async initialization
+        self._tools = list(tools)
+        self._mcp_servers = mcp_servers if mcp_servers else []
         self._mcp_initialized = False
         self._register_class_tools()
         # self.register_tools()
@@ -43,7 +52,11 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
     @instructions.setter
     def instructions(self, value: str) -> None:
         self._instructions = value
-        # self.emit("instructions_updated", {"instructions": value})
+        self.chat_context.add_message(
+            role=ChatRole.SYSTEM,
+            content=value
+        )
+        # global_event_emitter.emit("instructions_updated", {"instructions": value})
 
     @property
     def tools(self) -> List[FunctionTool]:
@@ -54,8 +67,7 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
         for tool in self._tools:
             if not is_function_tool(tool):
                 raise ValueError(f"Tool {tool.__name__ if hasattr(tool, '__name__') else tool} is not a valid FunctionTool")
-        
-        # self.emit("tools_updated", {"tools": self._tools})
+        # global_event_emitter.emit("tools_updated", {"tools": self._tools})
     
     async def initialize_mcp(self) -> None:
         """Initialize the agent, including any MCP server if provided."""
@@ -79,3 +91,29 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
     async def on_exit(self) -> None:
         """Called when session ends"""
         pass
+
+    async def process_stt_output(self, text: str) -> str:
+        """
+        Process STT output before it goes to LLM.
+        Override this method to add custom processing.
+        
+        Args:
+            text: The text from STT
+            
+        Returns:
+            Processed text
+        """
+        return text
+
+    async def process_llm_output(self, text: str) -> str:
+        """
+        Process LLM output before it goes to TTS.
+        Override this method to add custom processing.
+        
+        Args:
+            text: The text from LLM
+            
+        Returns:
+            Processed text
+        """
+        return text

@@ -3,13 +3,13 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "videosdk-plugins-aws"
+name = "videosdk-plugins-deepgram"
 dynamic = ["version"]
-description = "VideoSDK Agent Framework plugin for AWS"
+description = "VideoSDK Agent Framework plugin for Deepgram"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 authors = [{ name = "videosdk"}]
-keywords = ["video", "audio", "ai", "aws", "videosdk", "nova-sonic"]
+keywords = ["video", "audio", "ai", "videosdk", "deepgram"]
 classifiers = [
     "Intended Audience :: Developers",
     "Development Status :: 4 - Beta",
@@ -20,13 +20,11 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "videosdk-agents>=0.0.9",
-    "aws-sdk-bedrock-runtime",
-    "smithy-aws-core"
+    "videosdk-agents>=0.0.9"
 ]
 
 [tool.hatch.version]
-path = "videosdk/plugins/aws/version.py"
+path = "videosdk/plugins/deepgram/version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["videosdk"]
