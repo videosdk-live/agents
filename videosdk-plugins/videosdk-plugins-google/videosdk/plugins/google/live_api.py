@@ -6,8 +6,8 @@ import logging
 import traceback
 from typing import Any, Dict, Optional, Literal, List
 from dataclasses import dataclass, field
-import base64
-import time
+import numpy as np
+from scipy import signal
 from dotenv import load_dotenv
 from videosdk.agents import Agent,CustomAudioStreamTrack, RealtimeBaseModel, build_gemini_schema, is_function_tool, FunctionTool, get_tool_info
 
@@ -32,9 +32,8 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-AUDIO_SAMPLE_RATE = 24000  # Match audio sample rate expected by Gemini
+AUDIO_SAMPLE_RATE = 48000
 
-# Supported event types
 GeminiEventTypes = Literal[
    "tools_updated",
    "instructions_updated",
@@ -141,8 +140,11 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         self._instructions : str = "You are a helpful voice assistant that can answer questions and help with tasks."
         self.config: GeminiLiveConfig = config or GeminiLiveConfig()
         
-        # self.on("tools_updated", self._handle_tools_updated)
-        # self.on("instructions_updated", self._handle_instructions_updated)
+        self.target_sample_rate = 24000
+        self.input_sample_rate = 48000
+        
+        # global_event_emitter.on("tools_updated", self._handle_tools_updated)
+        # global_event_emitter.on("instructions_updated", self._handle_instructions_updated)
 
     def set_agent(self, agent: Agent) -> None:
         self._instructions = agent.instructions
@@ -310,7 +312,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         try:
             active_response_id = None
             chunk_number = 0
-            accumulated_text = ""  # Track accumulated text for complete response
+            accumulated_text = "" 
             
             while not self._closing:
                 try:
@@ -456,6 +458,10 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         # Only process audio input if AUDIO modality is enabled
         if "AUDIO" not in self.config.response_modalities:
             return
+
+        audio_data = np.frombuffer(audio_data, dtype=np.int16)
+        audio_data = signal.resample(audio_data, int(len(audio_data) * self.target_sample_rate / self.input_sample_rate))
+        audio_data = audio_data.astype(np.int16).tobytes()
         
         await self._session.session.send_realtime_input(
             audio=Blob(data=audio_data, mime_type=f"audio/pcm;rate={AUDIO_SAMPLE_RATE}")

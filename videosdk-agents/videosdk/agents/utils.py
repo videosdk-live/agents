@@ -21,19 +21,19 @@ class FunctionToolInfo:
 @runtime_checkable
 class FunctionTool(Protocol):
     """Protocol defining what makes a function tool"""
-    __tool_info: FunctionToolInfo
+    _tool_info: FunctionToolInfo
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any: ...
 
 def is_function_tool(obj: Any) -> bool:
     """Check if an object is a function tool"""
-    return hasattr(obj, "__tool_info")
+    return hasattr(obj, "_tool_info")
 
 def get_tool_info(tool: FunctionTool) -> FunctionToolInfo:
     """Get the tool info from a function tool"""
     if not is_function_tool(tool):
         raise ValueError("Object is not a function tool")
-    return getattr(tool, "__tool_info")
+    return getattr(tool, "_tool_info")
 
 def function_tool(func: Optional[Callable] = None, *, name: Optional[str] = None):
     """Decorator to mark a function as a tool. Can be used with or without parentheses."""
@@ -48,7 +48,7 @@ def function_tool(func: Optional[Callable] = None, *, name: Optional[str] = None
             description=fn.__doc__
         )
         
-        setattr(wrapper, "__tool_info", tool_info)
+        setattr(wrapper, "_tool_info", tool_info)
         return wrapper
 
     # Handle both @function_tool and @function_tool() syntax
