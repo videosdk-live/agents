@@ -77,6 +77,8 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
                 
                 await self.model.connect()
                 await self.room.join()
+            else:   
+                await self.model.connect()    
             
         except Exception as e:
             print(f"Error starting realtime connection: {e}")
