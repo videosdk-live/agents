@@ -21,7 +21,6 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
     
     def __init__(
         self,
-        agent: Agent,
         stt: STT | None = None,
         llm: LLM | None = None,
         tts: TTS | None = None,
@@ -42,6 +41,9 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         self.vad = vad
         self.loop = asyncio.get_event_loop()
         self.room = None
+        self.agent = None
+    
+    def set_agent(self, agent: Agent) -> None:
         self.agent = agent
         
     async def start(self, **kwargs: Any) -> None:
