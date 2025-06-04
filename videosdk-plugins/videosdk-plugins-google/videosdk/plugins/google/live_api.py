@@ -6,8 +6,6 @@ import logging
 import traceback
 from typing import Any, Dict, Optional, Literal, List
 from dataclasses import dataclass, field
-import base64
-import time
 import numpy as np
 from scipy import signal
 from dotenv import load_dotenv
