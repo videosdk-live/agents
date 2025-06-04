@@ -103,18 +103,6 @@ class VideoSDKHandler:
 
                 frame = await stream.track.recv()
                 audio_data = frame.to_ndarray()[0]
-                # audio_data_float = (
-                #     audio_data.astype(np.float32) / np.iinfo(np.int16).max
-                # )
-                # audio_mono = librosa.to_mono(audio_data_float.T)
-                # audio_resampled = librosa.resample(
-                #     audio_mono, orig_sr=48000, target_sr=16000
-                # )
-                # pcm_frame = (
-                #     (audio_resampled * np.iinfo(np.int16).max)
-                #     .astype(np.int16)
-                #     .tobytes()
-                # )
                 pcm_frame = audio_data.flatten().astype(np.int16).tobytes()
                 await self.pipeline.on_audio_delta(pcm_frame)
 

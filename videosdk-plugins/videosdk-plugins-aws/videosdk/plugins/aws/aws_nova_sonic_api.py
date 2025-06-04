@@ -308,7 +308,7 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
         await self._send_event(json.dumps(audio_content_start_payload))
 
     async def handle_audio_input(self, audio_data: bytes) -> None:
-        """Handle incoming 24kHz audio from VideoSDK"""
+        """Handle incoming 48kHz audio from VideoSDK"""
         if not self.is_active or self._closing:
             return
             
