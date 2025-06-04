@@ -97,7 +97,6 @@ class MyVoiceAgent(Agent):
         )
 
     async def on_enter(self) -> None:
-        return
         await self.session.say("Hello, how can I help you today?")
     
     async def on_exit(self) -> None:
@@ -209,7 +208,6 @@ async def test_connection(jobctx):
         # ),
     agent = MyVoiceAgent()
     pipeline = CascadingPipeline(
-        agent=agent,
         stt= DeepgramSTT(api_key=os.getenv("DEEPGRAM_API_KEY")),
         # stt= OpenAISTT(api_key=os.getenv("OPENAI_API_KEY")),
         llm=OpenAILLM(api_key=os.getenv("OPENAI_API_KEY")),
