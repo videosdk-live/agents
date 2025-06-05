@@ -6,7 +6,7 @@ from .agent import Agent
 from .llm.chat_context import ChatMessage, ChatRole
 # from .conversation_flow import ConversationFlow
 from .pipeline import Pipeline
-
+import os
 class AgentSession:
     """
     Manages an agent session with its associated conversation flow and pipeline.
@@ -55,8 +55,18 @@ class AgentSession:
         meeting_id = self.context.get("meetingId")
         name = self.context.get("name", "Agent")
         join_meeting = self.context.get("join_meeting",True)
-        videosdk_auth = self.context.get("videosdk_auth",None) 
+        videosdk_auth = self.context.get("videosdk_auth",None)
         
+        if "playground" in self.context:
+                auth = os.getenv("VIDEOSDK_AUTH_TOKEN")
+                if auth:
+                    playground_url = f"https://playground.videosdk.live?token={auth}&meetingId={meeting_id}"
+                    print(f"\033[1;36m" + "Agent started in playground mode" + "\033[0m")
+                    print("\033[1;75m" + "Interact with agent here at:" + "\033[0m")
+                    print("\033[1;4;94m" + playground_url + "\033[0m")
+                else:
+                    raise ValueError("VIDEOSDK_AUTH_TOKEN environment variable not found")
+             
         # Initialize the agent (including MCP tools if configured)
         await self.agent.initialize_mcp()
         if hasattr(self.pipeline, 'set_agent'):

@@ -68,14 +68,12 @@ class VideoSDKHandler:
         print("Participant joined:", peer_name)
 
         def on_stream_enabled(stream: Stream):
-            print("Participant stream enabled")
             if stream.kind == "audio":
                 self.audio_listener_tasks[stream.id] = self.loop.create_task(
                     self.add_audio_listener(stream)
                 )
 
         def on_stream_disabled(stream: Stream):
-            print("Participant stream disabled")
             if stream.kind == "audio":
                 audio_task = self.audio_listener_tasks[stream.id]
                 if audio_task is not None:
