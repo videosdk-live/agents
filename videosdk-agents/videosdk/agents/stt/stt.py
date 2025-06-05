@@ -57,7 +57,7 @@ class STT(EventEmitter[Literal["error"]]):
         audio_frames: bytes,
         language: Optional[str] = None,
         **kwargs: Any
-    ) -> AsyncIterator[STTResponse]:
+    ) -> None:
         """
         Process audio frames and convert to text
         

@@ -14,24 +14,28 @@ from .tts.tts import TTS
 from .stt.stt import SpeechEventType
 from .agent import Agent
 from .event_bus import global_event_emitter
+from .vad import VAD, VADResponse, VADEventType
 
 class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
     """
     Manages the conversation flow by listening to transcription events.
     """
 
-    def __init__(self, agent: Agent, stt: STT | None = None, llm: LLM | None = None, tts: TTS | None = None) -> None:
+    def __init__(self, agent: Agent, stt: STT | None = None, llm: LLM | None = None, tts: TTS | None = None, vad: VAD | None = None) -> None:
         """Initialize conversation flow with event emitter capabilities"""
         super().__init__() 
         self.transcription_callback: Callable[[STTResponse], Awaitable[None]] | None = None
         self.stt = stt
         self.llm = llm
         self.tts = tts
+        self.vad = vad
         self.agent = agent
         self.is_turn_active = False
         
         if self.stt:
             self.stt.on_stt_transcript(self.on_stt_transcript)
+        if self.vad:
+            self.vad.on_vad_event(self.on_vad_event)
         
     async def start(self) -> None:
         global_event_emitter.on("speech_started", self.on_speech_started)
@@ -52,7 +56,15 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         """
         if self.stt:
             await self.stt.process_audio(audio_data)
+        if self.vad:
+            await self.vad.process_audio(audio_data)
                         
+    async def on_vad_event(self, vad_response: VADResponse) -> None:
+        if vad_response.event_type == VADEventType.START_OF_SPEECH:
+            self.on_speech_started()
+        elif vad_response.event_type == VADEventType.END_OF_SPEECH:
+            self.on_speech_stopped()
+            
     async def on_stt_transcript(self, stt_response: STTResponse) -> None:
         if stt_response.event_type == SpeechEventType.FINAL:
             user_text = stt_response.data.text
@@ -161,4 +173,4 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             asyncio.create_task(self.tts.interrupt())
 
     def on_speech_stopped(self) -> None:
-        print("Speech stopped")
+        pass

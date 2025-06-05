@@ -4,6 +4,7 @@ from typing import AsyncIterator
 from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig, OpenAILLM, OpenAISTT, OpenAITTS
 from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig
 from videosdk.plugins.deepgram import DeepgramSTT
+from videosdk.plugins.silero import SileroVAD
 from videosdk.agents import Agent, AgentSession, CascadingPipeline, function_tool, WorkerJob, MCPServerStdio, MCPServerHTTP, ConversationFlow, ChatRole
 from google.genai.types import AudioTranscriptionConfig
 import aiohttp
@@ -237,7 +238,8 @@ async def test_connection(jobctx):
         stt= DeepgramSTT(api_key=os.getenv("DEEPGRAM_API_KEY")),
         # stt= OpenAISTT(api_key=os.getenv("OPENAI_API_KEY")),
         llm=OpenAILLM(api_key=os.getenv("OPENAI_API_KEY")),
-        tts=OpenAITTS(api_key=os.getenv("OPENAI_API_KEY"))
+        tts=OpenAITTS(api_key=os.getenv("OPENAI_API_KEY")),
+        vad=SileroVAD()
     )
     session = AgentSession(
         agent=agent, 

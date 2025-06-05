@@ -53,9 +53,11 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         self.conversation_flow.llm = self.llm
         self.conversation_flow.tts = self.tts
         self.conversation_flow.agent = self.agent
-        
+        self.conversation_flow.vad = self.vad
         if self.conversation_flow.stt:
             self.conversation_flow.stt.on_stt_transcript(self.conversation_flow.on_stt_transcript)
+        if self.conversation_flow.vad:
+            self.conversation_flow.vad.on_vad_event(self.conversation_flow.on_vad_event)
         
     async def start(self, **kwargs: Any) -> None:
         if self.conversation_flow:
