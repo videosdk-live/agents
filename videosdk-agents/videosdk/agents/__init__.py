@@ -12,9 +12,11 @@ from .llm.chat_context import ChatContext, ChatRole, ChatMessage, FunctionCall, 
 from .stt.stt import STT, STTResponse, SpeechEventType, SpeechData
 from .tts.tts import TTS
 from .vad import VAD, VADResponse, VADEventType
-from .event_bus import global_event_emitter, EventTypes
 from .cascading_pipeline import CascadingPipeline
 from .mcp.mcp_server import MCPServerStdio, MCPServerHTTP
+from .event_bus import global_event_emitter, EventTypes
+from .a2a.card import AgentCard
+from .a2a.protocol import A2AMessage
 
 __all__ = [
     'Agent',
@@ -54,4 +56,6 @@ __all__ = [
     'build_nova_sonic_schema',
     'MCPServerStdio',
     'MCPServerHTTP',
+    'AgentCard',
+    'A2AMessage',
 ]
