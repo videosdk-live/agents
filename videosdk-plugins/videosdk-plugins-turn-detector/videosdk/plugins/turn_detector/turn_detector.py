@@ -11,7 +11,15 @@ def _download_from_hf_hub(repo_id, filename, **kwargs):
     local_path = hf_hub_download(repo_id=repo_id, filename=filename, **kwargs)
     return local_path
 
-class TurnSenseEOU(EOU):
+def pre_download_model():
+    from transformers import AutoTokenizer
+    AutoTokenizer.from_pretrained(HG_MODEL)
+    _download_from_hf_hub(
+        repo_id=HG_MODEL,
+        filename=ONNX_FILENAME,
+    )
+
+class TurnDetector(EOU):
     """
     A lightweight end-of-utterance detection model using TurnSense.
     Based on SmolLM2-135M, optimized for edge devices.

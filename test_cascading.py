@@ -12,8 +12,11 @@ import logging
 from openai.types.beta.realtime.session import InputAudioTranscription, TurnDetection
 import pathlib
 import sys
+from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
 
 logger = logging.getLogger(__name__)
+
+pre_download_model()
 
 @function_tool
 async def get_weather(
@@ -239,7 +242,8 @@ async def test_connection(jobctx):
         # stt= OpenAISTT(api_key=os.getenv("OPENAI_API_KEY")),
         llm=OpenAILLM(api_key=os.getenv("OPENAI_API_KEY")),
         tts=OpenAITTS(api_key=os.getenv("OPENAI_API_KEY")),
-        vad=SileroVAD()
+        vad=SileroVAD(),
+        turn_detector=TurnDetector(threshold=0.8)
     )
     session = AgentSession(
         agent=agent, 
