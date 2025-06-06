@@ -15,6 +15,7 @@ from .vad import VAD, VADResponse, VADEventType
 from .event_bus import global_event_emitter, EventTypes
 from .cascading_pipeline import CascadingPipeline
 from .mcp.mcp_server import MCPServerStdio, MCPServerHTTP
+from .eou import EOU
 
 __all__ = [
     'Agent',
@@ -55,4 +56,5 @@ __all__ = [
     'MCPServerStdio',
     'MCPServerHTTP',
     'ConversationFlow',
+    'EOU',
     ]
