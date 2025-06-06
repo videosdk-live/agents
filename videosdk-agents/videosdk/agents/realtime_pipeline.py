@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Literal
+from typing import Any, Literal
 import asyncio
 
 from .pipeline import Pipeline
@@ -16,7 +16,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
     
     def __init__(
         self,
-        model: RealtimeBaseModel
+        model: RealtimeBaseModel,
     ) -> None:
         """
         Initialize the realtime pipeline.
@@ -54,21 +54,25 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
             videosdk_auth = kwargs.get('videosdk_auth')
             meeting_id = kwargs.get('meeting_id')
             name = kwargs.get('name')
-  
-            self.room = VideoSDKHandler(
-                meeting_id=meeting_id,
-                auth_token=videosdk_auth,
-                name=name,
-                pipeline=self,
-                loop=self.loop
-            )
-            
-            self.room.init_meeting()
-            self.model.loop = self.loop
-            self.model.audio_track = self.room.audio_track
-            
-            await self.model.connect()
-            await self.room.join()
+            join_meeting = kwargs.get('join_meeting',True)
+
+            if join_meeting:
+                self.room = VideoSDKHandler(
+                    meeting_id=meeting_id,
+                    auth_token=videosdk_auth,
+                    name=name,
+                    pipeline=self,
+                    loop=self.loop
+                )
+                
+                self.room.init_meeting()
+                self.model.loop = self.loop
+                self.model.audio_track = self.room.audio_track
+                
+                await self.model.connect()
+                await self.room.join()
+            else:   
+                await self.model.connect()    
             
         except Exception as e:
             print(f"Error starting realtime connection: {e}")
@@ -80,8 +84,9 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         Send a message through the realtime model.
         Delegates to the model's send_message implementation.
         """
+
         await self.model.send_message(message)
-    
+
     async def send_text_message(self, message: str) -> None:
         """
         Send a text message through the realtime model.
@@ -104,7 +109,6 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         """
         if self.room is not None:
             await self.room.leave()
-        
 
     async def cleanup(self):
         """Cleanup resources"""
