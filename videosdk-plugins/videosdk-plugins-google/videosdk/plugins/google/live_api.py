@@ -10,6 +10,7 @@ import numpy as np
 from scipy import signal
 from dotenv import load_dotenv
 from videosdk.agents import Agent,CustomAudioStreamTrack, RealtimeBaseModel, build_gemini_schema, is_function_tool, FunctionTool, get_tool_info
+from videosdk.agents.event_bus import global_event_emitter
 
 from google import genai
 from google.genai.live import AsyncSession
@@ -328,7 +329,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                             try:
                                 if (input_transcription := server_content.input_transcription):
                                     if input_transcription.text:
-                                        self.emit("input_transcription", {
+                                        global_event_emitter("input_transcription", {
                                             "text": input_transcription.text,
                                             "is_final": False
                                         })
@@ -336,7 +337,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                 # Output transcription handling
                                 if (output_transcription := server_content.output_transcription):
                                     if output_transcription.text:
-                                        self.emit("output_transcription", {
+                                        global_event_emitter("output_transcription", {
                                             "text": output_transcription.text,
                                             "is_final": False
                                         })
@@ -397,7 +398,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                             if server_content.turn_complete and active_response_id:
                                 # Emit completion for text responses with accumulated text
                                 if "TEXT" in self.config.response_modalities:
-                                    self.emit("text_response", {
+                                    global_event_emitter.emit("text_response", {
                                         "type": "done",
                                         "text": accumulated_text
                                     })
