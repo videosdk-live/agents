@@ -267,7 +267,8 @@ def entryPoint(jobctx):
 if __name__ == "__main__":
 
     def make_context():
-        return {"meetingId": "pbow-6vec-vahn", "name": "Sandbox Agent"}
+        return {"meetingId": "pbow-6vec-vahn", "name": "Sandbox Agent", "playground": True}
 
-    job = WorkerJob(job_func=entryPoint, jobctx=make_context)
-    job.start()
+    asyncio.run(entryPoint(make_context()))
+    # job = WorkerJob(job_func=entryPoint, jobctx=make_context)
+    # job.start()
