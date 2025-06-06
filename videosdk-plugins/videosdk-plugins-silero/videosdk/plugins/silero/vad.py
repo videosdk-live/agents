@@ -147,7 +147,6 @@ class SileroVAD(BaseVAD):
                         self._pub_silence_duration = 0.0
                         self._pub_speech_duration = self._speech_threshold_duration
                         
-                        print(f"🎤 START_OF_SPEECH: confidence={self._exp_filter:.3f}, threshold_duration={self._speech_threshold_duration:.3f}s")
                         response = VADResponse(
                             event_type=VADEventType.START_OF_SPEECH,
                             data=VADData(
@@ -169,7 +168,6 @@ class SileroVAD(BaseVAD):
                     self._pub_speech_duration = 0.0
                     self._pub_silence_duration = self._silence_threshold_duration
                     
-                    print(f"🛑 END_OF_SPEECH: confidence={self._exp_filter:.3f}, silence_duration={self._silence_threshold_duration:.3f}s")
                     response = VADResponse(
                         event_type=VADEventType.END_OF_SPEECH,
                         data=VADData(

@@ -15,13 +15,14 @@ from .stt.stt import SpeechEventType
 from .agent import Agent
 from .event_bus import global_event_emitter
 from .vad import VAD, VADResponse, VADEventType
+from .eou import EOU
 
 class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
     """
     Manages the conversation flow by listening to transcription events.
     """
 
-    def __init__(self, agent: Agent, stt: STT | None = None, llm: LLM | None = None, tts: TTS | None = None, vad: VAD | None = None) -> None:
+    def __init__(self, agent: Agent, stt: STT | None = None, llm: LLM | None = None, tts: TTS | None = None, vad: VAD | None = None, turn_detector: EOU | None = None) -> None:
         """Initialize conversation flow with event emitter capabilities"""
         super().__init__() 
         self.transcription_callback: Callable[[STTResponse], Awaitable[None]] | None = None
@@ -29,6 +30,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self.llm = llm
         self.tts = tts
         self.vad = vad
+        self.turn_detector = turn_detector
         self.agent = agent
         self.is_turn_active = False
         
@@ -74,11 +76,19 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 content=user_text
             )
             
-            if self.tts:
-                await self.tts.synthesize(self.run(user_text))
-            else:
-                async for _ in self.run(user_text):
-                    pass
+            if self.turn_detector and self.turn_detector.detect_end_of_utterance(self.agent.chat_context):
+                if self.tts:
+                    await self.tts.synthesize(self.run(user_text))
+                else:
+                    async for _ in self.run(user_text):
+                        pass
+            
+            if not self.turn_detector:
+                if self.tts:
+                    await self.tts.synthesize(self.run(user_text))
+                else:
+                    async for _ in self.run(user_text):
+                        pass
             
     async def process_with_llm(self) -> AsyncIterator[str]:
         """

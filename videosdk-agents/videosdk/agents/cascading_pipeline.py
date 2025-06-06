@@ -12,6 +12,7 @@ from .vad import VAD
 from .conversation_flow import ConversationFlow
 from .agent import Agent
 from .room.room import VideoSDKHandler
+from .eou import EOU
 
 class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
     """
@@ -24,7 +25,8 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         stt: STT | None = None,
         llm: LLM | None = None,
         tts: TTS | None = None,
-        vad: VAD | None = None
+        vad: VAD | None = None,
+        turn_detector: EOU | None = None
     ) -> None:
         """
         Initialize the cascading pipeline.
@@ -39,6 +41,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         self.llm = llm
         self.tts = tts
         self.vad = vad
+        self.turn_detector = turn_detector
         self.loop = asyncio.get_event_loop()
         self.room = None
         self.agent = None
@@ -54,6 +57,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         self.conversation_flow.tts = self.tts
         self.conversation_flow.agent = self.agent
         self.conversation_flow.vad = self.vad
+        self.conversation_flow.turn_detector = self.turn_detector
         if self.conversation_flow.stt:
             self.conversation_flow.stt.on_stt_transcript(self.conversation_flow.on_stt_transcript)
         if self.conversation_flow.vad:
