@@ -9,7 +9,9 @@ from dataclasses import dataclass, field
 import numpy as np
 from scipy import signal
 from dotenv import load_dotenv
-from videosdk.agents import Agent,CustomAudioStreamTrack, RealtimeBaseModel, build_gemini_schema, is_function_tool, FunctionTool, get_tool_info
+from videosdk.agents import Agent,CustomAudioStreamTrack, RealtimeBaseModel, build_gemini_schema, is_function_tool, FunctionTool, get_tool_info,EncodeOptions, ResizeOptions, encode as encode_image
+import av 
+import time
 from videosdk.agents.event_bus import global_event_emitter
 
 from google import genai
@@ -34,6 +36,13 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 AUDIO_SAMPLE_RATE = 48000
+
+
+DEFAULT_IMAGE_ENCODE_OPTIONS = EncodeOptions(
+    format="JPEG",
+    quality=75,
+    resize_options=ResizeOptions(width=1024, height=1024, strategy="scale_aspect_fit"),
+)
 
 GeminiEventTypes = Literal[
    "tools_updated",
@@ -467,6 +476,36 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         await self._session.session.send_realtime_input(
             audio=Blob(data=audio_data, mime_type=f"audio/pcm;rate={AUDIO_SAMPLE_RATE}")
         )
+
+    async def handle_video_input(self, video_data: av.VideoFrame) -> None:
+        """Improved video input handler with error prevention"""
+        if not self._session or self._closing:
+            return
+
+        try:
+            # Add frame existence check
+            if not video_data or not video_data.planes:
+                return
+
+            # Frame rate control with time.monotonic() for better precision
+            now = time.monotonic()
+            if hasattr(self, '_last_video_frame') and (now - self._last_video_frame) < 0.5:
+                return
+            self._last_video_frame = now
+
+            processed_jpeg = encode_image(video_data, DEFAULT_IMAGE_ENCODE_OPTIONS)
+            
+            # Add data validation
+            if not processed_jpeg or len(processed_jpeg) < 100:  # Minimum valid JPEG size
+                logger.warning("Invalid JPEG data generated")
+                return
+            
+            await self._session.session.send_realtime_input(
+                video=Blob(data=processed_jpeg, mime_type="image/jpeg")
+            )
+        except Exception as e:
+            logger.error(f"Video processing error: {str(e)}")
+            logger.debug(f"Failed frame details: {vars(video_data)}")
 
     async def interrupt(self) -> None:
         """Interrupt current response"""

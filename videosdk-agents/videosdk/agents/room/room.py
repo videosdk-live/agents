@@ -72,6 +72,10 @@ class VideoSDKHandler:
                 self.audio_listener_tasks[stream.id] = self.loop.create_task(
                     self.add_audio_listener(stream)
                 )
+            if stream.kind == "video":
+                self.video_listener_tasks[stream.id] = self.loop.create_task(
+                    self.add_video_listener(stream)
+                )    
 
         def on_stream_disabled(stream: Stream):
             if stream.kind == "audio":
@@ -106,7 +110,19 @@ class VideoSDKHandler:
 
             except Exception as e:
                 print("Audio processing error:", e)
-                break       
+                break    
+
+    async def add_video_listener(self, stream: Stream):          
+        while True:
+            try:
+                await asyncio.sleep(0.01)
+
+                frame = await stream.track.recv()
+                await self.pipeline.on_video_delta(frame)
+               
+            except Exception as e:
+                print("Audio processing error:", e)
+                break           
               
     async def cleanup(self):
         """Add cleanup method"""

@@ -102,7 +102,14 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         Handle incoming audio data from the user
         """
         await self.model.handle_audio_input(audio_data)
-        
+
+    async def on_video_delta(self, video_data: av.VideoFrame):
+        """
+        Handle incoming video data from the user
+        The model's handle_video_input is now expected to handle the av.VideoFrame.
+        """
+        await self.model.handle_video_input(video_data)
+
     async def leave(self) -> None:
         """
         Leave the realtime pipeline.
