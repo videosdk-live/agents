@@ -9,7 +9,6 @@ from google.genai import types
 from pydantic import BaseModel, Field, create_model
 from pydantic_core import PydanticUndefined
 from pydantic.fields import FieldInfo
-import json
 
 @dataclass
 class FunctionToolInfo:

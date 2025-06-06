@@ -21,6 +21,7 @@ from videosdk.agents import (
     CustomAudioStreamTrack,
     ToolChoice,
     RealtimeBaseModel,
+    global_event_emitter,
     Agent
 )
 
@@ -334,8 +335,6 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
     async def _handle_response_created(self, data: dict) -> None:
         """Handle initial response creation"""
         response_id = data.get("response", {}).get("id")
-        
-        self.emit("response_created", {"response_id": response_id})
 
     async def _handle_output_item_added(self, data: dict) -> None:
         """Handle new output item addition"""
@@ -405,6 +404,8 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
                 "event_id": str(uuid.uuid4())
             }
             await self.send_event(cancel_event)
+        if self.audio_track:
+            self.audio_track.interrupt()
             
     async def _handle_transcript_delta(self, data: dict) -> None:
         """Handle transcript chunk"""
@@ -585,6 +586,6 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         try:
             text_content = data.get("text", "")
             if text_content:
-                self.emit("text_response", {"text": text_content, "type": "done"})
+                global_event_emitter.emit("text_response", {"text": text_content, "type": "done"})
         except Exception as e:
             print(f"[ERROR] Error handling text done: {e}")
