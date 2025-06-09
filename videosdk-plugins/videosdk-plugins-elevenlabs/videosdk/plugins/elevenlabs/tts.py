@@ -153,7 +153,6 @@ class ElevenLabsTTS(TTS):
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.ws_connect(full_ws_url, headers=headers) as ws:
-                    print(text)
                     # Send initial configuration
                     init_message = {
                         "text": " ",
@@ -168,7 +167,6 @@ class ElevenLabsTTS(TTS):
                     
                     # Send text data
                     text_message = {"text": f"{text} "}
-                    print(text_message)
                     await ws.send_str(json.dumps(text_message))
                     
                     # Send end-of-stream marker

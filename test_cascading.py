@@ -213,7 +213,7 @@ async def test_connection(jobctx):
         # stt= OpenAISTT(api_key=os.getenv("OPENAI_API_KEY")),
         llm=OpenAILLM(api_key=os.getenv("OPENAI_API_KEY")),
         # tts=OpenAITTS(api_key=os.getenv("OPENAI_API_KEY"))
-        tts=ElevenLabsTTS(api_key=os.getenv("ELEVENLABS_API_KEY"), enable_streaming=True)
+        tts=ElevenLabsTTS(api_key=os.getenv("ELEVENLABS_API_KEY"))
     )
     session = AgentSession(
         agent=agent, 
@@ -240,7 +240,7 @@ def entryPoint(jobctx):
 if __name__ == "__main__":
 
     def make_context():
-        return {"meetingId": "obsk-dfh0-qmyb", "name": "Sandbox Agent", "playground": True}
+        return {"meetingId": "pbow-6vec-vahn", "name": "Sandbox Agent", "playground": True}
 
     asyncio.run(entryPoint(make_context()))
     # job = WorkerJob(job_func=entryPoint, jobctx=make_context)
