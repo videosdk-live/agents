@@ -4,7 +4,7 @@ from typing import Any
 
 from .agent import Agent
 from .llm.chat_context import ChatMessage, ChatRole
-# from .conversation_flow import ConversationFlow
+from .conversation_flow import ConversationFlow
 from .pipeline import Pipeline
 import os
 class AgentSession:
@@ -16,6 +16,7 @@ class AgentSession:
         self,
         agent: Agent,
         pipeline: Pipeline,
+        conversation_flow: ConversationFlow,
         context: dict | None = None,
     ) -> None:
         """
@@ -29,11 +30,14 @@ class AgentSession:
         """
         self.agent = agent
         self.pipeline = pipeline
+        self.conversation_flow = conversation_flow
         self.context = context or {}
         self.agent.session = self
         
         if hasattr(self.pipeline, 'set_agent'):
             self.pipeline.set_agent(self.agent)
+        if hasattr(self.pipeline, 'set_conversation_flow'):
+            self.pipeline.set_conversation_flow(self.conversation_flow)
 
     async def start(self, **kwargs: Any) -> None:
         """
@@ -56,11 +60,11 @@ class AgentSession:
         name = self.context.get("name", "Agent")
         join_meeting = self.context.get("join_meeting",True)
         videosdk_auth = self.context.get("videosdk_auth",None)
-        
+        if videosdk_auth is None:
+            videosdk_auth = os.getenv("VIDEOSDK_AUTH_TOKEN")
         if "playground" in self.context and self.context.get("playground") == True:
-                auth = os.getenv("VIDEOSDK_AUTH_TOKEN")
-                if auth:
-                    playground_url = f"https://playground.videosdk.live?token={auth}&meetingId={meeting_id}"
+                if videosdk_auth:
+                    playground_url = f"https://playground.videosdk.live?token={videosdk_auth}&meetingId={meeting_id}"
                     print(f"\033[1;36m" + "Agent started in playground mode" + "\033[0m")
                     print("\033[1;75m" + "Interact with agent here at:" + "\033[0m")
                     print("\033[1;4;94m" + playground_url + "\033[0m")
