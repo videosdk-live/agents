@@ -60,11 +60,11 @@ class AgentSession:
         name = self.context.get("name", "Agent")
         join_meeting = self.context.get("join_meeting",True)
         videosdk_auth = self.context.get("videosdk_auth",None)
-        
+        if videosdk_auth is None:
+            videosdk_auth = os.getenv("VIDEOSDK_AUTH_TOKEN")
         if "playground" in self.context and self.context.get("playground") == True:
-                auth = os.getenv("VIDEOSDK_AUTH_TOKEN")
-                if auth:
-                    playground_url = f"https://playground.videosdk.live?token={auth}&meetingId={meeting_id}"
+                if videosdk_auth:
+                    playground_url = f"https://playground.videosdk.live?token={videosdk_auth}&meetingId={meeting_id}"
                     print(f"\033[1;36m" + "Agent started in playground mode" + "\033[0m")
                     print("\033[1;75m" + "Interact with agent here at:" + "\033[0m")
                     print("\033[1;4;94m" + playground_url + "\033[0m")
