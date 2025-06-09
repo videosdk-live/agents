@@ -10,6 +10,7 @@ import logging
 from openai.types.beta.realtime.session import InputAudioTranscription, TurnDetection
 import pathlib
 import sys
+from videosdk.plugins.elevenlabs import ElevenLabsTTS
 
 logger = logging.getLogger(__name__)
 
@@ -211,7 +212,8 @@ async def test_connection(jobctx):
         stt= DeepgramSTT(api_key=os.getenv("DEEPGRAM_API_KEY")),
         # stt= OpenAISTT(api_key=os.getenv("OPENAI_API_KEY")),
         llm=OpenAILLM(api_key=os.getenv("OPENAI_API_KEY")),
-        tts=OpenAITTS(api_key=os.getenv("OPENAI_API_KEY"))
+        # tts=OpenAITTS(api_key=os.getenv("OPENAI_API_KEY"))
+        tts=ElevenLabsTTS(api_key=os.getenv("ELEVENLABS_API_KEY"))
     )
     session = AgentSession(
         agent=agent, 
