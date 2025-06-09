@@ -1,19 +1,16 @@
 from __future__ import annotations
 
-import asyncio
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, AsyncIterator, Literal, Optional
+from typing import Any, Awaitable, Callable, Literal, Optional
 from pydantic import BaseModel
 
 from .event_emitter import EventEmitter
 
 class VADEventType(str, Enum):
-    START = "start_of_speech"
-    SPEECH = "speech_detected"
-    SILENCE = "silence_detected"
-    END = "end_of_speech"
+    START_OF_SPEECH = "start_of_speech"
+    END_OF_SPEECH = "end_of_speech"
 
 
 @dataclass
@@ -49,6 +46,7 @@ class VAD(EventEmitter[Literal["error"]]):
         self._threshold = threshold
         self._min_speech_duration = min_speech_duration
         self._min_silence_duration = min_silence_duration
+        self._vad_callback: Optional[Callable[[VADResponse], Awaitable[None]]] = None
 
     @property
     def label(self) -> str:
@@ -65,7 +63,7 @@ class VAD(EventEmitter[Literal["error"]]):
         self,
         audio_frames: bytes,
         **kwargs: Any
-    ) -> AsyncIterator[VADResponse]:
+    ) -> None:
         """
         Process audio frames and detect voice activity
         
@@ -87,3 +85,7 @@ class VAD(EventEmitter[Literal["error"]]):
         
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         await self.aclose()
+
+    def on_vad_event(self, callback: Callable[[VADResponse], Awaitable[None]]) -> None:
+        """Set callback for receiving VAD events"""
+        self._vad_callback = callback
