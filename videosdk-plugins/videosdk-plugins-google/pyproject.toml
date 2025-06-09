@@ -22,6 +22,7 @@ classifiers = [
 dependencies = [
     "videosdk-agents>=0.0.10",
     "google-genai >= 1.14.0",
+    "google-cloud-texttospeech >= 2.24, < 3",
 ]
 
 [tool.hatch.version]
