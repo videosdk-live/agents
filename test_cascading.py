@@ -13,6 +13,7 @@ from openai.types.beta.realtime.session import InputAudioTranscription, TurnDete
 import pathlib
 import sys
 from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
+from videosdk.plugins.elevenlabs import ElevenLabsTTS
 
 logger = logging.getLogger(__name__)
 
