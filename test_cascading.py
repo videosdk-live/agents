@@ -1,18 +1,23 @@
 import asyncio
 import os
+from typing import AsyncIterator
 from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig, OpenAILLM, OpenAISTT, OpenAITTS
 from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig
 from videosdk.plugins.deepgram import DeepgramSTT
-from videosdk.agents import Agent, AgentSession, CascadingPipeline, function_tool, WorkerJob, MCPServerStdio, MCPServerHTTP
+from videosdk.plugins.silero import SileroVAD
+from videosdk.agents import Agent, AgentSession, CascadingPipeline, function_tool, WorkerJob, MCPServerStdio, MCPServerHTTP, ConversationFlow, ChatRole
 from google.genai.types import AudioTranscriptionConfig
 import aiohttp
 import logging
 from openai.types.beta.realtime.session import InputAudioTranscription, TurnDetection
 import pathlib
 import sys
+from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
 from videosdk.plugins.elevenlabs import ElevenLabsTTS
 
 logger = logging.getLogger(__name__)
+
+pre_download_model()
 
 @function_tool
 async def get_weather(
@@ -164,6 +169,30 @@ class MyVoiceAgent(Agent):
         text = ' '.join(text.split())
         
         return text
+    
+class MyConversationFlow(ConversationFlow):
+    def __init__(self, agent, stt=None, llm=None, tts=None):
+        super().__init__(agent, stt, llm, tts)
+
+    async def run(self, transcript: str) -> AsyncIterator[str]:
+        """Main conversation loop: handle a user turn."""
+        await self.on_turn_start(transcript)
+
+        processed_transcript = transcript.lower().strip()
+        self.agent.chat_context.add_message(role=ChatRole.USER, content=processed_transcript)
+        
+        async for response_chunk in self.process_with_llm():
+            yield response_chunk
+
+        await self.on_turn_end()
+
+    async def on_turn_start(self, transcript: str) -> None:
+        """Called at the start of a user turn."""
+        self.is_turn_active = True
+
+    async def on_turn_end(self) -> None:
+        """Called at the end of a user turn."""
+        self.is_turn_active = False
 
 
 async def test_connection(jobctx):
@@ -208,16 +237,19 @@ async def test_connection(jobctx):
         # }
         # ),
     agent = MyVoiceAgent()
+    conversation_flow = MyConversationFlow(agent)
     pipeline = CascadingPipeline(
         stt= DeepgramSTT(api_key=os.getenv("DEEPGRAM_API_KEY")),
         # stt= OpenAISTT(api_key=os.getenv("OPENAI_API_KEY")),
         llm=OpenAILLM(api_key=os.getenv("OPENAI_API_KEY")),
-        # tts=OpenAITTS(api_key=os.getenv("OPENAI_API_KEY"))
-        tts=ElevenLabsTTS(api_key=os.getenv("ELEVENLABS_API_KEY"))
+        tts=OpenAITTS(api_key=os.getenv("OPENAI_API_KEY")),
+        vad=SileroVAD(),
+        turn_detector=TurnDetector(threshold=0.8)
     )
     session = AgentSession(
         agent=agent, 
         pipeline=pipeline,
+        conversation_flow=conversation_flow,
         context=jobctx
     )
 
