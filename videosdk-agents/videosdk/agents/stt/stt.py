@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import asyncio
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, AsyncIterator, Awaitable, Callable, List, Literal, Optional
+from typing import Any, Awaitable, Callable, Literal, Optional
 from pydantic import BaseModel  
 from ..event_emitter import EventEmitter
 
@@ -57,7 +56,7 @@ class STT(EventEmitter[Literal["error"]]):
         audio_frames: bytes,
         language: Optional[str] = None,
         **kwargs: Any
-    ) -> AsyncIterator[STTResponse]:
+    ) -> None:
         """
         Process audio frames and convert to text
         

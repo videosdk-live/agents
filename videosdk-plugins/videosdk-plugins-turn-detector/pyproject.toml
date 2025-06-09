@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "videosdk-plugins-eou"
+name = "videosdk-plugins-turn-detector"
 dynamic = ["version"]
-description = "VideoSDK Agent Framework plugin for livekit's end of utterance model"
+description = "VideoSDK Agent Framework plugin for turnsense turn detector model"
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "videosdk"}]
@@ -28,7 +28,7 @@ dependencies = [
 ]
 
 [tool.hatch.version]
-path = "videosdk/plugins/end_of_utterance/version.py"
+path = "videosdk/plugins/turn_detector/version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["videosdk"]
