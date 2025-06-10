@@ -2,7 +2,7 @@ import asyncio
 import os
 from typing import AsyncIterator
 from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig, OpenAILLM, OpenAISTT, OpenAITTS
-from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig, GoogleTTS,GoogleVoiceConfig,GoogleLLM
+from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig, GoogleTTS,GoogleVoiceConfig,GoogleLLM, GoogleSTT
 from videosdk.plugins.deepgram import DeepgramSTT
 from videosdk.plugins.silero import SileroVAD
 from videosdk.agents import Agent, AgentSession, CascadingPipeline, function_tool, WorkerJob, MCPServerStdio, MCPServerHTTP, ConversationFlow, ChatRole
@@ -239,11 +239,12 @@ async def test_connection(jobctx):
     agent = MyVoiceAgent()
     conversation_flow = MyConversationFlow(agent)
     pipeline = CascadingPipeline(
-        stt= DeepgramSTT(api_key=os.getenv("DEEPGRAM_API_KEY")),
+        # stt= DeepgramSTT(api_key=os.getenv("DEEPGRAM_API_KEY")),
         # stt= OpenAISTT(api_key=os.getenv("OPENAI_API_KEY")),
         # llm=OpenAILLM(api_key=os.getenv("OPENAI_API_KEY")),
         # tts=OpenAITTS(api_key=os.getenv("OPENAI_API_KEY")),
         # tts=ElevenLabsTTS(api_key=os.getenv("ELEVENLABS_API_KEY")),
+        stt = GoogleSTT( model="latest_long"),
         llm=GoogleLLM(api_key=os.getenv("GOOGLE_API_KEY")),
         tts=GoogleTTS(api_key=os.getenv("GOOGLE_API_KEY")),
         vad=SileroVAD(),
