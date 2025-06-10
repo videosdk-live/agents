@@ -38,6 +38,10 @@ echo "📁 Installing videosdk plugins (openai)..."
 cd ../videosdk-plugins-openai
 pip install -e .
 
+echo "📁 Installing videosdk plugins (sarvamai)..."
+cd ../videosdk-plugins-sarvamai
+pip install -e .
+
 echo "📁 Installing videosdk-plugins (silero)..."
 cd ../videosdk-plugins-silero
 pip install -e .
