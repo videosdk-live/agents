@@ -170,7 +170,6 @@ class GoogleLLM(LLM):
                             content=current_content,
                             role=ChatRole.ASSISTANT
                         )
-                        print(part.text)
 
         except (ClientError, ServerError, APIError) as e:
             error_msg = f"Google API error: {e}"
