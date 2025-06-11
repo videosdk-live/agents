@@ -37,6 +37,10 @@ dependencies = [
     "pydantic>=2.0,<3",
     "scipy>=1.11.0",
     "mcp",
+    "opentelemetry-distro==0.43b0",
+    "opentelemetry-exporter-otlp",  
+    "opentelemetry-sdk",
+    "opentelemetry-api",
 ]
 
 [project.optional-dependencies]
