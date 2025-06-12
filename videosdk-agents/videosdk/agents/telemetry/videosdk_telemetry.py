@@ -12,13 +12,15 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.trace import Status, StatusCode, Span
+from ..performance_matrix import PerformanceMatrix
 
 
 class VideoSDKTelemetry:
     """
     Central telemetry manager for VideoSDK Agents
     
-    Provides a clean API for distributed tracing with automatic span hierarchy management.
+    Provides a clean API for distributed tracing with automatic span hierarchy management
+    and integrated performance metrics collection.
     """
     
     def __init__(
@@ -45,6 +47,10 @@ class VideoSDKTelemetry:
         self.tracer: Optional[trace.Tracer] = None
         self.root_span: Optional[Span] = None
         self.tracer_provider: Optional[TracerProvider] = None
+        
+        # Initialize performance matrix
+        self.performance = PerformanceMatrix()
+        self.current_turn_span: Optional[Span] = None
         
         try:
             self._initialize_telemetry()
@@ -344,6 +350,98 @@ class VideoSDKTelemetry:
                 print("📊 VideoSDK Telemetry flushed")
             except Exception as e:
                 print(f"Error flushing telemetry: {e}")
+    
+    def start_turn_performance_tracking(self, turn_data: Optional[Dict[str, Any]] = None) -> Optional[Span]:
+        """
+        Start tracking performance for a conversation turn
+        
+        Args:
+            turn_data: Additional data about the turn
+            
+        Returns:
+            The turn span for this performance tracking session
+        """
+        if not self.traces_enabled:
+            return None
+            
+        # Clear previous performance data
+        self.performance.clear()
+        
+        # Create turn span with minimal attributes
+        turn_attributes = {
+            "meeting.id": self.meeting_id,
+            "peer.id": self.peer_id
+        }
+        
+        self.current_turn_span = self.trace("conversation_turn", turn_attributes)
+        return self.current_turn_span
+    
+    def complete_turn_performance_tracking(self, turn_result: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Complete performance tracking for a turn and return clean component-wise metrics
+        
+        Args:
+            turn_result: Additional result data
+            
+        Returns:
+            Clean performance metrics dictionary
+        """
+        measures = self.performance.get_entries()
+        measures_dict = {m["name"]: m["duration"] for m in measures}
+
+        def get_metric(name):
+            return round(measures_dict.get(name, 0), 2)
+
+        clean_metrics = {
+            "latency.01.stt_ms": get_metric("stt_time"),
+            "latency.02.llm_ms": get_metric("llm_total_time") or get_metric("llm_time_to_first_chunk"),
+            "latency.03.tts_ms": get_metric("tts_synthesis_time"),
+            "latency.04.total_ms": get_metric("total_turn_time"),
+        }
+
+        if turn_result and "transcript" in turn_result:
+            clean_metrics["conversation.transcript"] = turn_result["transcript"]
+
+        if self.current_turn_span and self.traces_enabled:
+            self.add_span_attributes(self.current_turn_span, clean_metrics)
+            self.complete_span(self.current_turn_span, StatusCode.OK, "Turn completed successfully")
+            self.current_turn_span = None
+            
+        return clean_metrics
+    
+    def get_performance_summary(self) -> Dict[str, Any]:
+        """Get current performance summary"""
+        measures = self.performance.get_entries()
+        summary = {
+            "total_stages": len(measures),
+            "stages": {}
+        }
+        
+        for measure in measures:
+            stage_name = measure["name"]
+            summary["stages"][stage_name] = {
+                "duration_ms": measure["duration"],
+                "start_time": measure["startTime"],
+                "end_time": measure["endTime"]
+            }
+        
+        return summary
+    
+    def add_span_attributes(self, span: Optional[Span], attributes: Dict[str, Any]) -> None:
+        """Add multiple attributes to a span safely"""
+        if span and self.traces_enabled and attributes:
+            try:
+                safe_attributes = {}
+                for key, value in attributes.items():
+                    if isinstance(value, (str, int, float, bool)):
+                        safe_attributes[key] = value
+                    elif value is not None:
+                        safe_attributes[key] = str(value)
+                
+                if safe_attributes:
+                    span.set_attributes(safe_attributes)
+            except Exception as e:
+                print(f"Error setting span attributes: {e}")
 
 
 # Global telemetry instance

@@ -10,6 +10,7 @@ from .stt.stt import STT, STTResponse
 from .llm.llm import LLM, LLMResponse
 from .llm.chat_context import ChatRole, ChatContext, ChatMessage
 from .utils import is_function_tool, get_tool_info, FunctionTool, FunctionToolInfo
+from .performance_matrix import PerformanceMatrix
 from .tts.tts import TTS
 from .stt.stt import SpeechEventType
 from .agent import Agent
@@ -34,10 +35,24 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self.agent = agent
         self.is_turn_active = False
         
+        # Use telemetry performance if available, fallback to standalone
+        self.performance = PerformanceMatrix()
+        self.telemetry = None
+        if hasattr(agent, 'telemetry') and agent.telemetry:
+            self.set_telemetry(agent.telemetry)
+        
         if self.stt:
             self.stt.on_stt_transcript(self.on_stt_transcript)
         if self.vad:
             self.vad.on_vad_event(self.on_vad_event)
+        
+    def set_telemetry(self, telemetry) -> None:
+        """Sets the telemetry object and performance matrix for the conversation flow."""
+        self.telemetry = telemetry
+        if self.telemetry:
+            self.performance = self.telemetry.performance
+        else:
+            self.performance = PerformanceMatrix()
         
     async def start(self) -> None:
         global_event_emitter.on("speech_started", self.on_speech_started)
@@ -64,6 +79,17 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
     async def on_vad_event(self, vad_response: VADResponse) -> None:
         if vad_response.event_type == VADEventType.START_OF_SPEECH:
             self.on_speech_started()
+            
+            # Start telemetry turn tracking if available
+            if self.telemetry:
+                self.telemetry.start_turn_performance_tracking({
+                    "speech_event": "start",
+                    "vad_threshold": getattr(self.vad, 'threshold', 'unknown')
+                })
+
+            self.performance.mark("turn_start_time")
+            self.performance.mark("stt_start_time")
+                
         elif vad_response.event_type == VADEventType.END_OF_SPEECH:
             self.on_speech_stopped()
             
@@ -71,24 +97,63 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         if stt_response.event_type == SpeechEventType.FINAL:
             user_text = stt_response.data.text
             
+            if self.telemetry:
+                if not self.telemetry.current_turn_span:
+                    self.telemetry.start_turn_performance_tracking({"speech_event": "transcript_received"})
+            
+            self.performance.mark("stt_end_time")
+            self.performance.mark("llm_start_time")
+            self.performance.measure("stt_time", "stt_start_time", "stt_end_time")
+            
             self.agent.chat_context.add_message(
                 role=ChatRole.USER,
                 content=user_text
             )
+
+            # Process the conversation turn
+            await self._process_conversation_turn(user_text)
+
+            # Measure total turn time
+            self.performance.mark("turn_end_time")
+            self.performance.measure("total_turn_time", "turn_start_time", "turn_end_time")
+
+            if self.telemetry:
+                self.telemetry.complete_turn_performance_tracking({
+                    "transcript": user_text
+                })
+            else:
+                self._print_performance_metrics()
             
-            if self.turn_detector and self.turn_detector.detect_end_of_utterance(self.agent.chat_context):
+    async def _process_conversation_turn(self, user_text: str) -> None:
+        """Process a complete conversation turn with proper sequential timing"""
+        try:
+            should_process = not self.turn_detector or self.turn_detector.detect_end_of_utterance(self.agent.chat_context)
+
+            if should_process:
                 if self.tts:
-                    await self.tts.synthesize(self.run(user_text))
+                    await self.time_tts_synthesize(self.run(user_text))
                 else:
                     async for _ in self.run(user_text):
                         pass
-            
-            if not self.turn_detector:
-                if self.tts:
-                    await self.tts.synthesize(self.run(user_text))
-                else:
-                    async for _ in self.run(user_text):
-                        pass
+                    self._mark_llm_completion()
+            else:
+                # If turn detector prevents processing, we still need to finalize timings
+                self._mark_llm_completion()
+
+        except Exception as e:
+            print(f"Error during conversation turn processing: {e}")
+            # Ensure timing completion even on errors
+            self._mark_llm_completion()
+    
+    def _mark_llm_completion(self) -> None:
+        """Mark LLM completion and measure its performance"""
+        self.performance.mark("llm_end_time")
+        self.performance.measure("llm_total_time", "llm_start_time", "llm_end_time")
+
+        self.performance.mark("tts_start_time")
+        if not self.tts:
+            self.performance.mark("tts_end_time")
+            self.performance.measure("tts_synthesis_time", "tts_start_time", "tts_end_time")
             
     async def process_with_llm(self) -> AsyncIterator[str]:
         """
@@ -101,60 +166,113 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         full_response = ""
         prev_content_length = 0
         
-        async for llm_chunk_resp in self.llm.chat(
-            self.agent.chat_context,
-            tools=self.agent._tools
-        ):
-            if llm_chunk_resp.metadata and "function_call" in llm_chunk_resp.metadata:
-                func_call = llm_chunk_resp.metadata["function_call"]
-                
-                self.agent.chat_context.add_function_call(
-                    name=func_call["name"],
-                    arguments=json.dumps(func_call["arguments"]),
-                    call_id=func_call.get("call_id", f"call_{int(time.time())}")
-                )
-                
-                try:
-                    tool = next(
-                        (t for t in self.agent.tools if hasattr(t, '_tool_info') and t._tool_info.name == func_call["name"]),
-                        None
-                    )
-                except Exception as e:
-                    print(f"Error while selecting tool: {e}")
-                    continue
-                    
-                if tool:
-                    try:
-                        result = await tool(**func_call["arguments"])
-                        
-                        self.agent.chat_context.add_function_output(
-                            name=func_call["name"],
-                            output=json.dumps(result),
-                            call_id=func_call.get("call_id", f"call_{int(time.time())}")
-                        )
-                        
-                        async for new_resp in self.llm.chat(self.agent.chat_context):
-                            new_content = new_resp.content[prev_content_length:]
-                            if new_content:
-                                yield new_content
-                            full_response = new_resp.content
-                            prev_content_length = len(new_resp.content)
-                    except Exception as e:
-                        print(f"Error executing function {func_call['name']}: {e}")
-                        continue
-            else:
-                new_content = llm_chunk_resp.content[prev_content_length:]
-                if new_content: 
-                    new_content = await self.agent.process_llm_output(new_content)
-                    yield new_content
-                full_response = llm_chunk_resp.content
-                prev_content_length = len(llm_chunk_resp.content)
-        
-        if full_response:
-            self.agent.chat_context.add_message(
-                role=ChatRole.ASSISTANT,
-                content=full_response
+        try:
+            self.performance.mark("llm_start_time")
+            
+            llm_response_iterator = self.llm.chat(
+                self.agent.chat_context,
+                tools=self.agent._tools
             )
+            
+            first_chunk = True
+            async for llm_chunk_resp in llm_response_iterator:
+                if first_chunk:
+                    if "function_call" not in (llm_chunk_resp.metadata or {}):
+                        self.performance.mark("llm_first_chunk_received")
+                        self.performance.measure("llm_time_to_first_chunk", "llm_start_time", "llm_first_chunk_received")
+                    first_chunk = False
+
+                if llm_chunk_resp.metadata and "function_call" in llm_chunk_resp.metadata:
+                    func_call = llm_chunk_resp.metadata["function_call"]
+                    
+                    self.agent.chat_context.add_function_call(
+                        name=func_call["name"],
+                        arguments=json.dumps(func_call["arguments"]),
+                        call_id=func_call.get("call_id", f"call_{int(time.time())}")
+                    )
+                    
+                    try:
+                        tool = next(
+                            (t for t in self.agent.tools if hasattr(t, '_tool_info') and t._tool_info.name == func_call["name"]),
+                            None
+                        )
+                    except Exception as e:
+                        print(f"Error while selecting tool: {e}")
+                        break
+                        
+                    if tool:
+                        try:
+                            result = await tool(**func_call["arguments"])
+                            
+                            self.agent.chat_context.add_function_output(
+                                name=func_call["name"],
+                                output=json.dumps(result),
+                                call_id=func_call.get("call_id", f"call_{int(time.time())}")
+                            )
+                            
+                            async for new_resp in self.llm.chat(self.agent.chat_context):
+                                new_content = new_resp.content[prev_content_length:]
+                                if new_content:
+                                    yield new_content
+                                full_response = new_resp.content
+                                prev_content_length = len(new_resp.content)
+                        except Exception as e:
+                            print(f"Error executing function {func_call['name']}: {e}")
+                            break
+                else:
+                    new_content = llm_chunk_resp.content[prev_content_length:]
+                    if new_content: 
+                        new_content = await self.agent.process_llm_output(new_content)
+                        yield new_content
+                    full_response = llm_chunk_resp.content
+                    prev_content_length = len(llm_chunk_resp.content)
+            
+            if full_response:
+                self.performance.mark("llm_end_time")
+                self.performance.measure("llm_total_time", "llm_start_time", "llm_end_time")
+                
+                # Start TTS timing immediately after LLM completes (if TTS is enabled)
+                if self.tts:
+                    self.performance.mark("tts_start_time")
+                
+                self.agent.chat_context.add_message(
+                    role=ChatRole.ASSISTANT,
+                    content=full_response
+                )
+        except Exception as e:
+            print(f"Error during LLM processing: {e}")
+            # Mark LLM as completed even if there was an error
+            self.performance.mark("llm_end_time")
+
+    async def time_tts_synthesize(self, text_iterator: AsyncIterator[str]):
+        """Synthesize text to speech with proper timing measurement"""
+        if not self.tts:
+            self.performance.mark("tts_start_time")
+            self.performance.mark("tts_end_time")
+            self.performance.measure("tts_synthesis_time", "tts_start_time", "tts_end_time")
+            return
+
+        # Collect text for metrics
+        text_chunks = []
+        
+        async def text_collector():
+            async for chunk in text_iterator:
+                text_chunks.append(chunk)
+                yield chunk
+
+        try:
+            self.performance.mark("tts_start_time")
+                
+            await self.tts.synthesize(text_collector())
+            
+            self.performance.mark("tts_end_time")
+            self.performance.measure("tts_synthesis_time", "tts_start_time", "tts_end_time")
+                
+        except Exception as e:
+            print(f"Error during TTS synthesis: {e}")
+            # Still mark as finished even if there was an error
+            self.performance.mark("tts_end_time")
+            self.performance.measure("tts_synthesis_time", "tts_start_time", "tts_end_time")
                             
     async def say(self, message: str) -> None:
         if self.tts:

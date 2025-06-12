@@ -72,6 +72,8 @@ class AgentSession:
             }
             self.telemetry = initialize_telemetry(meeting_id, name, "videosdk-agents", metadata)
             self.agent.telemetry = self.telemetry
+            if hasattr(self.conversation_flow, 'set_telemetry'):
+                self.conversation_flow.set_telemetry(self.telemetry)
 
         # Start session span
         session_span = None
