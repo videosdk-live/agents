@@ -3,13 +3,13 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "videosdk-plugins-elevenlabs"
+name = "videosdk-plugins-sarvamai"
 dynamic = ["version"]
-description = "VideoSDK Agent Framework plugin for ElevenLabs"
+description = "VideoSDK Agent Framework plugin for SarvamAI"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 authors = [{ name = "videosdk"}]
-keywords = ["video", "audio", "ai", "videosdk", "elevenlabs"]
+keywords = ["video", "audio", "ai", "sarvamai", "videosdk", "sarvamai"]
 classifiers = [
     "Intended Audience :: Developers",
     "Development Status :: 4 - Beta",
@@ -20,11 +20,12 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "videosdk-agents>=0.0.12"
+    "videosdk-agents>=0.0.12",
+    "sarvamai",
 ]
 
 [tool.hatch.version]
-path = "videosdk/plugins/elevenlabs/version.py"
+path = "videosdk/plugins/sarvamai/version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["videosdk"]

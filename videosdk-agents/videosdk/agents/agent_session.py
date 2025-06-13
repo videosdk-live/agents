@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 from .agent import Agent
 from .llm.chat_context import ChatMessage, ChatRole
@@ -18,7 +18,7 @@ class AgentSession:
         self,
         agent: Agent,
         pipeline: Pipeline,
-        conversation_flow: ConversationFlow,
+        conversation_flow: Optional[ConversationFlow] = None,
         context: dict | None = None,
     ) -> None:
         """
@@ -39,7 +39,7 @@ class AgentSession:
         
         if hasattr(self.pipeline, 'set_agent'):
             self.pipeline.set_agent(self.agent)
-        if hasattr(self.pipeline, 'set_conversation_flow'):
+        if hasattr(self.pipeline, 'set_conversation_flow') and self.conversation_flow is not None:
             self.pipeline.set_conversation_flow(self.conversation_flow)
 
     async def start(self, **kwargs: Any) -> None:
