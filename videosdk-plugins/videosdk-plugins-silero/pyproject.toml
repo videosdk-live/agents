@@ -20,7 +20,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "videosdk-agents>=0.0.11",
+    "videosdk-agents>=0.0.12",
     "onnxruntime>=1.18",
     "numpy>=1.26",
 ]
