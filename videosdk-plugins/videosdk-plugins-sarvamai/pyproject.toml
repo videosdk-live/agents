@@ -3,13 +3,13 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "videosdk-plugins-google"
+name = "videosdk-plugins-sarvamai"
 dynamic = ["version"]
-description = "VideoSDK Agent Framework plugin for google services"
+description = "VideoSDK Agent Framework plugin for SarvamAI"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 authors = [{ name = "videosdk"}]
-keywords = ["video", "audio", "ai", "google", "videosdk"]
+keywords = ["video", "audio", "ai", "sarvamai", "videosdk", "sarvamai"]
 classifiers = [
     "Intended Audience :: Developers",
     "Development Status :: 4 - Beta",
@@ -21,14 +21,11 @@ classifiers = [
 ]
 dependencies = [
     "videosdk-agents>=0.0.10",
-    "google-genai >= 1.14.0",
-    "google-cloud-texttospeech >= 2.24, < 3",
-    "google-cloud-speech >= 2, < 3",
-    "scipy",
+    "sarvamai",
 ]
 
 [tool.hatch.version]
-path = "videosdk/plugins/google/version.py"
+path = "videosdk/plugins/sarvamai/version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["videosdk"]
