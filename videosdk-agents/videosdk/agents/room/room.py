@@ -9,7 +9,6 @@ import librosa
 import asyncio
 import os
 from asyncio import AbstractEventLoop
-import sys
 
 load_dotenv()
 
@@ -35,7 +34,7 @@ class VideoSDKHandler:
         self.meeting = None
 
         self.participants_data = {}
-
+        
     def init_meeting(self):
         self.meeting = VideoSDK.init_meeting(**self.meeting_config)
         self.meeting.add_event_listener(
@@ -69,14 +68,12 @@ class VideoSDKHandler:
         print("Participant joined:", peer_name)
 
         def on_stream_enabled(stream: Stream):
-            print("Participant stream enabled")
             if stream.kind == "audio":
                 self.audio_listener_tasks[stream.id] = self.loop.create_task(
                     self.add_audio_listener(stream)
                 )
 
         def on_stream_disabled(stream: Stream):
-            print("Participant stream disabled")
             if stream.kind == "audio":
                 audio_task = self.audio_listener_tasks[stream.id]
                 if audio_task is not None:
@@ -95,34 +92,22 @@ class VideoSDKHandler:
         for audio_task in self.audio_listener_tasks.values():
             audio_task.cancel()
         self.leave()
-        # sys.exit(0)
         
 
-    async def add_audio_listener(self, stream: Stream):
+    async def add_audio_listener(self, stream: Stream):          
         while True:
             try:
                 await asyncio.sleep(0.01)
 
                 frame = await stream.track.recv()
                 audio_data = frame.to_ndarray()[0]
-                audio_data_float = (
-                    audio_data.astype(np.float32) / np.iinfo(np.int16).max
-                )
-                audio_mono = librosa.to_mono(audio_data_float.T)
-                audio_resampled = librosa.resample(
-                    audio_mono, orig_sr=48000, target_sr=16000
-                )
-                pcm_frame = (
-                    (audio_resampled * np.iinfo(np.int16).max)
-                    .astype(np.int16)
-                    .tobytes()
-                )
+                pcm_frame = audio_data.flatten().astype(np.int16).tobytes()
                 await self.pipeline.on_audio_delta(pcm_frame)
 
             except Exception as e:
                 print("Audio processing error:", e)
-                break
-            
+                break       
+              
     async def cleanup(self):
         """Add cleanup method"""
         
