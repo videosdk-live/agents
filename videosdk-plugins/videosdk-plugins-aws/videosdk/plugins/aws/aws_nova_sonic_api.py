@@ -9,6 +9,7 @@ from typing import Optional, Literal, List, Dict, Any
 from dataclasses import dataclass
 import librosa
 import numpy as np
+from scipy import signal
 
 
 from aws_sdk_bedrock_runtime.client import (
@@ -26,8 +27,7 @@ from aws_sdk_bedrock_runtime.config import (
 )
 from smithy_aws_core.credentials_resolvers.environment import EnvironmentCredentialsResolver
 
-from videosdk.agents import RealtimeBaseModel
-from videosdk.agents.utils import build_nova_sonic_schema, get_tool_info, is_function_tool, FunctionTool
+from videosdk.agents import Agent, RealtimeBaseModel, build_nova_sonic_schema, get_tool_info, is_function_tool, FunctionTool
 
 NOVA_INPUT_SAMPLE_RATE = 16000  
 NOVA_OUTPUT_SAMPLE_RATE = 24000 
@@ -112,10 +112,18 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
         
         # Initialize Bedrock client
         self._initialize_bedrock_client()
+        
+        self.input_sample_rate = 48000
+        self.target_sample_rate = 16000
 
-        # Listen for agent events
-        self.on("instructions_updated", self._handle_instructions_updated)
-        self.on("tools_updated", self._handle_tools_updated)
+        # global_event_emitter.on("instructions_updated", self._handle_instructions_updated)
+        # global_event_emitter.on("tools_updated", self._handle_tools_updated)
+
+    def set_agent(self, agent: Agent) -> None:
+        self._instructions = agent.instructions
+        self._tools = agent.tools
+        self.tools_formatted = [build_nova_sonic_schema(tool) for tool in self._tools if is_function_tool(tool)]
+        self.formatted_tools = self.tools_formatted
 
     def _initialize_bedrock_client(self):
         """Initialize the Bedrock client with manual credential handling"""
@@ -300,25 +308,25 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
         await self._send_event(json.dumps(audio_content_start_payload))
 
     async def handle_audio_input(self, audio_data: bytes) -> None:
-        """Handle incoming 24kHz audio from VideoSDK"""
+        """Handle incoming 48kHz audio from VideoSDK"""
         if not self.is_active or self._closing:
             return
             
         try:
-            # Get audio array from bytes
             audio_array = np.frombuffer(audio_data, dtype=np.int16)
             
-            # Resample from 24kHz to 16kHz
-            resampled = librosa.resample(
-                audio_array.astype(np.float32),
-                orig_sr=24000,
-                target_sr=16000
-            ).astype(np.int16)
+            # convert stereo to mono (AWS NOVA SONIC ONLY SUPPORTS MONO AUDIO)
+            if len(audio_array) % 2 == 0: 
+                audio_array = audio_array.reshape(-1, 2)
+                audio_array = np.mean(audio_array, axis=1).astype(np.int16) 
             
-            # Convert to bytes
-            resampled_bytes = resampled.tobytes()
+            target_length = int(len(audio_array) * self.target_sample_rate / self.input_sample_rate)
+            resampled_float = signal.resample(audio_array.astype(np.float32), target_length)
             
-            # Encode in base64 as expected by Nova Sonic
+            resampled_int16 = np.clip(resampled_float, -32768, 32767).astype(np.int16)
+            resampled_bytes = resampled_int16.tobytes()
+            
+            
             encoded_audio = base64.b64encode(resampled_bytes).decode('utf-8')
             
             # Format exactly as in the     
@@ -386,13 +394,16 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                         audio_bytes = base64.b64decode(audio_content)
                                         
                                         # Queue for playback
-                                        if self.audio_track and not self._closing:
-                                            await self.audio_track.add_new_bytes(audio_bytes)
+                                        if self.audio_track and self.loop and not self._closing:
+                                            self.loop.create_task(self.audio_track.add_new_bytes(audio_bytes))
 
                                     except Exception as e:
                                         print(f"AUDIO PROCESSING ERROR: {e}")
                                 
                                 elif 'contentEnd' in json_data['event']: 
+                                    pass
+
+                                elif 'usageEvent' in json_data['event']:
                                     pass
 
                                 elif 'toolUse' in json_data['event']:
