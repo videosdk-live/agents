@@ -6,10 +6,11 @@ import logging
 import traceback
 from typing import Any, Dict, Optional, Literal, List
 from dataclasses import dataclass, field
-import base64
-import time
+import numpy as np
+from scipy import signal
 from dotenv import load_dotenv
-from videosdk.agents import CustomAudioStreamTrack, RealtimeBaseModel, build_gemini_schema, is_function_tool, FunctionTool, get_tool_info
+from videosdk.agents import Agent,CustomAudioStreamTrack, RealtimeBaseModel, build_gemini_schema, is_function_tool, FunctionTool, get_tool_info
+from videosdk.agents.event_bus import global_event_emitter
 
 from google import genai
 from google.genai.live import AsyncSession
@@ -32,12 +33,12 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-AUDIO_SAMPLE_RATE = 24000  # Match audio sample rate expected by Gemini
+AUDIO_SAMPLE_RATE = 48000
 
-# Supported event types
 GeminiEventTypes = Literal[
    "tools_updated",
    "instructions_updated",
+   "text_response",
 ]
 
 Voice = Literal["Puck", "Charon", "Kore", "Fenrir", "Aoede"]
@@ -140,8 +141,17 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         self._instructions : str = "You are a helpful voice assistant that can answer questions and help with tasks."
         self.config: GeminiLiveConfig = config or GeminiLiveConfig()
         
-        self.on("tools_updated", self._handle_tools_updated)
-        self.on("instructions_updated", self._handle_instructions_updated)
+        self.target_sample_rate = 24000
+        self.input_sample_rate = 48000
+        
+        # global_event_emitter.on("tools_updated", self._handle_tools_updated)
+        # global_event_emitter.on("instructions_updated", self._handle_instructions_updated)
+
+    def set_agent(self, agent: Agent) -> None:
+        self._instructions = agent.instructions
+        self.tools = agent.tools
+        self.tools_formatted = self._convert_tools_to_gemini_format(self.tools)
+        self.formatted_tools = self.tools_formatted
     
     def _init_client(self, api_key: str | None, service_account_path: str | None):
         if service_account_path:
@@ -166,10 +176,10 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         self._session_should_close.clear()
         
         try:
-            # Initialize audio track
-            if not self.audio_track and self.loop:
+            # Initialize audio track only if AUDIO modality is enabled
+            if not self.audio_track and self.loop and "AUDIO" in self.config.response_modalities:
                 self.audio_track = CustomAudioStreamTrack(self.loop)
-            elif not self.loop:
+            elif not self.loop and "AUDIO" in self.config.response_modalities:
                 raise RuntimeError("Event loop not initialized. Audio playback will not work.")
             
             # Try to create an initial session
@@ -303,6 +313,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         try:
             active_response_id = None
             chunk_number = 0
+            accumulated_text = "" 
             
             while not self._closing:
                 try:
@@ -318,7 +329,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                             try:
                                 if (input_transcription := server_content.input_transcription):
                                     if input_transcription.text:
-                                        self.emit("input_transcription", {
+                                        global_event_emitter("input_transcription", {
                                             "text": input_transcription.text,
                                             "is_final": False
                                         })
@@ -326,7 +337,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                 # Output transcription handling
                                 if (output_transcription := server_content.output_transcription):
                                     if output_transcription.text:
-                                        self.emit("output_transcription", {
+                                        global_event_emitter("output_transcription", {
                                             "text": output_transcription.text,
                                             "is_final": False
                                         })
@@ -341,13 +352,15 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                             if not active_response_id:
                                 active_response_id = f"response_{id(response)}"
                                 chunk_number = 0
+                                accumulated_text = ""  # Reset for new response
                             
                             # Handle interruption
                             if server_content.interrupted:
                                 if active_response_id:
                                     active_response_id = None
+                                    accumulated_text = ""  # Clear accumulated text
                                 # Clear audio buffer to stop playing interrupted audio
-                                if self.audio_track:
+                                if self.audio_track and "AUDIO" in self.config.response_modalities:
                                     self.audio_track.interrupt()
                                 continue
                             
@@ -355,29 +368,42 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                             if model_turn := server_content.model_turn:
                                 # Emit output speech started when model starts responding
                                 for part in model_turn.parts:
+                                    # Handle audio content
                                     if hasattr(part, 'inline_data') and part.inline_data:
                                         raw_audio = part.inline_data.data
                                         # Skip empty chunks
                                         if not raw_audio or len(raw_audio) < 2:
                                             continue
                                         
-                                        # Process audio chunk
-                                        chunk_number += 1
-                                        
-                                        # Send to audio track
-                                        if self.audio_track and self.loop:
-                                            # Ensure even length for 16-bit samples
-                                            if len(raw_audio) % 2 != 0: 
-                                                raw_audio += b'\x00'
+                                        # Process audio chunk only if AUDIO modality is enabled
+                                        if "AUDIO" in self.config.response_modalities:
+                                            chunk_number += 1
                                             
-                                            self.loop.create_task(
-                                                self.audio_track.add_new_bytes(raw_audio),
-                                                name=f"audio_chunk_{chunk_number}"
-                                            )
-                            
+                                            # Send to audio track
+                                            if self.audio_track and self.loop:
+                                                # Ensure even length for 16-bit samples
+                                                if len(raw_audio) % 2 != 0: 
+                                                    raw_audio += b'\x00'
+                                                
+                                                self.loop.create_task(
+                                                    self.audio_track.add_new_bytes(raw_audio),
+                                                    name=f"audio_chunk_{chunk_number}"
+                                                )
+                                    
+                                    # Handle text content - accumulate instead of emitting immediately
+                                    elif hasattr(part, 'text') and part.text:
+                                        accumulated_text += part.text
+
                             # Handle response completion
                             if server_content.turn_complete and active_response_id:
+                                # Emit completion for text responses with accumulated text
+                                if "TEXT" in self.config.response_modalities:
+                                    global_event_emitter.emit("text_response", {
+                                        "type": "done",
+                                        "text": accumulated_text
+                                    })
                                 active_response_id = None
+                                accumulated_text = ""  # Reset for next response
                 
                 except Exception as e:
                     if "1000 (OK)" in str(e):
@@ -430,6 +456,14 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         if not self._session or self._closing:
             return
         
+        # Only process audio input if AUDIO modality is enabled
+        if "AUDIO" not in self.config.response_modalities:
+            return
+
+        audio_data = np.frombuffer(audio_data, dtype=np.int16)
+        audio_data = signal.resample(audio_data, int(len(audio_data) * self.target_sample_rate / self.input_sample_rate))
+        audio_data = audio_data.astype(np.int16).tobytes()
+        
         await self._session.session.send_realtime_input(
             audio=Blob(data=audio_data, mime_type=f"audio/pcm;rate={AUDIO_SAMPLE_RATE}")
         )
@@ -444,7 +478,8 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                 turns=Content(parts=[Part(text="stop")], role="user"),
                 turn_complete=True
             )
-            if self.audio_track:
+            # Only interrupt audio track if AUDIO modality is enabled
+            if self.audio_track and "AUDIO" in self.config.response_modalities:
                 self.audio_track.interrupt()
         except Exception as e:
             logger.error(f"Interrupt error: {e}")
@@ -471,6 +506,26 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
             await asyncio.sleep(0.1)
         except Exception as e:
             logger.error(f"Error sending message: {e}")
+            self._session_should_close.set()
+
+    async def send_text_message(self, message: str) -> None:
+        """Send a text message for text-only communication"""
+        retry_count = 0
+        max_retries = 5
+        while not self._session or not self._session.session:
+            if retry_count >= max_retries:
+                raise RuntimeError("No active Gemini session after maximum retries")
+            logger.debug("No active session, waiting for connection...")
+            await asyncio.sleep(1)
+            retry_count += 1
+        
+        try:
+            await self._session.session.send_client_content(
+                turns=Content(parts=[Part(text=message)], role="user"),
+                turn_complete=True
+            )
+        except Exception as e:
+            logger.error(f"Error sending text message: {e}")
             self._session_should_close.set()
     
     async def _cleanup_session(self, session: GeminiSession) -> None:
