@@ -7,7 +7,6 @@ import json
 import uuid
 from typing import Optional, Literal, List, Dict, Any
 from dataclasses import dataclass
-import librosa
 import numpy as np
 from scipy import signal
 
@@ -552,17 +551,6 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                 except Exception as e:
                     print(f"Error cleaning up audio track: {e}")
             self.audio_track = None
-        
-
-    def _handle_instructions_updated(self, data: Dict[str, Any]) -> None:
-        """Handle instructions updated event"""
-        self._instructions = data.get("instructions")
-
-    def _handle_tools_updated(self, data: Dict[str, Any]) -> None:
-        """Handle tools updated event"""
-        tools = data.get("tools", [])
-        self._tools = tools 
-        self.tools_formatted = [build_nova_sonic_schema(tool) for tool in tools if is_function_tool(tool)]
         
     async def _execute_tool_and_send_result(self, tool_use_event: Dict[str, Any]) -> None:
         """Executes a tool and sends the result back to Nova Sonic."""

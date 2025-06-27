@@ -145,7 +145,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             else:
                 new_content = llm_chunk_resp.content[prev_content_length:]
                 if new_content: 
-                    new_content = await self.agent.process_llm_output(new_content)
                     yield new_content
                 full_response = llm_chunk_resp.content
                 prev_content_length = len(llm_chunk_resp.content)

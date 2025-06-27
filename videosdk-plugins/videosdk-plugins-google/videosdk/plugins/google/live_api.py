@@ -4,7 +4,7 @@ import asyncio
 import os
 import logging
 import traceback
-from typing import Any, Dict, Optional, Literal, List
+from typing import Any, Optional, Literal, List
 from dataclasses import dataclass, field
 import numpy as np
 from scipy import signal
@@ -604,14 +604,3 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                 logger.error(f"Failed to format tool {tool}: {e}")
                 continue
         return [Tool(function_declarations=function_declarations)] if function_declarations else []
-
-    def _handle_tools_updated(self, data: Dict[str, Any]) -> None:
-        """Handle tools updated event"""
-        tools = data.get("tools", [])
-        self.tools = tools
-        self.tools_formatted = self._convert_tools_to_gemini_format(tools)
-        self.formatted_tools = self.tools_formatted
-
-    def _handle_instructions_updated(self, data: Dict[str, Any]) -> None:
-        """Handle instruction updated event"""
-        self._instructions = data.get("instructions", "")

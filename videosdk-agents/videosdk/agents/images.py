@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import io
 from dataclasses import dataclass, field
-from importlib import import_module
-from typing import TYPE_CHECKING, Literal, Optional
+from typing import Literal
 from PIL import Image as PILImage
 
 import av  

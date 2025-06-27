@@ -119,43 +119,6 @@ class MyVoiceAgent(Agent):
     #     await self.session.say("Goodbye!")
     #     await asyncio.sleep(1)
     #     await self.session.leave()
-        
-    async def process_stt_output(self, text: str) -> str:
-        """
-        Example of custom STT processing:
-        - Convert numbers to digits
-        - Clean up common speech artifacts
-        """
-        # Convert written numbers to digits
-        number_mapping = {
-            'one': '1', 'two': '2', 'three': '3',
-            'four': '4', 'five': '5', 'six': '6',
-            'seven': '7', 'eight': '8', 'nine': '9',
-            'zero': '0'
-        }
-        for word, digit in number_mapping.items():
-            text = text.replace(word, digit)
-            
-        # Remove common speech artifacts
-        text = text.replace('um', '').replace('uh', '').strip()
-        
-        return text
-
-    async def process_llm_output(self, text: str) -> str:
-        """
-        Example of custom LLM processing:
-        - Add emphasis to important words
-        - Clean up formatting
-        """
-        # Add emphasis to important words
-        emphasis_words = ['important', 'warning', 'critical']
-        for word in emphasis_words:
-            text = text.replace(word, f"*{word}*")
-            
-        # Clean up extra whitespace
-        text = ' '.join(text.split())
-        
-        return text
     
 class MyConversationFlow(ConversationFlow):
     def __init__(self, agent, stt=None, llm=None, tts=None):

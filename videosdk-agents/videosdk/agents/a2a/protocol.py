@@ -28,8 +28,7 @@ class AgentRegistry:
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super(AgentRegistry, cls).__new__(cls)
-            # Ensure these are initialized here if not relying solely on default_factory
-            # For this structure, default_factory handles it if _instance is new
+            
             if not hasattr(cls._instance, 'agents'):
                  cls._instance.agents = {}
             if not hasattr(cls._instance, 'agent_instances'):

@@ -36,7 +36,6 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
         self._mcp_servers = mcp_servers if mcp_servers else []
         self._mcp_initialized = False
         self._register_class_tools()
-        self.register_tools()
         self.a2a = A2AProtocol(self)
         self._agent_card = None 
         self.id = agent_id or str(uuid.uuid4())
@@ -59,18 +58,10 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
             role=ChatRole.SYSTEM,
             content=value
         )
-        # global_event_emitter.emit("instructions_updated", {"instructions": value})
 
     @property
     def tools(self) -> List[FunctionTool]:
         return self._tools
-
-    def register_tools(self) -> None:
-        """Register external function tools for the agent"""
-        for tool in self._tools:
-            if not is_function_tool(tool):
-                raise ValueError(f"Tool {tool.__name__ if hasattr(tool, '__name__') else tool} is not a valid FunctionTool")
-        # global_event_emitter.emit("tools_updated", {"tools": self._tools})
     
     async def initialize_mcp(self) -> None:
         """Initialize the agent, including any MCP server if provided."""
@@ -83,7 +74,6 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
         """Initialize the MCP server and register the tools"""
         await self.mcp_manager.add_mcp_server(mcp_server)
         self._tools.extend(self.mcp_manager.tools)
-        # self.register_tools()
     
     @abstractmethod
     async def on_enter(self) -> None:
@@ -104,29 +94,3 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
     async def on_exit(self) -> None:
         """Called when session ends"""
         pass
-
-    async def process_stt_output(self, text: str) -> str:
-        """
-        Process STT output before it goes to LLM.
-        Override this method to add custom processing.
-        
-        Args:
-            text: The text from STT
-            
-        Returns:
-            Processed text
-        """
-        return text
-
-    async def process_llm_output(self, text: str) -> str:
-        """
-        Process LLM output before it goes to TTS.
-        Override this method to add custom processing.
-        
-        Args:
-            text: The text from LLM
-            
-        Returns:
-            Processed text
-        """
-        return text

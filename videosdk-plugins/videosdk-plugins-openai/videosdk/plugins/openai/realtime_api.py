@@ -514,10 +514,6 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         new_url = urlunparse((parsed_url.scheme, parsed_url.netloc, path, "", new_query, ""))
 
         return new_url
-    
-    def _handle_instructions_updated(self, data: Dict[str, Any]) -> None:
-        """Handle instructions_updated event"""
-        self._instructions = data.get("instructions")
 
     def _format_tools_for_session(self, tools: List[FunctionTool]) -> List[Dict[str, Any]]:
         """Format tools for OpenAI session update"""
@@ -534,13 +530,6 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
                 continue
                 
         return oai_tools
-
-    def _handle_tools_updated(self, data: Dict[str, Any]) -> None:
-        """Handle tools_updated event"""
-        tools = data.get("tools", [])
-        self._tools = tools
-        self.tools_formatted = self._format_tools_for_session(tools)
-        self._formatted_tools = self.tools_formatted
 
     async def send_text_message(self, message: str) -> None:
         """Send a text message to the OpenAI realtime API"""
