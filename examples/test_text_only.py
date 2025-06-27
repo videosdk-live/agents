@@ -7,7 +7,7 @@ import sys
 import logging
 
 import aiohttp
-from videosdk.agents import Agent, AgentSession, RealTimePipeline, function_tool, MCPServerStdio, MCPServerHTTP, global_event_emitter
+from videosdk.agents import Agent, AgentSession, RealTimePipeline, function_tool, MCPServerStdio, MCPServerHTTP, global_event_emitter, WorkerJob
 # from videosdk.plugins.aws import NovaSonicRealtime, NovaSonicConfig
 from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig
 from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig
@@ -159,8 +159,12 @@ async def main(context: dict):
         await pipeline.cleanup()
 
 
+def entryPoint(jobctx):
+    asyncio.run(main(context=jobctx))
+
 if __name__ == "__main__":
     def make_context():
-        return {"meetingId": "<meeting_id>", "name": "VideoSDK Voice Agent"}
+        return {"meetingId": "<meeting_id>", "name": "Sandbox Agent", "playground": True}
 
-    asyncio.run(main(context=make_context()))
+    job = WorkerJob(job_func=entryPoint, jobctx=make_context)
+    job.start()

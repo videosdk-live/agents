@@ -4,7 +4,7 @@ import os
 from typing import AsyncIterator
 from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig, OpenAILLM, OpenAISTT, OpenAITTS
 from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig, GoogleTTS,GoogleVoiceConfig,GoogleLLM, GoogleSTT
-from videosdk.plugins.deepgram import DeepgramSTT
+# from videosdk.plugins.deepgram import DeepgramSTT
 from videosdk.plugins.silero import SileroVAD
 from videosdk.agents import Agent, AgentSession, CascadingPipeline, function_tool, WorkerJob, MCPServerStdio, MCPServerHTTP, ConversationFlow, ChatRole
 from google.genai.types import AudioTranscriptionConfig
@@ -14,8 +14,8 @@ from openai.types.beta.realtime.session import InputAudioTranscription, TurnDete
 import pathlib
 import sys
 from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
-from videosdk.plugins.elevenlabs import ElevenLabsTTS
-from videosdk.plugins.sarvamai import SarvamAITTS, SarvamAILLM,SarvamAISTT
+# from videosdk.plugins.elevenlabs import ElevenLabsTTS
+# from videosdk.plugins.sarvamai import SarvamAITTS, SarvamAILLM,SarvamAISTT
 
 logger = logging.getLogger(__name__)
 
@@ -146,7 +146,6 @@ class MyConversationFlow(ConversationFlow):
 
 
 async def test_connection(jobctx):
-    print("Starting connection test...")
     print(f"Job context: {jobctx}")
     
     # model = OpenAIRealtime(
@@ -190,16 +189,16 @@ async def test_connection(jobctx):
     conversation_flow = MyConversationFlow(agent)
     pipeline = CascadingPipeline(
         # stt= DeepgramSTT(api_key=os.getenv("DEEPGRAM_API_KEY")),
-        # stt= OpenAISTT(api_key=os.getenv("OPENAI_API_KEY")),
-        # llm=OpenAILLM(api_key=os.getenv("OPENAI_API_KEY")),
-        # tts=OpenAITTS(api_key=os.getenv("OPENAI_API_KEY")),
+        stt= OpenAISTT(api_key=os.getenv("OPENAI_API_KEY")),
+        llm=OpenAILLM(api_key=os.getenv("OPENAI_API_KEY")),
+        tts=OpenAITTS(api_key=os.getenv("OPENAI_API_KEY")),
         # tts=ElevenLabsTTS(api_key=os.getenv("ELEVENLABS_API_KEY")),
         # stt = GoogleSTT( model="latest_long"),
         # llm=GoogleLLM(api_key=os.getenv("GOOGLE_API_KEY")),
         # tts=GoogleTTS(api_key=os.getenv("GOOGLE_API_KEY")),
-        stt=SarvamAISTT(api_key=os.getenv("SARVAMAI_API_KEY")),
-        llm=SarvamAILLM(api_key=os.getenv("SARVAMAI_API_KEY")),
-        tts=SarvamAITTS(api_key=os.getenv("SARVAMAI_API_KEY")),
+        # stt=SarvamAISTT(api_key=os.getenv("SARVAMAI_API_KEY")),
+        # llm=SarvamAILLM(api_key=os.getenv("SARVAMAI_API_KEY")),
+        # tts=SarvamAITTS(api_key=os.getenv("SARVAMAI_API_KEY")),
         vad=SileroVAD(),
         turn_detector=TurnDetector(threshold=0.8)
     )
@@ -231,6 +230,5 @@ if __name__ == "__main__":
     def make_context():
         return {"meetingId": "<meeting_id>", "name": "Sandbox Agent", "playground": True}
 
-    asyncio.run(entryPoint(make_context()))
-    # job = WorkerJob(job_func=entryPoint, jobctx=make_context)
-    # job.start()
+    job = WorkerJob(job_func=entryPoint, jobctx=make_context)
+    job.start()

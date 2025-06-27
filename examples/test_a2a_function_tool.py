@@ -3,7 +3,7 @@ import asyncio
 import os
 from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig
 from openai.types.beta.realtime.session import  TurnDetection
-from videosdk.agents import Agent, AgentSession, RealTimePipeline, function_tool, AgentCard, A2AMessage
+from videosdk.agents import Agent, AgentSession, RealTimePipeline, function_tool, AgentCard, A2AMessage, WorkerJob
 from typing import Dict, Any
 from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig
 
@@ -246,5 +246,12 @@ async def main():
         await customer_agent.unregister_a2a()
         await specialist_agent.unregister_a2a()
 
+def entryPoint(jobctx):
+    asyncio.run(main(jobctx))
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    def make_context():
+        return {"meetingId": "<meeting_id>", "name": "Sandbox Agent", "playground": True}
+
+    job = WorkerJob(job_func=entryPoint, jobctx=make_context)
+    job.start()
