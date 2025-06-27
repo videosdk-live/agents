@@ -52,8 +52,6 @@ class GoogleTTS(TTS):
             follow_redirects=True,
         )
 
-
-
     async def synthesize(
         self,
         text: AsyncIterator[str] | str,
