@@ -1,3 +1,4 @@
+# This test script is used to test cascading pipeline.
 import asyncio
 import os
 from typing import AsyncIterator
@@ -57,30 +58,15 @@ async def get_weather(
 class MyVoiceAgent(Agent):
     def __init__(self):
         current_dir = pathlib.Path(__file__).parent
-        possible_paths = [
-            current_dir / "examples" / "mcp_server_example.py",
-            current_dir.parent / "examples" / "mcp_server_example.py",
-            current_dir / "mcp_server_example.py"
-        ]
+        mcp_server_path = current_dir / "mcp_server_examples" / "mcp_server_example.py"
+        mcp_current_time_path = current_dir / "mcp_server_examples" / "mcp_current_time_example.py"
 
-        spath = [
-            current_dir / "examples" / "mcp_current_time_example.py",
-            current_dir.parent / "examples" / "mcp_current_time_example.py",
-            current_dir / "mcp_current_time_example.py"
-        ]
-
-
-        mcp_server_path = next((p for p in possible_paths if p.exists()), None)
-        mcp_current_time_path = next((p for p in spath if p.exists()), None)
-
-        if not mcp_server_path:
-            for path in possible_paths:
-                print(f"MCP server example not found. Checked path: {path}")
+        if not mcp_server_path.exists():
+            print(f"MCP server example not found at: {mcp_server_path}")
             raise Exception("MCP server example not found")
         
-        if not mcp_current_time_path:
-            for path in spath:
-                print(f"MCP current time example not found. Checked path: {path}")
+        if not mcp_current_time_path.exists():
+            print(f"MCP current time example not found at: {mcp_current_time_path}")
             raise Exception("MCP current time example not found")
         super().__init__(
             instructions="You are a helpful voice assistant that can answer questions and help with tasks and help with horoscopes and weather.",
@@ -280,7 +266,7 @@ def entryPoint(jobctx):
 if __name__ == "__main__":
 
     def make_context():
-        return {"meetingId": "pbow-6vec-vahn", "name": "Sandbox Agent", "playground": True}
+        return {"meetingId": "<meeting_id>", "name": "Sandbox Agent", "playground": True}
 
     asyncio.run(entryPoint(make_context()))
     # job = WorkerJob(job_func=entryPoint, jobctx=make_context)

@@ -1,5 +1,6 @@
-# example_usage.py
+# This test script is used to test A2A communication with function calling.
 import asyncio
+import os
 from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig
 from openai.types.beta.realtime.session import  TurnDetection
 from videosdk.agents import Agent, AgentSession, RealTimePipeline, function_tool, AgentCard, A2AMessage
@@ -211,9 +212,9 @@ async def main():
         pipeline=customer_pipeline,
         context={
             "name": "Customer Service Assistant",
-            "meetingId": "re2o-30kc-tbqt",
+            "meetingId": "<meeting_id>",
             "join_meeting":True,
-            "videosdk_auth": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhcGlrZXkiOiI0N2M3ZTJlYy01NzY5LTQ3OWQtYjdjNS0zYjU5MDcxYzhhMDkiLCJwZXJtaXNzaW9ucyI6WyJhbGxvd19qb2luIl0sImlhdCI6MTY3MjgwOTcxMywiZXhwIjoxODMwNTk3NzEzfQ.KeXr1cxORdq6X7-sxBLLV7MsUnwuJGLaG8_VTyTFBig"
+            "videosdk_auth": os.getenv("VIDEOSDK_AUTH")
         }
     )
 
