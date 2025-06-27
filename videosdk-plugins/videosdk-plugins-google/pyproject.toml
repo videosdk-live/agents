@@ -7,6 +7,7 @@ name = "videosdk-plugins-google"
 dynamic = ["version"]
 description = "VideoSDK Agent Framework plugin for google services"
 readme = "README.md"
+license = "Apache-2.0"
 requires-python = ">=3.11"
 authors = [{ name = "videosdk"}]
 keywords = ["video", "audio", "ai", "google", "videosdk"]
@@ -20,7 +21,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "videosdk-agents>=0.0.15",
+    "videosdk-agents>=0.0.12",
     "google-genai >= 1.14.0",
     "google-cloud-texttospeech >= 2.24, < 3",
     "google-cloud-speech >= 2, < 3",

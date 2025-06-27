@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, List, Optional, Union, Literal
+from typing import List, Optional, Union, Literal
 from pydantic import BaseModel, Field
 
 from ..utils import FunctionTool, is_function_tool, get_tool_info
@@ -169,7 +169,6 @@ class ChatContext:
         
         new_items = self._items[-max_items:]
         
-        # Remove leading function calls
         while new_items and isinstance(new_items[0], (FunctionCall, FunctionCallOutput)):
             new_items.pop(0)
             

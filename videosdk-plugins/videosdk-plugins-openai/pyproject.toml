@@ -7,6 +7,7 @@ name = "videosdk-plugins-openai"
 dynamic = ["version"]
 description = "VideoSDK Agent Framework plugin for OpenAI services"
 readme = "README.md"
+license = "Apache-2.0"
 requires-python = ">=3.11"
 authors = [{ name = "videosdk"}]
 keywords = ["video", "audio", "ai", "openai", "videosdk"]
@@ -20,7 +21,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "videosdk-agents>=0.0.15",
+    "videosdk-agents>=0.0.12",
     "openai[realtime]>=1.68.2",
 ]
 

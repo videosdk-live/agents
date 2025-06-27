@@ -145,7 +145,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             else:
                 new_content = llm_chunk_resp.content[prev_content_length:]
                 if new_content: 
-                    new_content = await self.agent.process_llm_output(new_content)
                     yield new_content
                 full_response = llm_chunk_resp.content
                 prev_content_length = len(llm_chunk_resp.content)
@@ -160,13 +159,13 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         if self.tts:
             await self.tts.synthesize(message)
     
-    @abstractmethod
     async def run(self, transcript: str) -> AsyncIterator[str]:
         """
         Main conversation loop: handle a user turn.
         Users should implement this method to preprocess transcripts and yield response chunks.
         """
-        pass
+        async for response in self.process_with_llm():
+            yield response
     
     @abstractmethod
     async def on_turn_start(self, transcript: str) -> None:
