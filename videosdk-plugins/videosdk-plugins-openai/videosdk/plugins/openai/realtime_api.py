@@ -131,9 +131,6 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         self.audio_track: Optional[CustomAudioStreamTrack] = None
         self._formatted_tools: Optional[List[Dict[str, Any]]] = None
         self.config: OpenAIRealtimeConfig = config or OpenAIRealtimeConfig()
-        # global_event_emitter.on("instructions_updated", self._handle_instructions_updated)
-        # global_event_emitter.on("tools_updated", self._handle_tools_updated)
-        
         self.input_sample_rate = 48000
         self.target_sample_rate = 16000
     
@@ -207,7 +204,6 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         if not self._session:
             raise RuntimeError("No active WebSocket session")
             
-        # Create response event
         response_event = {
             "type": "response.create",
             "event_id": str(uuid.uuid4()),
@@ -219,18 +215,8 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
             }
         }
         
-        # Send the event through our message queue
         await self.send_event(response_event)
-        
-        # session_update = {
-        #     "type": "session.update",
-        #     "session": {
-        #         "instructions": self._instructions
-        #     }
-        # }
-        
-        # await self.send_event(session_update)
-
+    
     async def _handle_websocket(self, session: OpenAISession) -> None:
         """Start WebSocket send/receive tasks"""
         session.tasks.extend([
@@ -412,8 +398,6 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
     
     async def _handle_input_audio_transcription_completed(self, data: dict) -> None:
         """Handle input audio transcription completion"""
-        # if "transcript" in data:
-            # self.emit("transcription_event", {"text": data["transcript"]})
 
     async def _handle_response_done(self, data: dict) -> None:
         """Handle response completion"""
@@ -442,7 +426,6 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
                 except (asyncio.CancelledError, asyncio.TimeoutError):
                     pass
 
-        # Close WebSocket
         if not session.ws.closed:
             try:
                 await session.ws.close()
@@ -472,7 +455,6 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         if not self._session:
             return
 
-        # Conditionally set turn detection and audio transcription based on modalities
         turn_detection = None
         input_audio_transcription = None
         
@@ -501,7 +483,6 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
             }
         }
         
-        # Only add audio-related configurations if audio modality is enabled
         if "audio" in self.config.modalities:
             session_update["session"]["voice"] = self.config.voice
             session_update["session"]["input_audio_format"] = DEFAULT_INPUT_AUDIO_FORMAT

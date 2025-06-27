@@ -55,7 +55,6 @@ class ElevenLabsTTS(TTS):
         if not self.api_key:
             raise ValueError("ElevenLabs API key must be provided either through api_key parameter or ELEVENLABS_API_KEY environment variable")
 
-        # Create HTTP session for requests
         self._session = httpx.AsyncClient(
             timeout=httpx.Timeout(connect=15.0, read=30.0, write=5.0, pool=5.0),
             follow_redirects=True,
@@ -68,7 +67,6 @@ class ElevenLabsTTS(TTS):
         **kwargs: Any,
     ) -> None:
         try:
-            # Convert AsyncIterator to string if needed
             if isinstance(text, AsyncIterator):
                 full_text = ""
                 async for chunk in text:
@@ -80,7 +78,6 @@ class ElevenLabsTTS(TTS):
                 self.emit("error", "Audio track or event loop not set")
                 return
 
-            # Use the provided voice_id or fall back to default
             target_voice = voice_id or self.voice
 
             if self.enable_streaming:
@@ -95,7 +92,6 @@ class ElevenLabsTTS(TTS):
         """Non-streaming synthesis using the standard API"""
         url = f"{self.base_url}/text-to-speech/{voice_id}/stream"
         
-        # Add output_format as URL parameter for ElevenLabs API
         params = {
             "model_id": self.model,
             "output_format": self.response_format,
@@ -144,7 +140,6 @@ class ElevenLabsTTS(TTS):
             "output_format": self.response_format,
         }
         
-        # Build WebSocket URL with parameters
         param_string = "&".join([f"{k}={v}" for k, v in params.items()])
         full_ws_url = f"{ws_url}?{param_string}"
         
@@ -153,7 +148,6 @@ class ElevenLabsTTS(TTS):
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.ws_connect(full_ws_url, headers=headers) as ws:
-                    # Send initial configuration
                     init_message = {
                         "text": " ",
                         "voice_settings": {
@@ -165,15 +159,12 @@ class ElevenLabsTTS(TTS):
                     }
                     await ws.send_str(json.dumps(init_message))
                     
-                    # Send text data
                     text_message = {"text": f"{text} "}
                     await ws.send_str(json.dumps(text_message))
-                    
-                    # Send end-of-stream marker
+            
                     eos_message = {"text": ""}
                     await ws.send_str(json.dumps(eos_message))
                     
-                    # Receive and process audio data
                     async for msg in ws:
                         if msg.type == aiohttp.WSMsgType.TEXT:
                             data = json.loads(msg.data)
