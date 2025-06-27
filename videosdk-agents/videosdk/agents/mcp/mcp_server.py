@@ -4,7 +4,7 @@ from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from datetime import timedelta
 from functools import partial
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Callable
+from typing import Any, Dict, List, Optional
 
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from mcp import ClientSession, stdio_client

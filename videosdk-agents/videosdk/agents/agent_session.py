@@ -72,13 +72,12 @@ class AgentSession:
                 else:
                     raise ValueError("VIDEOSDK_AUTH_TOKEN environment variable not found")
              
-        # Initialize the agent (including MCP tools if configured)
         await self.agent.initialize_mcp()
         if hasattr(self.pipeline, 'set_agent'):
             self.pipeline.set_agent(self.agent)
         
         await self.pipeline.start(
-    meeting_id=meeting_id,
+            meeting_id=meeting_id,
             name=name,
             videosdk_auth=videosdk_auth,
             join_meeting=join_meeting,
@@ -97,7 +96,7 @@ class AgentSession:
         """
         Close the agent session.
         """
-        # await self.agent.on_exit()
+        await self.agent.on_exit()
         await self.pipeline.cleanup()
     
     async def leave(self) -> None:
