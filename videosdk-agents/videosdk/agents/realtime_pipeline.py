@@ -56,7 +56,13 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
             meeting_id = kwargs.get('meeting_id')
             name = kwargs.get('name')
             join_meeting = kwargs.get('join_meeting',True)
-            self.vision = kwargs.get('vision', self.vision)
+            requested_vision = kwargs.get('vision', self.vision)
+            model_name = type(self.model).__name__
+            if requested_vision and model_name != 'GeminiRealtime':
+                print(f"Warning: Vision mode requested but {model_name} doesn't support video input. Only GeminiRealtime supports vision. Disabling vision.")
+                self.vision = False
+            else:
+                self.vision = requested_vision
 
             if join_meeting:
                 self.room = VideoSDKHandler(
