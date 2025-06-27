@@ -1,53 +1,34 @@
+#!/bin/bash
 
-echo "📦 Installing dependencies from requirements.txt..."
+set -e
+
+echo "Setting up VideoSDK Agents..."
+
+echo "📦 Installing dependencies..."
 pip install -r requirements.txt
 
-echo "🛠️ Modifying videosdk __init__.py file..."
-VIDEOSDK_INIT_FILE="venv/lib/$(python -c 'import sys; print("python{}.{}".format(*sys.version_info))')/site-packages/videosdk/__init__.py"
-
-if [ -f "$VIDEOSDK_INIT_FILE" ]; then
-  echo "__path__ = __import__('pkgutil').extend_path(__path__, __name__)" >> "$VIDEOSDK_INIT_FILE"
-  echo "✅ __init__.py modified."
-else
-  echo "❌ videosdk __init__.py not found. Please check your installation."
-  exit 1
+if [ ! -d "venv" ]; then
+    echo "Creating virtual environment..."
+    python3 -m venv venv
 fi
 
+source venv/bin/activate
 
-echo "📁 Installing videosdk-agent..."
-cd ../../videosdk-agents
-pip install -e .
+echo "Fixing videosdk namespace..."
+PYTHON_PATH=$(python -c "import videosdk; print(videosdk.__file__)" 2>/dev/null || echo "")
+if [ -n "$PYTHON_PATH" ]; then
+    VIDEOSDK_DIR=$(dirname "$PYTHON_PATH")
+    if ! grep -q "extend_path" "$VIDEOSDK_DIR/__init__.py" 2>/dev/null; then
+        echo "__path__ = __import__('pkgutil').extend_path(__path__, __name__)" >> "$VIDEOSDK_DIR/__init__.py"
+    fi
+fi
 
-echo "📁 Installing videosdk plugins aws"
-cd ../videosdk-plugins-aws
-pip install -e .
+echo "Installing plugins..."
+for plugin in videosdk-agents videosdk-plugins/*; do
+    if [ -d "$plugin" ] && [ -f "$plugin/pyproject.toml" ]; then
+        echo "  Installing $(basename "$plugin")..."
+        pip install -e "$plugin"
+    fi
+done
 
-echo "📁 Installing videosdk-plugins (deepgram)..."
-cd ../videosdk-plugins-deepgram
-pip install -e .
-
-echo "📁 Installing videosdk-plugins (elevenlabs)..."
-cd ../videosdk-plugins-elevenlabs
-pip install -e .
-
-echo "📁 Installing videosdk plugins (google)..."
-cd videosdk-plugins/videosdk-plugins-google
-pip install -e .
-
-echo "📁 Installing videosdk plugins (openai)..."
-cd ../videosdk-plugins-openai
-pip install -e .
-
-echo "📁 Installing videosdk plugins (sarvamai)..."
-cd ../videosdk-plugins-sarvamai
-pip install -e .
-
-echo "📁 Installing videosdk-plugins (silero)..."
-cd ../videosdk-plugins-silero
-pip install -e .
-
-echo "📁 Installing videosdk-plugins turn detector"
-cd ../videosdk-plugins-turn-detector 
-pip install -e .
-
-echo "🎉 Setup complete!"
+echo "Setup complete!"

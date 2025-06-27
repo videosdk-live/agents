@@ -7,6 +7,7 @@ name = "videosdk-plugins-turn-detector"
 dynamic = ["version"]
 description = "VideoSDK Agent Framework plugin for turnsense turn detector model"
 readme = "README.md"
+license = "Apache-2.0"
 requires-python = ">=3.11"
 authors = [{ name = "videosdk"}]
 keywords = ["video", "audio", "ai", "videosdk"]
