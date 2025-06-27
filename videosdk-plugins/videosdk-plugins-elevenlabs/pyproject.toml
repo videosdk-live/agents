@@ -3,13 +3,13 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "videosdk-plugins-eou"
+name = "videosdk-plugins-elevenlabs"
 dynamic = ["version"]
-description = "VideoSDK Agent Framework plugin for livekit's end of utterance model"
+description = "VideoSDK Agent Framework plugin for ElevenLabs"
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "videosdk"}]
-keywords = ["video", "audio", "ai", "videosdk"]
+keywords = ["video", "audio", "ai", "videosdk", "elevenlabs"]
 classifiers = [
     "Intended Audience :: Developers",
     "Development Status :: 4 - Beta",
@@ -20,15 +20,11 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "videosdk-agents>=0.0.6",
-    "transformers>=4.47.1",
-    "numpy>=1.26",
-    "onnxruntime>=1.18",
-    "jinja2",
+    "videosdk-agents>=0.0.12"
 ]
 
 [tool.hatch.version]
-path = "videosdk/plugins/end_of_utterance/version.py"
+path = "videosdk/plugins/elevenlabs/version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["videosdk"]

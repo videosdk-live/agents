@@ -35,15 +35,28 @@ dependencies = [
     "docstring_parser",
     "google-genai",
     "pydantic>=2.0,<3",
+    "requests>=2.25.0",
+    "rich>=10.0.0",
+    "click>=8.0.0",
     "scipy>=1.11.0",
     "mcp",
+    "PyYAML",
+    "urllib3",
 ]
 
+
+[project.scripts]
+videosdk = "videosdk.agents.cli:main"
+
 [project.optional-dependencies]
-openai = ["videosdk-plugins-openai>=0.0.7"]
-google = ["videosdk-plugins-google>=0.0.5"]
-aws = ["videosdk-plugins-aws>=0.0.4"]
-deepgram = ["videosdk-plugins-deepgram>=0.0.2"]
+openai = ["videosdk-plugins-openai>=0.0.8"]
+google = ["videosdk-plugins-google>=0.0.6"]
+aws = ["videosdk-plugins-aws>=0.0.5"]
+deepgram = ["videosdk-plugins-deepgram>=0.0.3"]
+elevenlabs = ["videosdk-plugins-elevenlabs>=0.0.2"]
+silero = ["videosdk-plugins-silero>=0.0.2"]
+turn-detector = ["videosdk-plugins-turn-detector>=0.0.2"]
+sarvamai = ["videosdk-plugins-sarvamai>=0.0.1"]
 
 
 [tool.hatch.version]
@@ -55,3 +68,6 @@ include = ["videosdk/agents/resources/*"]
 
 [tool.hatch.build.targets.sdist]
 include = ["/videosdk"]
+
+[tool.hatch.metadata]
+allow-direct-references = true

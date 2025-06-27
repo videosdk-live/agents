@@ -3,13 +3,13 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "videosdk-plugins-openai"
+name = "videosdk-plugins-turn-detector"
 dynamic = ["version"]
-description = "VideoSDK Agent Framework plugin for OpenAI services"
+description = "VideoSDK Agent Framework plugin for turnsense turn detector model"
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "videosdk"}]
-keywords = ["video", "audio", "ai", "openai", "videosdk"]
+keywords = ["video", "audio", "ai", "videosdk"]
 classifiers = [
     "Intended Audience :: Developers",
     "Development Status :: 4 - Beta",
@@ -21,11 +21,14 @@ classifiers = [
 ]
 dependencies = [
     "videosdk-agents>=0.0.12",
-    "openai[realtime]>=1.68.2",
+    "transformers>=4.47.1",
+    "numpy>=1.26",
+    "onnxruntime>=1.18",
+    "jinja2",
 ]
 
 [tool.hatch.version]
-path = "videosdk/plugins/openai/version.py"
+path = "videosdk/plugins/turn_detector/version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["videosdk"]

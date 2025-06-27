@@ -14,6 +14,7 @@ from .tts.tts import TTS
 from .vad import VAD, VADResponse, VADEventType
 from .cascading_pipeline import CascadingPipeline
 from .mcp.mcp_server import MCPServerStdio, MCPServerHTTP
+from .eou import EOU
 from .event_bus import global_event_emitter, EventTypes
 from .a2a.card import AgentCard
 from .a2a.protocol import A2AMessage
@@ -57,6 +58,8 @@ __all__ = [
     'build_nova_sonic_schema',
     'MCPServerStdio',
     'MCPServerHTTP',
+    'ConversationFlow',
+    'EOU',
     'AgentCard',
     'A2AMessage',
     'EncodeOptions',
