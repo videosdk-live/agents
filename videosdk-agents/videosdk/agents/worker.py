@@ -7,51 +7,11 @@ class Worker:
         self.processes = []  # List of (pid, Process)
 
     def run(self):
-        print(
-            "Worker CLI started.\n"
-            "- 'n' + Enter: start a new worker process\n"
-            "- 'l' + Enter: list running worker processes\n"
-            "- 'q <pid>' + Enter: stop a specific process\n"
-            "- 'q' + Enter: stop all running processes\n"
-            "- 'x' + Enter: exit CLI"
-        )
-
-        while True:
-            cmd = input("> ").strip()
-
-            if cmd == "n":
-                jobctx = self.job.get_job_context()
-
-                p = multiprocessing.Process(target=self.job.job_func, args=(jobctx,))
-                p.start()
-                self.processes.append((p.pid, p))
-                print(f"Started job in PID {p.pid}")
-
-            elif cmd == "l":
-                self._cleanup_processes()
-                if not self.processes:
-                    print("No running worker processes.")
-                else:
-                    for pid, proc in self.processes:
-                        print(f"PID {pid} - Alive: {proc.is_alive()}")
-
-            elif cmd == "q":
-                self._terminate_all_processes()
-
-            elif cmd.startswith("q "):
-                parts = cmd.split()
-                if len(parts) != 2 or not parts[1].isdigit():
-                    print("Invalid command. Usage: q <pid> or q to kill all")
-                    continue
-                pid = int(parts[1])
-                self._terminate_process(pid)
-
-            elif cmd == "x":
-                print("Exiting CLI.")
-                break
-
-            else:
-                print("Unknown command. Use 'n', 'l', 'q <pid>', 'q', or 'x'.")
+        jobctx = self.job.get_job_context()
+        p = multiprocessing.Process(target=self.job.job_func, args=(jobctx,))
+        p.start()
+        self.processes.append((p.pid, p))
+        print(f"Started job in PID {p.pid}")
 
     def _terminate_process(self, pid):
         for i, (stored_pid, proc) in enumerate(self.processes):

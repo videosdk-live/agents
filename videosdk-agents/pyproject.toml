@@ -7,6 +7,7 @@ name = "videosdk-agents"
 dynamic = ["version"]
 description = "Video SDK Agents"
 readme = "README.md"
+license = "Apache-2.0"
 requires-python = ">=3.11"
 authors = [{ name = "videosdk" }]
 keywords = ["video", "audio", "ai", "agents", "videosdk", "webrtc", "realtime"]
@@ -49,14 +50,14 @@ dependencies = [
 videosdk = "videosdk.agents.cli:main"
 
 [project.optional-dependencies]
-openai = ["videosdk-plugins-openai>=0.0.9"]
-google = ["videosdk-plugins-google>=0.0.7"]
-aws = ["videosdk-plugins-aws>=0.0.6"]
-deepgram = ["videosdk-plugins-deepgram>=0.0.4"]
-elevenlabs = ["videosdk-plugins-elevenlabs>=0.0.3"]
-silero = ["videosdk-plugins-silero>=0.0.3"]
-turn-detector = ["videosdk-plugins-turn-detector>=0.0.4"]
-sarvamai = ["videosdk-plugins-sarvamai>=0.0.2"]
+openai = ["videosdk-plugins-openai>=0.0.16"]
+google = ["videosdk-plugins-google>=0.0.16"]
+aws = ["videosdk-plugins-aws>=0.0.16"]
+deepgram = ["videosdk-plugins-deepgram>=0.0.16"]
+elevenlabs = ["videosdk-plugins-elevenlabs>=0.0.16"]
+silero = ["videosdk-plugins-silero>=0.0.16"]
+turn-detector = ["videosdk-plugins-turn-detector>=0.0.16"]
+sarvamai = ["videosdk-plugins-sarvamai>=0.0.16"]
 
 
 [tool.hatch.version]

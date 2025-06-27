@@ -1,10 +1,18 @@
 myenv/
 venv/
 env/
-__pycache__
+__pycache__/
 
 .env
 .env.local
 test_env/
 dist/
 .DS_Store
+
+node_modules/
+credentials.json
+.Python
+build/
+eggs/
+sdist/
+wheels/
