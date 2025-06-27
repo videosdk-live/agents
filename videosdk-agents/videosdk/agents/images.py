@@ -6,10 +6,9 @@ from importlib import import_module
 from typing import TYPE_CHECKING, Literal, Optional
 from PIL import Image as PILImage
 
-import av  # For av.VideoFrame
-import av.logging  # For logging control
+import av  
+import av.logging  
 
-# Suppress FFmpeg swscaler warnings about accelerated colorspace conversion
 av.logging.set_level(av.logging.ERROR)
 
 @dataclass
@@ -20,13 +19,13 @@ class EncodeOptions:
     """The format to encode the image."""
 
     resize_options: ResizeOptions = field(default_factory=lambda: ResizeOptions(
-        width=320,  # Match React scale factor
+        width=320,  
         height=240,
         strategy="scale_aspect_fit"
     ))
     """Options for resizing the image."""
 
-    quality: int = 90  # Increase quality while maintaining performance
+    quality: int = 90 
     """Image compression quality, 0-100. Only applies to JPEG."""
 
 
@@ -59,20 +58,20 @@ def encode(frame: av.VideoFrame, options: EncodeOptions) -> bytes:
     """Encode with optimized pipeline"""
     img = frame.to_image()
     
-    # Fast resize using LANCZOS filter for better quality
+    
     if options.resize_options:
         img = img.resize(
             (options.resize_options.width, options.resize_options.height),
             resample=PILImage.Resampling.LANCZOS
         )
     
-    # Optimized JPEG encoding
+    
     buffer = io.BytesIO()
     img.save(buffer,
             format=options.format,
             quality=options.quality,
-            optimize=True,  # Enable optimization
-            subsampling=0,  # Keep chroma subsampling
-            qtables="web_high"  # Use web-optimized quantization tables
+            optimize=True,  
+            subsampling=0,  
+            qtables="web_high"
     )
     return buffer.getvalue()
