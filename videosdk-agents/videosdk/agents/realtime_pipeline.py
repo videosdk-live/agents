@@ -34,6 +34,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         self.model.loop = self.loop
         self.model.audio_track = None
         self.agent = None
+        self.vision = False
     
     def set_agent(self, agent: Agent) -> None:
         self.agent = agent
@@ -55,6 +56,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
             meeting_id = kwargs.get('meeting_id')
             name = kwargs.get('name')
             join_meeting = kwargs.get('join_meeting',True)
+            self.vision = kwargs.get('vision', self.vision)
 
             if join_meeting:
                 self.room = VideoSDKHandler(
@@ -62,7 +64,8 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
                     auth_token=videosdk_auth,
                     name=name,
                     pipeline=self,
-                    loop=self.loop
+                    loop=self.loop,
+                    vision=self.vision
                 )
                 
                 self.room.init_meeting()
@@ -108,7 +111,8 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         Handle incoming video data from the user
         The model's handle_video_input is now expected to handle the av.VideoFrame.
         """
-        await self.model.handle_video_input(video_data)
+        if self.vision and hasattr(self.model, 'handle_video_input'):
+            await self.model.handle_video_input(video_data)
 
     async def leave(self) -> None:
         """

@@ -13,7 +13,16 @@ from asyncio import AbstractEventLoop
 load_dotenv()
 
 class VideoSDKHandler:
-    def __init__(self, *, meeting_id: str, auth_token: str | None = None, name: str, pipeline: Pipeline, loop: AbstractEventLoop):
+    def __init__(
+        self,
+        *,
+        meeting_id: str,
+        auth_token: str | None = None,
+        name: str,
+        pipeline: Pipeline,
+        loop: AbstractEventLoop,
+        vision: bool = False,
+    ):
         self.loop = loop
         self.audio_track = CustomAudioStreamTrack(
             loop=self.loop
@@ -31,6 +40,8 @@ class VideoSDKHandler:
         )
         self.pipeline = pipeline
         self.audio_listener_tasks = {}
+        self.video_listener_tasks = {}
+        self.vision = vision
         self.meeting = None
 
         self.participants_data = {}
@@ -52,6 +63,8 @@ class VideoSDKHandler:
     def leave(self):
         for audio_task in self.audio_listener_tasks.values():
             audio_task.cancel()
+        for video_task in self.video_listener_tasks.values():
+            video_task.cancel()
         self.meeting.leave()
 
     def on_meeting_joined(self, data):
@@ -72,7 +85,7 @@ class VideoSDKHandler:
                 self.audio_listener_tasks[stream.id] = self.loop.create_task(
                     self.add_audio_listener(stream)
                 )
-            if stream.kind == "video":
+            if stream.kind == "video" and self.vision:
                 self.video_listener_tasks[stream.id] = self.loop.create_task(
                     self.add_video_listener(stream)
                 )    
@@ -95,6 +108,8 @@ class VideoSDKHandler:
         print("Participant left:", participant.display_name)
         for audio_task in self.audio_listener_tasks.values():
             audio_task.cancel()
+        for video_task in self.video_listener_tasks.values():
+            video_task.cancel()
         self.leave()
         
 
