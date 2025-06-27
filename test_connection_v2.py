@@ -8,7 +8,11 @@ from videosdk.agents import Agent, AgentSession, RealTimePipeline, function_tool
 # from videosdk.plugins.aws import NovaSonicRealtime, NovaSonicConfig
 from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig
 from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig
+from videosdk.plugins.simli import SimliAvatar,SimliConfig
 from openai.types.beta.realtime.session import  TurnDetection
+from dotenv import load_dotenv
+
+load_dotenv(override=True)
 
 # Suppress all external library logging
 logging.getLogger().setLevel(logging.CRITICAL)
@@ -113,29 +117,38 @@ class MyVoiceAgent(Agent):
 
 async def main(context: dict):
     
+    # simli_avatar = SimliAvatar(SimliConfig(
+    #   apikey=os.getenv("SIMLI_API_KEY"),
+    #   faceId=os.getenv("SIMLI_FACE_ID")
+    # ))
 
-    model = OpenAIRealtime(
-        model="gpt-4o-realtime-preview",
-        config=OpenAIRealtimeConfig(
-            voice="alloy", # alloy, ash, ballad, coral, echo, fable, onyx, nova, sage, shimmer, and verse
-            modalities=["text", "audio"],
-            turn_detection=TurnDetection(
-                type="server_vad",
-                threshold=0.5,
-                prefix_padding_ms=300,
-                silence_duration_ms=200,
-            ),
-            tool_choice="auto"
-        )
+    simli_avatar = SimliAvatar(
+        api_key=os.getenv("SIMLI_API_KEY"),
+        face_id=os.getenv("SIMLI_FACE_ID"),
     )
 
-    # model = GeminiRealtime(
-    #     model="gemini-2.0-flash-live-001",
-    #     config=GeminiLiveConfig(
-    #         voice="Leda", # Puck, Charon, Kore, Fenrir, Aoede, Leda, Orus, and Zephyr.
-    #         response_modalities=["AUDIO"]
+    # model = OpenAIRealtime(
+    #     model="gpt-4o-realtime-preview",
+    #     config=OpenAIRealtimeConfig(
+    #         voice="alloy", # alloy, ash, ballad, coral, echo, fable, onyx, nova, sage, shimmer, and verse
+    #         modalities=["text", "audio"],
+    #         turn_detection=TurnDetection(
+    #             type="server_vad",
+    #             threshold=0.5,
+    #             prefix_padding_ms=300,
+    #             silence_duration_ms=200,
+    #         ),
+    #         tool_choice="auto"
     #     )
     # )
+
+    model = GeminiRealtime(
+        model="gemini-2.0-flash-live-001",
+        config=GeminiLiveConfig(
+            voice="Leda", # Puck, Charon, Kore, Fenrir, Aoede, Leda, Orus, and Zephyr.
+            response_modalities=["AUDIO"]
+        )
+    )
 
     # model = NovaSonicRealtime(
     #     model="amazon.nova-sonic-v1:0",
@@ -147,7 +160,7 @@ async def main(context: dict):
     #     )
     # )
 
-    pipeline = RealTimePipeline(model=model)
+    pipeline = RealTimePipeline(model=model, avatar=simli_avatar)
     agent = MyVoiceAgent()
 
     session = AgentSession(

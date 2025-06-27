@@ -17,6 +17,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
     def __init__(
         self,
         model: RealtimeBaseModel,
+        avatar = None,
     ) -> None:
         """
         Initialize the realtime pipeline.
@@ -34,6 +35,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         self.model.loop = self.loop
         self.model.audio_track = None
         self.agent = None
+        self.avatar = avatar
     
     def set_agent(self, agent: Agent) -> None:
         self.agent = agent
@@ -56,18 +58,34 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
             name = kwargs.get('name')
             join_meeting = kwargs.get('join_meeting',True)
 
+            custom_camera_video_track = None
+            custom_microphone_audio_track = None
+            sinks = []
+            
+            if self.avatar:
+                await self.avatar.connect()
+                custom_camera_video_track = self.avatar.video_track
+                custom_microphone_audio_track = self.avatar.audio_track  
+                sinks.append(self.avatar)  
+                print("RealTimePipeline: Using avatar mode - agent audio -> Simli -> synchronized A/V -> VideoSDK")
+            else:
+                print("RealTimePipeline: Using direct mode - agent audio -> VideoSDK directly")
+
             if join_meeting:
                 self.room = VideoSDKHandler(
                     meeting_id=meeting_id,
                     auth_token=videosdk_auth,
                     name=name,
                     pipeline=self,
-                    loop=self.loop
+                    loop=self.loop,
+                    custom_camera_video_track=custom_camera_video_track,
+                    custom_microphone_audio_track=custom_microphone_audio_track,
+                    audio_sinks=sinks 
                 )
                 
                 self.room.init_meeting()
                 self.model.loop = self.loop
-                self.model.audio_track = self.room.audio_track
+                self.model.audio_track = getattr(self.room, 'agent_audio_track', None) or self.room.audio_track
                 
                 await self.model.connect()
                 await self.room.join()

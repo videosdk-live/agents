@@ -1,7 +1,7 @@
 from videosdk import MeetingConfig, VideoSDK, Participant, Stream
 from .meeting_event_handler import MeetingHandler
 from .participant_event_handler import ParticipantHandler
-from .audio_stream import CustomAudioStreamTrack
+from .audio_stream import TeeCustomAudioStreamTrack
 from videosdk.agents.pipeline import Pipeline
 from dotenv import load_dotenv
 import numpy as np
@@ -13,11 +13,28 @@ from asyncio import AbstractEventLoop
 load_dotenv()
 
 class VideoSDKHandler:
-    def __init__(self, *, meeting_id: str, auth_token: str | None = None, name: str, pipeline: Pipeline, loop: AbstractEventLoop):
+    def __init__(self, *, meeting_id: str, auth_token: str | None = None, name: str, pipeline: Pipeline, loop: AbstractEventLoop, custom_camera_video_track=None, custom_microphone_audio_track=None, audio_sinks=None):
         self.loop = loop
-        self.audio_track = CustomAudioStreamTrack(
-            loop=self.loop
-        )
+        
+        if custom_microphone_audio_track:
+            self.audio_track = custom_microphone_audio_track
+            if audio_sinks:
+                self.agent_audio_track = TeeCustomAudioStreamTrack(
+                    loop=self.loop,
+                    sinks=audio_sinks
+                )
+                print("VideoSDK: Using custom microphone audio track (Simli synchronized audio) + TeeCustomAudioStreamTrack for agent routing")
+            else:
+                self.agent_audio_track = None
+                print("VideoSDK: Using custom microphone audio track (Simli synchronized audio) only")
+        else:
+            self.audio_track = TeeCustomAudioStreamTrack(
+                loop=self.loop,
+                sinks=audio_sinks
+            )
+            self.agent_audio_track = None
+            print("VideoSDK: Using TeeCustomAudioStreamTrack for agent audio")
+            
         auth_token = auth_token or os.getenv("VIDEOSDK_AUTH_TOKEN")
         if not auth_token:
             raise ValueError("VIDEOSDK_AUTH_TOKEN is not set")
@@ -26,8 +43,9 @@ class VideoSDKHandler:
             meeting_id=meeting_id,
             token=auth_token,
             mic_enabled=True,
-            webcam_enabled=False,
+            webcam_enabled=custom_camera_video_track is not None,
             custom_microphone_audio_track=self.audio_track,
+            custom_camera_video_track=custom_camera_video_track
         )
         self.pipeline = pipeline
         self.audio_listener_tasks = {}

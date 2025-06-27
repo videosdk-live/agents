@@ -15,8 +15,13 @@ import sys
 from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
 from videosdk.plugins.elevenlabs import ElevenLabsTTS
 from videosdk.plugins.sarvamai import SarvamAITTS, SarvamAILLM,SarvamAISTT
+from videosdk.plugins.simli import SimliAvatar
+from dotenv import load_dotenv
+
 
 logger = logging.getLogger(__name__)
+
+load_dotenv(dotenv_path=".env", override=True)
 
 pre_download_model()
 
@@ -239,20 +244,27 @@ async def test_connection(jobctx):
         # ),
     agent = MyVoiceAgent()
     conversation_flow = MyConversationFlow(agent)
+
+    simli_avatar = SimliAvatar(
+        api_key=os.getenv("SIMLI_API_KEY"),
+        face_id=os.getenv("SIMLI_FACE_ID")
+    )
+
     pipeline = CascadingPipeline(
         # stt= DeepgramSTT(api_key=os.getenv("DEEPGRAM_API_KEY")),
         # stt= OpenAISTT(api_key=os.getenv("OPENAI_API_KEY")),
         # llm=OpenAILLM(api_key=os.getenv("OPENAI_API_KEY")),
         # tts=OpenAITTS(api_key=os.getenv("OPENAI_API_KEY")),
         # tts=ElevenLabsTTS(api_key=os.getenv("ELEVENLABS_API_KEY")),
-        # stt = GoogleSTT( model="latest_long"),
-        # llm=GoogleLLM(api_key=os.getenv("GOOGLE_API_KEY")),
-        # tts=GoogleTTS(api_key=os.getenv("GOOGLE_API_KEY")),
-        stt=SarvamAISTT(api_key=os.getenv("SARVAMAI_API_KEY")),
-        llm=SarvamAILLM(api_key=os.getenv("SARVAMAI_API_KEY")),
-        tts=SarvamAITTS(api_key=os.getenv("SARVAMAI_API_KEY")),
+        stt = GoogleSTT( model="latest_long"),
+        llm=GoogleLLM(api_key=os.getenv("GOOGLE_API_KEY")),
+        tts=GoogleTTS(api_key=os.getenv("GOOGLE_API_KEY")),
+        # stt=SarvamAISTT(api_key=os.getenv("SARVAMAI_API_KEY")),
+        # llm=SarvamAILLM(api_key=os.getenv("SARVAMAI_API_KEY")),
+        # tts=SarvamAITTS(api_key=os.getenv("SARVAMAI_API_KEY")),
         vad=SileroVAD(),
-        turn_detector=TurnDetector(threshold=0.8)
+        turn_detector=TurnDetector(threshold=0.8),
+        avatar=simli_avatar
     )
     session = AgentSession(
         agent=agent, 
