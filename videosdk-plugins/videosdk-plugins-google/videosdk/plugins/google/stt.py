@@ -22,8 +22,7 @@ try:
 except ImportError:
     GOOGLE_V2_AVAILABLE = False
 
-# Google STT has a timeout of 5 mins, we'll attempt to restart the session before that timeout is reached
-_MAX_SESSION_DURATION = 240  # 4 minutes
+_MAX_SESSION_DURATION = 240  
 
 class GoogleSTT(BaseSTT):
     def __init__(
@@ -43,7 +42,6 @@ class GoogleSTT(BaseSTT):
         if not GOOGLE_V2_AVAILABLE:
             raise ImportError("google-cloud-speech is not installed")
 
-        # Credentials
         if api_key:
             os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = api_key
         try:
@@ -51,7 +49,6 @@ class GoogleSTT(BaseSTT):
         except DefaultCredentialsError:
             raise ValueError("Google credentials are not configured.")
 
-        # Config
         self.input_sample_rate = 48000
         self.target_sample_rate = sample_rate
         if isinstance(languages, str):
@@ -105,7 +102,6 @@ class GoogleSTT(BaseSTT):
         if self._client:
             self._client = None
 
-
 class SpeechStream:
     def __init__(self, client: SpeechAsyncClient, config: dict, transcript_callback):
         self._client = client
@@ -127,7 +123,6 @@ class SpeechStream:
         await self._audio_queue.put(audio_frames)
 
     async def _audio_generator(self) -> AsyncGenerator[speech_types.StreamingRecognizeRequest, None]:
-        # Send config
         _, project_id = gauth_default()
         recognizer = f"projects/{project_id}/locations/{self._config['location']}/recognizers/_"
 
@@ -150,7 +145,6 @@ class SpeechStream:
         )
         yield speech_types.StreamingRecognizeRequest(recognizer=recognizer, streaming_config=streaming_config)
 
-        # Stream audio
         while self._running:
             try:
                 chunk = await asyncio.wait_for(self._audio_queue.get(), timeout=0.1)
@@ -178,7 +172,6 @@ class SpeechStream:
             except Exception:
                 await asyncio.sleep(2)
             
-            # Clear queue on reconnect
             while not self._audio_queue.empty():
                 self._audio_queue.get_nowait()
 

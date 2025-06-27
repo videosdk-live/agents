@@ -27,7 +27,6 @@ class GoogleLLM(LLM):
     ) -> None:
         super().__init__()
         
-        # Handle API key authentication
         self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
         if not self.api_key:
             raise ValueError("Google API key must be provided either through api_key parameter or GOOGLE_API_KEY environment variable")
@@ -40,8 +39,6 @@ class GoogleLLM(LLM):
         self.top_k = top_k
         self.presence_penalty = presence_penalty
         self.frequency_penalty = frequency_penalty
-        
-        # Initialize the Google GenAI client
         self._client = Client(api_key=self.api_key)
 
     async def chat(
@@ -62,20 +59,16 @@ class GoogleLLM(LLM):
             LLMResponse objects containing the model's responses
         """
         try:
-            # Convert messages to Google format
             contents, system_instruction = self._convert_messages_to_contents(messages)
-            
-            # Prepare request parameters
+
             config_params = {
                 "temperature": self.temperature,
                 **kwargs
             }
-            
-            # Add system instruction if present
+
             if system_instruction:
                 config_params["system_instruction"] = [types.Part(text=system_instruction)]
             
-            # Add optional parameters if set
             if self.max_output_tokens is not None:
                 config_params["max_output_tokens"] = self.max_output_tokens
             if self.top_p is not None:
@@ -87,7 +80,6 @@ class GoogleLLM(LLM):
             if self.frequency_penalty is not None:
                 config_params["frequency_penalty"] = self.frequency_penalty
 
-            # Handle tools
             if tools:
                 function_declarations = []
                 for tool in tools:
@@ -102,7 +94,6 @@ class GoogleLLM(LLM):
                 if function_declarations:
                     config_params["tools"] = [types.Tool(function_declarations=function_declarations)]
                     
-                    # Handle tool choice
                     if self.tool_choice == "required":
                         config_params["tool_config"] = types.ToolConfig(
                             function_calling_config=types.FunctionCallingConfig(
@@ -122,10 +113,8 @@ class GoogleLLM(LLM):
                             )
                         )
 
-            # Create configuration
             config = types.GenerateContentConfig(**config_params)
 
-            # Generate content stream
             response_stream = await self._client.aio.models.generate_content_stream(
                 model=self.model,
                 contents=contents,
@@ -136,7 +125,6 @@ class GoogleLLM(LLM):
             current_function_calls = []
 
             async for response in response_stream:
-                # Handle prompt feedback errors
                 if response.prompt_feedback:
                     error_msg = f"Prompt feedback error: {response.prompt_feedback}"
                     self.emit("error", Exception(error_msg))
@@ -151,7 +139,6 @@ class GoogleLLM(LLM):
 
                 for part in candidate.content.parts:
                     if part.function_call:
-                        # Handle function call
                         function_call = {
                             "name": part.function_call.name,
                             "arguments": dict(part.function_call.args)
@@ -164,7 +151,6 @@ class GoogleLLM(LLM):
                             metadata={"function_call": function_call}
                         )
                     elif part.text:
-                        # Handle text content
                         current_content += part.text
                         yield LLMResponse(
                             content=current_content,
@@ -187,7 +173,6 @@ class GoogleLLM(LLM):
         for item in messages.items:
             if isinstance(item, ChatMessage):
                 if item.role == ChatRole.SYSTEM:
-                    # System messages are handled separately in Google
                     system_instruction = str(item.content)
                     continue
                 elif item.role == ChatRole.USER:
@@ -201,7 +186,6 @@ class GoogleLLM(LLM):
                         parts=[types.Part(text=str(item.content))]
                     ))
             elif isinstance(item, FunctionCall):
-                # Function calls are part of assistant messages
                 function_call = types.FunctionCall(
                     name=item.name,
                     args=json.loads(item.arguments) if isinstance(item.arguments, str) else item.arguments
@@ -211,7 +195,6 @@ class GoogleLLM(LLM):
                     parts=[types.Part(function_call=function_call)]
                 ))
             elif isinstance(item, FunctionCallOutput):
-                # Function responses are user messages
                 function_response = types.FunctionResponse(
                     name=item.name,
                     response={"output": item.output}
