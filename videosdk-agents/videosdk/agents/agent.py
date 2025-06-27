@@ -36,6 +36,7 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
         self._mcp_servers = mcp_servers if mcp_servers else []
         self._mcp_initialized = False
         self._register_class_tools()
+        self.register_tools()
         self.a2a = A2AProtocol(self)
         self._agent_card = None 
         self.id = agent_id or str(uuid.uuid4())
@@ -62,6 +63,12 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
     @property
     def tools(self) -> List[FunctionTool]:
         return self._tools
+    
+    def register_tools(self) -> None:
+        """Register external function tools for the agent"""
+        for tool in self._tools:
+            if not is_function_tool(tool):
+                raise ValueError(f"Tool {tool.__name__ if hasattr(tool, '__name__') else tool} is not a valid FunctionTool")
     
     async def initialize_mcp(self) -> None:
         """Initialize the agent, including any MCP server if provided."""

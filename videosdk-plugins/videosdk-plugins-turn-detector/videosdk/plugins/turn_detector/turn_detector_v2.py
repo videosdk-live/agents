@@ -1,6 +1,5 @@
 import logging
 import os
-import time
 import numpy as np
 from typing import Optional
 from .model import VIDEOSDK_MODEL_URL, VIDEOSDK_MODEL_FILES, MODEL_DIR
@@ -115,7 +114,6 @@ class TurnDetector(EOU):
             str: "True" if turn detected, "False" otherwise
         """
         try:
-            start_time = time.time()
             inputs = self.tokenizer(sentence.strip(), truncation=True, max_length=512, return_tensors="np")
             outputs = self.session.run(None, {
                 "input_ids": inputs["input_ids"],
@@ -127,8 +125,6 @@ class TurnDetector(EOU):
                 pred = "False"
             else:
                 pred = "True"
-            end_time = time.time()
-            print(f"Time taken: {end_time - start_time} seconds")
             return pred
         except Exception as e:
             print(e)
