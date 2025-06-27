@@ -85,13 +85,11 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
         self.aws_access_key_id = aws_access_key_id or os.getenv("AWS_ACCESS_KEY_ID")
         self.aws_secret_access_key = aws_secret_access_key or os.getenv("AWS_SECRET_ACCESS_KEY")
         
-        # Validate credentials
         if not self.region:
             raise ValueError("AWS region is required (pass as parameter or set AWS_DEFAULT_REGIONenvironment variable)")
         if not self.aws_access_key_id or not self.aws_secret_access_key:
             raise ValueError("AWS credentials required (pass as parameters or set AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY environment variables)")
         
-        # Initialize state
         self.bedrock_client = None
         self.stream = None
         self._closing = False
@@ -100,24 +98,14 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
         self.tools_formatted = [] 
         self.loop = asyncio.get_event_loop()
         self.audio_track = None
-        
-        # Session information
         self.prompt_name = str(uuid.uuid4())
         self.system_content_name = f"system_{str(uuid.uuid4())}"
         self.audio_content_name = f"audio_{str(uuid.uuid4())}"
-        
-        # For response handling
         self.is_active = False
         self.response_task = None
-        
-        # Initialize Bedrock client
         self._initialize_bedrock_client()
-        
         self.input_sample_rate = 48000
         self.target_sample_rate = 16000
-
-        # global_event_emitter.on("instructions_updated", self._handle_instructions_updated)
-        # global_event_emitter.on("tools_updated", self._handle_tools_updated)
 
     def set_agent(self, agent: Agent) -> None:
         self._instructions = agent.instructions
@@ -128,7 +116,6 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
     def _initialize_bedrock_client(self):
         """Initialize the Bedrock client with manual credential handling"""
         try:
-            # Only set env vars if credentials were passed explicitly
             if self.region:
                 os.environ["AWS_REGION"] = self.region
             if self.aws_access_key_id:
@@ -157,9 +144,7 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
         self._closing = False
         
         try:
-            # Store loop reference for creating tasks
             self.loop = asyncio.get_event_loop()
-            # Initialize Bedrock stream
             self.stream = await self.bedrock_client.invoke_model_with_bidirectional_stream(
                 InvokeModelWithBidirectionalStreamOperationInput(
                     model_id=self.config.model_id
@@ -167,7 +152,6 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             )
             self.is_active = True
             
-            # Step 1: Send session start event -            
             session_start_payload = {
               "event": {
                 "sessionStart": {
@@ -181,7 +165,6 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             }
             await self._send_event(json.dumps(session_start_payload))
             
-            # Step 2: Send prompt start event -            
             prompt_start_event_dict = {
               "event": {
                 "promptStart": {
@@ -212,7 +195,6 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             
             await self._send_event(json.dumps(prompt_start_event_dict))
             
-            # Step 3: Send system content start -            
             system_content_start_payload = {
                 "event": {
                     "contentStart": {
@@ -229,7 +211,6 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             }
             await self._send_event(json.dumps(system_content_start_payload))
             
-            # Step 4: Send system content text -            
             system_instructions = self._instructions or "You are a helpful voice assistant. Keep your responses short and conversational."
             text_input_payload = {
                 "event": {
@@ -242,7 +223,6 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             }
             await self._send_event(json.dumps(text_input_payload))
             
-            # Step 5: End system content -            
             content_end_payload = {
                 "event": {
                     "contentEnd": {
@@ -253,10 +233,8 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             }
             await self._send_event(json.dumps(content_end_payload))         
 
-            # Start response processing task
             self.response_task = asyncio.create_task(self._process_responses())
             
-            # Start audio input
             await self._start_audio_input()
 
         except Exception as e:
@@ -269,12 +247,10 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             return
             
         try:
-            # Create the input chunk - exactly like     
             event = InvokeModelWithBidirectionalStreamInputChunk(
                 value=BidirectionalInputPayloadPart(bytes_=event_json.encode('utf-8'))
             )
 
-            # Send the event
             await self.stream.input_stream.send(event)
             
         except Exception as e:
@@ -285,7 +261,6 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
         if not self.is_active:
             return
         
-        # Create fresh audio content start event
         audio_content_start_payload = {
             "event": {
                 "contentStart": {
@@ -315,7 +290,6 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
         try:
             audio_array = np.frombuffer(audio_data, dtype=np.int16)
             
-            # convert stereo to mono (AWS NOVA SONIC ONLY SUPPORTS MONO AUDIO)
             if len(audio_array) % 2 == 0: 
                 audio_array = audio_array.reshape(-1, 2)
                 audio_array = np.mean(audio_array, axis=1).astype(np.int16) 
@@ -329,7 +303,6 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             
             encoded_audio = base64.b64encode(resampled_bytes).decode('utf-8')
             
-            # Format exactly as in the     
             audio_event_payload = {
                 "event": {
                     "audioInput": {
@@ -340,7 +313,6 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                 }
             }
             
-            # Send using the raw event
             await self._send_event(json.dumps(audio_event_payload))
 
         except Exception as e:
@@ -366,11 +338,9 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                 if 'completionStart' in json_data['event']:
                                     completion_start = json_data['event']['completionStart']
                                 
-                                # Handle content start - similar to     
                                 elif 'contentStart' in json_data['event']:
                                     content_start = json_data['event']['contentStart']
  
-                                    # Check for speculative content like in     
                                     if 'additionalModelFields' in content_start:
                                         try:
                                             additional_fields = json.loads(content_start['additionalModelFields'])
@@ -380,7 +350,6 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                     pass
 
                                 elif 'audioOutput' in json_data['event']:                                    
-                                    # Extract audio content -  
                                     audio_output = json_data['event']['audioOutput']
                                     if 'content' not in audio_output:
                                         continue
@@ -390,10 +359,8 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                         continue
                                     
                                     try:
-                                        # Decode audio like in     
                                         audio_bytes = base64.b64decode(audio_content)
-                                        
-                                        # Queue for playback
+
                                         if self.audio_track and self.loop and not self._closing:
                                             self.loop.create_task(self.audio_track.add_new_bytes(audio_bytes))
 
@@ -414,7 +381,6 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                      completion_end = json_data['event']['completionEnd']
                                      print(f"Nova completionEnd: {json.dumps(completion_end, indent=2)}")
 
-                                # Handle other event types
                                 else:
                                     print(f"Unhandled event type from Nova: {event_keys} - {json.dumps(json_data['event'], indent=2)}")
                             else:
@@ -440,7 +406,6 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
         try:
             text_content_name = f"text_{str(uuid.uuid4())}"
             
-            # Step 1: Start text content 
             text_content_start_payload = {
                 "event": {
                     "contentStart": {
@@ -457,7 +422,6 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             }
             await self._send_event(json.dumps(text_content_start_payload))
             
-            # Step 2: Send text input
             text_input_payload = {
                 "event": {
                     "textInput": {
@@ -469,7 +433,6 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             }
             await self._send_event(json.dumps(text_input_payload))
             
-            # Step 3: End text content
             content_end_payload = {
                 "event": {
                     "contentEnd": {
@@ -487,7 +450,6 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
     async def emit(self, event_type: NovaSonicEventTypes, data: Dict[str, Any]) -> None:
         """Emit an event to subscribers"""
         try:
-            # Call parent class emit method
             await super().emit(event_type, data)
         except Exception as e:
             print(f"Error in emit for {event_type}: {e}")
@@ -495,7 +457,6 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
     def _safe_emit(self, event_type: NovaSonicEventTypes, data: Dict[str, Any]) -> None:
         """Safely emit an event without requiring await"""
         try:
-            # Create a future to hold the result of the emit coroutine
             if self.loop and not self.loop.is_closed():
                 asyncio.run_coroutine_threadsafe(
                     self.emit(event_type, data),
@@ -509,11 +470,9 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
         if not self.is_active or self._closing:
             return
             
-        # Interrupt audio track if available
         if self.audio_track:
             self.audio_track.interrupt()
         
-        # End the current audio content stream
         content_end_payload = {
             "event": {
                 "contentEnd": {
@@ -525,7 +484,6 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
         await self._send_event(json.dumps(content_end_payload))
         print(f"Sent contentEnd for {self.audio_content_name}")
 
-        # Generate new content name for fresh audio session
         self.audio_content_name = f"audio_{str(uuid.uuid4())}"
         await self._start_audio_input()
 
@@ -535,7 +493,6 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             return
             
         try:
-            # End audio content
             audio_content_end_payload = {
                 "event": {
                     "contentEnd": {
@@ -546,7 +503,6 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             }
             await self._send_event(json.dumps(audio_content_end_payload))
             
-            # End prompt
             prompt_end_payload = {
                 "event": {
                     "promptEnd": {
@@ -556,7 +512,6 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             }
             await self._send_event(json.dumps(prompt_end_payload))
             
-            # End session
             session_end_payload = {
                 "event": {
                     "sessionEnd": {}
@@ -564,7 +519,6 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             }
             await self._send_event(json.dumps(session_end_payload))
             
-            # Close the stream
             if self.stream and hasattr(self.stream, 'input_stream'):
                 await self.stream.input_stream.close()
         except Exception as e:
@@ -572,7 +526,6 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
         finally:
             self.is_active = False
             
-            # Cancel the response task
             if self.response_task and not self.response_task.done():
                 self.response_task.cancel()
                 try:
@@ -590,10 +543,8 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             
         self._closing = True
         
-        # Clean up session
         await self._cleanup()
         
-        # Clean up audio track
         if self.audio_track:
             if hasattr(self.audio_track, 'cleanup'):
                 try:
@@ -645,10 +596,8 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             result = await target_tool(**tool_input_args)
             result_content_str = json.dumps(result)
 
-            # Send the result back to Nova Sonic
             tool_content_name = f"tool_result_{str(uuid.uuid4())}"
 
-            # 1. Send contentStart for tool result
             tool_content_start_dict = {
                 "event": {
                     "contentStart": {
@@ -669,7 +618,6 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             }
             await self._send_event(json.dumps(tool_content_start_dict))
 
-            # 2. Send toolResult
             tool_result_event_dict = {
                 "event": {
                     "toolResult": {
@@ -681,7 +629,6 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             }
             await self._send_event(json.dumps(tool_result_event_dict))
             
-            # 3. Send contentEnd for tool result
             tool_content_end_payload = {
                 "event": {
                     "contentEnd": {

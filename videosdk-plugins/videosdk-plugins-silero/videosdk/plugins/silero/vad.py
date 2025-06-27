@@ -23,7 +23,7 @@ class SileroVAD(BaseVAD):
         force_cpu: bool = True,
         prefix_padding_duration: float = 0.3,
     ) -> None:
-        # Validate model sample rate (what the ONNX model supports)
+        
         if model_sample_rate not in SUPPORTED_SAMPLE_RATES:
             raise ValueError(f"Model sample rate {model_sample_rate} not supported. Must be one of {SUPPORTED_SAMPLE_RATES}")
             
