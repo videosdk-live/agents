@@ -38,12 +38,9 @@ class DeepgramSTT(BaseSTT):
         self.endpointing = endpointing
         self.filler_words = filler_words
         self.base_url = base_url
-        
-        # WebSocket session for streaming
         self._session: Optional[aiohttp.ClientSession] = None
         self._ws: Optional[aiohttp.ClientWebSocketResponse] = None
         self._ws_task: Optional[asyncio.Task] = None
-        
         self._last_speech_event_time = 0.0
         self._previous_speech_event_time = 0.0
         
@@ -57,7 +54,6 @@ class DeepgramSTT(BaseSTT):
         
         if not self._ws:
             await self._connect_ws()
-            # Start listening for responses in background
             self._ws_task = asyncio.create_task(self._listen_for_responses())
             
         try:

@@ -59,6 +59,7 @@ class AgentSession:
         meeting_id = self.context.get("meetingId")
         name = self.context.get("name", "Agent")
         join_meeting = self.context.get("join_meeting",True)
+        vision = self.context.get("vision", False)
         videosdk_auth = self.context.get("videosdk_auth",None)
         if videosdk_auth is None:
             videosdk_auth = os.getenv("VIDEOSDK_AUTH_TOKEN")
@@ -76,7 +77,13 @@ class AgentSession:
         if hasattr(self.pipeline, 'set_agent'):
             self.pipeline.set_agent(self.agent)
         
-        await self.pipeline.start(meeting_id=meeting_id, name=name, videosdk_auth=videosdk_auth, join_meeting=join_meeting)
+        await self.pipeline.start(
+    meeting_id=meeting_id,
+            name=name,
+            videosdk_auth=videosdk_auth,
+            join_meeting=join_meeting,
+            vision=vision,
+        )
         await self.agent.on_enter()
         
     async def say(self, message: str) -> None:

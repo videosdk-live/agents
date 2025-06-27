@@ -34,6 +34,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         self.model.loop = self.loop
         self.model.audio_track = None
         self.agent = None
+        self.vision = False
     
     def set_agent(self, agent: Agent) -> None:
         self.agent = agent
@@ -55,6 +56,13 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
             meeting_id = kwargs.get('meeting_id')
             name = kwargs.get('name')
             join_meeting = kwargs.get('join_meeting',True)
+            requested_vision = kwargs.get('vision', self.vision)
+            model_name = type(self.model).__name__
+            if requested_vision and model_name != 'GeminiRealtime':
+                print(f"Warning: Vision mode requested but {model_name} doesn't support video input. Only GeminiRealtime supports vision. Disabling vision.")
+                self.vision = False
+            else:
+                self.vision = requested_vision
 
             if join_meeting:
                 self.room = VideoSDKHandler(
@@ -62,7 +70,8 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
                     auth_token=videosdk_auth,
                     name=name,
                     pipeline=self,
-                    loop=self.loop
+                    loop=self.loop,
+                    vision=self.vision
                 )
                 
                 self.room.init_meeting()
@@ -102,7 +111,15 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         Handle incoming audio data from the user
         """
         await self.model.handle_audio_input(audio_data)
-        
+
+    async def on_video_delta(self, video_data: av.VideoFrame):
+        """
+        Handle incoming video data from the user
+        The model's handle_video_input is now expected to handle the av.VideoFrame.
+        """
+        if self.vision and hasattr(self.model, 'handle_video_input'):
+            await self.model.handle_video_input(video_data)
+
     async def leave(self) -> None:
         """
         Leave the realtime pipeline.

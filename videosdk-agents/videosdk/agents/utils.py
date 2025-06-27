@@ -9,7 +9,7 @@ from google.genai import types
 from pydantic import BaseModel, Field, create_model
 from pydantic_core import PydanticUndefined
 from pydantic.fields import FieldInfo
-
+import json
 @dataclass
 class FunctionToolInfo:
     """Metadata for a function tool"""
@@ -50,7 +50,7 @@ def function_tool(func: Optional[Callable] = None, *, name: Optional[str] = None
         setattr(wrapper, "_tool_info", tool_info)
         return wrapper
 
-    # Handle both @function_tool and @function_tool() syntax
+    
     if func is None:
         return lambda f: create_wrapper(f)
     
@@ -58,20 +58,14 @@ def function_tool(func: Optional[Callable] = None, *, name: Optional[str] = None
 
 def function_arguments_to_pydantic_model(func: Callable) -> type[BaseModel]:
     """Create a Pydantic model from a function's signature."""
-    # Create model name from function name
+    
     fnc_name = func.__name__.split("_")
     fnc_name = "".join(x.capitalize() for x in fnc_name)
     model_name = fnc_name + "Args"
-
-    # Parse docstring for parameter descriptions
     docstring = parse_from_object(func)
     param_docs = {p.arg_name: p.description for p in docstring.params}
-
-    # Get function signature and type hints
     signature = inspect.signature(func)
     type_hints = get_type_hints(func, include_extras=True)
-
-    # Build fields dictionary for model creation
     fields: dict[str, Any] = {}
 
     for param_name, param in signature.parameters.items():
@@ -85,21 +79,17 @@ def function_arguments_to_pydantic_model(func: Callable) -> type[BaseModel]:
         default_value = param.default if param.default is not param.empty else ...
         field_info = Field()
 
-        # Handle Annotated types
         if get_origin(type_hint) is Annotated:
             annotated_args = get_args(type_hint)
             type_hint = annotated_args[0]
-            # Get field info from annotations if present
             field_info = next(
                 (x for x in annotated_args[1:] if isinstance(x, FieldInfo)), 
                 field_info
             )
 
-        # Set default value if present
         if default_value is not ... and field_info.default is PydanticUndefined:
             field_info.default = default_value
 
-        # Set description from docstring
         if field_info.description is None:
             field_info.description = param_docs.get(param_name, None)
 
@@ -113,17 +103,13 @@ def build_openai_schema(function_tool: FunctionTool) -> dict[str, Any]:
     
     params_schema_to_use: Optional[dict] = None
 
-    # Prioritize parameters_schema if it's set on the tool_info (populated for MCP tools)
     if tool_info.parameters_schema is not None:
-        # This schema comes directly from the MCP tool's input_schema
         params_schema_to_use = tool_info.parameters_schema
     else:
-        # Fallback for standard @function_tool decorated functions
         model = function_arguments_to_pydantic_model(function_tool)
         params_schema_to_use = model.model_json_schema()
 
     final_params_schema = params_schema_to_use if params_schema_to_use is not None else {"type": "object", "properties": {}}
-
 
     return {
             "name": tool_info.name,
@@ -158,17 +144,14 @@ class _GeminiJsonSchema:
 
     def _simplify(self, schema: dict[str, Any], refs_stack: tuple[str, ...]) -> None:
         """Internal method to simplify schema recursively"""
-        # Remove unnecessary fields
         for field in ["title", "default", "additionalProperties"]:
             schema.pop(field, None)
 
-        # Handle type conversion
         if "type" in schema and schema["type"] != "null":
             json_type = schema["type"]
             if json_type in self.TYPE_MAPPING:
                 schema["type"] = self.TYPE_MAPPING[json_type]
 
-        # Handle nested objects and arrays
         type_ = schema.get("type")
         if type_ == types.Type.OBJECT:
             if properties := schema.get("properties"):
@@ -195,7 +178,6 @@ def build_gemini_schema(function_tool: FunctionTool) -> types.FunctionDeclaratio
              simplified_schema = _GeminiJsonSchema(openai_schema["parameters"]).simplify()
              parameter_json_schema_for_gemini = simplified_schema
 
-    # Generate the FunctionDeclaration
     func_declaration = types.FunctionDeclaration(
         name=tool_info.name, 
         description=tool_info.description or "", 
@@ -240,13 +222,10 @@ def create_generic_mcp_adapter(
     Returns:
         A function tool that can be registered with the agent
     """
-    # Extract required parameters from schema
     required_params = input_schema.get('required', [])
     
-    # Get parameter properties if available
     param_properties = input_schema.get('properties', {})
     
-    # Create docstring with parameters
     docstring = tool_description or f"Call the {tool_name} tool"
     if param_properties and "Args:" not in docstring:
         param_docs = "\n\nArgs:\n"
@@ -256,31 +235,25 @@ def create_generic_mcp_adapter(
             param_docs += f"    {param_name}{required}: {description}\n"
         docstring += param_docs
     
-    # Create tool function based on parameters
     if not param_properties:
-        # No parameters needed
         @function_tool(name=tool_name)
         async def no_param_tool() -> Any:
             return await client_call_function({})
         no_param_tool.__doc__ = docstring
-        # Populate the parameters_schema from MCP's input_schema
         tool_info_no_param = get_tool_info(no_param_tool)
         tool_info_no_param.parameters_schema = input_schema
         return no_param_tool
     else:
-        # Parameters required - create a generic tool that accepts kwargs
         @function_tool(name=tool_name) 
         async def param_tool(**kwargs) -> Any:
             actual_kwargs = kwargs.copy() # Work with a copy
 
             if 'instructions' in required_params and 'instructions' not in actual_kwargs:
-                # Check if any other parameter defined in the tool's properties was provided.
                 other_params_provided = any(p in actual_kwargs for p in param_properties if p != 'instructions')
                 if other_params_provided:
                     actual_kwargs['instructions'] = f"Execute tool {tool_name} with the provided parameters."
 
             
-            # Check for required parameters
             missing = [p for p in required_params if p not in actual_kwargs]
             if missing:
                 missing_str = ", ".join(missing)
@@ -297,7 +270,6 @@ def create_generic_mcp_adapter(
                 )
             return await client_call_function(actual_kwargs)
         param_tool.__doc__ = docstring
-        # Populate the parameters_schema from MCP's input_schema
         tool_info_param = get_tool_info(param_tool)
         tool_info_param.parameters_schema = input_schema
         return param_tool
@@ -308,12 +280,9 @@ def build_nova_sonic_schema(function_tool: FunctionTool) -> dict[str, Any]:
 
     params_schema_to_use: Optional[dict] = None
 
-    # Prioritize parameters_schema if it's set on the tool_info (populated for MCP tools)
     if tool_info.parameters_schema is not None:
-        # This schema comes directly from the MCP tool's input_schema
         params_schema_to_use = tool_info.parameters_schema
     else:
-        # Fallback for standard @function_tool decorated functions
         model = function_arguments_to_pydantic_model(function_tool)
         params_schema_to_use = model.model_json_schema()
     
@@ -321,7 +290,6 @@ def build_nova_sonic_schema(function_tool: FunctionTool) -> dict[str, Any]:
     final_params_schema_for_nova = params_schema_to_use if params_schema_to_use is not None else {"type": "object", "properties": {}}
     input_schema_json_string = json.dumps(final_params_schema_for_nova)
 
-    # Ensure description is not empty
     description = tool_info.description or tool_info.name
 
     return {

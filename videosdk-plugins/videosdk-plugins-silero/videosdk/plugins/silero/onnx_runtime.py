@@ -3,7 +3,7 @@ import importlib.resources
 from contextlib import ExitStack
 
 import numpy as np
-import onnxruntime  # type: ignore
+import onnxruntime  
 
 _resource_files = ExitStack()
 atexit.register(_resource_files.close)
@@ -32,7 +32,6 @@ def new_inference_session(force_cpu: bool) -> onnxruntime.InferenceSession:
         session = onnxruntime.InferenceSession(path, sess_options=opts)
 
     return session
-
 
 class OnnxModel:
     def __init__(self, *, onnx_session: onnxruntime.InferenceSession, sample_rate: int) -> None:

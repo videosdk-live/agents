@@ -127,7 +127,7 @@ class SarvamAITTS(TTS):
             raise
 
     async def _stream_audio_chunks(self, audio_bytes: bytes) -> None:
-        chunk_size = int(SARVAMAI_SAMPLE_RATE * SARVAMAI_CHANNELS * 2 * 20 / 1000) # 20ms chunks
+        chunk_size = int(SARVAMAI_SAMPLE_RATE * SARVAMAI_CHANNELS * 2 * 20 / 1000) 
         
         audio_data = self._remove_wav_header(audio_bytes)
         

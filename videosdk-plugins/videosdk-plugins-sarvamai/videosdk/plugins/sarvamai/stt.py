@@ -66,7 +66,7 @@ class SarvamAISTT(STT):
                 self._silence_frames = 0
             else:
                 if self._is_speaking:
-                    self._silence_frames += len(audio_frames) // 4 # 2 channels, 2 bytes per sample
+                    self._silence_frames += len(audio_frames) // 4 
                     if self._silence_frames > self.silence_duration_frames:
                         global_event_emitter.emit("speech_stopped")
                         asyncio.create_task(self._transcribe_buffer())
@@ -120,7 +120,7 @@ class SarvamAISTT(STT):
         with wave.open(wav_buffer, 'wb') as wf:
             wf.setnchannels(2)
             wf.setsampwidth(2)
-            wf.setframerate(self.output_sample_rate) # Use resampled rate
+            wf.setframerate(self.output_sample_rate) 
             wf.writeframes(pcm_data)
         wav_buffer.seek(0)
         return wav_buffer
