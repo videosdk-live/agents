@@ -26,7 +26,8 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         llm: LLM | None = None,
         tts: TTS | None = None,
         vad: VAD | None = None,
-        turn_detector: EOU | None = None
+        turn_detector: EOU | None = None,
+        avatar = None,
     ) -> None:
         """
         Initialize the cascading pipeline.
@@ -46,6 +47,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         self.room = None
         self.agent = None
         self.conversation_flow = None
+        self.avatar = avatar
         
     def set_agent(self, agent: Agent) -> None:
         self.agent = agent
@@ -70,17 +72,33 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
             meeting_id = kwargs.get('meeting_id')
             name = kwargs.get('name')
             token = kwargs.get('token')
+            custom_camera_video_track = None
+            custom_microphone_audio_track = None
+            sinks = []
+            
+            if self.avatar:
+                await self.avatar.connect()
+                custom_camera_video_track = self.avatar.video_track
+                custom_microphone_audio_track = self.avatar.audio_track  
+                sinks.append(self.avatar) 
+                print("CascadingPipeline: Using avatar mode - TTS audio -> Simli -> synchronized A/V -> VideoSDK")
+            else:
+                print("Avatar not provided")
+
             self.room = VideoSDKHandler(
                     meeting_id=meeting_id,
                     auth_token=token,
                     name=name,
                     pipeline=self,
-                    loop=self.loop
+                    loop=self.loop,
+                    custom_camera_video_track=custom_camera_video_track,
+                    custom_microphone_audio_track=custom_microphone_audio_track,
+                    audio_sinks=sinks 
                 )
 
             self.room.init_meeting()
             self.tts.loop = self.loop
-            self.tts.audio_track = self.room.audio_track
+            self.tts.audio_track = getattr(self.room, 'agent_audio_track', None) or self.room.audio_track
 
             await self.room.join()
         except Exception as e:
