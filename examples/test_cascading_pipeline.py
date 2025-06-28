@@ -12,6 +12,7 @@ from videosdk.plugins.elevenlabs import ElevenLabsTTS
 from videosdk.plugins.sarvamai import SarvamAITTS, SarvamAILLM,SarvamAISTT
 from videosdk.plugins.cartesia import CartesiaTTS, CartesiaSTT
 from videosdk.plugins.smallestai import SmallestAITTS
+from videosdk.plugins.resemble import ResembleTTS
 import logging
 import pathlib
 import sys
@@ -166,7 +167,8 @@ async def test_connection(jobctx):
         # TTS Based Providers 
         # tts=ElevenLabsTTS(api_key=os.getenv("ELEVENLABS_API_KEY")),
         # tts=CartesiaTTS(api_key=os.getenv("CARTESIA_API_KEY")),
-        tts=SmallestAITTS(api_key=os.getenv("SMALLESTAI_API_KEY")),
+        # tts=SmallestAITTS(api_key=os.getenv("SMALLESTAI_API_KEY")),
+        tts=ResembleTTS(api_key=os.getenv("RESEMBLE_API_KEY")),
 
         vad=SileroVAD(),
         turn_detector=TurnDetector(threshold=0.8)
