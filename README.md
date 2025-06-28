@@ -132,12 +132,12 @@ The framework supports integration with various AI models and tools, including:
 | **Provider** | **Real-time Models** | **Speech-to-Text (STT)** | **Language Models (LLM)** | **Text-to-Speech (TTS)** | **Voice Activity Detection (VAD)** | **Turn Detection Model** |
 |--------------|:-------------:|:-------------------------:|:--------------------------:|:-------------------------:|:----------------------------------:|:----------------------------------:|
 | **OpenAI** | [OpenAIRealtime](https://docs.videosdk.live/ai_agents/plugins/realtime/openai) | [OpenAISTT](https://docs.videosdk.live/ai_agents/plugins/stt/openai) | [OpenAILLM](https://docs.videosdk.live/ai_agents/plugins/llm/openai) | [OpenAITTS](https://docs.videosdk.live/ai_agents/plugins/tts/openai) | ✖️ |✖️ |
-| **Google** | [GeminiRealtime](https://docs.videosdk.live/ai_agents/plugins/realtime/google-live-api) | [GoogleSTT](https://docs.videosdk.live/ai_agents/plugins/stt/google) | [GoogleLLM](https://docs.videosdk.live/ai_agents/plugins/llm/google) | [GoogleTTS](https://docs.videosdk.live/ai_agents/plugins/tts/google) | ✖️ |✖️ |
+| **Google** | [GeminiRealtime](https://docs.videosdk.live/ai_agents/plugins/realtime/google-live-api) | [GoogleSTT](https://docs.videosdk.live/ai_agents/plugins/stt/google) | [GoogleLLM](https://docs.videosdk.live/ai_agents/plugins/llm/google-llm) | [GoogleTTS](https://docs.videosdk.live/ai_agents/plugins/tts/google-tts) | ✖️ |✖️ |
 | **AWS** | [AWSNovaSonic](https://docs.videosdk.live/ai_agents/plugins/realtime/aws-nova-sonic) | ✖️ | ✖️ | ✖️ | ✖️ |✖️ |
-| **Sarvam** | ✖️ | [SarvamSTT](https://docs.videosdk.live/ai_agents/plugins/stt/sarvam-ai) | [SarvamLLM](https://docs.videosdk.live/ai_agents/plugins/llm/sarvam-ai) | [SarvamTTS](https://docs.videosdk.live/ai_agents/plugins/tts/sarvam-ai) | ✖️ |✖️ |
+| **Sarvam** | ✖️ | [SarvamSTT](https://docs.videosdk.live/ai_agents/plugins/stt/sarvam-ai) | [SarvamLLM](https://docs.videosdk.live/ai_agents/plugins/llm/sarvam-ai-llm) | [SarvamTTS](https://docs.videosdk.live/ai_agents/plugins/tts/sarvam-ai-tts) | ✖️ |✖️ |
 | **Deepgram** | ✖️ | [DeepgramSTT](https://docs.videosdk.live/ai_agents/plugins/stt/deepgram) | ✖️ | ✖️ | ✖️ |✖️ |
-| **ElevenLabs** | ✖️ | ✖️ | ✖️ | [ElevenLabsTTS](https://docs.videosdk.live/ai_agents/plugins/tts/elevenlabs) | ✖️ |✖️ |
-| **Silero VAD** | ✖️ | ✖️ | ✖️ | ✖️ | [SileroVAD](https://docs.videosdk.live/ai_agents/plugins/vad/silero) |✖️ |
+| **ElevenLabs** | ✖️ | ✖️ | ✖️ | [ElevenLabsTTS](https://docs.videosdk.live/ai_agents/plugins/tts/elevenlabs-tts) | ✖️ |✖️ |
+| **Silero VAD** | ✖️ | ✖️ | ✖️ | ✖️ | [SileroVAD](https://docs.videosdk.live/ai_agents/plugins/silero-vad) |✖️ |
 | **Hugging Face** | ✖️ | ✖️ | ✖️ | ✖️ | ✖️ | [Turn Detection](https://docs.videosdk.live/ai_agents/plugins/turn-detector) |
 
 
