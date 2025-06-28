@@ -43,6 +43,10 @@ dependencies = [
     "mcp",
     "PyYAML",
     "urllib3",
+    "opentelemetry-distro==0.43b0",
+    "opentelemetry-exporter-otlp",  
+    "opentelemetry-sdk",
+    "opentelemetry-api",
 ]
 
 

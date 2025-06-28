@@ -1,7 +1,6 @@
 from __future__ import annotations
-
 from abc import ABC, abstractmethod
-from typing import List, Literal
+from typing import List, Literal, TYPE_CHECKING
 import inspect
 from .event_emitter import EventEmitter
 from .llm.chat_context import ChatContext
@@ -12,6 +11,8 @@ import uuid
 from .llm.chat_context import ChatContext, ChatRole
 from .mcp.mcp_manager import MCPToolManager
 from .mcp.mcp_server import MCPServer
+from .telemetry.videosdk_telemetry import VideoSDKTelemetry
+from opentelemetry.trace import StatusCode
 
 
 AgentEventTypes = Literal[
@@ -31,6 +32,7 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
         self._stt = None
         self._tts = None
         self.chat_context = ChatContext.empty()
+        self.telemetry: VideoSDKTelemetry | None = None
         self.instructions = instructions
         self._tools = list(tools)
         self._mcp_servers = mcp_servers if mcp_servers else []
@@ -54,6 +56,12 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
 
     @instructions.setter
     def instructions(self, value: str) -> None:
+        if self.telemetry:
+            self.telemetry.trace_auto_complete("Agent Set Instructions", {
+                "instructions.length": len(value),
+                "agent.type": type(self).__name__
+            })
+        
         self._instructions = value
         self.chat_context.add_message(
             role=ChatRole.SYSTEM,
@@ -63,24 +71,64 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
     @property
     def tools(self) -> List[FunctionTool]:
         return self._tools
-    
+
     def register_tools(self) -> None:
         """Register external function tools for the agent"""
         for tool in self._tools:
             if not is_function_tool(tool):
                 raise ValueError(f"Tool {tool.__name__ if hasattr(tool, '__name__') else tool} is not a valid FunctionTool")
+        
+        if self.telemetry:
+            self.telemetry.trace_auto_complete("Agent Register Tools", {
+                "tools.count": len(self._tools),
+                "tools.names": [tool.__name__ for tool in self._tools],
+                "agent.type": type(self).__name__
+            })
     
     async def initialize_mcp(self) -> None:
         """Initialize the agent, including any MCP server if provided."""
-        if self._mcp_servers and not self._mcp_initialized:
-            for server in self._mcp_servers:
-                await self.add_server(server)
-            self._mcp_initialized = True
+        mcp_span = None
+        if self.telemetry:
+            mcp_span = self.telemetry.trace("Agent MCP Setup", {
+                "agent.type": type(self).__name__,
+                "mcp.server_count": len(self._mcp_servers),
+                "mcp.already_initialized": self._mcp_initialized
+            })
+        
+        try:
+            if self._mcp_servers and not self._mcp_initialized:
+                for server in self._mcp_servers:
+                    await self.add_server(server)
+                self._mcp_initialized = True
+                if self.telemetry:
+                    self.telemetry.add_span_attribute(mcp_span, "mcp.initialization_completed", True)
+            else:
+                if self.telemetry:
+                    self.telemetry.add_span_attribute(mcp_span, "mcp.initialization_skipped", True)
+                    
+            if self.telemetry:
+                self.telemetry.complete_span(mcp_span, StatusCode.OK, "MCP initialization completed")
+        except Exception as e:
+            if self.telemetry:
+                self.telemetry.complete_span(mcp_span, StatusCode.ERROR, f"MCP initialization failed: {str(e)}")
+            raise
     
     async def add_server(self, mcp_server: MCPServer) -> None:
         """Initialize the MCP server and register the tools"""
-        await self.mcp_manager.add_mcp_server(mcp_server)
-        self._tools.extend(self.mcp_manager.tools)
+        if self.telemetry:
+            with self.telemetry.span_context("Agent Add MCP Server", {
+                "agent.type": type(self).__name__,
+                "server.name": mcp_server.name if hasattr(mcp_server, 'name') else str(mcp_server)
+            }):
+                await self.mcp_manager.add_mcp_server(mcp_server)
+                self._tools.extend(self.mcp_manager.tools)
+                
+                if self.telemetry:
+                    self.telemetry.add_span_attribute(None, "tools.added", [tool.__name__ for tool in self.mcp_manager.tools])
+                    self.telemetry.add_span_attribute(None, "tools.total", len(self._tools))
+        else:
+            await self.mcp_manager.add_mcp_server(mcp_server)
+            self._tools.extend(self.mcp_manager.tools)
     
     @abstractmethod
     async def on_enter(self) -> None:
@@ -89,11 +137,26 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
 
     async def register_a2a(self, card: AgentCard) -> None:
         """Register the agent for A2A communication"""
-        self._agent_card = card
-        await self.a2a.register(card)
+        if self.telemetry:
+            with self.telemetry.span_context("Agent A2A Registration", {
+                "agent.type": type(self).__name__,
+                "agent.id": self.id,
+                "card.info": str(card.to_dict())
+            }):
+                self._agent_card = card
+                await self.a2a.register(card)
+        else:
+            self._agent_card = card
+            await self.a2a.register(card)
 
     async def unregister_a2a(self) -> None:
         """Unregister the agent from A2A communication"""
+        if self.telemetry:
+            self.telemetry.trace_auto_complete("Agent A2A Unregistration", {
+                "agent.type": type(self).__name__,
+                "agent.id": self.id
+            })
+        
         await self.a2a.unregister()
         self._agent_card = None
 
@@ -101,3 +164,51 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
     async def on_exit(self) -> None:
         """Called when session ends"""
         pass
+
+    async def process_stt_output(self, text: str) -> str:
+        """
+        Process STT output before it goes to LLM.
+        Override this method to add custom processing.
+        
+        Args:
+            text: The text from STT
+            
+        Returns:
+            Processed text
+        """
+        if self.telemetry:
+            with self.telemetry.span_context("Agent STT Processing", {
+                "agent.type": type(self).__name__,
+                "input.text_length": len(text),
+                "agent.id": self.id
+            }) as span:
+                processed_text = text
+                if span and self.telemetry:
+                    self.telemetry.add_span_attribute(span, "output.text_length", len(processed_text))
+                return processed_text
+        else:
+            return text
+
+    async def process_llm_output(self, text: str) -> str:
+        """
+        Process LLM output before it goes to TTS.
+        Override this method to add custom processing.
+        
+        Args:
+            text: The text from LLM
+            
+        Returns:
+            Processed text
+        """
+        if self.telemetry:
+            with self.telemetry.span_context("Agent LLM Processing", {
+                "agent.type": type(self).__name__,
+                "input.text_length": len(text),
+                "agent.id": self.id
+            }) as span:
+                processed_text = text
+                if span and self.telemetry:
+                    self.telemetry.add_span_attribute(span, "output.text_length", len(processed_text))
+                return processed_text
+        else:
+            return text
