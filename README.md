@@ -1,81 +1,159 @@
-# VideoSDK Agents
+<!--BEGIN_BANNER_IMAGE-->
+<p align="center">
+  <img src="https://raw.githubusercontent.com/videosdk-community/ai-agent-examples/main/.github/banner.png" alt="VideoSDK AI Agents Banner" style="width:100%;">
+</p>
+<!--END_BANNER_IMAGE-->
 
-Agents Framework on top of VideoSDK's architecture. The Agents Framework lets you build Voice AI agents that can hear, see*, and speak in realtime. Agents Framework is an open-source platform that helps creating server-side agentic applications.
+# VideoSDK AI Agents
+Open-source framework for developing real-time multimodal conversational AI agents.
+
+![PyPI - Version](https://img.shields.io/pypi/v/videosdk-agents)
+[![PyPI Downloads](https://static.pepy.tech/badge/videosdk-agents/month)](https://pepy.tech/projects/videosdk-agents)
+[![Twitter Follow](https://img.shields.io/twitter/follow/video_sdk)](https://x.com/video_sdk)
+[![YouTube](https://img.shields.io/badge/YouTube-VideoSDK-red)](https://www.youtube.com/c/VideoSDK)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-VideoSDK-blue)](https://www.linkedin.com/company/video-sdk/)
+[![Discord](https://img.shields.io/badge/Discord-Join%20Us-7289DA)](https://discord.com/invite/f2WsNDN9S5)
+
+## Overview
+
+The AI Agent SDK is a Python framework built on top of the VideoSDK Python SDK that enables AI-powered agents to join VideoSDK rooms as participants. This SDK serves as a real-time bridge between AI models (like OpenAI and Gemini) and your users, facilitating seamless voice and media interactions.
+
+## Features
+
+### Real-time communication
+-   Real-time voice and media: agents can listen, speak, and interact live in meetings
+-   SIP and telephony integration: seamlessly connect agents to phone systems via SIP for call handling, routing, and PSTN access
+-   Virtual avatars: add lifelike avatars to enhance interaction and presence
+
+### Intelligence and interaction
+-   Multi-model support: integrate with OpenAI, Gemini, AWS NovaSonic, and more
+-   Cascading pipeline: integrates with different providers of STT, LLM, and TTS seamlessly
+-   Conversational flow: VAD, turn detection, RAG, and memory for smooth, context-aware conversations
+-   Function tools: extend agent capabilities with event scheduling, expense tracking, and more
+-   Client-side function calling: trigger actions directly from the client side for low-latency interaction
+
+### Integration and connectivity
+-   MCP integration: connect agents to external data sources and tools using Model Context Protocol
+-   A2A protocol: enable agent-to-agent interactions for complex workflows
+-   SDK support: available for web, mobile, gaming, and IoT
+    
+
+### Media and observability
+-   Recording and transcription: capture and analyze conversations
+-   In-built observability: access real-time and historical traces, logs, and metrics for monitoring and debugging
+
+### Deployment and scalability
+-   Deploy and scale: run on FlyIO, Kubernetes, or Agent Cloud (deploy close to your users)
+-   Global coverage: infrastructure optimized for international availability and low latency
+-   Scale and deploy on your cloud: flexible deployment to meet enterprise compliance and privacy needs
+    
+### Security and compliance
+-   Security and compliance covered: enterprise-grade security protocols
+-   End-to-end encryption of streams: ensure secure communication across the board
+
+> \[!IMPORTANT]
+>
+> **Star VideoSDK Repositories** ⭐️
+>
+> Get instant notifications for new releases and updates. Your support helps us grow and improve VideoSDK!
+
+## Introduction
+
+### ⚙️ System Components
+- **🖥️ Your Backend:** Hosts the Worker and Agent Job that powers the AI agents
+- **☁️ VideoSDK Cloud:** Manages the meeting rooms where agents and users interact in real time
+- **📱 Client SDK:** Applications on user devices (web, mobile, or SIP) that connect to VideoSDK meetings
+
+### 🔄 Process Flow
+1. **📝 Register:** Your backend worker registers with the VideoSDK Cloud
+2. **📲 Initiate to join Room:** The user initiates joining a VideoSDK Room via the Client SDK on their device
+3. **📡 Notify worker for Agent to join Room:** The VideoSDK Cloud notifies your backend worker to have an Agent join the room.
+4. **🤖 Agent joins the room:** The Agent connects to the VideoSDK Room and can interact with the user.
+
+## 🚀 Before You Begin
+
+Before you begin, ensure you have:
+
+- A VideoSDK authentication token (generate from [app.videosdk.live](https://app.videosdk.live))
+   - A VideoSDK meeting ID (you can generate one using the [Create Room API](https://docs.videosdk.live/api-reference/realtime-communication/create-room) or through the VideoSDK dashboard)
+- Python 3.12 or higher
+- Third-Party API Keys:
+   - API keys for the services you intend to use (e.g., OpenAI for LLM/STT/TTS, ElevenLabs for TTS, Google for Gemini etc.).
 
 ## Installation
 
-```bash
-pip install videosdk-agents
-```
-
-## Features
-- **Realtime Pipeline**: Use realtime model from providers like openai, google, aws for low latency agentic conversation/ tasks.
-- **Cascading Pipeline**: Use cascading pipeline to get more control over the choice of models in your STT, LLM, TTS from available providers for better flexibility according to your use case. To make conversations more human-like, cascading also supports VAD and turn detection.
-- **Semantic Turn detection**: Uses a BERT model to detect when a user is done speaking, helps to reduce interruptions.
-- **Telephony Support**: Works seamlessly with VideoSDK's [telephony](https://docs.videosdk.live/react/guide/sip-connect/overview), allowing your agent to make/receive calls from phones.
-- **WebRTC Client Support**: Use VideoSDK's [client SDKs](https://docs.videosdk.live/) to build client applications, supporting nearly all major platforms.
-- **MCP Support**: Native support for MCP. Integrate [MCP](https://docs.videosdk.live/ai_agents/mcp-integration) tools seamlessly.
-- **Open-Source**: Allows you to run the entire agent stack on your own servers, including VideoSDK's AgentCloud that has built-in support of Worker Job.
-
-## Documentation and Guides
-
-Visit [Agents Docs](https://docs.videosdk.live/ai_agents/introduction) for Quickstart, Examples and Detailed Documentation.
-
-## Usage
-
-```py
-import asyncio
-from videosdk.agents import Agent, AgentSession, RealTimePipeline, function_tool, WorkerJob
-from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig
-from openai.types.beta.realtime.session import InputAudioTranscription, TurnDetection
-
-
-class MyVoiceAgent(Agent):
-    def __init__(self):
-        super().__init__(
-            instructions="You are a helpful voice assistant that can answer questions and help with tasks.",
-        )
-
-    async def on_enter(self) -> None:
-        await self.session.say("How can I assist you today?")
-
-async def test_connection(jobctx):
-    print("Starting connection test...")
-    print(f"Job context: {jobctx}")
+- Create and activate a virtual environment with Python 3.12 or higher.
+    <details>
+    <summary><strong>💻 macOS / Linux</strong></summary>
     
-    model = OpenAIRealtime(
-        model="gpt-4o-realtime-preview",
-        config=OpenAIRealtimeConfig( modalities=["text", "audio"] )
-    )
-    pipeline = RealTimePipeline(model=model)
-    session = AgentSession(
-        agent=MyVoiceAgent(), 
-        pipeline=pipeline,
-        context=jobctx
-    )
+    ```bash
+    python3 -m venv venv
+    source venv/bin/activate
+    ```
+    </details> 
+    <details> 
+    <summary><strong>🪟 Windows</strong></summary>
+    
+    ```bash
+    python -m venv venv
+    venv\Scripts\activate
+    ```
+    </details>
+    
+- Install the core VideoSDK AI Agent package 
+  ```bash
+  pip install videosdk-agents
+  ```
+- Install Optional Plugins. Plugins help integrate different providers for Realtime, STT, LLM, TTS, and more. Install what your use case needs:
+  ```bash
+  # Example: Install the Turn Detector plugin
+  pip install videosdk-plugins-turn-detector
+  ```
+  👉 Supported plugins (Realtime, LLM, STT, TTS, VAD) are listed in the [Supported Libraries](#supported-libraries-and-plugins) section below.
 
-    try:
-        await session.start()
-        await asyncio.Event().wait()
-    except KeyboardInterrupt:
-    finally:
-        await session.close()
+
+## 🏁 Getting Started: Your First Agent
+
+Now that you've installed the necessary packages, you're ready to build!
+
+- For detailed guides, tutorials, and API references, check out our official [VideoSDK AI Agents Documentation](https://docs.videosdk.live/ai_agents/introduction).
+- To see the framework in action, explore the code in the [Examples](examples/) directory. It is a great place to quickstart.
 
 
-def entryPoint(jobctx):
-    jobctx["pid"] = os.getpid()
-    asyncio.run(test_connection(jobctx))
+## Architecture
+
+This architecture shows how AI voice agents connect to VideoSDK meetings. The system links your backend with VideoSDK's platform, allowing AI assistants to interact with users in real-time.
+![VideoSDK AI Agents High Level Architecture](https://strapi.videosdk.live/uploads/Group_15_1_5610ce9c7e.png)
+
+## Supported Libraries and Plugins
+
+The framework supports integration with various AI models and tools, including:
+
+| **Provider** | **Real-time Models** | **Speech-to-Text (STT)** | **Language Models (LLM)** | **Text-to-Speech (TTS)** | **Voice Activity Detection (VAD)** |
+|--------------|:-------------:|:-------------------------:|:--------------------------:|:-------------------------:|:----------------------------------:|
+| **OpenAI** | [OpenAIRealtime](https://docs.videosdk.live/ai_agents/plugins/realtime/openai) | [OpenAISTT](https://docs.videosdk.live/ai_agents/plugins/stt/openai) | [OpenAILLM](https://docs.videosdk.live/ai_agents/plugins/llm/openai) | [OpenAITTS](https://docs.videosdk.live/ai_agents/plugins/tts/openai) | ✖️ |
+| **Google** | [GeminiRealtime](https://docs.videosdk.live/ai_agents/plugins/realtime/google-live-api) | [GoogleSTT](https://docs.videosdk.live/ai_agents/plugins/stt/google) | [GoogleLLM](https://docs.videosdk.live/ai_agents/plugins/llm/google) | [GoogleTTS](https://docs.videosdk.live/ai_agents/plugins/tts/google) | ✖️ |
+| **AWS** | [AWSNovaSonic](https://docs.videosdk.live/ai_agents/plugins/realtime/aws-nova-sonic) | ✖️ | ✖️ | ✖️ | ✖️ |
+| **Sarvam** | ✖️ | [SarvamSTT](https://docs.videosdk.live/ai_agents/plugins/stt/sarvam-ai) | [SarvamLLM](https://docs.videosdk.live/ai_agents/plugins/llm/sarvam-ai) | [SarvamTTS](https://docs.videosdk.live/ai_agents/plugins/tts/sarvam-ai) | ✖️ |
+| **Deepgram** | ✖️ | [DeepgramSTT](https://docs.videosdk.live/ai_agents/plugins/stt/deepgram) | ✖️ | ✖️ | ✖️ |
+| **ElevenLabs** | ✖️ | ✖️ | ✖️ | [ElevenLabsTTS](https://docs.videosdk.live/ai_agents/plugins/tts/elevenlabs) | ✖️ |
+| **Silero VAD** | ✖️ | ✖️ | ✖️ | ✖️ | [SileroVAD](https://docs.videosdk.live/ai_agents/plugins/vad/silero) |
 
 
-if __name__ == "__main__":
-    def make_context():
-        return {"meetingId": "<meeting_id>", "name": "Sandbox Agent", "playground": True}
+## Contributing
 
-    asyncio.run(entryPoint(make_context()))
-```
+The Agents framework is under active development in a rapidly evolving field. We welcome and appreciate contributions of any kind, be it feedback, bugfixes, features, new plugins and tools, or better documentation. You can file issues under this repo, open a PR, or chat with us in VideoSDK's [Discord community](https://discord.com/invite/f2WsNDN9S5).
 
-You'll need following environment variables for this examples:
-- OPENAI_API_KEY
-- [VIDEOSDK_AUTH_TOKEN](https://docs.videosdk.live/react/guide/video-and-audio-calling-api-sdk/authentication-and-token)
 
+When contributing, consider developing new plugins or enhancing existing ones to expand the framework's capabilities. Your contributions can help integrate more AI models and tools, making the framework even more versatile.
+
+We love our contributors! Here's how you can contribute:
+
+- [Open an issue](https://github.com/videosdk-live/agents/issues) if you believe you've encountered a bug.
+- Follow the [documentation guide](https://docs.videosdk.live/ai_agents/introduction) to get your local dev environment set up.
+- Make a [pull request](https://github.com/videosdk-live/agents/pull) to add new features/make quality-of-life improvements/fix bugs.
+
+<a href="https://github.com/videosdk-live/agents/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=videosdk-live/agents" />
+</a>
 
