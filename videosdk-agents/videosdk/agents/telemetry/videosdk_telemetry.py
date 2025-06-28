@@ -1,0 +1,447 @@
+from __future__ import annotations
+
+import os
+import time
+import requests
+from typing import Any, Dict, Optional, Union
+from contextlib import contextmanager
+
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.trace import Status, StatusCode, Span
+from ..performance_matrix import PerformanceMatrix
+
+
+class VideoSDKTelemetry:
+    """
+    Central telemetry manager for VideoSDK Agents
+    
+    Provides a clean API for distributed tracing with automatic span hierarchy management
+    and integrated performance metrics collection.
+    """
+    
+    def __init__(
+        self, 
+        meeting_id: str, 
+        peer_id: str, 
+        sdk_name: str = "videosdk-agents", 
+        metadata: Optional[Dict[str, Any]] = None
+    ):
+        """
+        Initialize VideoSDK telemetry
+        
+        Args:
+            meeting_id: The meeting/room identifier
+            peer_id: The participant/agent identifier  
+            sdk_name: Name of the SDK component
+            metadata: Additional metadata (userId, email, etc.)
+        """
+        self.meeting_id = meeting_id
+        self.peer_id = peer_id
+        self.sdk_name = sdk_name
+        self.metadata = metadata or {}
+        self.traces_enabled = True
+        self.tracer: Optional[trace.Tracer] = None
+        self.root_span: Optional[Span] = None
+        self.tracer_provider: Optional[TracerProvider] = None
+        self.performance = PerformanceMatrix()
+        self.current_turn_span: Optional[Span] = None
+        
+        try:
+            self._initialize_telemetry()
+        except Exception as e:
+            print(f"Error initializing VideoSDK telemetry: {e}")
+            self.traces_enabled = False
+    
+    def _initialize_telemetry(self) -> None:
+        """Initialize OpenTelemetry configuration - matching traces.py format"""
+        traces_endpoint = os.getenv("OTLP_BASE_URL_TRACES") or os.getenv("OTLP_BASE_URL")
+        api_key = os.getenv("OTLP_API_KEY")
+        
+        if not traces_endpoint:
+            print("No OTLP endpoint configured, disabling telemetry")
+            self.traces_enabled = False
+            return
+            
+        # Ensure endpoint has proper protocol (same as traces.py)
+        if traces_endpoint and not traces_endpoint.startswith("http"):
+            traces_endpoint = f"https://{traces_endpoint}"
+        
+        resource_attributes = {
+            "service.name": os.getenv("OTEL_SERVICE_NAME", "videosdk-agents"),
+            "service.version": os.getenv("OTEL_SERVICE_VERSION", "1.0.0"),
+            "deployment.environment": os.getenv("OTEL_ENVIRONMENT", "development"),
+            "sdk.name": self.sdk_name,
+            "meeting.id": self.meeting_id,
+            "peer.id": self.peer_id,
+        }
+        
+        for key, value in self.metadata.items():
+            if isinstance(value, (str, int, float, bool)):
+                resource_attributes[f"user.{key}"] = str(value)
+        
+        resource = Resource.create(resource_attributes)
+        
+        headers = {}
+        if api_key:
+            headers["api-key"] = api_key  
+        
+        disable_ssl = os.getenv("OTLP_DISABLE_SSL", "false").lower() in ("true", "1", "yes")
+        
+        exporter_options = {
+            "endpoint": traces_endpoint,
+            "headers": headers,
+            "timeout": 30
+        }
+        
+        if disable_ssl:
+            print(" WARNING: SSL verification disabled for testing - DO NOT use in production!")
+            import urllib3
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+            
+            session = requests.Session()
+            session.verify = False
+            exporter_options["session"] = session
+        
+        try:
+            exporter = OTLPSpanExporter(**exporter_options)
+            
+            self.tracer_provider = TracerProvider(resource=resource)
+            
+            processor = BatchSpanProcessor(exporter)
+            self.tracer_provider.add_span_processor(processor)
+            
+            trace.set_tracer_provider(self.tracer_provider)
+            
+            self.tracer = trace.get_tracer(self.peer_id)
+            
+            self._create_root_span()
+            
+            ssl_status = "SSL disabled" if disable_ssl else "SSL enabled"
+            print(f" VideoSDK Telemetry initialized for meeting: {self.meeting_id} ({ssl_status})")
+            
+        except Exception as e:
+            print(f" Failed to configure VideoSDK telemetry: {e}")
+            print("   Telemetry will be disabled for this session.")
+            self.traces_enabled = False
+    
+    def _create_root_span(self) -> None:
+        """Create the root span for this agent session"""
+        if not self.tracer:
+            return
+            
+        span_name = f"meeting_{self.meeting_id}_agent_{self.peer_id}"
+        self.root_span = self.tracer.start_span(span_name)
+        
+        if self.root_span:
+            self.root_span.set_attributes({
+                "meeting.id": self.meeting_id,
+                "peer.id": self.peer_id,
+                "sdk.name": self.sdk_name,
+                "session.start_time": time.time(),
+                **{f"user.{k}": str(v) for k, v in self.metadata.items() 
+                   if isinstance(v, (str, int, float, bool))}
+            })
+    
+    def trace(
+        self, 
+        span_name: str, 
+        attributes: Optional[Dict[str, Any]] = None, 
+        parent_span: Optional[Span] = None
+    ) -> Optional[Span]:
+        """
+        Create a new span with optional parent
+        
+        Args:
+            span_name: Name of the span
+            attributes: Key-value attributes to add
+            parent_span: Parent span (uses current or root if None)
+            
+        Returns:
+            The created span or None if tracing disabled
+        """
+        if not self.traces_enabled or not self.tracer:
+            return None
+            
+        try:
+            if parent_span is None:
+                parent_span = self.get_current_span() or self.root_span
+            
+            if parent_span:
+                ctx = trace.set_span_in_context(parent_span)
+                span = self.tracer.start_span(span_name, context=ctx)
+            else:
+                span = self.tracer.start_span(span_name)
+            
+            if attributes and span:
+                safe_attributes = {}
+                for key, value in attributes.items():
+                    if isinstance(value, (str, int, float, bool)):
+                        safe_attributes[key] = value
+                    elif value is not None:
+                        safe_attributes[key] = str(value)
+                
+                span.set_attributes(safe_attributes)
+            
+            return span
+            
+        except Exception as e:
+            print(f"Error creating span '{span_name}': {e}")
+            return None
+    
+    def trace_auto_complete(
+        self,
+        span_name: str,
+        attributes: Optional[Dict[str, Any]] = None,
+        parent_span: Optional[Span] = None,
+        status: StatusCode = StatusCode.OK,
+        message: Optional[str] = None
+    ) -> None:
+        """
+        Create and immediately complete a span (for simple operations)
+        
+        Args:
+            span_name: Name of the span
+            attributes: Key-value attributes
+            parent_span: Parent span
+            status: Span status (OK or ERROR)
+            message: Optional status message
+        """
+        span = self.trace(span_name, attributes, parent_span)
+        if span:
+            self.complete_span(span, status, message)
+    
+    def complete_span(
+        self, 
+        span: Optional[Span], 
+        status: StatusCode = StatusCode.OK, 
+        message: Optional[str] = None
+    ) -> None:
+        """
+        Complete a span with status and optional message
+        
+        Args:
+            span: The span to complete
+            status: Status code (OK or ERROR)
+            message: Optional message
+        """
+        if not self.traces_enabled or not span:
+            return
+            
+        try:
+            if status == StatusCode.ERROR:
+                span.set_status(Status(StatusCode.ERROR, message or "Operation failed"))
+            else:
+                span.set_status(Status(StatusCode.OK))
+            
+            if message:
+                span.set_attribute("message", message)
+                
+            # End the span
+            span.end()
+            
+        except Exception as e:
+            print(f"Error completing span: {e}")
+    
+    def get_current_span(self) -> Optional[Span]:
+        """Get the currently active span"""
+        if not self.traces_enabled:
+            return None
+            
+        current = trace.get_current_span()
+        if current and current.is_recording():
+            return current
+        return self.root_span
+    
+    def get_current_span_name(self) -> Optional[str]:
+        """Get the name of the current span"""
+        current = self.get_current_span()
+        return getattr(current, 'name', None) if current else None
+    
+    @contextmanager
+    def span_context(
+        self, 
+        span_name: str, 
+        attributes: Optional[Dict[str, Any]] = None,
+        parent_span: Optional[Span] = None
+    ):
+        """
+        Context manager for automatic span lifecycle management
+        
+        Args:
+            span_name: Name of the span
+            attributes: Span attributes
+            parent_span: Parent span
+            
+        Usage:
+            with telemetry.span_context("operation_name", {"key": "value"}):
+                # Your code here
+                pass
+        """
+        span = self.trace(span_name, attributes, parent_span)
+        try:
+            if span:
+                with trace.use_span(span):
+                    yield span
+            else:
+                yield None
+        except Exception as e:
+            if span:
+                self.complete_span(span, StatusCode.ERROR, str(e))
+            raise
+        else:
+            if span:
+                self.complete_span(span, StatusCode.OK)
+    
+    def add_span_attribute(self, span: Optional[Span], key: str, value: Any) -> None:
+        """Add an attribute to a span safely"""
+        if span and self.traces_enabled:
+            try:
+                if isinstance(value, (str, int, float, bool)):
+                    span.set_attribute(key, value)
+                elif value is not None:
+                    span.set_attribute(key, str(value))
+            except Exception as e:
+                print(f"Error setting span attribute {key}: {e}")
+    
+    def record_exception(self, span: Optional[Span], exception: Exception) -> None:
+        """Record an exception in a span"""
+        if span and self.traces_enabled:
+            try:
+                span.record_exception(exception)
+                span.set_status(Status(StatusCode.ERROR, str(exception)))
+            except Exception as e:
+                print(f"Error recording exception: {e}")
+    
+    def flush(self) -> None:
+        """Flush and shutdown telemetry"""
+        if self.traces_enabled and self.tracer_provider:
+            try:
+                if self.root_span:
+                    self.complete_span(self.root_span, StatusCode.OK, "Session completed")
+                    
+                self.tracer_provider.shutdown()
+                print("VideoSDK Telemetry flushed")
+            except Exception as e:
+                print(f"Error flushing telemetry: {e}")
+    
+    def start_turn_performance_tracking(self, turn_data: Optional[Dict[str, Any]] = None) -> Optional[Span]:
+        """
+        Start tracking performance for a conversation turn
+        
+        Args:
+            turn_data: Additional data about the turn
+            
+        Returns:
+            The turn span for this performance tracking session
+        """
+        if not self.traces_enabled:
+            return None
+            
+        self.performance.clear()
+        
+        turn_attributes = {
+            "meeting.id": self.meeting_id,
+            "peer.id": self.peer_id
+        }
+        
+        self.current_turn_span = self.trace("conversation_turn", turn_attributes)
+        return self.current_turn_span
+    
+    def complete_turn_performance_tracking(self, turn_result: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Complete performance tracking for a turn and return clean component-wise metrics
+        
+        Args:
+            turn_result: Additional result data
+            
+        Returns:
+            Clean performance metrics dictionary
+        """
+        measures = self.performance.get_entries()
+        measures_dict = {m["name"]: m["duration"] for m in measures}
+
+        def get_metric(name):
+            return round(measures_dict.get(name, 0), 2)
+
+        clean_metrics = {
+            "latency.01.stt_ms": get_metric("stt_time"),
+            "latency.02.llm_ms": get_metric("llm_total_time") or get_metric("llm_time_to_first_chunk"),
+            "latency.03.tts_ms": get_metric("tts_synthesis_time"),
+            "latency.04.total_ms": get_metric("total_turn_time"),
+        }
+
+        if turn_result and "transcript" in turn_result:
+            clean_metrics["conversation.transcript"] = turn_result["transcript"]
+
+        if self.current_turn_span and self.traces_enabled:
+            self.add_span_attributes(self.current_turn_span, clean_metrics)
+            self.complete_span(self.current_turn_span, StatusCode.OK, "Turn completed successfully")
+            self.current_turn_span = None
+            
+        return clean_metrics
+    
+    def get_performance_summary(self) -> Dict[str, Any]:
+        """Get current performance summary"""
+        measures = self.performance.get_entries()
+        summary = {
+            "total_stages": len(measures),
+            "stages": {}
+        }
+        
+        for measure in measures:
+            stage_name = measure["name"]
+            summary["stages"][stage_name] = {
+                "duration_ms": measure["duration"],
+                "start_time": measure["startTime"],
+                "end_time": measure["endTime"]
+            }
+        
+        return summary
+    
+    def add_span_attributes(self, span: Optional[Span], attributes: Dict[str, Any]) -> None:
+        """Add multiple attributes to a span safely"""
+        if span and self.traces_enabled and attributes:
+            try:
+                safe_attributes = {}
+                for key, value in attributes.items():
+                    if isinstance(value, (str, int, float, bool)):
+                        safe_attributes[key] = value
+                    elif value is not None:
+                        safe_attributes[key] = str(value)
+                
+                if safe_attributes:
+                    span.set_attributes(safe_attributes)
+            except Exception as e:
+                print(f"Error setting span attributes: {e}")
+
+
+_global_telemetry: Optional[VideoSDKTelemetry] = None
+
+
+def initialize_telemetry(
+    meeting_id: str, 
+    peer_id: str, 
+    sdk_name: str = "videosdk-agents",
+    metadata: Optional[Dict[str, Any]] = None
+) -> VideoSDKTelemetry:
+    """Initialize global telemetry instance"""
+    global _global_telemetry
+    _global_telemetry = VideoSDKTelemetry(meeting_id, peer_id, sdk_name, metadata)
+    return _global_telemetry
+
+
+def get_telemetry() -> Optional[VideoSDKTelemetry]:
+    """Get the global telemetry instance"""
+    return _global_telemetry
+
+
+def cleanup_telemetry() -> None:
+    """Cleanup global telemetry"""
+    global _global_telemetry
+    if _global_telemetry:
+        _global_telemetry.flush()
+        _global_telemetry = None 
