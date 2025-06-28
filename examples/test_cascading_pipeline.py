@@ -11,6 +11,7 @@ from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
 from videosdk.plugins.elevenlabs import ElevenLabsTTS
 from videosdk.plugins.sarvamai import SarvamAITTS, SarvamAILLM,SarvamAISTT
 from videosdk.plugins.cartesia import CartesiaTTS, CartesiaSTT
+from videosdk.plugins.smallestai import SmallestAITTS
 import logging
 import pathlib
 import sys
@@ -82,7 +83,7 @@ class MyVoiceAgent(Agent):
                     client_session_timeout_seconds=30
                 ),
                 MCPServerHTTP(
-                    url="https://mcp.zapier.com/api/mcp/s/ODk5ODA5OTctMDM2Ny00ZDEyLTk2NjctNDQ4NDE3MDI5MjA3OjE3MzQ5NjE3LTg0MjQtNDJhZC1iOWJkLTE2OTBmMmRkYzI0ZQ==/mcp",
+                    url="YOUR_ZAPIER_MCP_SERVER_URL",
                     client_session_timeout_seconds=30
                 )
             ]
@@ -144,8 +145,8 @@ async def test_connection(jobctx):
     conversation_flow = MyConversationFlow(agent)
     pipeline = CascadingPipeline(
         # STT Based Providers 
-        # stt= DeepgramSTT(api_key=os.getenv("DEEPGRAM_API_KEY")),
-        stt=CartesiaSTT(api_key=os.getenv("CARTESIA_API_KEY")),
+        stt= DeepgramSTT(api_key=os.getenv("DEEPGRAM_API_KEY")),
+        # stt=CartesiaSTT(api_key=os.getenv("CARTESIA_API_KEY")),
        
         # OpenAI - All Three 
         # stt= OpenAISTT(api_key=os.getenv("OPENAI_API_KEY")),
@@ -164,7 +165,8 @@ async def test_connection(jobctx):
 
         # TTS Based Providers 
         # tts=ElevenLabsTTS(api_key=os.getenv("ELEVENLABS_API_KEY")),
-        tts=CartesiaTTS(api_key=os.getenv("CARTESIA_API_KEY")),
+        # tts=CartesiaTTS(api_key=os.getenv("CARTESIA_API_KEY")),
+        tts=SmallestAITTS(api_key=os.getenv("SMALLESTAI_API_KEY")),
 
         vad=SileroVAD(),
         turn_detector=TurnDetector(threshold=0.8)
