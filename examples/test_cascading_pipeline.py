@@ -2,25 +2,26 @@
 import asyncio
 import os
 from typing import AsyncIterator
-from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig, OpenAILLM, OpenAISTT, OpenAITTS
-from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig, GoogleTTS,GoogleVoiceConfig,GoogleLLM, GoogleSTT
-# from videosdk.plugins.deepgram import DeepgramSTT
+from videosdk.plugins.openai import OpenAILLM, OpenAISTT, OpenAITTS
+from videosdk.plugins.google import GoogleTTS,GoogleVoiceConfig,GoogleLLM, GoogleSTT
+from videosdk.plugins.deepgram import DeepgramSTT
 from videosdk.plugins.silero import SileroVAD
 from videosdk.agents import Agent, AgentSession, CascadingPipeline, function_tool, WorkerJob, MCPServerStdio, MCPServerHTTP, ConversationFlow, ChatRole
-from google.genai.types import AudioTranscriptionConfig
-import aiohttp
-import logging
-from openai.types.beta.realtime.session import InputAudioTranscription, TurnDetection
-import pathlib
-import sys
 from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
-# from videosdk.plugins.elevenlabs import ElevenLabsTTS
-# from videosdk.plugins.sarvamai import SarvamAITTS, SarvamAILLM,SarvamAISTT
+from videosdk.plugins.elevenlabs import ElevenLabsTTS
+from videosdk.plugins.sarvamai import SarvamAITTS, SarvamAILLM,SarvamAISTT
+from videosdk.plugins.cartesia import CartesiaTTS, CartesiaSTT
+from videosdk.plugins.smallestai import SmallestAITTS
+from videosdk.plugins.resemble import ResembleTTS
 from videosdk.plugins.inworldai import InworldAITTS
 from videosdk.plugins.lmnt import LMNTTTS
 from videosdk.plugins.cerebras import CerebrasLLM
 from videosdk.plugins.aws import AWSPollyTTS
 from videosdk.plugins.neuphonic import NeuphonicTTS
+import logging
+import pathlib
+import sys
+import aiohttp
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +89,7 @@ class MyVoiceAgent(Agent):
                     client_session_timeout_seconds=30
                 ),
                 MCPServerHTTP(
-                    url="https://mcp.zapier.com/api/mcp/s/ODk5ODA5OTctMDM2Ny00ZDEyLTk2NjctNDQ4NDE3MDI5MjA3OjE3MzQ5NjE3LTg0MjQtNDJhZC1iOWJkLTE2OTBmMmRkYzI0ZQ==/mcp",
+                    url="YOUR_ZAPIER_MCP_SERVER_URL",
                     client_session_timeout_seconds=30
                 )
             ]
@@ -118,13 +119,6 @@ class MyVoiceAgent(Agent):
             "horoscope": horoscopes.get(sign, "The stars are aligned for you today!"),
         }
     
-    # @function_tool
-    # async def end_call(self) -> None:
-    #     """End the call upon request by the user"""
-    #     await self.session.say("Goodbye!")
-    #     await asyncio.sleep(1)
-    #     await self.session.leave()
-    
 class MyConversationFlow(ConversationFlow):
     def __init__(self, agent, stt=None, llm=None, tts=None):
         super().__init__(agent, stt, llm, tts)
@@ -153,64 +147,41 @@ class MyConversationFlow(ConversationFlow):
 async def test_connection(jobctx):
     print(f"Job context: {jobctx}")
     
-    # model = OpenAIRealtime(
-    #     model="gpt-4o-realtime-preview",
-    #     config=OpenAIRealtimeConfig(
-    #         modalities=["text", "audio"],
-    #         input_audio_transcription=InputAudioTranscription(
-    #             model="whisper-1"
-    #         ),
-    #         turn_detection=TurnDetection(
-    #             type="server_vad",
-    #             threshold=0.5,
-    #             prefix_padding_ms=300,
-    #             silence_duration_ms=200,
-    #         ),
-    #         tool_choice="auto"
-    #     )
-    # )
-    
-    # model = GeminiRealtime(
-    #     model="gemini-2.0-flash-live-001",
-    #     config=GeminiLiveConfig(
-    #         response_modalities=["AUDIO"],
-    #         output_audio_transcription=AudioTranscriptionConfig(
-    #         )
-    #     )
-    # )
-    # pipeline = RealTimePipeline(model=model)
-        #     stt = OpenAISTT(
-        # api_key=os.getenv("OPENAI_API_KEY"),
-        # model="whisper-1",
-        # language="en",
-        # turn_detection={
-        #     "type": "server_vad",
-        #     "threshold": 0.5,
-        #     "prefix_padding_ms": 600,
-        #     "silence_duration_ms": 350,
-        # }
-        # ),
     agent = MyVoiceAgent()
     conversation_flow = MyConversationFlow(agent)
     pipeline = CascadingPipeline(
-        # stt= DeepgramSTT(api_key=os.getenv("DEEPGRAM_API_KEY")),
+        # STT Based Providers 
+        stt= DeepgramSTT(api_key=os.getenv("DEEPGRAM_API_KEY")),
+        # stt=CartesiaSTT(api_key=os.getenv("CARTESIA_API_KEY")),
+       
+        # OpenAI - All Three 
         # stt= OpenAISTT(api_key=os.getenv("OPENAI_API_KEY")),
         # llm=OpenAILLM(api_key=os.getenv("OPENAI_API_KEY")),
         # tts=OpenAITTS(api_key=os.getenv("OPENAI_API_KEY")),
-        # tts=ElevenLabsTTS(api_key=os.getenv("ELEVENLABS_API_KEY")),
-        stt = GoogleSTT( model="latest_long"),
+
+        # Google - All Three 
+        # stt = GoogleSTT( model="latest_long"),
         llm=GoogleLLM(api_key=os.getenv("GOOGLE_API_KEY")),
         # tts=GoogleTTS(api_key=os.getenv("GOOGLE_API_KEY")),
+        
+        # SarvamAI - All Three 
         # stt=SarvamAISTT(api_key=os.getenv("SARVAMAI_API_KEY")),
         # llm=SarvamAILLM(api_key=os.getenv("SARVAMAI_API_KEY")),
         # tts=SarvamAITTS(api_key=os.getenv("SARVAMAI_API_KEY")),
+
+        # LLM Based Providers 
         # llm=CerebrasLLM(api_key=os.getenv("CEREBRAS_API_KEY")),
 
-        # tts=AWSPollyTTS(api_key=os.getenv("AWS_API_KEY")),
+        # TTS Based Providers 
+        # tts=ElevenLabsTTS(api_key=os.getenv("ELEVENLABS_API_KEY")),
+        # tts=CartesiaTTS(api_key=os.getenv("CARTESIA_API_KEY")),
+        # tts=SmallestAITTS(api_key=os.getenv("SMALLESTAI_API_KEY")),
+        # tts=ResembleTTS(api_key=os.getenv("RESEMBLE_API_KEY")),
+        tts=AWSPollyTTS(api_key=os.getenv("AWS_API_KEY")),
         # tts=NeuphonicTTS(api_key=os.getenv("NEUPHONIC_API_KEY")),
         # tts=InworldAITTS(api_key=os.getenv("INWORLD_API_KEY")),
-        tts=LMNTTTS(api_key=os.getenv("LMNT_API_KEY")),
-        
+        # tts=LMNTTTS(api_key=os.getenv("LMNT_API_KEY")),
+
         vad=SileroVAD(),
         turn_detector=TurnDetector(threshold=0.8)
     )
