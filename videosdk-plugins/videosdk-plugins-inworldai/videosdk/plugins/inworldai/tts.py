@@ -45,7 +45,6 @@ class InworldAITTS(TTS):
                 "2. INWORLD_API_KEY environment variable"
             )
         
-        # Create Basic auth header
         self._auth_header = f"Basic {self.api_key}"
         
         self._http_client = httpx.AsyncClient(
@@ -109,7 +108,6 @@ class InworldAITTS(TTS):
                 "Accept": "application/json",
             }
 
-            # Use streaming response
             async with self._http_client.stream(
                 "POST",
                 INWORLD_TTS_STREAMING_ENDPOINT,
@@ -118,33 +116,26 @@ class InworldAITTS(TTS):
             ) as response:
                 response.raise_for_status()
                 
-                # Read the streaming response line by line
                 async for line in response.aiter_lines():
                     if not line:
                         continue
                     
                     try:
-                        # Parse the JSON response
                         data = json.loads(line)
                         
-                        # Check for error in the response
                         if "error" in data:
                             error = data["error"]
                             self.emit("error", f"InworldAI API error: {error.get('message', 'Unknown error')}")
                             return
                         
-                        # Extract audio content from result
                         if "result" in data and "audioContent" in data["result"]:
                             audio_content_b64 = data["result"]["audioContent"]
                             if audio_content_b64:
-                                # Decode base64 audio
                                 audio_bytes = base64.b64decode(audio_content_b64)
                                 
-                                # Process and stream the audio chunk
                                 await self._stream_audio_chunk(audio_bytes)
                     
                     except json.JSONDecodeError:
-                        # Skip lines that aren't valid JSON
                         continue
                     except Exception as e:
                         self.emit("error", f"Error processing stream chunk: {str(e)}")
@@ -168,22 +159,17 @@ class InworldAITTS(TTS):
         if not audio_bytes:
             return
         
-        # Remove WAV header if present (as mentioned in the API docs for PCM)
         audio_data = self._remove_wav_header(audio_bytes)
         
-        # Stream the audio data
         if audio_data:
             self.loop.create_task(self.audio_track.add_new_bytes(audio_data))
-            # Small delay to prevent overwhelming the audio buffer
             await asyncio.sleep(0.001)
 
     def _remove_wav_header(self, audio_bytes: bytes) -> bytes:
         """Remove WAV header if present to get raw PCM data"""
         if audio_bytes.startswith(b'RIFF'):
-            # Find the data chunk
             data_pos = audio_bytes.find(b'data')
             if data_pos != -1:
-                # Skip 'data' (4 bytes) and size (4 bytes) to get to actual audio data
                 return audio_bytes[data_pos + 8:]
         
         return audio_bytes

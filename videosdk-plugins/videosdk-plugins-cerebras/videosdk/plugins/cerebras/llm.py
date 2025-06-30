@@ -100,7 +100,6 @@ class CerebrasLLM(LLM):
             "stream": True,
         }
 
-        # Add optional parameters if set
         if self.temperature is not None:
             completion_params["temperature"] = self.temperature
         if self.max_completion_tokens is not None:
@@ -121,7 +120,6 @@ class CerebrasLLM(LLM):
                     continue
                 try:
                     tool_schema = build_openai_schema(tool)
-                    # Convert OpenAI schema to Cerebras format
                     cerebras_tool = {
                         "type": "function",
                         "function": tool_schema
@@ -147,7 +145,6 @@ class CerebrasLLM(LLM):
                     
                 delta = chunk.choices[0].delta
                 
-                # Handle tool calls if they exist
                 if hasattr(delta, 'tool_calls') and delta.tool_calls:
                     for tool_call_delta in delta.tool_calls:
                         index = tool_call_delta.index
@@ -161,13 +158,11 @@ class CerebrasLLM(LLM):
                                 }
                             }
                         else:
-                            # Accumulate function call data
                             if tool_call_delta.function.name:
                                 current_tool_calls[index]["function"]["name"] += tool_call_delta.function.name
                             if tool_call_delta.function.arguments:
                                 current_tool_calls[index]["function"]["arguments"] += tool_call_delta.function.arguments
                 elif current_tool_calls:
-                    # Tool calls are complete, process them
                     for tool_call in current_tool_calls.values():
                         try:
                             args = json.loads(tool_call["function"]["arguments"])
@@ -186,7 +181,6 @@ class CerebrasLLM(LLM):
                         )
                     current_tool_calls = {}
                 
-                # Handle text content
                 if delta.content is not None:
                     current_content += delta.content
                     yield LLMResponse(
@@ -195,12 +189,10 @@ class CerebrasLLM(LLM):
                     )
 
         except Exception as e:
-            # Handle Cerebras-specific errors
             error_msg = f"Cerebras API error: {str(e)}"
             self.emit("error", Exception(error_msg))
             raise Exception(error_msg) from e
 
     async def aclose(self) -> None:
         """Cleanup resources"""
-        # Cerebras client doesn't require explicit cleanup
         pass

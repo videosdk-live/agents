@@ -45,11 +45,9 @@ class NeuphonicTTS(TTS):
                 "or NEUPHONIC_API_KEY environment variable"
             )
 
-        # Validate speed parameter
         if not 0.7 <= self.speed <= 2.0:
             raise ValueError(f"Speed must be between 0.7 and 2.0, got {self.speed}")
 
-        # Validate sampling rate
         if sampling_rate not in [8000, 16000, 22050]:
             raise ValueError(f"Sampling rate must be one of 8000, 16000, 22050, got {sampling_rate}")
 
@@ -59,7 +57,6 @@ class NeuphonicTTS(TTS):
         **kwargs: Any,
     ) -> None:
         try:
-            # Convert AsyncIterator to string if needed
             if isinstance(text, AsyncIterator):
                 full_text = ""
                 async for chunk in text:
@@ -71,7 +68,6 @@ class NeuphonicTTS(TTS):
                 self.emit("error", "Audio track or event loop not set")
                 return
 
-            # Use WebSocket for streaming
             await self._websocket_synthesis(full_text)
 
         except Exception as e:
@@ -79,7 +75,6 @@ class NeuphonicTTS(TTS):
 
     async def _websocket_synthesis(self, text: str) -> None:
         """WebSocket-based streaming synthesis"""
-        # Build WebSocket URL with query parameters
         params = {
             "api_key": self.api_key,
             "speed": self.speed,
@@ -96,25 +91,18 @@ class NeuphonicTTS(TTS):
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.ws_connect(ws_url) as ws:
-                    # Send text with STOP token
                     await ws.send_str(f"{text} <STOP>")
                     
-                    # Receive and process audio data
                     async for msg in ws:
                         if msg.type == aiohttp.WSMsgType.TEXT:
                             try:
                                 data = json.loads(msg.data)
                                 if "data" in data and "audio" in data["data"]:
-                                    # Decode base64 audio data
                                     audio_data = base64.b64decode(data["data"]["audio"])
                                     
-                                    # Handle different encoding formats
                                     if self.encoding == "pcm_linear":
-                                        # PCM linear is raw audio data
                                         await self._stream_audio_chunks(audio_data)
                                     elif self.encoding == "pcm_mulaw":
-                                        # For mu-law, we need to convert to linear PCM
-                                        # Note: This is a simplified version, real mu-law decoding might be needed
                                         await self._stream_audio_chunks(audio_data)
                                         
                             except json.JSONDecodeError:
@@ -133,26 +121,22 @@ class NeuphonicTTS(TTS):
 
     async def _stream_audio_chunks(self, audio_bytes: bytes) -> None:
         """Stream audio data in chunks for smooth playback"""
-        # Calculate chunk size for 20ms of audio
         chunk_duration_ms = 20
-        bytes_per_sample = 2  # 16-bit audio
+        bytes_per_sample = 2 
         chunk_size = int(self._sample_rate * NEUPHONIC_CHANNELS * bytes_per_sample * chunk_duration_ms / 1000)
         
-        # Ensure chunk size is even for 16-bit audio
         if chunk_size % 2 != 0:
             chunk_size += 1
         
         for i in range(0, len(audio_bytes), chunk_size):
             chunk = audio_bytes[i:i + chunk_size]
             
-            # Pad the last chunk if necessary
             if len(chunk) < chunk_size and len(chunk) > 0:
                 padding_needed = chunk_size - len(chunk)
                 chunk += b'\x00' * padding_needed
             
             if len(chunk) == chunk_size:
                 self.loop.create_task(self.audio_track.add_new_bytes(chunk))
-                # Small delay to prevent buffer overflow
                 await asyncio.sleep(0.001)
 
     async def _sse_synthesis(self, text: str) -> None:
@@ -185,7 +169,7 @@ class NeuphonicTTS(TTS):
                         
                         if line_str.startswith("data: "):
                             try:
-                                json_data = json.loads(line_str[6:])  # Remove "data: " prefix
+                                json_data = json.loads(line_str[6:]) 
                                 if "data" in json_data and "audio" in json_data["data"]:
                                     audio_data = base64.b64decode(json_data["data"]["audio"])
                                     await self._stream_audio_chunks(audio_data)
