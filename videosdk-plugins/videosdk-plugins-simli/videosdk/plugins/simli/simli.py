@@ -251,21 +251,16 @@ class SimliVideoTrack(CustomVideoTrack):
 @dataclass
 class SimliConfig:
     apiKey: str
-    faceId: str
+    faceId: str = "0c2b8b04-5274-41f1-a21c-d5c98322efa9"
     syncAudio: bool = True
     handleSilence: bool = True
     maxSessionLength: int = 1800  # 30 minutes 
     maxIdleTime: int = 300       # 5 minutes
 
 class SimliAvatar:
-    def __init__(self, api_key: str, face_id: str, simli_url: str = DEFAULT_SIMLI_HTTP_URL):
+    def __init__(self, config: SimliConfig, simli_url: str = DEFAULT_SIMLI_HTTP_URL):
         super().__init__()
-        self.config = SimliConfig(
-            apiKey=api_key, 
-            faceId=face_id,
-            maxSessionLength=1800, 
-            maxIdleTime=120         
-        )
+        self.config = config
         self._stream_start_time = None
         self.video_track = SimliVideoTrack()
         self.audio_track = None  

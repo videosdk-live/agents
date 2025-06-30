@@ -11,7 +11,7 @@ from videosdk.agents import Agent, AgentSession, RealTimePipeline, function_tool
 from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig
 from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig
 from openai.types.beta.realtime.session import  TurnDetection
-from videosdk.plugins.simli import SimliAvatar
+from videosdk.plugins.simli import SimliAvatar,SimliConfig
 
 # Suppress all external library logging
 logging.getLogger().setLevel(logging.CRITICAL)
@@ -144,10 +144,13 @@ async def main(context: dict):
     # )
 
 
-    simli_avatar = SimliAvatar(
-        api_key=os.getenv("SIMLI_API_KEY"),
-        face_id=os.getenv("SIMLI_FACE_ID"),
+    simli_config = SimliConfig(
+        apiKey=os.getenv("SIMLI_API_KEY"),
+        faceId=os.getenv("SIMLI_FACE_ID"),
+        maxSessionLength=1800,
+        maxIdleTime=300,
     )
+    simli_avatar = SimliAvatar(config=simli_config)
 
     pipeline = RealTimePipeline(model=model, avatar=simli_avatar)
     agent = MyVoiceAgent()
