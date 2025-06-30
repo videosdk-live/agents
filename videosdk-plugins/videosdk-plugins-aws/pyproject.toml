@@ -23,7 +23,8 @@ classifiers = [
 dependencies = [
     "videosdk-agents>=0.0.18",
     "aws-sdk-bedrock-runtime",
-    "smithy-aws-core"
+    "smithy-aws-core",
+    "boto3"
 ]
 
 [tool.hatch.version]

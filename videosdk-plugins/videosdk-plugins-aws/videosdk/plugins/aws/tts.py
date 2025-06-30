@@ -166,12 +166,11 @@ class AWSPollyTTS(TTS):
                 
                 if self.audio_track and self.loop:
                     self.loop.create_task(self.audio_track.add_new_bytes(chunk))
-                    await asyncio.sleep(0.01)  # Paced sending
+                    await asyncio.sleep(0.01) 
                     
         except Exception as e:
             logger.error(f"Error in audio streaming: {e}")
-            # Fallback to original method if resampling fails
-            chunk_size = int(self.sample_rate * self.num_channels * 2 * 20 / 1000)  # 20ms chunks
+            chunk_size = int(self.sample_rate * self.num_channels * 2 * 20 / 1000)  
             
             for i in range(0, len(audio_data), chunk_size):
                 chunk = audio_data[i:i+chunk_size]
@@ -180,17 +179,14 @@ class AWSPollyTTS(TTS):
                 
                 if self.audio_track and self.loop:
                     self.loop.create_task(self.audio_track.add_new_bytes(chunk))
-                    await asyncio.sleep(0.01)  # Paced sending
+                    await asyncio.sleep(0.01)  
 
     def _build_ssml(self, text: str) -> str:
         """Build SSML for AWS Polly with speed and pitch controls"""
-        # Escape special characters
         text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         
-        # Build SSML with prosody controls
         ssml_parts = ["<speak>"]
         
-        # Add speed control if not default
         if self.speed != 1.0:
             if self.speed <= 0.5:
                 rate = "x-slow"
@@ -203,18 +199,15 @@ class AWSPollyTTS(TTS):
             else:
                 rate = "x-fast"
             
-            # Use percentage for more precise control
             rate_percent = f"{int(self.speed * 100)}%"
             ssml_parts.append(f'<prosody rate="{rate_percent}">')
         
-        # Add pitch control if not default
         if self.pitch != 0.0:
             pitch_value = f"{int(self.pitch * 100)}%"
             ssml_parts.append(f'<prosody pitch="{pitch_value}">')
         
         ssml_parts.append(text)
         
-        # Close prosody tags if opened
         if self.pitch != 0.0:
             ssml_parts.append("</prosody>")
         if self.speed != 1.0:
@@ -230,5 +223,4 @@ class AWSPollyTTS(TTS):
         
     async def aclose(self):
         """Close the TTS connection"""
-        # No specific cleanup needed for Polly with boto3, but implemented for interface compliance.
         pass
