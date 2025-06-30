@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel", "toml", "build"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "videosdk-plugins-humeai"
+version = "0.1.0"
+description = "Hume AI TTS plugin for videosdk-agents"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+keywords = ["tts", "text-to-speech", "hume", "ai", "voice", "videosdk", "agents"]
+authors = [
+  {name = "VideoSDK", email = "support@videosdk.live"},
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: Multimedia :: Sound/Audio :: Speech",
+]
+dependencies = [
+  "videosdk-agents",
+  "httpx>=0.24.0",
+  "dataclasses>=0.6; python_version<'3.7'",
+]
+
+[project.urls]
+homepage = "https://github.com/videosdk-live/videosdk-agents"
+documentation = "https://docs.videosdk.live/"
+repository = "https://github.com/videosdk-live/videosdk-agents"
+issues = "https://github.com/videosdk-live/videosdk-agents/issues"
+
+[tool.setuptools]
+py-modules = ["videosdk"]
+
+[tool.setuptools.packages.find]
+include = ["videosdk*"] 

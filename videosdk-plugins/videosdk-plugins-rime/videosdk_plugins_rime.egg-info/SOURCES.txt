@@ -1,0 +1,10 @@
+README.md
+pyproject.toml
+videosdk/plugins/rime/__init__.py
+videosdk/plugins/rime/tts.py
+videosdk/plugins/rime/version.py
+videosdk_plugins_rime.egg-info/PKG-INFO
+videosdk_plugins_rime.egg-info/SOURCES.txt
+videosdk_plugins_rime.egg-info/dependency_links.txt
+videosdk_plugins_rime.egg-info/requires.txt
+videosdk_plugins_rime.egg-info/top_level.txt
