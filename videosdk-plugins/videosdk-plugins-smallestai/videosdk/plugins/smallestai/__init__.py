@@ -1,6 +1,5 @@
-from .tts import SmallestAITTS, SmallestAIConfig
+from .tts import SmallestAITTS
 
 __all__ = [
     "SmallestAITTS",
-    "SmallestAIConfig",
 ]

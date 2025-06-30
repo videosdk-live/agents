@@ -197,14 +197,6 @@ class CartesiaSTT(BaseSTT):
         
         return responses
 
-    async def finalize(self) -> None:
-        """Send finalize command to flush any remaining audio"""
-        if self._ws and not self._ws.closed:
-            try:
-                await self._ws.send_str("finalize")
-            except Exception as e:
-                print(f"Error sending finalize command: {str(e)}")
-
     async def aclose(self) -> None:
         """Cleanup resources"""
         if self._ws and not self._ws.closed:

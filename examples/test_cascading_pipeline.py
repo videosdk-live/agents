@@ -2,8 +2,8 @@
 import asyncio
 import os
 from typing import AsyncIterator
-from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig, OpenAILLM, OpenAISTT, OpenAITTS
-from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig, GoogleTTS,GoogleVoiceConfig,GoogleLLM, GoogleSTT
+from videosdk.plugins.openai import OpenAILLM, OpenAISTT, OpenAITTS
+from videosdk.plugins.google import GoogleTTS,GoogleVoiceConfig,GoogleLLM, GoogleSTT
 from videosdk.plugins.deepgram import DeepgramSTT
 from videosdk.plugins.silero import SileroVAD
 from videosdk.agents import Agent, AgentSession, CascadingPipeline, function_tool, WorkerJob, MCPServerStdio, MCPServerHTTP, ConversationFlow, ChatRole
@@ -167,8 +167,8 @@ async def test_connection(jobctx):
         # TTS Based Providers 
         # tts=ElevenLabsTTS(api_key=os.getenv("ELEVENLABS_API_KEY")),
         # tts=CartesiaTTS(api_key=os.getenv("CARTESIA_API_KEY")),
-        # tts=SmallestAITTS(api_key=os.getenv("SMALLESTAI_API_KEY")),
-        tts=ResembleTTS(api_key=os.getenv("RESEMBLE_API_KEY")),
+        tts=SmallestAITTS(api_key=os.getenv("SMALLESTAI_API_KEY")),
+        # tts=ResembleTTS(api_key=os.getenv("RESEMBLE_API_KEY")),
 
         vad=SileroVAD(),
         turn_detector=TurnDetector(threshold=0.8)

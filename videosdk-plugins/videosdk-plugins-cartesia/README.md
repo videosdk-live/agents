@@ -1,6 +1,6 @@
 Cartesia Plugin
 
-Agent Framework plugin for tts services from Cartesia.
+Agent Framework plugin for stt and tts services from Cartesia.
 
 ## Installation
 

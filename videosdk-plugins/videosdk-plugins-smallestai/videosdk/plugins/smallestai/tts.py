@@ -5,7 +5,6 @@ import os
 import asyncio
 import aiofiles
 import tempfile
-from dataclasses import dataclass
 from videosdk.agents import TTS
 
 SMALLESTAI_SAMPLE_RATE = 24000
@@ -13,16 +12,6 @@ SMALLESTAI_CHANNELS = 1
 DEFAULT_MODEL = "lightning"
 DEFAULT_VOICE_ID = "emily"
 
-
-@dataclass
-class SmallestAIConfig:
-    model: str = DEFAULT_MODEL
-    voice_id: str = DEFAULT_VOICE_ID
-    speed: float = 1.0
-    consistency: float = 0.5
-    similarity: float = 0.0
-    enhancement: bool = False
-    add_wav_header: bool = False
 
 class SmallestAITTS(TTS):
     def __init__(
@@ -36,27 +25,16 @@ class SmallestAITTS(TTS):
         enhancement: bool = False,
         add_wav_header: bool = False,
         api_key: str | None = None,
-        config: SmallestAIConfig | None = None,
     ) -> None:
         super().__init__(sample_rate=SMALLESTAI_SAMPLE_RATE, num_channels=SMALLESTAI_CHANNELS)
 
-        
-        if config:
-            self.model = config.model
-            self.voice_id = config.voice_id
-            self.speed = config.speed
-            self.consistency = config.consistency
-            self.similarity = config.similarity
-            self.enhancement = config.enhancement
-            self.add_wav_header = config.add_wav_header
-        else:
-            self.model = model
-            self.voice_id = voice_id
-            self.speed = speed
-            self.consistency = consistency
-            self.similarity = similarity
-            self.enhancement = enhancement
-            self.add_wav_header = add_wav_header
+        self.model = model
+        self.voice_id = voice_id
+        self.speed = speed
+        self.consistency = consistency
+        self.similarity = similarity
+        self.enhancement = enhancement
+        self.add_wav_header = add_wav_header
 
         self.audio_track = None
         self.loop = None
