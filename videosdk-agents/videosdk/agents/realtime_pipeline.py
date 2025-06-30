@@ -27,19 +27,23 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
                    - response_modalities: List of enabled modalities
                    - silence_threshold_ms: Silence threshold in milliseconds
         """
-        super().__init__()
         self.model = model
-        self.loop = asyncio.get_event_loop()
         self.room = None
-        self.model.loop = self.loop
         self.model.audio_track = None
         self.agent = None
         self.vision = False
+        super().__init__()
     
     def set_agent(self, agent: Agent) -> None:
         self.agent = agent
         if hasattr(self.model, 'set_agent'):
             self.model.set_agent(agent)
+
+    def _configure_components(self) -> None:
+        """Configure pipeline components with the loop"""
+        if self.loop and self.audio_track:
+            self.model.loop = self.loop
+            self.model.audio_track = self.audio_track
 
     async def start(self, **kwargs: Any) -> None:
         """
@@ -51,42 +55,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
             name: The name of the agent in the meeting
             **kwargs: Additional arguments for pipeline configuration
         """
-        try:
-            videosdk_auth = kwargs.get('videosdk_auth')
-            meeting_id = kwargs.get('meeting_id')
-            name = kwargs.get('name')
-            join_meeting = kwargs.get('join_meeting',True)
-            requested_vision = kwargs.get('vision', self.vision)
-            model_name = type(self.model).__name__
-            if requested_vision and model_name != 'GeminiRealtime':
-                print(f"Warning: Vision mode requested but {model_name} doesn't support video input. Only GeminiRealtime supports vision. Disabling vision.")
-                self.vision = False
-            else:
-                self.vision = requested_vision
-
-            if join_meeting:
-                self.room = VideoSDKHandler(
-                    meeting_id=meeting_id,
-                    auth_token=videosdk_auth,
-                    name=name,
-                    pipeline=self,
-                    loop=self.loop,
-                    vision=self.vision
-                )
-                
-                self.room.init_meeting()
-                self.model.loop = self.loop
-                self.model.audio_track = self.room.audio_track
-                
-                await self.model.connect()
-                await self.room.join()
-            else:   
-                await self.model.connect()    
-            
-        except Exception as e:
-            print(f"Error starting realtime connection: {e}")
-            await self.cleanup()
-            raise
+        await self.model.connect()
 
     async def send_message(self, message: str) -> None:
         """

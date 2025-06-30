@@ -1,52 +1,52 @@
-from videosdk import MeetingConfig, VideoSDK, Participant, Stream
+from videosdk import MeetingConfig, VideoSDK, Participant, Stream, PubSubPublishConfig, PubSubSubscribeConfig
 from .meeting_event_handler import MeetingHandler
 from .participant_event_handler import ParticipantHandler
 from .audio_stream import CustomAudioStreamTrack
 from videosdk.agents.pipeline import Pipeline
 from dotenv import load_dotenv
 import numpy as np
-import librosa
 import asyncio
 import os
 from asyncio import AbstractEventLoop
+import requests
+
+START_RECORDING_URL = "https://api.videosdk.live/v2/recordings/participant/start"
+STOP_RECORDING_URL = "https://api.videosdk.live/v2/recordings/participant/stop"
+MERGE_RECORDINGS_URL = "https://api.videosdk.live/v2/recordings/participant/merge"
 
 load_dotenv()
 
 class VideoSDKHandler:
-    def __init__(
-        self,
-        *,
-        meeting_id: str,
-        auth_token: str | None = None,
-        name: str,
-        pipeline: Pipeline,
-        loop: AbstractEventLoop,
-        vision: bool = False,
-    ):
+    def __init__(self, *, meeting_id: str, auth_token: str | None = None, name: str, pipeline: Pipeline, loop: AbstractEventLoop, vision: bool = False):
         self.loop = loop
         self.audio_track = CustomAudioStreamTrack(
             loop=self.loop
         )
-        auth_token = auth_token or os.getenv("VIDEOSDK_AUTH_TOKEN")
-        if not auth_token:
+        self.meeting_id = meeting_id
+        self.name = name
+        self.auth_token = auth_token or os.getenv("VIDEOSDK_AUTH_TOKEN")
+        if not self.auth_token:
             raise ValueError("VIDEOSDK_AUTH_TOKEN is not set")
         self.meeting_config = MeetingConfig(
-            name=name,
-            meeting_id=meeting_id,
-            token=auth_token,
+            name=self.name,
+            meeting_id=self.meeting_id,
+            token=self.auth_token,
             mic_enabled=True,
-            webcam_enabled=False,
+            webcam_enabled=vision,
             custom_microphone_audio_track=self.audio_track,
         )
         self.pipeline = pipeline
         self.audio_listener_tasks = {}
+        self.meeting = None
+        self.attributes = {}
+        self.participants_data = {}
         self.video_listener_tasks = {}
         self.vision = vision
-        self.meeting = None
-
-        self.participants_data = {}
+        self._participant_joined_events: dict[str, asyncio.Event] = {}
+        self._first_participant_event = asyncio.Event()
         
     def init_meeting(self):
+        # self.meeting = VideoSDK.init_meeting(**self.meeting_config, sdk_version="0.0.12", sdk_name="agents")
         self.meeting = VideoSDK.init_meeting(**self.meeting_config)
         self.meeting.add_event_listener(
             MeetingHandler(
@@ -69,6 +69,7 @@ class VideoSDKHandler:
 
     def on_meeting_joined(self, data):
         print(f"Agent joined the meeting")
+        # self.attributes = self.meeting.get_attributes()
 
     def on_meeting_left(self, data):
         print(f"Meeting Left", data)
@@ -79,6 +80,12 @@ class VideoSDKHandler:
             "name": peer_name,
         }
         print("Participant joined:", peer_name)
+        
+        if participant.id in self._participant_joined_events:
+            self._participant_joined_events[participant.id].set()
+        
+        if not self._first_participant_event.is_set():
+            self._first_participant_event.set()
 
         def on_stream_enabled(stream: Stream):
             if stream.kind == "audio":
@@ -95,6 +102,12 @@ class VideoSDKHandler:
                 audio_task = self.audio_listener_tasks[stream.id]
                 if audio_task is not None:
                     audio_task.cancel()
+                    del self.audio_listener_tasks[stream.id]
+            if stream.kind == "video":
+                video_task = self.video_listener_tasks[stream.id]
+                if video_task is not None:
+                    video_task.cancel()
+                    del self.video_listener_tasks[stream.id]
 
         participant.add_event_listener(
             ParticipantHandler(
@@ -137,7 +150,81 @@ class VideoSDKHandler:
                
             except Exception as e:
                 print("Audio processing error:", e)
-                break           
+                break
+
+    async def wait_for_participant(self, participant_id: str | None = None) -> str:
+        """
+        Wait for a specific participant to join, or wait for the first participant if none specified.
+        
+        Args:
+            participant_id: Optional participant ID to wait for. If None, waits for first participant.
+            
+        Returns:
+            str: The participant ID that joined
+        """
+        if participant_id:
+            if participant_id in self.participants_data:
+                return participant_id
+                
+            if participant_id not in self._participant_joined_events:
+                self._participant_joined_events[participant_id] = asyncio.Event()
+            
+            await self._participant_joined_events[participant_id].wait()
+            return participant_id
+        else:
+            if self.participants_data:
+                return next(iter(self.participants_data.keys()))
+            
+            await self._first_participant_event.wait()
+            return next(iter(self.participants_data.keys()))    
+    
+    async def subscribe_to_pubsub(self, pubsub_config: PubSubSubscribeConfig):
+        old_messages = await self.meeting.pubsub.subscribe(pubsub_config)  
+        return old_messages
+    
+    async def publish_to_pubsub(self, pubsub_config: PubSubPublishConfig):
+        await self.meeting.pubsub.publish(pubsub_config)
+    
+    async def start_participants_recording(self) :
+        await self.start_participant_recording(self.meeting.local_participant.id)
+        for participant in self.meeting.participants.values():
+            await self.start_participant_recording(participant.id)
+
+    async def stop_participants_recording(self):
+        await self.stop_participant_recording(self.meeting.local_participant.id)
+        for participant_id in self.participants_data.keys():
+            print("stopping participant", participant_id)
+            await self.stop_participant_recording(participant_id)
+             
+    async def start_participant_recording(self, id: str):
+        headers = {'Authorization' : self.auth_token,'Content-Type' : 'application/json'}
+        response = requests.request("POST", START_RECORDING_URL,json = {
+		"roomId" : self.meeting_id,
+		"participantId" : id
+	    },headers = headers)
+        print("response for id", id, response.text)
+    
+    async def stop_participant_recording(self, id: str):
+        headers = {'Authorization' : self.auth_token,'Content-Type' : 'application/json'}
+        response = requests.request("POST", STOP_RECORDING_URL,json = {
+		"roomId" : self.meeting_id,
+		"participantId" : id
+	    },headers = headers)
+        print("response for id", id, response.text)
+        
+    async def merge_participant_recordings(self):
+        headers = {'Authorization' : self.auth_token,'Content-Type' : 'application/json'}
+        response = requests.request("POST", MERGE_RECORDINGS_URL,json = {
+		"sessionId" : self.meeting.session_id,
+		"channel1" : [{"participantId":self.meeting.local_participant.id}],
+		"channel2" : [{"participantId":participant_id} for participant_id in self.participants_data.keys()],
+	},headers = headers)
+        print(response.text)      
+        
+    
+    async def stop_and_merge_recordings(self):
+        await self.stop_participants_recording()
+        await self.merge_participant_recordings()           
               
     async def cleanup(self):
         """Add cleanup method"""

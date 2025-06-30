@@ -16,7 +16,6 @@ from .utils import (
 )
 from .room.audio_stream import CustomAudioStreamTrack
 from .event_emitter import EventEmitter
-from .job import WorkerJob
 from .llm.llm import LLM, LLMResponse
 from .llm.chat_context import (
     ChatContext,
@@ -35,6 +34,8 @@ from .event_bus import global_event_emitter, EventTypes
 from .a2a.card import AgentCard
 from .a2a.protocol import A2AMessage
 from .images import EncodeOptions, ResizeOptions, encode
+from .job import JobContext, RoomOptions
+from .worker import Worker, WorkerOptions
 
 __all__ = [
     "Agent",
@@ -51,7 +52,6 @@ __all__ = [
     "build_openai_schema",
     "build_gemini_schema",
     "ToolChoice",
-    "WorkerJob",
     "LLM",
     "ChatContext",
     "ChatRole",
@@ -81,4 +81,8 @@ __all__ = [
     "EncodeOptions",
     "ResizeOptions",
     "encode",
+    "JobContext",
+    "RoomOptions",
+    "Worker",
+    "WorkerOptions",
 ]
