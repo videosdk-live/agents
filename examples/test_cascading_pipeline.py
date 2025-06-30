@@ -16,7 +16,7 @@ import sys
 from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
 # from videosdk.plugins.elevenlabs import ElevenLabsTTS
 # from videosdk.plugins.sarvamai import SarvamAITTS, SarvamAILLM,SarvamAISTT
-from videosdk.plugins.simli import SimliAvatar
+from videosdk.plugins.simli import SimliAvatar, SimliConfig
 
 logger = logging.getLogger(__name__)
 
@@ -189,10 +189,13 @@ async def test_connection(jobctx):
     agent = MyVoiceAgent()
     conversation_flow = MyConversationFlow(agent)
 
-    simli_avatar = SimliAvatar(
-        api_key=os.getenv("SIMLI_API_KEY"),
-        face_id=os.getenv("SIMLI_FACE_ID")
+    simli_config = SimliConfig(
+        apiKey=os.getenv("SIMLI_API_KEY"),
+        faceId=os.getenv("SIMLI_FACE_ID"),
+        maxSessionLength=1800,
+        maxIdleTime=300,
     )
+    simli_avatar = SimliAvatar(config=simli_config)
 
     pipeline = CascadingPipeline(
         # stt= DeepgramSTT(api_key=os.getenv("DEEPGRAM_API_KEY")),
