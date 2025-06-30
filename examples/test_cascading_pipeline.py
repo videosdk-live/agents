@@ -18,6 +18,8 @@ from videosdk.plugins.lmnt import LMNTTTS
 from videosdk.plugins.cerebras import CerebrasLLM
 from videosdk.plugins.aws import AWSPollyTTS
 from videosdk.plugins.neuphonic import NeuphonicTTS
+from videosdk.plugins.anthropic import AnthropicLLM
+
 import logging
 import pathlib
 import sys
@@ -161,7 +163,7 @@ async def test_connection(jobctx):
 
         # Google - All Three 
         # stt = GoogleSTT( model="latest_long"),
-        llm=GoogleLLM(api_key=os.getenv("GOOGLE_API_KEY")),
+        # llm=GoogleLLM(api_key=os.getenv("GOOGLE_API_KEY")),
         # tts=GoogleTTS(api_key=os.getenv("GOOGLE_API_KEY")),
         
         # SarvamAI - All Three 
@@ -171,6 +173,7 @@ async def test_connection(jobctx):
 
         # LLM Based Providers 
         # llm=CerebrasLLM(api_key=os.getenv("CEREBRAS_API_KEY")),
+        llm=AnthropicLLM(api_key=os.getenv("ANTHROPIC_API_KEY")),
 
         # TTS Based Providers 
         # tts=ElevenLabsTTS(api_key=os.getenv("ELEVENLABS_API_KEY")),
