@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from typing import Any, Literal
 import asyncio
+import av
 
 from .pipeline import Pipeline
 from .event_emitter import EventEmitter
 from .realtime_base_model import RealtimeBaseModel
 from .room.room import VideoSDKHandler
 from .agent import Agent
+from .job import get_current_job_context
+
 class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtime_end","user_audio_input_data"]]):
     """
     RealTime pipeline implementation that processes data in real-time.
@@ -17,6 +20,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
     def __init__(
         self,
         model: RealtimeBaseModel,
+        avatar: Any | None = None,
     ) -> None:
         """
         Initialize the realtime pipeline.
@@ -30,6 +34,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         self.model = model
         self.model.audio_track = None
         self.agent = None
+        self.avatar = avatar
         super().__init__()
     
     def set_agent(self, agent: Agent) -> None:
@@ -39,9 +44,13 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
 
     def _configure_components(self) -> None:
         """Configure pipeline components with the loop"""
-        if self.loop and self.audio_track:
+        if self.loop:
             self.model.loop = self.loop
-            self.model.audio_track = self.audio_track
+            job_context = get_current_job_context()
+            if self.avatar and job_context and job_context.room:
+                self.model.audio_track = getattr(job_context.room, 'agent_audio_track', None) or job_context.room.audio_track
+            elif self.audio_track:
+                self.model.audio_track = self.audio_track
 
     async def start(self, **kwargs: Any) -> None:
         """
