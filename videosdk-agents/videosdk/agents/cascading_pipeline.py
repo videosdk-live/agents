@@ -11,8 +11,9 @@ from .tts.tts import TTS
 from .vad import VAD
 from .conversation_flow import ConversationFlow
 from .agent import Agent
-from .room.room import VideoSDKHandler
+from .room.room import VideoSDKHandler, TeeCustomAudioStreamTrack
 from .eou import EOU
+from .job import get_current_job_context
 
 class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
     """
@@ -26,7 +27,8 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         llm: LLM | None = None,
         tts: TTS | None = None,
         vad: VAD | None = None,
-        turn_detector: EOU | None = None
+        turn_detector: EOU | None = None,
+        avatar: Any | None = None,
     ) -> None:
         """
         Initialize the cascading pipeline.
@@ -43,6 +45,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         self.turn_detector = turn_detector
         self.agent = None
         self.conversation_flow = None
+        self.avatar = avatar
         
         super().__init__()
         
@@ -52,7 +55,11 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
     def _configure_components(self) -> None:
         if self.loop and self.tts:
             self.tts.loop = self.loop
-            self.tts.audio_track = self.audio_track
+            job_context = get_current_job_context()
+            if self.avatar and job_context and job_context.room:
+                self.tts.audio_track = getattr(job_context.room, 'agent_audio_track', None) or job_context.room.audio_track
+            elif hasattr(self, 'audio_track'):
+                self.tts.audio_track = self.audio_track
     
     def set_conversation_flow(self, conversation_flow: ConversationFlow) -> None:
         self.conversation_flow = conversation_flow

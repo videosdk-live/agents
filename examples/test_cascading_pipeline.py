@@ -14,6 +14,7 @@ from videosdk.plugins.sarvamai import SarvamAITTS, SarvamAILLM,SarvamAISTT
 from videosdk.plugins.cartesia import CartesiaTTS, CartesiaSTT
 from videosdk.plugins.smallestai import SmallestAITTS
 from videosdk.plugins.resemble import ResembleTTS
+from videosdk.plugins.simli import SimliAvatar, SimliConfig
 import logging
 import pathlib
 import sys
@@ -158,9 +159,16 @@ async def entrypoint(ctx: JobContext):
     
     agent = MyVoiceAgent(ctx)
     conversation_flow = MyConversationFlow(agent)
+
+    # Simli avatar
+    simli_config = SimliConfig(
+        apiKey=os.getenv("SIMLI_API_KEY")
+    )
+    avatar = SimliAvatar(simli_config)
+
     pipeline = CascadingPipeline(
         # STT Based Providers 
-        stt= DeepgramSTT(api_key=os.getenv("DEEPGRAM_API_KEY")),
+        # stt= DeepgramSTT(api_key=os.getenv("DEEPGRAM_API_KEY")),
         # stt=CartesiaSTT(api_key=os.getenv("CARTESIA_API_KEY")),
        
         # OpenAI - All Three 
@@ -169,9 +177,9 @@ async def entrypoint(ctx: JobContext):
         # tts=OpenAITTS(api_key=os.getenv("OPENAI_API_KEY")),
 
         # Google - All Three 
-        # stt = GoogleSTT( model="latest_long"),
+        stt = GoogleSTT( model="latest_long"),
         llm=GoogleLLM(api_key=os.getenv("GOOGLE_API_KEY")),
-        # tts=GoogleTTS(api_key=os.getenv("GOOGLE_API_KEY")),
+        tts=GoogleTTS(api_key=os.getenv("GOOGLE_API_KEY")),
         
         # SarvamAI - All Three 
         # stt=SarvamAISTT(api_key=os.getenv("SARVAMAI_API_KEY")),
@@ -181,11 +189,12 @@ async def entrypoint(ctx: JobContext):
         # TTS Based Providers 
         # tts=ElevenLabsTTS(api_key=os.getenv("ELEVENLABS_API_KEY")),
         # tts=CartesiaTTS(api_key=os.getenv("CARTESIA_API_KEY")),
-        tts=SmallestAITTS(api_key=os.getenv("SMALLESTAI_API_KEY")),
+        # tts=SmallestAITTS(api_key=os.getenv("SMALLESTAI_API_KEY")),
         # tts=ResembleTTS(api_key=os.getenv("RESEMBLE_API_KEY")),
 
         vad=SileroVAD(),
-        turn_detector=TurnDetector(threshold=0.8)
+        turn_detector=TurnDetector(threshold=0.8),
+        avatar=avatar,
     )
     session = AgentSession(
         agent=agent, 

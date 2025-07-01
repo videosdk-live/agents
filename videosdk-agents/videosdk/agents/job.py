@@ -15,6 +15,7 @@ class RoomOptions:
     name: Optional[str] = "Agent"
     playground: bool = True
     vision: bool = False
+    avatar: Optional[Any] = None
 
 class WorkerJob:
     def __init__(self, entrypoint, jobctx=None):
@@ -44,17 +45,7 @@ class JobContext:
         self._loop = loop or asyncio.get_event_loop()
         self._pipeline: Optional[Pipeline] = None
         self.videosdk_auth = self.room_options.auth_token or os.getenv("VIDEOSDK_AUTH_TOKEN")
-        if self.room_options:
-            self.room = VideoSDKHandler(
-                meeting_id=self.room_options.room_id,
-                auth_token=self.videosdk_auth,
-                name=self.room_options.name,
-                pipeline=None,
-                loop=self._loop,
-                vision=self.room_options.vision
-            )
-        else:
-            self.room = None
+        self.room: Optional[VideoSDKHandler] = None
         self._shutdown_callbacks: list[Callable[[], Coroutine[None, None, None]]] = []
     
     def _set_pipeline_internal(self, pipeline: Any) -> None:
@@ -67,6 +58,35 @@ class JobContext:
 
     async def connect(self) -> None:
         """Connect to the room"""
+        if self.room_options:
+            custom_camera_video_track = None
+            custom_microphone_audio_track = None
+            sinks = []
+            
+            avatar = self.room_options.avatar
+            if not avatar and self._pipeline and hasattr(self._pipeline, 'avatar'):
+                avatar = self._pipeline.avatar
+
+            if avatar:
+                await avatar.connect()
+                custom_camera_video_track = avatar.video_track
+                custom_microphone_audio_track = avatar.audio_track
+                sinks.append(avatar)
+
+            self.room = VideoSDKHandler(
+                meeting_id=self.room_options.room_id,
+                auth_token=self.videosdk_auth,
+                name=self.room_options.name,
+                pipeline=self._pipeline,
+                loop=self._loop,
+                vision=self.room_options.vision,
+                custom_camera_video_track=custom_camera_video_track,
+                custom_microphone_audio_track=custom_microphone_audio_track,
+                audio_sinks=sinks,
+            )
+            if self._pipeline and hasattr(self._pipeline, '_set_loop_and_audio_track'):
+                self._pipeline._set_loop_and_audio_track(self._loop, self.room.audio_track)
+
         if self.room:
             self.room.init_meeting()
             await self.room.join()

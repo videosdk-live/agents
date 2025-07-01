@@ -1,24 +1,41 @@
 from videosdk import MeetingConfig, VideoSDK, Participant, Stream, PubSubPublishConfig, PubSubSubscribeConfig
 from .meeting_event_handler import MeetingHandler
 from .participant_event_handler import ParticipantHandler
-from .audio_stream import CustomAudioStreamTrack
+from .audio_stream import CustomAudioStreamTrack, TeeCustomAudioStreamTrack
 from videosdk.agents.pipeline import Pipeline
 from dotenv import load_dotenv
 import numpy as np
 import asyncio
 import os
 from asyncio import AbstractEventLoop
+from .audio_stream import TeeCustomAudioStreamTrack
+
 
 load_dotenv()
 
 class VideoSDKHandler:
-    def __init__(self, *, meeting_id: str, auth_token: str | None = None, name: str, pipeline: Pipeline, loop: AbstractEventLoop, vision: bool = False):
+    def __init__(self, *, meeting_id: str, auth_token: str | None = None, name: str, pipeline: Pipeline, loop: AbstractEventLoop, vision: bool = False,custom_camera_video_track=None, 
+        custom_microphone_audio_track=None,audio_sinks=None):
         self.loop = loop
-        self.audio_track = CustomAudioStreamTrack(
-            loop=self.loop
-        )
         self.meeting_id = meeting_id
         self.name = name
+
+        if custom_microphone_audio_track:
+            self.audio_track = custom_microphone_audio_track
+            if audio_sinks:
+                self.agent_audio_track = TeeCustomAudioStreamTrack(
+                    loop=self.loop,
+                    sinks=audio_sinks
+                )
+            else:
+                self.agent_audio_track = None
+        else:
+            self.audio_track = TeeCustomAudioStreamTrack(
+                loop=self.loop,
+                sinks=audio_sinks
+            )
+            self.agent_audio_track = None
+
         self.auth_token = auth_token or os.getenv("VIDEOSDK_AUTH_TOKEN")
         if not self.auth_token:
             raise ValueError("VIDEOSDK_AUTH_TOKEN is not set")
@@ -27,8 +44,9 @@ class VideoSDKHandler:
             meeting_id=self.meeting_id,
             token=self.auth_token,
             mic_enabled=True,
-            webcam_enabled=vision,
+            webcam_enabled=custom_camera_video_track is not None,
             custom_microphone_audio_track=self.audio_track,
+            custom_camera_video_track=custom_camera_video_track
         )
         self.pipeline = pipeline
         self.audio_listener_tasks = {}
