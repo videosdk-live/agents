@@ -14,9 +14,9 @@ from .utils import (
     ToolChoice,
     build_nova_sonic_schema,
 )
-from .room.audio_stream import CustomAudioStreamTrack
+from .room.audio_stream import CustomAudioStreamTrack, TeeCustomAudioStreamTrack
 from .event_emitter import EventEmitter
-from .job import WorkerJob
+from .job import WorkerJob, JobContext, RoomOptions 
 from .llm.llm import LLM, LLMResponse
 from .llm.chat_context import (
     ChatContext,
@@ -48,6 +48,7 @@ __all__ = [
     "FunctionTool",
     "FunctionToolInfo",
     "CustomAudioStreamTrack",
+    "TeeCustomAudioStreamTrack",
     "build_openai_schema",
     "build_gemini_schema",
     "ToolChoice",
@@ -81,4 +82,6 @@ __all__ = [
     "EncodeOptions",
     "ResizeOptions",
     "encode",
+    "JobContext",
+    "RoomOptions",
 ]

@@ -1,24 +1,29 @@
 # This test script is used to test cascading pipeline.
 import asyncio
 import os
-from typing import AsyncIterator
-from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig, OpenAILLM, OpenAISTT, OpenAITTS
-from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig, GoogleTTS,GoogleVoiceConfig,GoogleLLM, GoogleSTT
-# from videosdk.plugins.deepgram import DeepgramSTT
+from typing import AsyncIterator, Optional
+from videosdk import PubSubPublishConfig, PubSubSubscribeConfig
+from videosdk.agents import Agent, AgentSession, CascadingPipeline, function_tool, WorkerJob, MCPServerStdio, MCPServerHTTP, ConversationFlow, ChatRole, JobContext, RoomOptions
+from videosdk.plugins.openai import OpenAILLM, OpenAISTT, OpenAITTS
+from videosdk.plugins.google import GoogleTTS,GoogleVoiceConfig,GoogleLLM, GoogleSTT
+from videosdk.plugins.deepgram import DeepgramSTT
 from videosdk.plugins.silero import SileroVAD
-from videosdk.agents import Agent, AgentSession, CascadingPipeline, function_tool, WorkerJob, MCPServerStdio, MCPServerHTTP, ConversationFlow, ChatRole
-from google.genai.types import AudioTranscriptionConfig
-import aiohttp
+from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
+from videosdk.plugins.elevenlabs import ElevenLabsTTS
+from videosdk.plugins.sarvamai import SarvamAITTS, SarvamAILLM,SarvamAISTT
+# from videosdk.plugins.cartesia import CartesiaTTS, CartesiaSTT
+# from videosdk.plugins.smallestai import SmallestAITTS
+# from videosdk.plugins.resemble import ResembleTTS
+from videosdk.plugins.simli import SimliAvatar, SimliConfig
 import logging
-from openai.types.beta.realtime.session import InputAudioTranscription, TurnDetection
 import pathlib
 import sys
-from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
-# from videosdk.plugins.elevenlabs import ElevenLabsTTS
-# from videosdk.plugins.sarvamai import SarvamAITTS, SarvamAILLM,SarvamAISTT
-from videosdk.plugins.simli import SimliAvatar, SimliConfig
+import aiohttp
 
-logger = logging.getLogger(__name__)
+from dotenv import load_dotenv
+load_dotenv(override=True)
+
+logging.getLogger().setLevel(logging.CRITICAL)
 
 pre_download_model()
 
@@ -57,7 +62,7 @@ async def get_weather(
 
 
 class MyVoiceAgent(Agent):
-    def __init__(self):
+    def __init__(self, ctx: Optional[JobContext] = None):
         current_dir = pathlib.Path(__file__).parent
         mcp_server_path = current_dir / "mcp_server_examples" / "mcp_server_example.py"
         mcp_current_time_path = current_dir / "mcp_server_examples" / "mcp_current_time_example.py"
@@ -83,13 +88,14 @@ class MyVoiceAgent(Agent):
                     args=[str(mcp_current_time_path)],
                     client_session_timeout_seconds=30
                 ),
-                MCPServerHTTP(
-                    url="https://mcp.zapier.com/api/mcp/s/ODk5ODA5OTctMDM2Ny00ZDEyLTk2NjctNDQ4NDE3MDI5MjA3OjE3MzQ5NjE3LTg0MjQtNDJhZC1iOWJkLTE2OTBmMmRkYzI0ZQ==/mcp",
-                    client_session_timeout_seconds=30
-                )
+                # MCPServerHTTP(
+                #     url="YOUR_ZAPIER_MCP_SERVER_URL",
+                #     client_session_timeout_seconds=30
+                # )
             ]
         )
-
+        self.ctx = ctx
+        
     async def on_enter(self) -> None:
         await self.session.say("Hello, how can I help you today?")
     
@@ -113,13 +119,16 @@ class MyVoiceAgent(Agent):
             "sign": sign,
             "horoscope": horoscopes.get(sign, "The stars are aligned for you today!"),
         }
-    
-    # @function_tool
-    # async def end_call(self) -> None:
-    #     """End the call upon request by the user"""
-    #     await self.session.say("Goodbye!")
-    #     await asyncio.sleep(1)
-    #     await self.session.leave()
+        
+    @function_tool
+    async def send_pubsub_message(self, message: str):
+        """Send a message to the pubsub topic CHAT_MESSAGE"""
+        publish_config = PubSubPublishConfig(
+            topic="CHAT_MESSAGE",
+            message=message
+        )
+        await self.ctx.room.publish_to_pubsub(publish_config)
+        return "Message sent to pubsub topic CHAT_MESSAGE"
     
 class MyConversationFlow(ConversationFlow):
     def __init__(self, agent, stt=None, llm=None, tts=None):
@@ -145,101 +154,92 @@ class MyConversationFlow(ConversationFlow):
         """Called at the end of a user turn."""
         self.is_turn_active = False
 
+def on_pubsub_message(message):
+    print("Pubsub message received:", message)
 
-async def test_connection(jobctx):
-    print(f"Job context: {jobctx}")
+
+async def entrypoint(ctx: JobContext):
     
-    # model = OpenAIRealtime(
-    #     model="gpt-4o-realtime-preview",
-    #     config=OpenAIRealtimeConfig(
-    #         modalities=["text", "audio"],
-    #         input_audio_transcription=InputAudioTranscription(
-    #             model="whisper-1"
-    #         ),
-    #         turn_detection=TurnDetection(
-    #             type="server_vad",
-    #             threshold=0.5,
-    #             prefix_padding_ms=300,
-    #             silence_duration_ms=200,
-    #         ),
-    #         tool_choice="auto"
-    #     )
-    # )
     
-    # model = GeminiRealtime(
-    #     model="gemini-2.0-flash-live-001",
-    #     config=GeminiLiveConfig(
-    #         response_modalities=["AUDIO"],
-    #         output_audio_transcription=AudioTranscriptionConfig(
-    #         )
-    #     )
-    # )
-    # pipeline = RealTimePipeline(model=model)
-        #     stt = OpenAISTT(
-        # api_key=os.getenv("OPENAI_API_KEY"),
-        # model="whisper-1",
-        # language="en",
-        # turn_detection={
-        #     "type": "server_vad",
-        #     "threshold": 0.5,
-        #     "prefix_padding_ms": 600,
-        #     "silence_duration_ms": 350,
-        # }
-        # ),
-    agent = MyVoiceAgent()
+    agent = MyVoiceAgent(ctx)
     conversation_flow = MyConversationFlow(agent)
 
+    # Simli avatar
     simli_config = SimliConfig(
-        apiKey=os.getenv("SIMLI_API_KEY"),
-        faceId=os.getenv("SIMLI_FACE_ID"),
-        maxSessionLength=1800,
-        maxIdleTime=300,
+        apiKey=os.getenv("SIMLI_API_KEY")
     )
-    simli_avatar = SimliAvatar(config=simli_config)
+    avatar = SimliAvatar(simli_config)
 
     pipeline = CascadingPipeline(
+        # STT Based Providers 
         # stt= DeepgramSTT(api_key=os.getenv("DEEPGRAM_API_KEY")),
-        stt= OpenAISTT(api_key=os.getenv("OPENAI_API_KEY")),
-        llm=OpenAILLM(api_key=os.getenv("OPENAI_API_KEY")),
-        tts=OpenAITTS(api_key=os.getenv("OPENAI_API_KEY")),
-        # tts=ElevenLabsTTS(api_key=os.getenv("ELEVENLABS_API_KEY")),
-        # stt = GoogleSTT( model="latest_long"),
-        # llm=GoogleLLM(api_key=os.getenv("GOOGLE_API_KEY")),
-        # tts=GoogleTTS(api_key=os.getenv("GOOGLE_API_KEY")),
+        # stt=CartesiaSTT(api_key=os.getenv("CARTESIA_API_KEY")),
+       
+        # OpenAI - All Three 
+        # stt= OpenAISTT(api_key=os.getenv("OPENAI_API_KEY")),
+        # llm=OpenAILLM(api_key=os.getenv("OPENAI_API_KEY")),
+        # tts=OpenAITTS(api_key=os.getenv("OPENAI_API_KEY")),
+
+        # Google - All Three 
+        stt = GoogleSTT( model="latest_long"),
+        llm=GoogleLLM(api_key=os.getenv("GOOGLE_API_KEY")),
+        tts=GoogleTTS(api_key=os.getenv("GOOGLE_API_KEY")),
+        
+        # SarvamAI - All Three 
         # stt=SarvamAISTT(api_key=os.getenv("SARVAMAI_API_KEY")),
         # llm=SarvamAILLM(api_key=os.getenv("SARVAMAI_API_KEY")),
         # tts=SarvamAITTS(api_key=os.getenv("SARVAMAI_API_KEY")),
+
+        # TTS Based Providers 
+        # tts=ElevenLabsTTS(api_key=os.getenv("ELEVENLABS_API_KEY")),
+        # tts=CartesiaTTS(api_key=os.getenv("CARTESIA_API_KEY")),
+        # tts=SmallestAITTS(api_key=os.getenv("SMALLESTAI_API_KEY")),
+        # tts=ResembleTTS(api_key=os.getenv("RESEMBLE_API_KEY")),
+
         vad=SileroVAD(),
         turn_detector=TurnDetector(threshold=0.8),
-        avatar=simli_avatar
+        avatar=avatar,
     )
     session = AgentSession(
         agent=agent, 
         pipeline=pipeline,
         conversation_flow=conversation_flow,
-        context=jobctx
     )
+    
+    async def cleanup_session():
+        print("Cleaning up session...")
+    
+    ctx.add_shutdown_callback(cleanup_session)
 
     try:
+        await ctx.connect()
+        print("Waiting for participant...")
+        await ctx.room.wait_for_participant()
+        print("Participant joined")
         await session.start()
         print("Connection established. Press Ctrl+C to exit.")
+        
+        subscribe_config = PubSubSubscribeConfig(
+            topic="CHAT",
+            cb=on_pubsub_message
+        )
+        await ctx.room.subscribe_to_pubsub(subscribe_config)
         await asyncio.Event().wait()
-        # await asyncio.sleep(30)
     except KeyboardInterrupt:
         print("\nShutting down gracefully...")
     finally:
         await session.close()
+        await ctx.shutdown()
 
-
-def entryPoint(jobctx):
-    jobctx["pid"] = os.getpid()
-    asyncio.run(test_connection(jobctx))
+def make_context() -> JobContext:
+    room_options = RoomOptions(room_id="<meeting_id>", name="Sandbox Agent", playground=True)
+    
+    return JobContext(
+        room_options=room_options
+        )
 
 
 if __name__ == "__main__":
 
-    def make_context():
-        return {"meetingId": "<meeting_id>", "name": "Sandbox Agent", "playground": True}
-
-    job = WorkerJob(job_func=entryPoint, jobctx=make_context)
+    job = WorkerJob(entrypoint=entrypoint, jobctx=make_context)
     job.start()
