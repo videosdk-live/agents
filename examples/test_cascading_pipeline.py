@@ -1,12 +1,13 @@
 # This test script is used to test cascading pipeline.
 import asyncio
 import os
-from typing import AsyncIterator
+from typing import AsyncIterator, Optional
+from videosdk import PubSubPublishConfig, PubSubSubscribeConfig
+from videosdk.agents import Agent, AgentSession, CascadingPipeline, function_tool, WorkerJob, MCPServerStdio, MCPServerHTTP, ConversationFlow, ChatRole, JobContext, RoomOptions
 from videosdk.plugins.openai import OpenAILLM, OpenAISTT, OpenAITTS
 from videosdk.plugins.google import GoogleTTS,GoogleVoiceConfig,GoogleLLM, GoogleSTT
 from videosdk.plugins.deepgram import DeepgramSTT
 from videosdk.plugins.silero import SileroVAD
-from videosdk.agents import Agent, AgentSession, CascadingPipeline, function_tool, WorkerJob, MCPServerStdio, MCPServerHTTP, ConversationFlow, ChatRole
 from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
 from videosdk.plugins.elevenlabs import ElevenLabsTTS
 from videosdk.plugins.sarvamai import SarvamAITTS, SarvamAILLM,SarvamAISTT
@@ -18,7 +19,7 @@ import pathlib
 import sys
 import aiohttp
 
-logger = logging.getLogger(__name__)
+logging.getLogger().setLevel(logging.CRITICAL)
 
 pre_download_model()
 
@@ -57,7 +58,7 @@ async def get_weather(
 
 
 class MyVoiceAgent(Agent):
-    def __init__(self):
+    def __init__(self, ctx: Optional[JobContext] = None):
         current_dir = pathlib.Path(__file__).parent
         mcp_server_path = current_dir / "mcp_server_examples" / "mcp_server_example.py"
         mcp_current_time_path = current_dir / "mcp_server_examples" / "mcp_current_time_example.py"
@@ -89,7 +90,8 @@ class MyVoiceAgent(Agent):
                 )
             ]
         )
-
+        self.ctx = ctx
+        
     async def on_enter(self) -> None:
         await self.session.say("Hello, how can I help you today?")
     
@@ -113,6 +115,16 @@ class MyVoiceAgent(Agent):
             "sign": sign,
             "horoscope": horoscopes.get(sign, "The stars are aligned for you today!"),
         }
+        
+    @function_tool
+    async def send_pubsub_message(self, message: str):
+        """Send a message to the pubsub topic CHAT_MESSAGE"""
+        publish_config = PubSubPublishConfig(
+            topic="CHAT_MESSAGE",
+            message=message
+        )
+        await self.ctx.room.publish_to_pubsub(publish_config)
+        return "Message sent to pubsub topic CHAT_MESSAGE"
     
 class MyConversationFlow(ConversationFlow):
     def __init__(self, agent, stt=None, llm=None, tts=None):
@@ -138,11 +150,13 @@ class MyConversationFlow(ConversationFlow):
         """Called at the end of a user turn."""
         self.is_turn_active = False
 
+def on_pubsub_message(message):
+    print("Pubsub message received:", message)
 
-async def test_connection(jobctx):
-    print(f"Job context: {jobctx}")
+
+async def entrypoint(ctx: JobContext):
     
-    agent = MyVoiceAgent()
+    agent = MyVoiceAgent(ctx)
     conversation_flow = MyConversationFlow(agent)
     pipeline = CascadingPipeline(
         # STT Based Providers 
@@ -177,29 +191,42 @@ async def test_connection(jobctx):
         agent=agent, 
         pipeline=pipeline,
         conversation_flow=conversation_flow,
-        context=jobctx
     )
+    
+    async def cleanup_session():
+        print("Cleaning up session...")
+    
+    ctx.add_shutdown_callback(cleanup_session)
 
     try:
+        await ctx.connect()
+        print("Waiting for participant...")
+        await ctx.room.wait_for_participant()
+        print("Participant joined")
         await session.start()
         print("Connection established. Press Ctrl+C to exit.")
+        
+        subscribe_config = PubSubSubscribeConfig(
+            topic="CHAT",
+            cb=on_pubsub_message
+        )
+        await ctx.room.subscribe_to_pubsub(subscribe_config)
         await asyncio.Event().wait()
-        # await asyncio.sleep(30)
     except KeyboardInterrupt:
         print("\nShutting down gracefully...")
     finally:
         await session.close()
+        await ctx.shutdown()
 
-
-def entryPoint(jobctx):
-    jobctx["pid"] = os.getpid()
-    asyncio.run(test_connection(jobctx))
+def make_context() -> JobContext:
+    room_options = RoomOptions(room_id="<meeting_id>", name="Sandbox Agent", playground=True)
+    
+    return JobContext(
+        room_options=room_options
+        )
 
 
 if __name__ == "__main__":
 
-    def make_context():
-        return {"meetingId": "<meeting_id>", "name": "Sandbox Agent", "playground": True}
-
-    job = WorkerJob(job_func=entryPoint, jobctx=make_context)
+    job = WorkerJob(entrypoint=entrypoint, jobctx=make_context)
     job.start()

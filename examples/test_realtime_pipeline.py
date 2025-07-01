@@ -6,13 +6,14 @@ import pathlib
 import sys
 import logging
 import aiohttp
-from videosdk.agents import Agent, AgentSession, RealTimePipeline, function_tool, MCPServerStdio, MCPServerHTTP, WorkerJob
-# from videosdk.plugins.aws import NovaSonicRealtime, NovaSonicConfig
+from typing import Optional
+from videosdk import PubSubPublishConfig, PubSubSubscribeConfig
+from videosdk.agents import Agent, AgentSession, RealTimePipeline, function_tool, MCPServerStdio, MCPServerHTTP, WorkerJob, JobContext, RoomOptions
+from videosdk.plugins.aws import NovaSonicRealtime, NovaSonicConfig
 from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig
 from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig
 from openai.types.beta.realtime.session import  TurnDetection
 
-# Suppress all external library logging
 logging.getLogger().setLevel(logging.CRITICAL)
 
 
@@ -39,7 +40,7 @@ async def get_weather(latitude: str, longitude: str):
 
 
 class MyVoiceAgent(Agent):
-    def __init__(self):
+    def __init__(self, ctx: Optional[JobContext] = None):
         current_dir = pathlib.Path(__file__).parent
         mcp_server_path = current_dir / "mcp_server_examples" / "mcp_server_example.py"
         mcp_current_time_path = current_dir / "mcp_server_examples" / "mcp_current_time_example.py"
@@ -67,17 +68,28 @@ class MyVoiceAgent(Agent):
                     client_session_timeout_seconds=30
                 ),
                 MCPServerHTTP(
-                    url="https://mcp.zapier.com/api/mcp/s/ODk5ODA5OTctMDM2Ny00ZDEyLTk2NjctNDQ4NDE3MDI5MjA3OjE3MzQ5NjE3LTg0MjQtNDJhZC1iOWJkLTE2OTBmMmRkYzI0ZQ==/mcp",
+                    url="YOUR_ZAPIER_MCP_SERVER_URL",
                     client_session_timeout_seconds=30
                 )
             ]
         )
+        self.ctx = ctx
 
     async def on_enter(self) -> None:
         await self.session.say("Hello, how can I help you today?")
 
     async def on_exit(self) -> None:
         await self.session.say("Goodbye!")
+    
+    @function_tool
+    async def send_pubsub_message(self, message: str):
+        """Send a message to the pubsub topic CHAT_MESSAGE"""
+        publish_config = PubSubPublishConfig(
+            topic="CHAT_MESSAGE",
+            message=message
+        )
+        await self.ctx.room.publish_to_pubsub(publish_config)
+        return "Message sent to pubsub topic CHAT_MESSAGE"
 
     @function_tool
     async def get_horoscope(self, sign: str) -> dict:
@@ -91,14 +103,17 @@ class MyVoiceAgent(Agent):
             "horoscope": horoscopes.get(sign, "The stars are aligned for you today!"),
         }
 
-    @function_tool
-    async def end_call(self) -> None:
-        await self.session.say("Goodbye!")
-        await asyncio.sleep(1)
-        await self.session.leave()
+    # @function_tool
+    # async def end_call(self) -> None:
+    #     await self.session.say("Goodbye!")
+    #     await asyncio.sleep(1)
+    #     await self.session.leave()
+        
+def on_pubsub_message(message):
+    print("Pubsub message received:", message)
 
 
-async def main(context: dict):
+async def entrypoint(ctx: JobContext):
     
 
     # model = OpenAIRealtime(
@@ -143,32 +158,47 @@ async def main(context: dict):
     # )
 
     pipeline = RealTimePipeline(model=model)
-    agent = MyVoiceAgent()
+    agent = MyVoiceAgent(ctx)
 
     session = AgentSession(
         agent=agent,
         pipeline=pipeline,
-        context=context
     )
+    
+        
+    async def cleanup_session():
+        print("Cleaning up session...")
+    
+    ctx.add_shutdown_callback(cleanup_session)
 
     try:
+        await ctx.connect()
+        print("Waiting for participant...")
+        await ctx.room.wait_for_participant()
+        print("Participant joined")
         await session.start()
         print("Voice session started. Awaiting interaction...")
+        subscribe_config = PubSubSubscribeConfig(
+            topic="CHAT_MESSAGE",
+            cb=on_pubsub_message
+        )
+        await ctx.room.subscribe_to_pubsub(subscribe_config)
         await asyncio.Event().wait()
     except KeyboardInterrupt:
         print("Shutting down...")
     finally:
         await session.close()
-        await pipeline.cleanup()
+        await ctx.shutdown()
 
-def entryPoint(jobctx):
-    """Wrapper function to run the async main function"""
-    asyncio.run(main(jobctx))
+def make_context() -> JobContext:
+    room_options = RoomOptions(room_id="<meeting_id>", name="Sandbox Agent", playground=True)
+    
+    return JobContext(
+        room_options=room_options
+        )
 
 
 if __name__ == "__main__":
-    def make_context():
-        return {"meetingId": "<meeting_id>", "name": "Sandbox Agent", "playground": True}
 
-    job = WorkerJob(job_func=entryPoint, jobctx=make_context)
+    job = WorkerJob(entrypoint=entrypoint, jobctx=make_context)
     job.start()
