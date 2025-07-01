@@ -16,7 +16,7 @@ from .utils import (
 )
 from .room.audio_stream import CustomAudioStreamTrack
 from .event_emitter import EventEmitter
-from .job import WorkerJob
+from .job import WorkerJob, JobContext, RoomOptions 
 from .llm.llm import LLM, LLMResponse
 from .llm.chat_context import (
     ChatContext,
@@ -81,4 +81,6 @@ __all__ = [
     "EncodeOptions",
     "ResizeOptions",
     "encode",
+    "JobContext",
+    "RoomOptions",
 ]
