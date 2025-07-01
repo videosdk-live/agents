@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from typing import Any, Literal
 import asyncio
+import av
 
 from .pipeline import Pipeline
 from .event_emitter import EventEmitter
 from .realtime_base_model import RealtimeBaseModel
 from .room.room import VideoSDKHandler
 from .agent import Agent
+from .job import get_current_job_context
+
 class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtime_end","user_audio_input_data"]]):
     """
     RealTime pipeline implementation that processes data in real-time.
@@ -17,7 +20,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
     def __init__(
         self,
         model: RealtimeBaseModel,
-        avatar = None,
+        avatar: Any | None = None,
     ) -> None:
         """
         Initialize the realtime pipeline.
@@ -28,20 +31,26 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
                    - response_modalities: List of enabled modalities
                    - silence_threshold_ms: Silence threshold in milliseconds
         """
-        super().__init__()
         self.model = model
-        self.loop = asyncio.get_event_loop()
-        self.room = None
-        self.model.loop = self.loop
         self.model.audio_track = None
         self.agent = None
-        self.vision = False
         self.avatar = avatar
+        super().__init__()
     
     def set_agent(self, agent: Agent) -> None:
         self.agent = agent
         if hasattr(self.model, 'set_agent'):
             self.model.set_agent(agent)
+
+    def _configure_components(self) -> None:
+        """Configure pipeline components with the loop"""
+        if self.loop:
+            self.model.loop = self.loop
+            job_context = get_current_job_context()
+            if self.avatar and job_context and job_context.room:
+                self.model.audio_track = getattr(job_context.room, 'agent_audio_track', None) or job_context.room.audio_track
+            elif self.audio_track:
+                self.model.audio_track = self.audio_track
 
     async def start(self, **kwargs: Any) -> None:
         """
@@ -49,61 +58,9 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         Overrides the abstract start method from Pipeline base class.
         
         Args:
-            meeting_id: The meeting ID to join
-            name: The name of the agent in the meeting
             **kwargs: Additional arguments for pipeline configuration
         """
-        try:
-            videosdk_auth = kwargs.get('videosdk_auth')
-            meeting_id = kwargs.get('meeting_id')
-            name = kwargs.get('name')
-            join_meeting = kwargs.get('join_meeting',True)
-            requested_vision = kwargs.get('vision', self.vision)
-            custom_camera_video_track = None
-            custom_microphone_audio_track = None
-            sinks = []
-
-            model_name = type(self.model).__name__
-            if requested_vision and model_name != 'GeminiRealtime':
-                print(f"Warning: Vision mode requested but {model_name} doesn't support video input. Only GeminiRealtime supports vision. Disabling vision.")
-                self.vision = False
-            else:
-                self.vision = requested_vision
-
-            if self.avatar:
-                await self.avatar.connect()
-                custom_camera_video_track = self.avatar.video_track
-                custom_microphone_audio_track = self.avatar.audio_track  
-                sinks.append(self.avatar)  
-            else:
-                print("No avatar provided")
-
-            if join_meeting:
-                self.room = VideoSDKHandler(
-                    meeting_id=meeting_id,
-                    auth_token=videosdk_auth,
-                    name=name,
-                    pipeline=self,
-                    loop=self.loop,
-                    vision=self.vision,
-                    custom_camera_video_track=custom_camera_video_track,
-                    custom_microphone_audio_track=custom_microphone_audio_track,
-                    audio_sinks=sinks 
-                )
-                
-                self.room.init_meeting()
-                self.model.loop = self.loop
-                self.model.audio_track = getattr(self.room, 'agent_audio_track', None) or self.room.audio_track
-                
-                await self.model.connect()
-                await self.room.join()
-            else:   
-                await self.model.connect()    
-            
-        except Exception as e:
-            print(f"Error starting realtime connection: {e}")
-            await self.cleanup()
-            raise
+        await self.model.connect()
 
     async def send_message(self, message: str) -> None:
         """

@@ -50,14 +50,17 @@ dependencies = [
 videosdk = "videosdk.agents.cli:main"
 
 [project.optional-dependencies]
-openai = ["videosdk-plugins-openai>=0.0.16"]
-google = ["videosdk-plugins-google>=0.0.16"]
-aws = ["videosdk-plugins-aws>=0.0.16"]
-deepgram = ["videosdk-plugins-deepgram>=0.0.16"]
-elevenlabs = ["videosdk-plugins-elevenlabs>=0.0.16"]
-silero = ["videosdk-plugins-silero>=0.0.16"]
-turn-detector = ["videosdk-plugins-turn-detector>=0.0.16"]
-sarvamai = ["videosdk-plugins-sarvamai>=0.0.16"]
+openai = ["videosdk-plugins-openai>=0.0.17"]
+google = ["videosdk-plugins-google>=0.0.17"]
+aws = ["videosdk-plugins-aws>=0.0.17"]
+deepgram = ["videosdk-plugins-deepgram>=0.0.17"]
+elevenlabs = ["videosdk-plugins-elevenlabs>=0.0.17"]
+silero = ["videosdk-plugins-silero>=0.0.17"]
+turn-detector = ["videosdk-plugins-turn-detector>=0.0.17"]
+sarvamai = ["videosdk-plugins-sarvamai>=0.0.17"]
+cartesia = ["videosdk-plugins-cartesia>=0.0.17"]
+resemble = ["videosdk-plugins-resemble>=0.0.17"]
+smallestai = ["videosdk-plugins-smallestai>=0.0.17"]
 
 
 [tool.hatch.version]

@@ -1,11 +1,10 @@
-from videosdk import MeetingConfig, VideoSDK, Participant, Stream
+from videosdk import MeetingConfig, VideoSDK, Participant, Stream, PubSubPublishConfig, PubSubSubscribeConfig
 from .meeting_event_handler import MeetingHandler
 from .participant_event_handler import ParticipantHandler
-from .audio_stream import CustomAudioStreamTrack
+from .audio_stream import CustomAudioStreamTrack, TeeCustomAudioStreamTrack
 from videosdk.agents.pipeline import Pipeline
 from dotenv import load_dotenv
 import numpy as np
-import librosa
 import asyncio
 import os
 from asyncio import AbstractEventLoop
@@ -15,20 +14,12 @@ from .audio_stream import TeeCustomAudioStreamTrack
 load_dotenv()
 
 class VideoSDKHandler:
-    def __init__(
-        self,
-        *,
-        meeting_id: str,
-        auth_token: str | None = None,
-        name: str,
-        pipeline: Pipeline,
-        loop: AbstractEventLoop,
-        vision: bool = False,
-        custom_camera_video_track=None, 
-        custom_microphone_audio_track=None,
-        audio_sinks=None
-    ):
+    def __init__(self, *, meeting_id: str, auth_token: str | None = None, name: str, pipeline: Pipeline, loop: AbstractEventLoop, vision: bool = False,custom_camera_video_track=None, 
+        custom_microphone_audio_track=None,audio_sinks=None):
         self.loop = loop
+        self.meeting_id = meeting_id
+        self.name = name
+
         if custom_microphone_audio_track:
             self.audio_track = custom_microphone_audio_track
             if audio_sinks:
@@ -36,25 +27,22 @@ class VideoSDKHandler:
                     loop=self.loop,
                     sinks=audio_sinks
                 )
-                print("VideoSDK: Using custom microphone audio track (Simli synchronized audio) + TeeCustomAudioStreamTrack for agent routing")
             else:
                 self.agent_audio_track = None
-                print("VideoSDK: Using custom microphone audio track (Simli synchronized audio) only")
         else:
             self.audio_track = TeeCustomAudioStreamTrack(
                 loop=self.loop,
                 sinks=audio_sinks
             )
             self.agent_audio_track = None
-            print("VideoSDK: Using TeeCustomAudioStreamTrack for agent audio")
 
-        auth_token = auth_token or os.getenv("VIDEOSDK_AUTH_TOKEN")
-        if not auth_token:
+        self.auth_token = auth_token or os.getenv("VIDEOSDK_AUTH_TOKEN")
+        if not self.auth_token:
             raise ValueError("VIDEOSDK_AUTH_TOKEN is not set")
         self.meeting_config = MeetingConfig(
-            name=name,
-            meeting_id=meeting_id,
-            token=auth_token,
+            name=self.name,
+            meeting_id=self.meeting_id,
+            token=self.auth_token,
             mic_enabled=True,
             webcam_enabled=custom_camera_video_track is not None,
             custom_microphone_audio_track=self.audio_track,
@@ -62,11 +50,13 @@ class VideoSDKHandler:
         )
         self.pipeline = pipeline
         self.audio_listener_tasks = {}
+        self.meeting = None
+        self.attributes = {}
+        self.participants_data = {}
         self.video_listener_tasks = {}
         self.vision = vision
-        self.meeting = None
-
-        self.participants_data = {}
+        self._participant_joined_events: dict[str, asyncio.Event] = {}
+        self._first_participant_event = asyncio.Event()
         
     def init_meeting(self):
         self.meeting = VideoSDK.init_meeting(**self.meeting_config)
@@ -101,6 +91,12 @@ class VideoSDKHandler:
             "name": peer_name,
         }
         print("Participant joined:", peer_name)
+        
+        if participant.id in self._participant_joined_events:
+            self._participant_joined_events[participant.id].set()
+        
+        if not self._first_participant_event.is_set():
+            self._first_participant_event.set()
 
         def on_stream_enabled(stream: Stream):
             if stream.kind == "audio":
@@ -117,6 +113,12 @@ class VideoSDKHandler:
                 audio_task = self.audio_listener_tasks[stream.id]
                 if audio_task is not None:
                     audio_task.cancel()
+                    del self.audio_listener_tasks[stream.id]
+            if stream.kind == "video":
+                video_task = self.video_listener_tasks[stream.id]
+                if video_task is not None:
+                    video_task.cancel()
+                    del self.video_listener_tasks[stream.id]
 
         participant.add_event_listener(
             ParticipantHandler(
@@ -128,22 +130,24 @@ class VideoSDKHandler:
 
     def on_participant_left(self, participant: Participant):
         print("Participant left:", participant.display_name)
-        for audio_task in self.audio_listener_tasks.values():
-            audio_task.cancel()
-        for video_task in self.video_listener_tasks.values():
-            video_task.cancel()
-        self.leave()
-        
+        if participant.id in self.audio_listener_tasks:
+            self.audio_listener_tasks[participant.id].cancel()
+            del self.audio_listener_tasks[participant.id]
+        if participant.id in self.video_listener_tasks:
+            self.video_listener_tasks[participant.id].cancel()
+            del self.video_listener_tasks[participant.id]
+        if participant.id in self.participants_data:
+            del self.participants_data[participant.id]
 
-    async def add_audio_listener(self, stream: Stream):          
+    async def add_audio_listener(self, stream: Stream):    
         while True:
             try:
                 await asyncio.sleep(0.01)
-
                 frame = await stream.track.recv()
                 audio_data = frame.to_ndarray()[0]
                 pcm_frame = audio_data.flatten().astype(np.int16).tobytes()
-                await self.pipeline.on_audio_delta(pcm_frame)
+                if self.pipeline:
+                    await self.pipeline.on_audio_delta(pcm_frame)
 
             except Exception as e:
                 print("Audio processing error:", e)
@@ -155,11 +159,45 @@ class VideoSDKHandler:
                 await asyncio.sleep(0.01)
 
                 frame = await stream.track.recv()
-                await self.pipeline.on_video_delta(frame)
+                if self.pipeline:
+                    await self.pipeline.on_video_delta(frame)
                
             except Exception as e:
                 print("Audio processing error:", e)
-                break           
+                break
+
+    async def wait_for_participant(self, participant_id: str | None = None) -> str:
+        """
+        Wait for a specific participant to join, or wait for the first participant if none specified.
+        
+        Args:
+            participant_id: Optional participant ID to wait for. If None, waits for first participant.
+            
+        Returns:
+            str: The participant ID that joined
+        """
+        if participant_id:
+            if participant_id in self.participants_data:
+                return participant_id
+                
+            if participant_id not in self._participant_joined_events:
+                self._participant_joined_events[participant_id] = asyncio.Event()
+            
+            await self._participant_joined_events[participant_id].wait()
+            return participant_id
+        else:
+            if self.participants_data:
+                return next(iter(self.participants_data.keys()))
+            
+            await self._first_participant_event.wait()
+            return next(iter(self.participants_data.keys()))    
+    
+    async def subscribe_to_pubsub(self, pubsub_config: PubSubSubscribeConfig):
+        old_messages = await self.meeting.pubsub.subscribe(pubsub_config)  
+        return old_messages
+    
+    async def publish_to_pubsub(self, pubsub_config: PubSubPublishConfig):
+        await self.meeting.pubsub.publish(pubsub_config)         
               
     async def cleanup(self):
         """Add cleanup method"""

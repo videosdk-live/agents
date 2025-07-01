@@ -11,8 +11,9 @@ from .tts.tts import TTS
 from .vad import VAD
 from .conversation_flow import ConversationFlow
 from .agent import Agent
-from .room.room import VideoSDKHandler
+from .room.room import VideoSDKHandler, TeeCustomAudioStreamTrack
 from .eou import EOU
+from .job import get_current_job_context
 
 class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
     """
@@ -27,7 +28,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         tts: TTS | None = None,
         vad: VAD | None = None,
         turn_detector: EOU | None = None,
-        avatar = None,
+        avatar: Any | None = None,
     ) -> None:
         """
         Initialize the cascading pipeline.
@@ -37,20 +38,28 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
             llm: Language Model processor (optional)
             tts: Text-to-Speech processor (optional)
         """
-        super().__init__()
         self.stt = stt
         self.llm = llm
         self.tts = tts
         self.vad = vad
         self.turn_detector = turn_detector
-        self.loop = asyncio.get_event_loop()
-        self.room = None
         self.agent = None
         self.conversation_flow = None
         self.avatar = avatar
         
+        super().__init__()
+        
     def set_agent(self, agent: Agent) -> None:
         self.agent = agent
+
+    def _configure_components(self) -> None:
+        if self.loop and self.tts:
+            self.tts.loop = self.loop
+            job_context = get_current_job_context()
+            if self.avatar and job_context and job_context.room:
+                self.tts.audio_track = getattr(job_context.room, 'agent_audio_track', None) or job_context.room.audio_track
+            elif hasattr(self, 'audio_track'):
+                self.tts.audio_track = self.audio_track
     
     def set_conversation_flow(self, conversation_flow: ConversationFlow) -> None:
         self.conversation_flow = conversation_flow
@@ -68,43 +77,6 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
     async def start(self, **kwargs: Any) -> None:
         if self.conversation_flow:
             await self.conversation_flow.start()
-        try:
-            meeting_id = kwargs.get('meeting_id')
-            name = kwargs.get('name')
-            token = kwargs.get('token')
-            custom_camera_video_track = None
-            custom_microphone_audio_track = None
-            sinks = []
-            
-            if self.avatar:
-                await self.avatar.connect()
-                custom_camera_video_track = self.avatar.video_track
-                custom_microphone_audio_track = self.avatar.audio_track  
-                sinks.append(self.avatar) 
-                print("CascadingPipeline: Using avatar mode - TTS audio -> Simli -> synchronized A/V -> VideoSDK")
-            else:
-                print("Avatar not provided")
-
-            self.room = VideoSDKHandler(
-                    meeting_id=meeting_id,
-                    auth_token=token,
-                    name=name,
-                    pipeline=self,
-                    loop=self.loop,
-                    custom_camera_video_track=custom_camera_video_track,
-                    custom_microphone_audio_track=custom_microphone_audio_track,
-                    audio_sinks=sinks 
-                )
-
-            self.room.init_meeting()
-            self.tts.loop = self.loop
-            self.tts.audio_track = getattr(self.room, 'agent_audio_track', None) or self.room.audio_track
-
-            await self.room.join()
-        except Exception as e:
-            print(f"Error starting realtime connection: {e}")
-            await self.cleanup()
-            raise
 
     async def send_message(self, message: str) -> None:
         await self.conversation_flow.say(message)
