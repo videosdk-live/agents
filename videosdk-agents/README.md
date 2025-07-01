@@ -14,7 +14,7 @@ Visit https://docs.videosdk.live/ai_agents/introduction for Quickstart, Examples
 
 ```py
 import asyncio
-from videosdk.agents import Agent, AgentSession, RealTimePipeline, function_tool, WorkerJob
+from videosdk.agents import Agent, AgentSession, RealTimePipeline, function_tool, WorkerJob, RoomOptions, JobContext
 from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig
 from openai.types.beta.realtime.session import InputAudioTranscription, TurnDetection
 
@@ -28,7 +28,7 @@ class MyVoiceAgent(Agent):
     async def on_enter(self) -> None:
         await self.session.say("How can i assist you today?")
 
-async def test_connection(jobctx):
+async def entrypoint(ctx: JobContext):
     print("Starting connection test...")
     print(f"Job context: {jobctx}")
     
@@ -44,21 +44,26 @@ async def test_connection(jobctx):
     )
 
     try:
+        await ctx.connect()
         await session.start()
+        print("Connection established. Press Ctrl+C to exit.")
         await asyncio.Event().wait()
     except KeyboardInterrupt:
+        print("\nShutting down gracefully...")
     finally:
         await session.close()
+        await ctx.shutdown()
 
 
-def entryPoint(jobctx):
-    jobctx["pid"] = os.getpid()
-    asyncio.run(test_connection(jobctx))
+def make_context() -> JobContext:
+    room_options = RoomOptions(room_id="<meeting_id>", name="Sandbox Agent", playground=True)
+    
+    return JobContext(
+        room_options=room_options
+        )
 
 
 if __name__ == "__main__":
-    def make_context():
-        return {"meetingId": "<Meet-ID>", "name": "Agent"}
     job = WorkerJob(job_func=entryPoint, jobctx=make_context)
     job.start()
 ```
