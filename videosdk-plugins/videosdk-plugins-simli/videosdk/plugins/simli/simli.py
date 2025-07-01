@@ -91,6 +91,9 @@ class SimliAudioTrack(CustomAudioTrack):
         if len(chunk) != self.chunk_size:
             print(f"Warning: Incorrect Simli chunk size received {len(chunk)}, expected {self.chunk_size}")
 
+        if len(chunk) % 2 != 0:
+            chunk = chunk + b'\x00'
+
         data = np.frombuffer(chunk, dtype=np.int16)
         expected_samples = self.samples * self.channels
         if len(data) != expected_samples:
@@ -546,6 +549,9 @@ class SimliAvatar:
             
         if self.ws and self.ready.is_set():
             try:
+                if len(audio_data) % 2 != 0:
+                    audio_data = audio_data + b'\x00'
+                
                 audio_array = np.frombuffer(audio_data, dtype=np.int16)
                 input_frame = AudioFrame.from_ndarray(
                     audio_array.reshape(1, -1), format="s16", layout="mono"
