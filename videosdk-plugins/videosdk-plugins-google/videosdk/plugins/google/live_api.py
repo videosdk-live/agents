@@ -316,14 +316,14 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                             try:
                                 if (input_transcription := server_content.input_transcription):
                                     if input_transcription.text:
-                                        global_event_emitter("input_transcription", {
+                                        global_event_emitter.emit("input_transcription", {
                                             "text": input_transcription.text,
                                             "is_final": False
                                         })
 
                                 if (output_transcription := server_content.output_transcription):
                                     if output_transcription.text:
-                                        global_event_emitter("output_transcription", {
+                                        global_event_emitter.emit("output_transcription", {
                                             "text": output_transcription.text,
                                             "is_final": False
                                         })
