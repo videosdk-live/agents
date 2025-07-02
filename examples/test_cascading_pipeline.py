@@ -14,7 +14,6 @@ from videosdk.plugins.sarvamai import SarvamAITTS, SarvamAILLM,SarvamAISTT
 from videosdk.plugins.cartesia import CartesiaTTS, CartesiaSTT
 from videosdk.plugins.smallestai import SmallestAITTS
 from videosdk.plugins.resemble import ResembleTTS
-from videosdk.plugins.simli import SimliAvatar, SimliConfig
 import logging
 import pathlib
 import sys
@@ -160,12 +159,6 @@ async def entrypoint(ctx: JobContext):
     agent = MyVoiceAgent(ctx)
     conversation_flow = MyConversationFlow(agent)
 
-    # Simli avatar
-    simli_config = SimliConfig(
-        apiKey=os.getenv("SIMLI_API_KEY")
-    )
-    avatar = SimliAvatar(simli_config)
-
     pipeline = CascadingPipeline(
         # STT Based Providers 
         # stt= DeepgramSTT(api_key=os.getenv("DEEPGRAM_API_KEY")),
@@ -193,8 +186,7 @@ async def entrypoint(ctx: JobContext):
         # tts=ResembleTTS(api_key=os.getenv("RESEMBLE_API_KEY")),
 
         vad=SileroVAD(),
-        turn_detector=TurnDetector(threshold=0.8),
-        avatar=avatar,
+        turn_detector=TurnDetector(threshold=0.8)
     )
     session = AgentSession(
         agent=agent, 
