@@ -13,7 +13,6 @@ from videosdk.plugins.aws import NovaSonicRealtime, NovaSonicConfig
 from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig
 from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig
 from openai.types.beta.realtime.session import  TurnDetection
-from videosdk.plugins.simli import SimliAvatar,SimliConfig
 
 logging.getLogger().setLevel(logging.CRITICAL)
 
@@ -158,12 +157,7 @@ async def entrypoint(ctx: JobContext):
     #     )
     # )
 
-    # Simli avatar
-    simli_config = SimliConfig(
-        apiKey=os.getenv("SIMLI_API_KEY")
-    )
-    avatar = SimliAvatar(simli_config)
-    pipeline = RealTimePipeline(model=model, avatar=avatar)
+    pipeline = RealTimePipeline(model=model)
     agent = MyVoiceAgent(ctx)
 
     
