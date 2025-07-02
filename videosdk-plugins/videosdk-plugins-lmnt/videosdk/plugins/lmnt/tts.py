@@ -1,305 +1,208 @@
 from __future__ import annotations
 
 from typing import Any, AsyncIterator, Literal, Optional, Union
+import httpx
 import os
 import asyncio
-import json
-import aiohttp
-from dataclasses import dataclass
 
 from videosdk.agents import TTS
 
+# LMNT API defaults
+LMNT_API_BASE_URL = "https://api.lmnt.com"
 LMNT_SAMPLE_RATE = 24000
 LMNT_CHANNELS = 1
-LMNT_WEBSOCKET_URL = "wss://api.lmnt.com/v1/ai/speech/stream"
 
-DEFAULT_VOICE = "morgan"
-DEFAULT_FORMAT = "raw"
+DEFAULT_MODEL = "blizzard"
+DEFAULT_VOICE = "ava"
 DEFAULT_LANGUAGE = "auto"
-DEFAULT_SAMPLE_RATE = 24000
+DEFAULT_FORMAT = "wav"  # WAV format for proper 16-bit PCM audio
 
-try:
-    import pydub
-    PYDUB_AVAILABLE = True
-except ImportError:
-    PYDUB_AVAILABLE = False
+# Type definitions for parameters
+_LanguageCode = Union[
+    Literal["auto", "de", "en", "es", "fr", "hi", "id", "it", "ja", 
+            "ko", "nl", "pl", "pt", "ru", "sv", "th", "tr", "uk", "vi", "zh"], 
+    str
+]
+_FormatType = Union[Literal["aac", "mp3", "mulaw", "raw", "wav"], str]
+_SampleRate = Union[Literal[8000, 16000, 24000], int]
 
-@dataclass
-class LMNTVoiceConfig:
-    """Configuration for LMNT voice settings"""
-    voice: str = DEFAULT_VOICE
-    format: str = DEFAULT_FORMAT
-    language: str = DEFAULT_LANGUAGE
-    sample_rate: int = DEFAULT_SAMPLE_RATE
-    return_extras: bool = False
-    auto_flush: bool = False  
 
 class LMNTTTS(TTS):
-    """
-    LMNT TTS implementation using WebSocket streaming API (plug-and-play for VideoSDK Agents).
-    Usage:
-        tts = LMNTTTS()  # All config from env, or override via kwargs
-    """
-    
     def __init__(
         self,
         *,
         voice: str = DEFAULT_VOICE,
-        format: str = DEFAULT_FORMAT,
-        language: str = DEFAULT_LANGUAGE,
-        sample_rate: int = DEFAULT_SAMPLE_RATE,
-        return_extras: bool = False,
-        auto_flush: bool = False,  
-        flush_interval: float = 1.0,  
+        model: str = DEFAULT_MODEL,
+        language: _LanguageCode = DEFAULT_LANGUAGE,
+        format: _FormatType = DEFAULT_FORMAT,
+        sample_rate: _SampleRate = LMNT_SAMPLE_RATE,
+        seed: Optional[int] = None,
+        temperature: float = 1.0,
+        top_p: float = 0.8,
         api_key: Optional[str] = None,
-        **kwargs: Any
-    ):
-        super().__init__(sample_rate=LMNT_SAMPLE_RATE, num_channels=LMNT_CHANNELS)
+        base_url: str = LMNT_API_BASE_URL,
+    ) -> None:
+        # Initialize with the specified sample rate
+        super().__init__(sample_rate=sample_rate, num_channels=LMNT_CHANNELS)
         
         self.voice = voice
-        self.format = format
+        self.model = model
         self.language = language
-        self._sample_rate = sample_rate  
-        self.return_extras = return_extras
-        self.auto_flush = auto_flush
-        self.flush_interval = flush_interval
+        self.format = format
+        self.output_sample_rate = sample_rate
+        self.seed = seed
+        self.temperature = temperature
+        self.top_p = top_p
+        self.base_url = base_url
         self.audio_track = None
         self.loop = None
-        self.stt_component = None
         
+        # Get API key from parameter or environment
         self.api_key = api_key or os.getenv("LMNT_API_KEY")
         if not self.api_key:
-            raise ValueError("LMNT API key must be provided either through api_key parameter or LMNT_API_KEY environment variable")
+            raise ValueError(
+                "LMNT API key must be provided either through api_key parameter "
+                "or LMNT_API_KEY environment variable"
+            )
         
-        self._session = None
-        self._ws = None
-        self._last_flush_time = 0.0
+        # Create HTTP client with appropriate timeouts
+        self._client = httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=15.0, read=30.0, write=5.0, pool=5.0),
+            follow_redirects=True,
+            limits=httpx.Limits(
+                max_connections=50,
+                max_keepalive_connections=50,
+                keepalive_expiry=120,
+            ),
+        )
     
-    async def synthesize(self, text_or_generator: Union[str, AsyncIterator[str]], **kwargs) -> None:
-        if not self.audio_track or not self.loop:
-            self.emit("error", "Audio track or event loop not initialized.")
-            return
-
-        if self.stt_component:
-            self.stt_component.set_agent_speaking(True)
-
+    async def synthesize(
+        self,
+        text: AsyncIterator[str] | str,
+        voice_id: Optional[str] = None,
+        **kwargs: Any
+    ) -> None:
+        """
+        Convert text to speech using LMNT's TTS API and stream to audio track
+        
+        Args:
+            text: Text to convert to speech
+            voice_id: Optional voice override (uses voice from __init__ if not provided)
+            **kwargs: Additional provider-specific arguments
+        """
         try:
-            if isinstance(text_or_generator, str):
-                await self._stream_synthesis(text_or_generator)
+            # Convert AsyncIterator to string if needed
+            if isinstance(text, AsyncIterator):
+                full_text = ""
+                async for chunk in text:
+                    full_text += chunk
             else:
-                await self._stream_synthesis_with_flush(text_or_generator)
+                full_text = text
 
-        except Exception as e:
-            self.emit("error", f"Error in LMNT TTS synthesis: {e}")
-        finally:
-            if self.stt_component:
-                self.stt_component.set_agent_speaking(False)
-
-    async def _stream_synthesis_with_flush(self, text_generator: AsyncIterator[str]) -> None:
-        """Stream text with automatic flushing for real-time synthesis"""
-        if not self._session:
-            self._session = aiohttp.ClientSession()
-        
-        try:
-            async with self._session.ws_connect(LMNT_WEBSOCKET_URL) as ws:
-                self._ws = ws
-                
-                init_message = {
-                    "X-API-Key": self.api_key,
-                    "voice": self.voice,
-                    "format": self.format,
-                    "language": self.language,
-                    "sample_rate": self._sample_rate,
-                    "return_extras": self.return_extras
-                }
-                await ws.send_str(json.dumps(init_message))
-                
-                current_text = ""
-                start_time = asyncio.get_event_loop().time()
-                
-                async for text_chunk in text_generator:
-                    current_text += text_chunk
-                    
-                    # Send text chunk
-                    text_message = {"text": text_chunk}
-                    print(text_message)
-                    await ws.send_str(json.dumps(text_message))
-                    
-                    if self.auto_flush:
-                        current_time = asyncio.get_event_loop().time()
-                        if current_time - start_time >= self.flush_interval:
-                            await self._flush()
-                            start_time = current_time
-                
-                eof_message = {"eof": True}
-                await ws.send_str(json.dumps(eof_message))
-                
-                await self._process_audio_responses(ws)
-                
-        except aiohttp.ClientError as e:
-            self.emit("error", f"LMNT WebSocket connection error: {e}")
-        except Exception as e:
-            self.emit("error", f"LMNT TTS streaming error: {e}")
-        finally:
-            self._ws = None
-
-    async def _stream_synthesis(self, text: str) -> None:
-        """Stream text to LMNT WebSocket API and receive synthesized audio (traditional approach)"""
-        if not self._session:
-            self._session = aiohttp.ClientSession()
-        
-        try:
-            async with self._session.ws_connect(LMNT_WEBSOCKET_URL) as ws:
-                init_message = {
-                    "X-API-Key": self.api_key,
-                    "voice": self.voice,
-                    "format": self.format,
-                    "language": self.language,
-                    "sample_rate": self._sample_rate,
-                    "return_extras": self.return_extras
-                }
-                await ws.send_str(json.dumps(init_message))
-                
-                text_message = {"text": text}
-                await ws.send_str(json.dumps(text_message))
-                
-                eof_message = {"eof": True}
-                await ws.send_str(json.dumps(eof_message))
-                
-                await self._process_audio_responses(ws)
-                        
-        except aiohttp.ClientError as e:
-            self.emit("error", f"LMNT WebSocket connection error: {e}")
-        except Exception as e:
-            self.emit("error", f"LMNT TTS streaming error: {e}")
-
-    async def _process_audio_responses(self, ws) -> None:
-        """Process audio responses from the WebSocket"""
-        async for msg in ws:
-            if msg.type == aiohttp.WSMsgType.TEXT:
-                try:
-                    data = json.loads(msg.data)
-                    
-                    if "error" in data:
-                        self.emit("error", f"LMNT API error: {data['error']}")
-                        break
-                    
-                    if self.return_extras and ("durations" in data or "buffer_empty" in data):
-                        if "buffer_empty" in data and data["buffer_empty"]:
-                            pass
-                        
-                except json.JSONDecodeError:
-                    pass
-                    
-            elif msg.type == aiohttp.WSMsgType.BINARY:
-                if msg.data:
-                    await self._stream_audio_chunk(msg.data)
-                    
-            elif msg.type == aiohttp.WSMsgType.ERROR:
-                self.emit("error", f"WebSocket error: {ws.exception()}")
-                break
-
-    async def flush(self) -> None:
-        """Manually flush the current text buffer to force synthesis"""
-        if self._ws:
-            try:
-                flush_message = {"flush": True}
-                await self._ws.send_str(json.dumps(flush_message))
-                self._last_flush_time = asyncio.get_event_loop().time()
-            except Exception as e:
-                self.emit("error", f"Error during manual flush: {e}")
-
-    async def _flush(self) -> None:
-        """Internal flush method"""
-        await self.flush()
-
-    async def _stream_audio_chunk(self, audio_data: bytes) -> None:
-        """Stream audio data in chunks to the audio track"""
-        if not audio_data:
-            return
-
-        try:
-            pcm_data = await self._convert_to_pcm(audio_data)
-            
-            if not pcm_data:
+            if not self.audio_track or not self.loop:
+                self.emit("error", "Audio track or event loop not set")
                 return
 
-            chunk_size = int(self._sample_rate * self.num_channels * 2 * 20 / 1000)
+            # Use the provided voice_id or fall back to default
+            target_voice = voice_id or self.voice
+
+            # Build request payload
+            payload = {
+                "voice": target_voice,
+                "text": full_text,
+                "model": kwargs.get("model", self.model),
+                "language": kwargs.get("language", self.language),
+                "format": kwargs.get("format", self.format),
+                "sample_rate": kwargs.get("sample_rate", self.output_sample_rate),
+                "temperature": kwargs.get("temperature", self.temperature),
+                "top_p": kwargs.get("top_p", self.top_p),
+            }
             
-            for i in range(0, len(pcm_data), chunk_size):
-                chunk = pcm_data[i:i+chunk_size]
-                if len(chunk) < chunk_size:
-                    chunk += b'\x00' * (chunk_size - len(chunk))
+            # Add seed if provided
+            seed = kwargs.get("seed", self.seed)
+            if seed is not None:
+                payload["seed"] = seed
+
+            # Make API request with streaming response
+            headers = {
+                "X-API-Key": self.api_key,
+                "Content-Type": "application/json",
+            }
+            
+            # Use the bytes endpoint for direct binary streaming
+            url = f"{self.base_url}/v1/ai/speech/bytes"
+            
+            async with self._client.stream(
+                "POST",
+                url,
+                headers=headers,
+                json=payload
+            ) as response:
+                # Check for errors
+                if response.status_code == 400:
+                    error_data = await response.aread()
+                    try:
+                        import json
+                        error_json = json.loads(error_data.decode())
+                        error_msg = error_json.get("error", "Bad request")
+                    except:
+                        error_msg = "Bad request"
+                    self.emit("error", f"LMNT API error: {error_msg}")
+                    return
+                elif response.status_code == 401:
+                    self.emit("error", "LMNT API authentication failed. Please check your API key.")
+                    return
+                elif response.status_code != 200:
+                    self.emit("error", f"LMNT API error: HTTP {response.status_code}")
+                    return
                 
-                if self.audio_track and self.loop:
-                    self.loop.create_task(self.audio_track.add_new_bytes(chunk))
-                    await asyncio.sleep(0.01)  
-                    
+                # Stream audio chunks in real-time
+                header_processed = False
+                accumulated_data = b""
+                
+                async for chunk in response.aiter_bytes():
+                    if chunk:
+                        accumulated_data += chunk
+                        
+                        # Process WAV header on first chunk
+                        if not header_processed and len(accumulated_data) >= 44:
+                            # Skip WAV header (typically 44 bytes)
+                            if accumulated_data.startswith(b'RIFF'):
+                                data_pos = accumulated_data.find(b'data')
+                                if data_pos != -1:
+                                    # Skip to actual audio data
+                                    accumulated_data = accumulated_data[data_pos + 8:]
+                            header_processed = True
+                        
+                        # Stream chunks of appropriate size
+                        if header_processed:
+                            chunk_size = int(self.output_sample_rate * LMNT_CHANNELS * 2 * 20 / 1000)  # 20ms chunks
+                            while len(accumulated_data) >= chunk_size:
+                                audio_chunk = accumulated_data[:chunk_size]
+                                accumulated_data = accumulated_data[chunk_size:]
+                                
+                                # Send chunk to audio track
+                                self.loop.create_task(self.audio_track.add_new_bytes(audio_chunk))
+                                await asyncio.sleep(0.01)  # Small delay for smooth playback
+                
+                # Process any remaining data
+                if accumulated_data and header_processed:
+                    # Pad the last chunk if needed
+                    chunk_size = int(self.output_sample_rate * LMNT_CHANNELS * 2 * 20 / 1000)
+                    if len(accumulated_data) < chunk_size:
+                        accumulated_data += b'\x00' * (chunk_size - len(accumulated_data))
+                    self.loop.create_task(self.audio_track.add_new_bytes(accumulated_data))
+
+        except httpx.HTTPError as e:
+            self.emit("error", f"HTTP error occurred: {str(e)}")
         except Exception as e:
-            self.emit("error", f"Error in audio streaming: {e}")
+            self.emit("error", f"TTS synthesis failed: {str(e)}")
 
-    async def _convert_to_pcm(self, audio_data: bytes) -> bytes:
-        """Convert audio data to PCM format for VideoSDK compatibility"""
-        if self.format.lower() == "raw":
-            return audio_data
-        elif self.format.lower() == "mp3":
-            if not PYDUB_AVAILABLE:
-                self.emit("error", "pydub is required for MP3 decoding. Install with: pip install pydub")
-                return b""
-            
-            try:
-                from pydub import AudioSegment
-                import io
-                
-                audio_segment = AudioSegment.from_mp3(io.BytesIO(audio_data))
-                
-                if audio_segment.channels != 1:
-                    audio_segment = audio_segment.set_channels(1)
-                
-                if audio_segment.frame_rate != self._sample_rate:
-                    audio_segment = audio_segment.set_frame_rate(self._sample_rate)
-                
-                pcm_bytes = audio_segment.raw_data
-                return pcm_bytes
-                
-            except Exception as e:
-                self.emit("error", f"Error converting MP3 to PCM: {e}")
-                return b""
-        elif self.format.lower() == "ulaw":
-            if not PYDUB_AVAILABLE:
-                self.emit("error", "pydub is required for µ-law decoding. Install with: pip install pydub")
-                return b""
-            
-            try:
-                from pydub import AudioSegment
-                import io
-                
-                audio_segment = AudioSegment.from_file(io.BytesIO(audio_data), format="wav")
-                
-                if audio_segment.channels != 1:
-                    audio_segment = audio_segment.set_channels(1)
-                
-                if audio_segment.frame_rate != self._sample_rate:
-                    audio_segment = audio_segment.set_frame_rate(self._sample_rate)
-                
-                pcm_bytes = audio_segment.raw_data
-                return pcm_bytes
-                
-            except Exception as e:
-                self.emit("error", f"Error converting µ-law to PCM: {e}")
-                return b""
-        else:
-            self.emit("error", f"Unsupported audio format: {self.format}")
-            return b""
 
-    def set_stt_component(self, stt_component):
-        """Set reference to STT component for conversation flow control"""
-        self.stt_component = stt_component
-        
-    async def aclose(self):
-        """Close the TTS connection and cleanup resources"""
-        if self._session:
-            await self._session.close()
+
+    async def aclose(self) -> None:
+        """Cleanup resources"""
+        await self._client.aclose()
         await super().aclose()
 
     async def interrupt(self) -> None:

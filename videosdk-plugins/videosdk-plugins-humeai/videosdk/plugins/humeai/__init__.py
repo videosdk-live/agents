@@ -1,9 +1,6 @@
-"""
-Hume AI TTS plugin for videosdk-agents
+"""Hume AI TTS plugin for VideoSDK Agents"""
 
-This plugin provides text-to-speech capabilities using Hume AI's API.
-"""
+from .tts import HumeAITTS
+from .version import __version__
 
-from .tts import HumeAITTS, Utterance, Context
-
-__all__ = ["HumeAITTS", "Utterance", "Context"] 
+__all__ = ["HumeAITTS", "__version__"] 

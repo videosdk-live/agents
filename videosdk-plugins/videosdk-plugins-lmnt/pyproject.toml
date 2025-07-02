@@ -5,11 +5,11 @@ build-backend = "hatchling.build"
 [project]
 name = "videosdk-plugins-lmnt"
 dynamic = ["version"]
-description = "VideoSDK Agent Framework plugin for LMNT"
+description = "VideoSDK Agent Framework plugin for LMNT AI Text-to-Speech services"
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "videosdk"}]
-keywords = ["video", "audio", "ai", "videosdk", "lmnt"]
+keywords = ["video", "audio", "ai", "lmnt", "tts", "videosdk"]
 classifiers = [
     "Intended Audience :: Developers",
     "Development Status :: 4 - Beta",
@@ -20,7 +20,8 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "videosdk-agents>=0.0.17"
+    "videosdk-agents>=0.0.10",
+    "httpx>=0.24.0",
 ]
 
 [tool.hatch.version]
@@ -30,4 +31,4 @@ path = "videosdk/plugins/lmnt/version.py"
 packages = ["videosdk"]
 
 [tool.hatch.build.targets.sdist]
-include = ["/videosdk"]
+include = ["/videosdk"] 

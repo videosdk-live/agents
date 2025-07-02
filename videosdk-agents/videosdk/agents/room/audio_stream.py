@@ -101,3 +101,15 @@ class CustomAudioStreamTrack(CustomAudioTrack):
     async def cleanup(self):
         self.interrupt()
         self.stop()
+
+class TeeCustomAudioStreamTrack(CustomAudioStreamTrack):
+    def __init__(self, loop, sinks=None):
+        super().__init__(loop)
+        self.sinks = sinks if sinks is not None else []
+
+    async def add_new_bytes(self, audio_data: bytes):
+        await super().add_new_bytes(audio_data)
+        
+        for sink in self.sinks:
+            if hasattr(sink, 'handle_audio_input'):
+                await sink.handle_audio_input(audio_data)
