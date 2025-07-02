@@ -22,5 +22,5 @@ def create_pipeline(agent_type: str) -> RealTimePipeline:
     return RealTimePipeline(model=model)
 
 
-def create_session(agent, pipeline, context: Dict) -> AgentSession:
-    return AgentSession(agent=agent, pipeline=pipeline, context=context)
+def create_session(agent, pipeline) -> AgentSession:
+    return AgentSession(agent=agent, pipeline=pipeline)
