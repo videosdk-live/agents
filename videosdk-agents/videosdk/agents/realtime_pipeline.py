@@ -35,6 +35,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         self.model.audio_track = None
         self.agent = None
         self.avatar = avatar
+        self.vision = False
         super().__init__()
     
     def set_agent(self, agent: Agent) -> None:
@@ -47,10 +48,20 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         if self.loop:
             self.model.loop = self.loop
             job_context = get_current_job_context()
-            if self.avatar and job_context and job_context.room:
-                self.model.audio_track = getattr(job_context.room, 'agent_audio_track', None) or job_context.room.audio_track
-            elif self.audio_track:
-                self.model.audio_track = self.audio_track
+            
+            if job_context and job_context.room:
+                requested_vision = getattr(job_context.room, 'vision', False)
+                self.vision = requested_vision
+                
+                model_name = self.model.__class__.__name__
+                if requested_vision and model_name != 'GeminiRealtime':
+                    print(f"Warning: Vision mode requested but {model_name} doesn't support video input. Only GeminiRealtime supports vision. Disabling vision.")
+                    self.vision = False
+                
+                if self.avatar:
+                    self.model.audio_track = getattr(job_context.room, 'agent_audio_track', None) or job_context.room.audio_track
+                elif self.audio_track:
+                     self.model.audio_track = self.audio_track
 
     async def start(self, **kwargs: Any) -> None:
         """
