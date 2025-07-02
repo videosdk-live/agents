@@ -174,13 +174,15 @@ class A2AProtocol:
 
         if hasattr(target_agent, 'a2a') and message_type in target_agent.a2a._message_handlers:
             handlers = target_agent.a2a._message_handlers[message_type]
-            for handler_func in handlers: # Renamed to avoid conflict
+            for handler_func in handlers:
                 try:
                     await handler_func(message)
                 except Exception as e:
                     print(f"Error in message handler for {message_type} on agent {to_agent}: {e}")
 
-        elif message_type == "specialist_query" and hasattr(target_agent, 'session') and hasattr(target_agent.session, 'pipeline') and hasattr(target_agent.session.pipeline, 'model'):
-            await target_agent.session.pipeline.send_text_message(content.get("query", ""))
-            return
+        elif message_type == "specialist_query" and hasattr(target_agent, 'session') and hasattr(target_agent.session, 'pipeline'):
+            if hasattr(target_agent.session.pipeline, 'model'):
+                await target_agent.session.pipeline.send_text_message(content.get("query", ""))
+            elif hasattr(target_agent.session.pipeline, 'send_text_message'):
+                await target_agent.session.pipeline.send_text_message(content.get("query", ""))
 

@@ -81,6 +81,15 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
     async def send_message(self, message: str) -> None:
         await self.conversation_flow.say(message)
 
+    async def send_text_message(self, message: str) -> None:
+        """
+        Send a text message directly to the LLM (for A2A communication).
+        This bypasses STT and directly processes the text through the conversation flow.
+        """
+        if self.conversation_flow:
+            await self.conversation_flow.process_text_input(message)
+        else:
+            await self.send_message(message)
 
     async def on_audio_delta(self, audio_data: bytes) -> None:
         """
