@@ -20,6 +20,10 @@ from videosdk.plugins.cerebras import CerebrasLLM
 from videosdk.plugins.aws import AWSPollyTTS
 from videosdk.plugins.neuphonic import NeuphonicTTS
 from videosdk.plugins.anthropic import AnthropicLLM
+from videosdk.plugins.humeai import HumeAITTS
+from videosdk.plugins.rime import RimeTTS
+from videosdk.plugins.speechify import SpeechifyTTS
+from videosdk.plugins.groq import GroqTTS
 
 import logging
 import pathlib
@@ -168,7 +172,7 @@ async def entrypoint(ctx: JobContext):
 
     pipeline = CascadingPipeline(
         # STT Based Providers 
-        # stt= DeepgramSTT(api_key=os.getenv("DEEPGRAM_API_KEY")),
+        stt= DeepgramSTT(api_key=os.getenv("DEEPGRAM_API_KEY")),
         # stt=CartesiaSTT(api_key=os.getenv("CARTESIA_API_KEY")),
        
         # OpenAI - All Three 
@@ -177,9 +181,9 @@ async def entrypoint(ctx: JobContext):
         # tts=OpenAITTS(api_key=os.getenv("OPENAI_API_KEY")),
 
         # Google - All Three 
-        stt = GoogleSTT( model="latest_long"),
-        llm=GoogleLLM(api_key=os.getenv("GOOGLE_API_KEY")),
-        tts=GoogleTTS(api_key=os.getenv("GOOGLE_API_KEY")),
+        # stt = GoogleSTT( model="latest_long"),
+        # llm=GoogleLLM(api_key=os.getenv("GOOGLE_API_KEY")),
+        # tts=GoogleTTS(api_key=os.getenv("GOOGLE_API_KEY")),
         
         # SarvamAI - All Three 
         # stt=SarvamAISTT(api_key=os.getenv("SARVAMAI_API_KEY")),
@@ -195,10 +199,14 @@ async def entrypoint(ctx: JobContext):
         # tts=CartesiaTTS(api_key=os.getenv("CARTESIA_API_KEY")),
         # tts=SmallestAITTS(api_key=os.getenv("SMALLESTAI_API_KEY")),
         # tts=ResembleTTS(api_key=os.getenv("RESEMBLE_API_KEY")),
-        tts=AWSPollyTTS(api_key=os.getenv("AWS_API_KEY")),
+        # tts=AWSPollyTTS(api_key=os.getenv("AWS_API_KEY")),
         # tts=NeuphonicTTS(api_key=os.getenv("NEUPHONIC_API_KEY")),
         # tts=InworldAITTS(api_key=os.getenv("INWORLD_API_KEY")),
         # tts=LMNTTTS(api_key=os.getenv("LMNT_API_KEY")),
+        # tts=HumeAITTS(api_key=os.getenv("HUMEAI_API_KEY")),
+        # tts=RimeTTS(api_key=os.getenv("RIME_API_KEY")),
+        tts=SpeechifyTTS(api_key=os.getenv("SPEECHIFY_API_KEY")),
+        # tts=GroqTTS(api_key=os.getenv("GROQ_API_KEY")),
 
         vad=SileroVAD(),
         turn_detector=TurnDetector(threshold=0.8)

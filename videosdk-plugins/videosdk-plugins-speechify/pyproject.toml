@@ -7,9 +7,10 @@ name = "videosdk-plugins-speechify"
 dynamic = ["version"]
 description = "VideoSDK Agent Framework plugin for Speechify AI TTS"
 readme = "README.md"
+license = "Apache-2.0"
 requires-python = ">=3.11"
 authors = [{ name = "videosdk"}]
-keywords = ["video", "audio", "ai", "speechify", "tts", "videosdk"]
+keywords = ["video", "audio", "ai", "speechify", "tts", "videosdk", "speechify"]
 classifiers = [
     "Intended Audience :: Developers",
     "Development Status :: 4 - Beta",
@@ -19,7 +20,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "videosdk-agents>=0.0.10",
+    "videosdk-agents>=0.0.18",
     "httpx>=0.25.0",
     "pydub>=0.25.1",
 ]

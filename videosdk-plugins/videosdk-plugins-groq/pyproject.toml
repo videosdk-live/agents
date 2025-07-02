@@ -9,7 +9,7 @@ description = "VideoSDK Agent Framework plugin for Groq TTS services"
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "videosdk"}]
-keywords = ["video", "audio", "ai", "groq", "tts", "videosdk"]
+keywords = ["video", "audio", "ai", "groq", "tts", "videosdk", "groq"]
 classifiers = [
     "Intended Audience :: Developers",
     "Development Status :: 4 - Beta",
@@ -19,7 +19,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "videosdk-agents>=0.0.10",
+    "videosdk-agents>=0.0.18",
     "httpx>=0.24.0",
 ]
 

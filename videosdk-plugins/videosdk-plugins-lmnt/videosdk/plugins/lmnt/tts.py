@@ -7,7 +7,6 @@ import asyncio
 
 from videosdk.agents import TTS
 
-# LMNT API defaults
 LMNT_API_BASE_URL = "https://api.lmnt.com"
 LMNT_SAMPLE_RATE = 24000
 LMNT_CHANNELS = 1
@@ -15,9 +14,8 @@ LMNT_CHANNELS = 1
 DEFAULT_MODEL = "blizzard"
 DEFAULT_VOICE = "ava"
 DEFAULT_LANGUAGE = "auto"
-DEFAULT_FORMAT = "wav"  # WAV format for proper 16-bit PCM audio
+DEFAULT_FORMAT = "wav"  
 
-# Type definitions for parameters
 _LanguageCode = Union[
     Literal["auto", "de", "en", "es", "fr", "hi", "id", "it", "ja", 
             "ko", "nl", "pl", "pt", "ru", "sv", "th", "tr", "uk", "vi", "zh"], 
@@ -42,7 +40,6 @@ class LMNTTTS(TTS):
         api_key: Optional[str] = None,
         base_url: str = LMNT_API_BASE_URL,
     ) -> None:
-        # Initialize with the specified sample rate
         super().__init__(sample_rate=sample_rate, num_channels=LMNT_CHANNELS)
         
         self.voice = voice
@@ -57,7 +54,6 @@ class LMNTTTS(TTS):
         self.audio_track = None
         self.loop = None
         
-        # Get API key from parameter or environment
         self.api_key = api_key or os.getenv("LMNT_API_KEY")
         if not self.api_key:
             raise ValueError(
@@ -65,7 +61,6 @@ class LMNTTTS(TTS):
                 "or LMNT_API_KEY environment variable"
             )
         
-        # Create HTTP client with appropriate timeouts
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(connect=15.0, read=30.0, write=5.0, pool=5.0),
             follow_redirects=True,
@@ -91,7 +86,6 @@ class LMNTTTS(TTS):
             **kwargs: Additional provider-specific arguments
         """
         try:
-            # Convert AsyncIterator to string if needed
             if isinstance(text, AsyncIterator):
                 full_text = ""
                 async for chunk in text:
@@ -103,10 +97,8 @@ class LMNTTTS(TTS):
                 self.emit("error", "Audio track or event loop not set")
                 return
 
-            # Use the provided voice_id or fall back to default
             target_voice = voice_id or self.voice
 
-            # Build request payload
             payload = {
                 "voice": target_voice,
                 "text": full_text,
@@ -118,18 +110,15 @@ class LMNTTTS(TTS):
                 "top_p": kwargs.get("top_p", self.top_p),
             }
             
-            # Add seed if provided
             seed = kwargs.get("seed", self.seed)
             if seed is not None:
                 payload["seed"] = seed
 
-            # Make API request with streaming response
             headers = {
                 "X-API-Key": self.api_key,
                 "Content-Type": "application/json",
             }
             
-            # Use the bytes endpoint for direct binary streaming
             url = f"{self.base_url}/v1/ai/speech/bytes"
             
             async with self._client.stream(
@@ -138,7 +127,6 @@ class LMNTTTS(TTS):
                 headers=headers,
                 json=payload
             ) as response:
-                # Check for errors
                 if response.status_code == 400:
                     error_data = await response.aread()
                     try:
@@ -156,7 +144,6 @@ class LMNTTTS(TTS):
                     self.emit("error", f"LMNT API error: HTTP {response.status_code}")
                     return
                 
-                # Stream audio chunks in real-time
                 header_processed = False
                 accumulated_data = b""
                 
@@ -164,30 +151,23 @@ class LMNTTTS(TTS):
                     if chunk:
                         accumulated_data += chunk
                         
-                        # Process WAV header on first chunk
                         if not header_processed and len(accumulated_data) >= 44:
-                            # Skip WAV header (typically 44 bytes)
                             if accumulated_data.startswith(b'RIFF'):
                                 data_pos = accumulated_data.find(b'data')
                                 if data_pos != -1:
-                                    # Skip to actual audio data
                                     accumulated_data = accumulated_data[data_pos + 8:]
                             header_processed = True
                         
-                        # Stream chunks of appropriate size
                         if header_processed:
                             chunk_size = int(self.output_sample_rate * LMNT_CHANNELS * 2 * 20 / 1000)  # 20ms chunks
                             while len(accumulated_data) >= chunk_size:
                                 audio_chunk = accumulated_data[:chunk_size]
                                 accumulated_data = accumulated_data[chunk_size:]
                                 
-                                # Send chunk to audio track
                                 self.loop.create_task(self.audio_track.add_new_bytes(audio_chunk))
-                                await asyncio.sleep(0.01)  # Small delay for smooth playback
+                                await asyncio.sleep(0.01)  
                 
-                # Process any remaining data
                 if accumulated_data and header_processed:
-                    # Pad the last chunk if needed
                     chunk_size = int(self.output_sample_rate * LMNT_CHANNELS * 2 * 20 / 1000)
                     if len(accumulated_data) < chunk_size:
                         accumulated_data += b'\x00' * (chunk_size - len(accumulated_data))

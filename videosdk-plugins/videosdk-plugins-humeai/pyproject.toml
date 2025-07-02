@@ -1,48 +1,37 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel", "toml", "build"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project]
 name = "videosdk-plugins-humeai"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Hume AI TTS plugin for videosdk-agents"
 readme = "README.md"
-requires-python = ">=3.8"
-license = {text = "MIT"}
-keywords = ["tts", "text-to-speech", "hume", "ai", "voice", "videosdk", "agents"]
-authors = [
-  {name = "VideoSDK", email = "support@videosdk.live"},
-]
+license = "Apache-2.0"
+requires-python = ">=3.11"
+authors = [{ name = "videosdk"}]
+keywords = ["tts", "text-to-speech", "hume", "ai", "voice", "videosdk", "agents", "humeai"]
 classifiers = [
-  "Development Status :: 4 - Beta",
-  "Intended Audience :: Developers",
-  "License :: OSI Approved :: MIT License",
-  "Programming Language :: Python",
-  "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.8",
-  "Programming Language :: Python :: 3.9",
-  "Programming Language :: Python :: 3.10",
-  "Programming Language :: Python :: 3.11",
-  "Programming Language :: Python :: 3.12",
-  "Topic :: Software Development :: Libraries :: Python Modules",
-  "Topic :: Multimedia :: Sound/Audio :: Speech",
+    "Intended Audience :: Developers",
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Communications :: Conferencing",
+    "Topic :: Multimedia :: Sound/Audio",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-  "videosdk-agents",
-  "httpx>=0.24.0",
-  "scipy>=1.11.0",
-  "numpy",
-  "dataclasses>=0.6; python_version<'3.7'",
+    "videosdk-agents>=0.0.18",
+    "httpx>=0.24.0",
+    "scipy>=1.11.0",
+    "numpy"
 ]
 
-[project.urls]
-homepage = "https://github.com/videosdk-live/videosdk-agents"
-documentation = "https://docs.videosdk.live/"
-repository = "https://github.com/videosdk-live/videosdk-agents"
-issues = "https://github.com/videosdk-live/videosdk-agents/issues"
+[tool.hatch.version]
+path = "videosdk/plugins/humeai/version.py"
 
-[tool.setuptools]
-py-modules = ["videosdk"]
+[tool.hatch.build.targets.wheel]
+packages = ["videosdk"]
 
-[tool.setuptools.packages.find]
-include = ["videosdk*"] 
+[tool.hatch.build.targets.sdist]
+include = ["/videosdk"]

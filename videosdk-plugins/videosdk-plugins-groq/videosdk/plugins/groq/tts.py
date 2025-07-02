@@ -7,15 +7,13 @@ import asyncio
 
 from videosdk.agents import TTS
 
-# Based on common configurations for audio, similar to OpenAI
-GROQ_TTS_SAMPLE_RATE = 24000  # Default sample rate for VideoSDK compatibility
+GROQ_TTS_SAMPLE_RATE = 24000  
 GROQ_TTS_CHANNELS = 1
 
 DEFAULT_MODEL = "playai-tts"
 DEFAULT_VOICE = "Fritz-PlayAI"
 GROQ_TTS_ENDPOINT = "https://api.groq.com/openai/v1/audio/speech"
 
-# Sample rate mapping based on API documentation
 SAMPLE_RATE_MAP = {
     8000: 8000,
     16000: 16000,
@@ -38,13 +36,11 @@ class GroqTTS(TTS):
         response_format: Literal["flac", "mp3", "mulaw", "ogg", "wav"] = "wav",
         sample_rate: int = 24000,
     ) -> None:
-        # Validate sample rate
         if sample_rate not in SAMPLE_RATE_MAP:
             raise ValueError(
                 f"Invalid sample rate: {sample_rate}. Must be one of: {list(SAMPLE_RATE_MAP.keys())}"
             )
         
-        # Validate speed
         if not 0.5 <= speed <= 5.0:
             raise ValueError(f"Speed must be between 0.5 and 5.0, got {speed}")
         
@@ -56,7 +52,7 @@ class GroqTTS(TTS):
         self.audio_track = None
         self.loop = None
         self.response_format = response_format
-        self._groq_sample_rate = sample_rate  # Store for API calls
+        self._groq_sample_rate = sample_rate 
         
         self.api_key = api_key or os.getenv("GROQ_API_KEY")
         if not self.api_key:
@@ -122,7 +118,6 @@ class GroqTTS(TTS):
                 "speed": self.speed,
             }
             
-            # Stream the response
             async with self._client.stream(
                 "POST",
                 GROQ_TTS_ENDPOINT,
@@ -131,19 +126,14 @@ class GroqTTS(TTS):
             ) as response:
                 response.raise_for_status()
                 
-                # Process audio data based on format
                 if self.response_format == "wav":
-                    # Accumulate all chunks first for WAV format to handle header
                     audio_data = b""
                     async for chunk in response.aiter_bytes():
                         audio_data += chunk
                     
-                    # Remove WAV header and stream PCM data
                     pcm_data = self._extract_pcm_from_wav(audio_data)
                     await self._stream_audio_chunks(pcm_data)
                 else:
-                    # For other formats, we would need to decode them first
-                    # For now, we'll emit an error
                     self.emit("error", f"Format {self.response_format} requires decoding, which is not implemented yet")
                     
         except httpx.HTTPStatusError as e:
@@ -165,36 +155,31 @@ class GroqTTS(TTS):
 
     async def _stream_audio_chunks(self, audio_bytes: bytes) -> None:
         """Stream audio data in chunks at 24kHz"""
-        # Calculate chunk size for 20ms of audio at 24kHz
-        chunk_size = int(24000 * GROQ_TTS_CHANNELS * 2 * 20 / 1000)  # 2 bytes per sample for 16-bit
+        chunk_size = int(24000 * GROQ_TTS_CHANNELS * 2 * 20 / 1000) 
         
         for i in range(0, len(audio_bytes), chunk_size):
             chunk = audio_bytes[i:i + chunk_size]
             
-            # Pad the last chunk if necessary
             if len(chunk) < chunk_size and len(chunk) > 0:
                 padding_needed = chunk_size - len(chunk)
                 chunk += b'\x00' * padding_needed
             
             if chunk:
                 self.loop.create_task(self.audio_track.add_new_bytes(chunk))
-                await asyncio.sleep(0.001)  # Small delay to prevent overwhelming the buffer
+                await asyncio.sleep(0.001)  
 
     def _extract_pcm_from_wav(self, wav_data: bytes) -> bytes:
         """Extract PCM data from WAV file format"""
-        if len(wav_data) < 44:  # Minimum WAV header size
+        if len(wav_data) < 44: 
             return wav_data
             
-        # Check for RIFF header
         if wav_data[:4] != b'RIFF':
             return wav_data
             
-        # Find the data chunk
         data_pos = wav_data.find(b'data')
         if data_pos == -1:
             return wav_data
             
-        # Skip 'data' (4 bytes) and size (4 bytes) to get to actual audio data
         return wav_data[data_pos + 8:]
 
     async def aclose(self) -> None:

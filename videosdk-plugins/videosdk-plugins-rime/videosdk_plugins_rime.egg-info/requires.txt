@@ -1,2 +1,0 @@
-videosdk-agents>=0.0.16
-httpx>=0.24.0

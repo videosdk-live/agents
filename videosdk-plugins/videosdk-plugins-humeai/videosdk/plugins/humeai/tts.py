@@ -54,7 +54,6 @@ class HumeAITTS(TTS):
         **kwargs: Any
     ) -> None:
         try:
-            # Convert text
             if isinstance(text, AsyncIterator):
                 full_text = "".join([chunk async for chunk in text])
             else:
@@ -67,7 +66,6 @@ class HumeAITTS(TTS):
                 self.emit("error", "Audio track not set")
                 return
 
-            # Build request
             utterance = {
                 "text": full_text,
                 "speed": kwargs.get("speed", self.speed)
@@ -116,7 +114,6 @@ class HumeAITTS(TTS):
                             except json.JSONDecodeError:
                                 continue
                 
-                # Process remaining buffer
                 if buffer.strip():
                     try:
                         data = json.loads(buffer)
@@ -137,15 +134,13 @@ class HumeAITTS(TTS):
             return
             
         try:
-            # Resample from 48kHz to 24kHz
             audio_array = np.frombuffer(audio_bytes, dtype=np.int16)
             if len(audio_array) == 0:
                 return
                 
-            resampled_audio = audio_array[::2]  # Simple decimation
+            resampled_audio = audio_array[::2]  
             audio_bytes = resampled_audio.tobytes()
             
-            # Stream in 960-byte chunks (20ms at 24kHz)
             chunk_size = 960
             for i in range(0, len(audio_bytes), chunk_size):
                 chunk = audio_bytes[i:i + chunk_size]

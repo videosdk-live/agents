@@ -15,10 +15,9 @@ DEFAULT_MODEL = "mist"
 DEFAULT_SPEAKER = "river"
 DEFAULT_LANGUAGE = "eng"
 
-# Known working speakers for different models
 KNOWN_SPEAKERS = {
     "mist": ["river", "storm", "brook", "ember", "iris", "pearl"],
-    "mistv2": ["river", "storm", "brook", "ember", "iris", "pearl"]  # Assuming same speakers work
+    "mistv2": ["river", "storm", "brook", "ember", "iris", "pearl"]  
 }
 
 class RimeTTS(TTS):
@@ -36,7 +35,6 @@ class RimeTTS(TTS):
         inline_speed_alpha: str | None = None,
         api_key: str | None = None,
     ) -> None:
-        # Use the sampling rate from init or default
         actual_sample_rate = sampling_rate
         super().__init__(sample_rate=actual_sample_rate, num_channels=RIME_CHANNELS)
 
@@ -61,10 +59,9 @@ class RimeTTS(TTS):
                 "2. RIME_API_KEY environment variable"
             )
 
-        # Validate speaker and model combination
         if model_id in KNOWN_SPEAKERS and speaker not in KNOWN_SPEAKERS[model_id]:
             available = ", ".join(KNOWN_SPEAKERS[model_id])
-            print(f"⚠️  Warning: Speaker '{speaker}' may not be available for model '{model_id}'. "
+            print(f" Warning: Speaker '{speaker}' may not be available for model '{model_id}'. "
                   f"Known speakers: {available}")
 
         self._http_client = httpx.AsyncClient(
@@ -97,7 +94,6 @@ class RimeTTS(TTS):
     async def _synthesize_audio(self, text: str) -> None:
         """Synthesize text to speech using Rime AI streaming API"""
         try:
-            # Ensure text doesn't exceed 500 character limit
             if len(text) > 500:
                 self.emit("error", f"Text exceeds 500 character limit. Got {len(text)} characters.")
                 return
@@ -114,7 +110,6 @@ class RimeTTS(TTS):
                 "phonemizeBetweenBrackets": self.phonemize_between_brackets,
             }
             
-            # Only add inline_speed_alpha if it's provided
             if self.inline_speed_alpha:
                 payload["inlineSpeedAlpha"] = self.inline_speed_alpha
 
@@ -124,7 +119,6 @@ class RimeTTS(TTS):
                 "Content-Type": "application/json",
             }
 
-            # Stream the response
             async with self._http_client.stream(
                 "POST",
                 RIME_TTS_ENDPOINT,
@@ -133,7 +127,6 @@ class RimeTTS(TTS):
             ) as response:
                 response.raise_for_status()
                 
-                # Collect all audio data first, then chunk it properly
                 audio_data = b""
                 async for chunk in response.aiter_bytes():
                     if chunk:
@@ -143,7 +136,6 @@ class RimeTTS(TTS):
                     self.emit("error", "No audio data received from Rime TTS")
                     return
                 
-                # Remove WAV header if present and stream in chunks
                 await self._stream_audio_chunks(audio_data)
             
         except httpx.HTTPStatusError as e:
@@ -166,10 +158,8 @@ class RimeTTS(TTS):
 
     async def _stream_audio_chunks(self, audio_bytes: bytes) -> None:
         """Stream audio data in chunks to avoid beeps and ensure smooth playback"""
-        # Calculate chunk size based on sample rate (20ms chunks)
         chunk_size = int(self.sampling_rate * RIME_CHANNELS * 2 * 20 / 1000)
         
-        # Remove WAV header if present
         audio_data = self._remove_wav_header(audio_bytes)
         
         for i in range(0, len(audio_data), chunk_size):

@@ -10,7 +10,6 @@ from pydub import AudioSegment
 
 from videosdk.agents import TTS
 
-# Speechify doesn't specify sample rate in docs, using standard rate
 SPEECHIFY_SAMPLE_RATE = 24000  
 SPEECHIFY_CHANNELS = 1
 SPEECHIFY_STREAM_ENDPOINT = "https://api.sws.speechify.com/v1/audio/stream"
@@ -97,13 +96,11 @@ class SpeechifyTTS(TTS):
             ) as response:
                 response.raise_for_status()
                 
-                # Collect audio data
                 audio_data = b""
                 async for chunk in response.aiter_bytes():
                     if chunk:
                         audio_data += chunk
                 
-                # Decode and stream the audio
                 await self._decode_and_stream(audio_data)
                         
         except httpx.HTTPStatusError as e:
@@ -121,21 +118,17 @@ class SpeechifyTTS(TTS):
     async def _decode_and_stream(self, audio_bytes: bytes) -> None:
         """Decode compressed audio to PCM and stream it"""
         try:
-            # Decode compressed audio to PCM using pydub
             audio = AudioSegment.from_file(
                 io.BytesIO(audio_bytes), 
                 format=self.audio_format
             )
             
-            # Convert to the expected format
             audio = audio.set_frame_rate(SPEECHIFY_SAMPLE_RATE)
             audio = audio.set_channels(SPEECHIFY_CHANNELS)
-            audio = audio.set_sample_width(2)  # 16-bit PCM
+            audio = audio.set_sample_width(2)  
             
-            # Get raw PCM data
             pcm_data = audio.raw_data
             
-            # Stream audio chunks
             chunk_size = int(SPEECHIFY_SAMPLE_RATE * SPEECHIFY_CHANNELS * 2 * 20 / 1000)  # 20ms chunks
             
             for i in range(0, len(pcm_data), chunk_size):

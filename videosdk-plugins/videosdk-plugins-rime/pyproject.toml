@@ -1,37 +1,35 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "videosdk-plugins-rime"
-version = "0.1.0"
-description = "Rime AI TTS plugin for VideoSDK"
-authors = [{name = "VideoSDK Team"}]
+dynamic = ["version"]
+description = "VideoSDK Agent Framework plugin for Rime AI Text-to-Speech services"
 readme = "README.md"
-requires-python = ">=3.9"
-license = {text = "MIT"}
-keywords = ["videosdk", "rime", "tts", "text-to-speech"]
+license = "Apache-2.0"
+requires-python = ">=3.11"
+authors = [{ name = "videosdk"}]
+keywords = ["video", "audio", "ai", "lmnt", "tts", "videosdk", "rime"]
 classifiers = [
+    "Intended Audience :: Developers",
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
+    "Topic :: Communications :: Conferencing",
+    "Topic :: Multimedia :: Sound/Audio",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-
 dependencies = [
-    "videosdk-agents>=0.0.16",
+    "videosdk-agents>=0.0.18",
     "httpx>=0.24.0",
 ]
 
-[project.urls]
-Homepage = "https://github.com/videosdk-live/videosdk-agents"
-Documentation = "https://docs.videosdk.live/agents"
-Repository = "https://github.com/videosdk-live/videosdk-agents"
+[tool.hatch.version]
+path = "videosdk/plugins/rime/version.py"
 
-[build-system]
-requires = ["setuptools>=61.0", "wheel"]
-build-backend = "setuptools.build_meta"
+[tool.hatch.build.targets.wheel]
+packages = ["videosdk"]
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["videosdk*"] 
+[tool.hatch.build.targets.sdist]
+include = ["/videosdk"] 
