@@ -154,8 +154,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 role=ChatRole.ASSISTANT,
                 content=full_response
             )
-            global_event_emitter.emit("text_response", {"text": full_response})
-
                             
     async def say(self, message: str) -> None:
         if self.tts:
@@ -171,11 +169,13 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             content=text
         )
         
-        if self.tts:
-            await self.tts.synthesize(self.run(text))
-        else:
-            async for _ in self.run(text):
-                pass        
+        full_response = ""
+        async for response_chunk in self.process_with_llm():
+            full_response += response_chunk
+        
+        if full_response:
+            global_event_emitter.emit("text_response", {"text": full_response})
+    
     
     async def run(self, transcript: str) -> AsyncIterator[str]:
         """
