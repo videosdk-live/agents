@@ -1,6 +1,6 @@
-VideoSDK Cerebras Plugin
+# VideoSDK Cerebras Plugin
 
-Agent Framework plugin for realtime services from Cerebras.
+Agent Framework plugin for LLM services from Cerebras.
 
 ## Installation
 

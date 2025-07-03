@@ -1,6 +1,6 @@
 # VideoSDK SmallestAI Plugin
 
-This plugin provides SmallestAI Text-to-Speech (TTS) integration for the VideoSDK Agent Framework.
+Agent Framework plugin for TTS services from SmallestAI.
 
 ## Installation
 

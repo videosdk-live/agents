@@ -1,6 +1,6 @@
 # VideoSDK Sarvam AI 
 
-This plugin integrates Sarvam AI' TTS.
+Agent Framework plugin for LLM, STT and TTS services from SarvamAI.
 
 ## Requirements
 

@@ -1,6 +1,6 @@
-VideoSDK Resemble Plugin
+# VideoSDK Resemble Plugin
 
-Agent Framework plugin for tts services from Resemble.
+Agent Framework plugin for TTS services from Resemble.
 
 ## Installation
 

@@ -1,6 +1,6 @@
-VideoSDK ElevenLabs Plugin
+# VideoSDK ElevenLabs Plugin
 
-Agent Framework plugin for tts services from ElevenLabs.
+Agent Framework plugin for TTS services from ElevenLabs.
 
 ## Installation
 

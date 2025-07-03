@@ -1,6 +1,6 @@
-# VideoSDK Speechify TTS Plugin
+# VideoSDK Speechify Plugin
 
-This plugin integrates Speechify AI's text-to-speech capabilities into the VideoSDK Agents framework.
+Agent Framework plugin for TTS services from Speechify.
 
 ## Installation
 

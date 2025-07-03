@@ -1,6 +1,6 @@
-# VideoSDK Rime AI TTS Plugin
+# VideoSDK Rime AI Plugin
 
-A Text-to-Speech (TTS) plugin for VideoSDK that integrates with Rime AI's TTS service.
+Agent Framework plugin for TTS services from Rime.
 
 ## Installation
 

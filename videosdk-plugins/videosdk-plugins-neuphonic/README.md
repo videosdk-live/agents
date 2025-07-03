@@ -1,6 +1,6 @@
-# videosdk-plugins-neuphonic
+# VideoSDK Neuphonic Plugin
 
-A VideoSDK Agent Framework plugin for Neuphonic AI text-to-speech services.
+Agent Framework plugin for TTS services from Neuphonic.
 
 ## Installation
 

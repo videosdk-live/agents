@@ -1,6 +1,6 @@
 # VideoSDK InworldAI Plugin
 
-Agent Framework plugin for Text-to-Speech services from InworldAI.
+Agent Framework plugin for TTS services from InworldAI.
 
 ## Installation
 

@@ -1,6 +1,6 @@
 # VideoSDK LMNT AI Plugin
 
-VideoSDK plugin for LMNT AI Text-to-Speech services.
+Agent Framework plugin for TTS services from LMNT.
 
 ## Installation
 

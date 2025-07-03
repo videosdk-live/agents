@@ -1,6 +1,6 @@
-# Hume AI TTS Plugin for VideoSDK Agents
+# VideoSDK HumeAI Plugin
 
-A text-to-speech (TTS) plugin for VideoSDK Agents that integrates with Hume AI's TTS API.
+Agent Framework plugin for TTS services from HumeAI.
 
 ```bash
 pip install videosdk-plugins-humeai

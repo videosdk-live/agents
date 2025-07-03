@@ -1,6 +1,6 @@
 # VideoSDK Anthropic Plugin
 
-This plugin provides Anthropic Claude integration for the VideoSDK Agent Framework.
+Agent Framework plugin for LLM services from Anthropic.
 
 ## Installation
 
