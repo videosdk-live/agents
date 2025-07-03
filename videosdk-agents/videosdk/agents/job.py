@@ -16,6 +16,7 @@ class RoomOptions:
     playground: bool = True
     vision: bool = False
     avatar: Optional[Any] = None
+    join_meeting: Optional[bool] = True
 
 class WorkerJob:
     def __init__(self, entrypoint, jobctx=None):
@@ -72,26 +73,27 @@ class JobContext:
                 custom_camera_video_track = avatar.video_track
                 custom_microphone_audio_track = avatar.audio_track
                 sinks.append(avatar)
-
-            self.room = VideoSDKHandler(
-                meeting_id=self.room_options.room_id,
-                auth_token=self.videosdk_auth,
-                name=self.room_options.name,
-                pipeline=self._pipeline,
-                loop=self._loop,
-                vision=self.room_options.vision,
-                custom_camera_video_track=custom_camera_video_track,
-                custom_microphone_audio_track=custom_microphone_audio_track,
-                audio_sinks=sinks,
-            )
+            
+            if self.room_options.join_meeting:
+                self.room = VideoSDKHandler(
+                    meeting_id=self.room_options.room_id,
+                    auth_token=self.videosdk_auth,
+                    name=self.room_options.name,
+                    pipeline=self._pipeline,
+                    loop=self._loop,
+                    vision=self.room_options.vision,
+                    custom_camera_video_track=custom_camera_video_track,
+                    custom_microphone_audio_track=custom_microphone_audio_track,
+                    audio_sinks=sinks,
+                )
             if self._pipeline and hasattr(self._pipeline, '_set_loop_and_audio_track'):
                 self._pipeline._set_loop_and_audio_track(self._loop, self.room.audio_track)
 
-        if self.room:
+        if self.room and self.room_options.join_meeting:
             self.room.init_meeting()
             await self.room.join()
         
-        if self.room_options.playground:
+        if self.room_options.playground and self.room_options.join_meeting:
             if self.videosdk_auth:
                 playground_url = f"https://playground.videosdk.live?token={self.videosdk_auth}&meetingId={self.room_options.room_id}"
                 print(f"\033[1;36m" + "Agent started in playground mode" + "\033[0m")

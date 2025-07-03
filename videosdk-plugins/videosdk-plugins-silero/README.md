@@ -1,4 +1,4 @@
-VideoSDK Silero Plugin
+# VideoSDK Silero Plugin
 
 Agent Framework plugin for Silero.
 

@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "videosdk-plugins-humeai"
+dynamic = ["version"]
+description = "Hume AI TTS plugin for videosdk-agents"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+authors = [{ name = "videosdk"}]
+keywords = ["tts", "text-to-speech", "hume", "ai", "voice", "videosdk", "agents", "humeai"]
+classifiers = [
+    "Intended Audience :: Developers",
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Communications :: Conferencing",
+    "Topic :: Multimedia :: Sound/Audio",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "videosdk-agents>=0.0.19",
+    "httpx>=0.24.0",
+    "scipy>=1.11.0",
+    "numpy"
+]
+
+[tool.hatch.version]
+path = "videosdk/plugins/humeai/version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["videosdk"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/videosdk"]

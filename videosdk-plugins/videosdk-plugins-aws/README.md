@@ -1,6 +1,6 @@
-# VideoSDK AWS Nova Sonic Plugin
+# VideoSDK AWS Plugin
 
-This plugin integrates Amazon Bedrock's Nova Sonic model with VideoSDK Agents framework.
+Agent Framework plugin for Realtime and TTS services from AWS.
 
 ## Requirements
 

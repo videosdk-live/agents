@@ -59,7 +59,11 @@ class VideoSDKHandler:
         self._first_participant_event = asyncio.Event()
         
     def init_meeting(self):
-        self.meeting = VideoSDK.init_meeting(**self.meeting_config)
+        sdk_metadata = {
+            "sdk" : "agents",
+            "sdk-version" : "0.0.19" 
+        }
+        self.meeting = VideoSDK.init_meeting(**self.meeting_config, sdk_metadata=sdk_metadata)
         self.meeting.add_event_listener(
             MeetingHandler(
                 on_meeting_joined=self.on_meeting_joined,

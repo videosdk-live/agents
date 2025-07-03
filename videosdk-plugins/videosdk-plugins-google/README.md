@@ -1,6 +1,6 @@
-VideoSDK Google Plugin
+# VideoSDK Google Plugin
 
-Agent Framework plugin for realtime services from Google.
+Agent Framework plugin for realtime, LLM, TTS, and STT  services from Google.
 
 ## Installation
 

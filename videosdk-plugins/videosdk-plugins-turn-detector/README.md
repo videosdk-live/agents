@@ -1,4 +1,4 @@
-VideoSDK Turn Detector Plugin
+# VideoSDK Turn Detector Plugin
 
 Agent Framework plugin for Turn Detection.
 
