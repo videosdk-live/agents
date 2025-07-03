@@ -23,7 +23,6 @@ class LoanAgent(Agent):
 
     async def handle_model_response(self, message: A2AMessage):
         response = message.content.get("response")
-        print("##R 1LoanAgent Given response:", response)
         requesting_agent = message.to_agent
         if response and requesting_agent:
             await self.a2a.send_message(

@@ -43,8 +43,8 @@ class CustomerServiceAgent(Agent):
             await asyncio.sleep(0.5)
             prompt = f"The loan specialist has responded: {response}"
             methods_to_try = [
-                (self.session.pipeline.send_text_message, prompt),
-                (self.session.pipeline.model.send_message, response),
+                (self.session.pipeline.send_text_message, prompt),# While using Cascading as main agent, comment this
+                (self.session.pipeline.model.send_message, response),# While using Cascading as main agent, comment this
                 (self.session.say, response)
             ]
             for method, arg in methods_to_try:
