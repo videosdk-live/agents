@@ -158,6 +158,24 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
     async def say(self, message: str) -> None:
         if self.tts:
             await self.tts.synthesize(message)
+
+    async def process_text_input(self, text: str) -> None:
+        """
+        Process text input directly (for A2A communication).
+        This bypasses STT and directly processes the text through the LLM.
+        """
+        self.agent.chat_context.add_message(
+            role=ChatRole.USER,
+            content=text
+        )
+        
+        full_response = ""
+        async for response_chunk in self.process_with_llm():
+            full_response += response_chunk
+        
+        if full_response:
+            global_event_emitter.emit("text_response", {"text": full_response})
+    
     
     async def run(self, transcript: str) -> AsyncIterator[str]:
         """

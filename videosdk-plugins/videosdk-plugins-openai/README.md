@@ -1,6 +1,6 @@
-VideoSDK OpenAI Plugin
+# VideoSDK OpenAI Plugin
 
-Agent Framework plugin for realtime services from OpenAI.
+Agent Framework plugin for realtime, LLM, STT and TTS services from OpenAI.
 
 ## Installation
 

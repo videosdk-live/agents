@@ -1,6 +1,6 @@
-Cartesia Plugin
+# VideoSDK Cartesia Plugin
 
-Agent Framework plugin for stt and tts services from Cartesia.
+Agent Framework plugin for STT and TTS services from Cartesia.
 
 ## Installation
 
