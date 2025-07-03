@@ -23,11 +23,9 @@ except ImportError:
     SCIPY_AVAILABLE = False
 
 
-# VideoSDK expects 24kHz for TTS output
 VIDEOSDK_TTS_SAMPLE_RATE = 24000
 VIDEOSDK_TTS_CHANNELS = 1
 
-# Default configuration
 DEFAULT_VOICE = "Joanna"
 DEFAULT_ENGINE = "neural"
 DEFAULT_OUTPUT_FORMAT = "pcm"
@@ -117,7 +115,7 @@ class AWSPollyTTS(TTS):
                 TextType="ssml",
                 OutputFormat="pcm",
                 VoiceId=self.voice,
-                SampleRate="16000",  # Use 16000 which is definitely supported by AWS Polly
+                SampleRate="16000",
                 Engine=self.engine
             )
 
@@ -139,16 +137,11 @@ class AWSPollyTTS(TTS):
             return
 
         try:
-            # Resample from AWS Polly's 16kHz to VideoSDK's expected 24kHz
             if SCIPY_AVAILABLE:
-                # Convert bytes to numpy array
                 audio_array = np.frombuffer(audio_data, dtype=np.int16)
-                
-                # Resample from 16kHz to 24kHz
                 target_length = int(len(audio_array) * 24000 / 16000)
                 resampled_audio = signal.resample(audio_array, target_length)
                 
-                # Correct: just clip and cast to int16, do NOT multiply by 32767
                 resampled_audio = np.clip(resampled_audio, -32768, 32767).astype(np.int16)
                 audio_data = resampled_audio.tobytes()
                 
@@ -156,8 +149,7 @@ class AWSPollyTTS(TTS):
             else:
                 logger.warning("scipy not available, using original audio without resampling")
 
-            # Stream the resampled audio in chunks
-            chunk_size = int(self.sample_rate * self.num_channels * 2 * 20 / 1000)  # 20ms chunks
+            chunk_size = int(self.sample_rate * self.num_channels * 2 * 20 / 1000)
             
             for i in range(0, len(audio_data), chunk_size):
                 chunk = audio_data[i:i+chunk_size]
