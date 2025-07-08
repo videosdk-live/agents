@@ -118,7 +118,7 @@ Now that you've installed the necessary packages, you're ready to build!
 - For detailed guides, tutorials, and API references, check out our official [VideoSDK AI Agents Documentation](https://docs.videosdk.live/ai_agents/introduction).
 - To see the framework in action, explore the code in the [Examples](examples/) directory. It is a great place to quickstart.
 - For Avatar support, check out the [Simli Avatar](videosdk-plugins/videosdk-plugins-simli) and [Avatar Examples](examples/avatar/).
-- For SIP integration, refer to the [SIP Plugin](videosdk-plugins/videosdk-plugins-agentsip) and [SIP Agent Example](examples/sip_agent_example.py).
+- For SIP integration, refer to the [SIP Plugin](videosdk-plugins/videosdk-plugins-agent-sip) and [SIP Agent Example](examples/sip_agent_example.py).
 
 
 ## Architecture
