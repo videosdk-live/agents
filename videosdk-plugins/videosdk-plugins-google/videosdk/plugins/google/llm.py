@@ -21,8 +21,9 @@ from videosdk.agents import (
     FunctionTool,
     is_function_tool,
     build_gemini_schema,
+    ChatContent,
+    ImageContent,
 )
-from videosdk.agents.llm.chat_context import ChatContent, ImageContent
 
 
 class GoogleLLM(LLM):
@@ -82,7 +83,6 @@ class GoogleLLM(LLM):
                 "temperature": self.temperature,
                 **kwargs
             }
-
             if system_instruction:
                 config_params["system_instruction"] = [types.Part(text=system_instruction)]
             
@@ -273,7 +273,7 @@ class GoogleLLM(LLM):
                 )
                 contents.append(
                     types.Content(
-                        role="user", parts=[types.Part(function_response=function_response)]
+                        role="tool", parts=[types.Part(function_response=function_response)]
                     )
                 )
 
