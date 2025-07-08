@@ -24,6 +24,7 @@ from .llm.chat_context import (
     ChatMessage,
     FunctionCall,
     FunctionCallOutput,
+    ImageContent,
 )
 from .stt.stt import STT, STTResponse, SpeechEventType, SpeechData
 from .tts.tts import TTS
@@ -84,4 +85,5 @@ __all__ = [
     "encode",
     "JobContext",
     "RoomOptions",
+    "ImageContent",
 ]
