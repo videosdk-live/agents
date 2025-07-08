@@ -23,10 +23,10 @@ The AI Agent SDK is a Python framework built on top of the VideoSDK Python SDK t
 ### Real-time communication
 -   Real-time voice and media: agents can listen, speak, and interact live in meetings
 -   SIP and telephony integration: seamlessly connect agents to phone systems via SIP for call handling, routing, and PSTN access
--   Virtual avatars: add lifelike avatars to enhance interaction and presence
+-   Virtual avatars: add lifelike avatars to enhance interaction and presence using Simli
 
 ### Intelligence and interaction
--   Multi-model support: integrate with OpenAI, Gemini, AWS NovaSonic, and more
+-   Multi-model support: integrate with OpenAI, Gemini, AWS NovaSonic, Anthropic, Cerebras, and more
 -   Cascading pipeline: integrates with different providers of STT, LLM, and TTS seamlessly
 -   Conversational flow: VAD, turn detection, RAG, and memory for smooth, context-aware conversations
 -   Function tools: extend agent capabilities with event scheduling, expense tracking, and more
@@ -36,7 +36,6 @@ The AI Agent SDK is a Python framework built on top of the VideoSDK Python SDK t
 -   MCP integration: connect agents to external data sources and tools using Model Context Protocol
 -   A2A protocol: enable agent-to-agent interactions for complex workflows
 -   SDK support: available for web, mobile, gaming, and IoT
-    
 
 ### Media and observability
 -   Recording and transcription: capture and analyze conversations
@@ -46,7 +45,7 @@ The AI Agent SDK is a Python framework built on top of the VideoSDK Python SDK t
 -   Deploy and scale: run on FlyIO, Kubernetes, or Agent Cloud (deploy close to your users)
 -   Global coverage: infrastructure optimized for international availability and low latency
 -   Scale and deploy on your cloud: flexible deployment to meet enterprise compliance and privacy needs
-    
+
 ### Security and compliance
 -   Security and compliance covered: enterprise-grade security protocols
 -   End-to-end encryption of streams: ensure secure communication across the board
@@ -118,6 +117,8 @@ Now that you've installed the necessary packages, you're ready to build!
 
 - For detailed guides, tutorials, and API references, check out our official [VideoSDK AI Agents Documentation](https://docs.videosdk.live/ai_agents/introduction).
 - To see the framework in action, explore the code in the [Examples](examples/) directory. It is a great place to quickstart.
+- For Avatar support, check out the [Simli Avatar](videosdk-plugins/videosdk-plugins-simli) and [Avatar Examples](examples/avatar/).
+- For SIP integration, refer to the [SIP Plugin](videosdk-plugins/videosdk-plugins-agentsip) and [SIP Agent Example](examples/sip_agent_example.py).
 
 
 ## Architecture
@@ -133,13 +134,21 @@ The framework supports integration with various AI models and tools, including:
 |--------------|:-------------:|:-------------------------:|:--------------------------:|:-------------------------:|:----------------------------------:|:----------------------------------:|
 | **OpenAI** | [OpenAIRealtime](https://docs.videosdk.live/ai_agents/plugins/realtime/openai) | [OpenAISTT](https://docs.videosdk.live/ai_agents/plugins/stt/openai) | [OpenAILLM](https://docs.videosdk.live/ai_agents/plugins/llm/openai) | [OpenAITTS](https://docs.videosdk.live/ai_agents/plugins/tts/openai) | ✖️ |✖️ |
 | **Google** | [GeminiRealtime](https://docs.videosdk.live/ai_agents/plugins/realtime/google-live-api) | [GoogleSTT](https://docs.videosdk.live/ai_agents/plugins/stt/google) | [GoogleLLM](https://docs.videosdk.live/ai_agents/plugins/llm/google-llm) | [GoogleTTS](https://docs.videosdk.live/ai_agents/plugins/tts/google-tts) | ✖️ |✖️ |
-| **AWS** | [AWSNovaSonic](https://docs.videosdk.live/ai_agents/plugins/realtime/aws-nova-sonic) | ✖️ | ✖️ | ✖️ | ✖️ |✖️ |
+| **AWS** | [AWSNovaSonic](https://docs.videosdk.live/ai_agents/plugins/realtime/aws-nova-sonic) | ✖️ | ✖️ | [AWSTTS](https://docs.videosdk.live/ai_agents/plugins/tts/aws-tts) | ✖️ |✖️ |
 | **Sarvam** | ✖️ | [SarvamSTT](https://docs.videosdk.live/ai_agents/plugins/stt/sarvam-ai) | [SarvamLLM](https://docs.videosdk.live/ai_agents/plugins/llm/sarvam-ai-llm) | [SarvamTTS](https://docs.videosdk.live/ai_agents/plugins/tts/sarvam-ai-tts) | ✖️ |✖️ |
 | **Deepgram** | ✖️ | [DeepgramSTT](https://docs.videosdk.live/ai_agents/plugins/stt/deepgram) | ✖️ | ✖️ | ✖️ |✖️ |
 | **ElevenLabs** | ✖️ | ✖️ | ✖️ | [ElevenLabsTTS](https://docs.videosdk.live/ai_agents/plugins/tts/elevenlabs-tts) | ✖️ |✖️ |
 | **Silero VAD** | ✖️ | ✖️ | ✖️ | ✖️ | [SileroVAD](https://docs.videosdk.live/ai_agents/plugins/silero-vad) |✖️ |
 | **Hugging Face** | ✖️ | ✖️ | ✖️ | ✖️ | ✖️ | [Turn Detection](https://docs.videosdk.live/ai_agents/plugins/turn-detector) |
-
+| **Anthropic** | ✖️ | ✖️ | [AnthropicLLM](https://docs.videosdk.live/ai_agents/plugins/llm/anthropic) | ✖️ | ✖️ | ✖️ |
+| **Cerebras** | ✖️ | ✖️ | [CerebrasLLM](https://docs.videosdk.live/ai_agents/plugins/llm/cerebras) | ✖️ | ✖️ | ✖️ |
+| **LMNT** | ✖️ | ✖️ | ✖️ | [LMNTTTS](https://docs.videosdk.live/ai_agents/plugins/tts/lmnt-tts) | ✖️ | ✖️ |
+| **InWorld** | ✖️ | ✖️ | ✖️ | [InWorldTTS](https://docs.videosdk.live/ai_agents/plugins/tts/inworld-tts) | ✖️ | ✖️ |
+| **Neuphonic** | ✖️ | ✖️ | ✖️ | [NeuphonicTTS](https://docs.videosdk.live/ai_agents/plugins/tts/neuphonic-tts) | ✖️ | ✖️ |
+| **Rime** | ✖️ | ✖️ | ✖️ | [RimeTTS](https://docs.videosdk.live/ai_agents/plugins/tts/rime-tts) | ✖️ | ✖️ |
+| **HumeAI** | ✖️ | ✖️ | ✖️ | [HumeAITTS](https://docs.videosdk.live/ai_agents/plugins/tts/humeai-tts) | ✖️ | ✖️ |
+| **Groq** | ✖️ | ✖️ | ✖️ | [GroqTTS](https://docs.videosdk.live/ai_agents/plugins/tts/groq-tts) | ✖️ | ✖️ |
+| **Speechify** | ✖️ | ✖️ | ✖️ | [SpeechifyTTS](https://docs.videosdk.live/ai_agents/plugins/tts/speechify-tts) | ✖️ | ✖️ |
 
 ## Contributing
 
