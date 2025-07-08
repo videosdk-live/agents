@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Request, Response
 import uvicorn
 from pyngrok import ngrok
-from videosdk.plugins.agentsip import create_sip_manager
+from videosdk.plugins.agent_sip import create_sip_manager
 from videosdk.agents import Agent, JobContext, function_tool, RealTimePipeline, MCPServerStdio
 from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig
 from videosdk import PubSubPublishConfig

@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "videosdk-plugins-agentsip"
+name = "videosdk-plugins-agent-sip"
 dynamic = ["version"]
 description = "VideoSDK Agent Framework plugin for SIP integration with multiple providers"
 readme = "README.md"
@@ -30,7 +30,7 @@ dependencies = [
 ]
 
 [tool.hatch.version]
-path = "videosdk/plugins/agentsip/version.py"
+path = "videosdk/plugins/agent_sip/version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["videosdk"]

@@ -130,25 +130,16 @@ This architecture shows how AI voice agents connect to VideoSDK meetings. The sy
 
 The framework supports integration with various AI models and tools, including:
 
-| **Provider** | **Real-time Models** | **Speech-to-Text (STT)** | **Language Models (LLM)** | **Text-to-Speech (TTS)** | **Voice Activity Detection (VAD)** | **Turn Detection Model** |
-|--------------|:-------------:|:-------------------------:|:--------------------------:|:-------------------------:|:----------------------------------:|:----------------------------------:|
-| **OpenAI** | [OpenAIRealtime](https://docs.videosdk.live/ai_agents/plugins/realtime/openai) | [OpenAISTT](https://docs.videosdk.live/ai_agents/plugins/stt/openai) | [OpenAILLM](https://docs.videosdk.live/ai_agents/plugins/llm/openai) | [OpenAITTS](https://docs.videosdk.live/ai_agents/plugins/tts/openai) | ✖️ |✖️ |
-| **Google** | [GeminiRealtime](https://docs.videosdk.live/ai_agents/plugins/realtime/google-live-api) | [GoogleSTT](https://docs.videosdk.live/ai_agents/plugins/stt/google) | [GoogleLLM](https://docs.videosdk.live/ai_agents/plugins/llm/google-llm) | [GoogleTTS](https://docs.videosdk.live/ai_agents/plugins/tts/google-tts) | ✖️ |✖️ |
-| **AWS** | [AWSNovaSonic](https://docs.videosdk.live/ai_agents/plugins/realtime/aws-nova-sonic) | ✖️ | ✖️ | [AWSTTS](https://docs.videosdk.live/ai_agents/plugins/tts/aws-tts) | ✖️ |✖️ |
-| **Sarvam** | ✖️ | [SarvamSTT](https://docs.videosdk.live/ai_agents/plugins/stt/sarvam-ai) | [SarvamLLM](https://docs.videosdk.live/ai_agents/plugins/llm/sarvam-ai-llm) | [SarvamTTS](https://docs.videosdk.live/ai_agents/plugins/tts/sarvam-ai-tts) | ✖️ |✖️ |
-| **Deepgram** | ✖️ | [DeepgramSTT](https://docs.videosdk.live/ai_agents/plugins/stt/deepgram) | ✖️ | ✖️ | ✖️ |✖️ |
-| **ElevenLabs** | ✖️ | ✖️ | ✖️ | [ElevenLabsTTS](https://docs.videosdk.live/ai_agents/plugins/tts/elevenlabs-tts) | ✖️ |✖️ |
-| **Silero VAD** | ✖️ | ✖️ | ✖️ | ✖️ | [SileroVAD](https://docs.videosdk.live/ai_agents/plugins/silero-vad) |✖️ |
-| **Hugging Face** | ✖️ | ✖️ | ✖️ | ✖️ | ✖️ | [Turn Detection](https://docs.videosdk.live/ai_agents/plugins/turn-detector) |
-| **Anthropic** | ✖️ | ✖️ | [AnthropicLLM](https://docs.videosdk.live/ai_agents/plugins/llm/anthropic) | ✖️ | ✖️ | ✖️ |
-| **Cerebras** | ✖️ | ✖️ | [CerebrasLLM](https://docs.videosdk.live/ai_agents/plugins/llm/cerebras) | ✖️ | ✖️ | ✖️ |
-| **LMNT** | ✖️ | ✖️ | ✖️ | [LMNTTTS](https://docs.videosdk.live/ai_agents/plugins/tts/lmnt-tts) | ✖️ | ✖️ |
-| **InWorld** | ✖️ | ✖️ | ✖️ | [InWorldTTS](https://docs.videosdk.live/ai_agents/plugins/tts/inworld-tts) | ✖️ | ✖️ |
-| **Neuphonic** | ✖️ | ✖️ | ✖️ | [NeuphonicTTS](https://docs.videosdk.live/ai_agents/plugins/tts/neuphonic-tts) | ✖️ | ✖️ |
-| **Rime** | ✖️ | ✖️ | ✖️ | [RimeTTS](https://docs.videosdk.live/ai_agents/plugins/tts/rime-tts) | ✖️ | ✖️ |
-| **HumeAI** | ✖️ | ✖️ | ✖️ | [HumeAITTS](https://docs.videosdk.live/ai_agents/plugins/tts/humeai-tts) | ✖️ | ✖️ |
-| **Groq** | ✖️ | ✖️ | ✖️ | [GroqTTS](https://docs.videosdk.live/ai_agents/plugins/tts/groq-tts) | ✖️ | ✖️ |
-| **Speechify** | ✖️ | ✖️ | ✖️ | [SpeechifyTTS](https://docs.videosdk.live/ai_agents/plugins/tts/speechify-tts) | ✖️ | ✖️ |
+
+| Category                 | Services |
+|--------------------------|----------|
+| **Real-time Models**     | [OpenAI](https://docs.videosdk.live/ai_agents/plugins/realtime/openai) &#124; [Gemini](https://docs.videosdk.live/ai_agents/plugins/realtime/google-live-api) &#124; [AWSNovaSonic](https://docs.videosdk.live/ai_agents/plugins/realtime/aws-nova-sonic) |
+| **Speech-to-Text (STT)** | [OpenAI](https://docs.videosdk.live/ai_agents/plugins/stt/openai) &#124; [Google](https://docs.videosdk.live/ai_agents/plugins/stt/google) &#124; [Sarvam AI](https://docs.videosdk.live/ai_agents/plugins/stt/sarvam-ai) &#124; [Deepgram](https://docs.videosdk.live/ai_agents/plugins/stt/deepgram) &#124; [Cartesia](https://docs.videosdk.live/ai_agents/plugins/stt/cartesia-stt)|
+| **Language Models (LLM)**| [OpenAI](https://docs.videosdk.live/ai_agents/plugins/llm/openai) &#124; [Google](https://docs.videosdk.live/ai_agents/plugins/llm/google-llm) &#124; [Sarvam AI](https://docs.videosdk.live/ai_agents/plugins/llm/sarvam-ai-llm) &#124; [Anthropic](https://docs.videosdk.live/ai_agents/plugins/llm/anthropic-llm) &#124; [Cerebras](https://docs.videosdk.live/ai_agents/plugins/llm/Cerebras-llm) |
+| **Text-to-Speech (TTS)** | [OpenAI](https://docs.videosdk.live/ai_agents/plugins/tts/openai) &#124; [Google](https://docs.videosdk.live/ai_agents/plugins/tts/google-tts) &#124; [AWS Polly](https://docs.videosdk.live/ai_agents/plugins/tts/aws-polly-tts) &#124; [Sarvam AI](https://docs.videosdk.live/ai_agents/plugins/tts/sarvam-ai-tts) &#124; [ElevenLabs](https://docs.videosdk.live/ai_agents/plugins/tts/eleven-labs) &#124; [Cartesia](https://docs.videosdk.live/ai_agents/plugins/tts/cartesia-tts)  &#124; [Resemble AI](https://docs.videosdk.live/ai_agents/plugins/tts/resemble-ai-tts) &#124;[Smallest AI](https://docs.videosdk.live/ai_agents/plugins/tts/smallestai-tts) &#124; [Speechify](https://docs.videosdk.live/ai_agents/plugins/tts/speechify-tts) &#124; [InWorld](https://docs.videosdk.live/ai_agents/plugins/tts/inworld-ai-tts) &#124; [Neuphonic](https://docs.videosdk.live/ai_agents/plugins/tts/neuphonic-tts) &#124; [Rime AI](https://docs.videosdk.live/ai_agents/plugins/tts/rime-ai-tts) &#124; [Hume AI](https://docs.videosdk.live/ai_agents/plugins/tts/hume-ai-tts) &#124; [Groq](https://docs.videosdk.live/ai_agents/plugins/tts/groq-ai-tts) &#124; [LMNT AI](https://docs.videosdk.live/ai_agents/plugins/tts/lmnt-ai-tts) |
+| **Voice Activity Detection (VAD)** | [SileroVAD](https://docs.videosdk.live/ai_agents/plugins/silero-vad) |
+| **Turn Detection Model** | [Turn Detector](https://docs.videosdk.live/ai_agents/plugins/turn-detector) |
+| **Virtual Avatar** | [Simli](https://docs.videosdk.live/ai_agents/plugins/avatar/simli) |
 
 ## Contributing
 

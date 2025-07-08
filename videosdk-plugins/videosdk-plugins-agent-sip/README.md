@@ -4,5 +4,5 @@ Welcome to the `videosdk-plugins-agentsip`, a production-ready plugin for creati
 ## Installation
 
 ```bash
-pip install videosdk-plugins-agentsip
+pip install videosdk-plugins-agent-sip
 ```
