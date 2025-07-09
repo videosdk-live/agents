@@ -9,7 +9,7 @@ class AnalyticsClient:
     
     def __init__(self, session_id: Optional[str] = None):
         self.session_id = session_id
-        self.base_url = "http://localhost:8000"
+        self.base_url = os.getenv("ANALYTICS_API_SERVER_URL")
         
         
     def set_session_id(self, session_id: str) -> None:
@@ -35,8 +35,13 @@ class AnalyticsClient:
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, json=interaction_data, headers=headers) as response:
-                    if response.status != 200:
+                     if response.status == 200:
+                        print(f"Analytics sent successfully")
+                     else:
+                        response_text = await response.text()
                         print(f"  Failed to send analytics: HTTP {response.status}")
+                        print(f"  Response content: {response_text}")
+
         except Exception as e:
             print(f"  Error sending analytics to API: {e}")
     
