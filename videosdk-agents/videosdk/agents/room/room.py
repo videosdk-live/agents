@@ -9,13 +9,14 @@ import asyncio
 import os
 from asyncio import AbstractEventLoop
 from .audio_stream import TeeCustomAudioStreamTrack
+from typing import Optional, Any, Callable
 
 
 load_dotenv()
 
 class VideoSDKHandler:
     def __init__(self, *, meeting_id: str, auth_token: str | None = None, name: str, pipeline: Pipeline, loop: AbstractEventLoop, vision: bool = False,custom_camera_video_track=None, 
-        custom_microphone_audio_track=None,audio_sinks=None):
+        custom_microphone_audio_track=None,audio_sinks=None, on_room_error: Optional[Callable[[Any], None]] = None):
         self.loop = loop
         self.meeting_id = meeting_id
         self.name = name
@@ -55,13 +56,14 @@ class VideoSDKHandler:
         self.participants_data = {}
         self.video_listener_tasks = {}
         self.vision = vision
+        self.on_room_error = on_room_error
         self._participant_joined_events: dict[str, asyncio.Event] = {}
         self._first_participant_event = asyncio.Event()
         
     def init_meeting(self):
         sdk_metadata = {
             "sdk" : "agents",
-            "sdk-version" : "0.0.19" 
+            "sdk_version" : "0.0.19" 
         }
         self.meeting = VideoSDK.init_meeting(**self.meeting_config, sdk_metadata=sdk_metadata)
         self.meeting.add_event_listener(
@@ -85,7 +87,8 @@ class VideoSDKHandler:
         self.meeting.leave()
 
     def on_error(self, data):
-        print(f"Error: {data}")
+        if self.on_room_error:
+            self.on_room_error(data)
 
     def on_meeting_joined(self, data):
         print(f"Agent joined the meeting")

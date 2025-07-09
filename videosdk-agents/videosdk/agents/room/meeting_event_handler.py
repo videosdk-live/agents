@@ -1,5 +1,5 @@
 from videosdk import MeetingEventHandler, Participant
-from typing import Callable
+from typing import Callable, Any
 
 
 class MeetingHandler(MeetingEventHandler):
@@ -9,7 +9,7 @@ class MeetingHandler(MeetingEventHandler):
         on_meeting_left: Callable[[str], None],
         on_participant_joined: Callable[[Participant], None],
         on_participant_left: Callable[[Participant], None],
-        on_error: Callable[[str], None],
+        on_error: Callable[[Any], None],
     ):
         super().__init__()
         self.on_meeting_joined = on_meeting_joined
