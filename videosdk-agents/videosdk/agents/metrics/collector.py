@@ -27,6 +27,44 @@ class MetricsCollector:
         """Convert latency from seconds to milliseconds and round to 4 decimal places"""
         return round(latency * 1000, 4)
     
+    def _transform_to_camel_case(self, interaction_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Transform snake_case field names to camelCase for analytics"""
+        field_mapping = {
+            'user_speech_start_time': 'userSpeechStartTime',
+            'user_speech_end_time': 'userSpeechEndTime',
+            'stt_latency': 'sttLatency',
+            'llm_latency': 'llmLatency',
+            'tts_latency': 'ttsLatency',
+            'e2e_latency': 'e2eLatency',
+            'function_tools_called': 'functionToolsCalled',
+            'system_instructions': 'systemInstructions'
+        }
+        
+        timeline_field_mapping = {
+            'event_type': 'eventType',
+            'start_time': 'startTime',
+            'end_time': 'endTime',
+            'duration_ms': 'durationInMs'
+        }
+        
+        transformed_data = {}
+        for key, value in interaction_data.items():
+            camel_key = field_mapping.get(key, key)
+            
+            if key == 'timeline' and isinstance(value, list):
+                transformed_timeline = []
+                for event in value:
+                    transformed_event = {}
+                    for event_key, event_value in event.items():
+                        camel_event_key = timeline_field_mapping.get(event_key, event_key)
+                        transformed_event[camel_event_key] = event_value
+                    transformed_timeline.append(transformed_event)
+                transformed_data[camel_key] = transformed_timeline
+            else:
+                transformed_data[camel_key] = value
+        
+        return transformed_data
+    
     def _start_timeline_event(self, event_type: str, start_time: float) -> None:
         """Start a timeline event"""
         if self.data.current_interaction:
@@ -109,12 +147,16 @@ class MetricsCollector:
         if self.data.current_interaction:
             self._calculate_e2e_metrics(self.data.current_interaction)
             self.data.interactions.append(self.data.current_interaction)
-            
             interaction_data = asdict(self.data.current_interaction)
             interaction_data['timeline'] = [asdict(event) for event in self.data.current_interaction.timeline]
+            transformed_data = self._transform_to_camel_case(interaction_data)
+
+            interaction_payload = {
+                "sessionId": self.data.session_id,           
+                "data": [transformed_data]               
+            }
             
-            self.analytics_client.send_interaction_analytics_safe(interaction_data)
-            
+            self.analytics_client.send_interaction_analytics_safe(interaction_payload)
             self.data.current_interaction = None
     
     def on_user_speech_start(self):
