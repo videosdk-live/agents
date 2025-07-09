@@ -2,7 +2,15 @@ import ctypes,numpy,os
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 lib_path = os.path.join(script_dir, "files", "librnnoise.dylib")
-lib = ctypes.cdll.LoadLibrary(lib_path)
+try:
+    lib = ctypes.cdll.LoadLibrary(lib_path)
+except OSError as e:
+    raise OSError(
+        f"Error loading rnnoise library at {lib_path}. "
+        f"It may be corrupted or incompatible with your platform. "
+        f"Original error: {e}"
+    ) from e
+
 lib.rnnoise_process_frame.argtypes = [ctypes.c_void_p,ctypes.POINTER(ctypes.c_float),ctypes.POINTER(ctypes.c_float)]
 lib.rnnoise_process_frame.restype = ctypes.c_float
 lib.rnnoise_create.restype = ctypes.c_void_p

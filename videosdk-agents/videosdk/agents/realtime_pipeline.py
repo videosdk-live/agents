@@ -10,6 +10,7 @@ from .realtime_base_model import RealtimeBaseModel
 from .room.room import VideoSDKHandler
 from .agent import Agent
 from .job import get_current_job_context
+from .denoise import Denoise
 
 class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtime_end","user_audio_input_data"]]):
     """
@@ -21,6 +22,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         self,
         model: RealtimeBaseModel,
         avatar: Any | None = None,
+        denoise: Denoise | None = None,
     ) -> None:
         """
         Initialize the realtime pipeline.
@@ -36,6 +38,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         self.agent = None
         self.avatar = avatar
         self.vision = False
+        self.denoise = denoise
         super().__init__()
     
     def set_agent(self, agent: Agent) -> None:
@@ -95,6 +98,8 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         """
         Handle incoming audio data from the user
         """
+        if self.denoise:
+            audio_data = await self.denoise.denoise(audio_data)
         await self.model.handle_audio_input(audio_data)
 
     async def on_video_delta(self, video_data: av.VideoFrame):
