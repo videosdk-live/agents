@@ -1,9 +1,6 @@
 import asyncio
 import os
-import sys
-import pathlib
 import logging
-import aiohttp
 from contextlib import asynccontextmanager
 from typing import Optional
 from dotenv import load_dotenv
@@ -11,34 +8,17 @@ from fastapi import FastAPI, Request, Response
 import uvicorn
 from pyngrok import ngrok
 from videosdk.plugins.agent_sip import create_sip_manager
-from videosdk.agents import Agent, JobContext, function_tool, RealTimePipeline, MCPServerStdio
+from videosdk.agents import Agent, JobContext, function_tool, RealTimePipeline
 from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig
-from videosdk import PubSubPublishConfig
 
 load_dotenv()
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
 
-@function_tool
-async def get_weather(latitude: str, longitude: str):
-    """Called when the user asks about the weather. Do not ask for latitude/longitude, estimate it."""
-    url = f"https://api.open-meteo.com/v1/forecast?latitude={latitude}&longitude={longitude}¤t=temperature_2m"
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as response:
-            if response.status == 200:
-                data = await response.json()
-                return {
-                    "temperature": data["current"]["temperature_2m"],
-                    "temperature_unit": "Celsius",
-                }
-            else:
-                raise Exception(f"Failed to get weather data, status code: {response.status}")
 
 def create_agent_pipeline():
-    """Factory to create the specific pipeline for our agent."""
-    # This is where all your customization goes!
-    # Example using GeminiRealtime
+    """Function to create the specific pipeline for our agent."""
     model = GeminiRealtime(
         api_key=os.getenv("GOOGLE_API_KEY"),
         model="gemini-2.0-flash-live-001",
@@ -50,51 +30,26 @@ def create_agent_pipeline():
     return RealTimePipeline(model=model)
 
 class SIPAIAgent(Agent):
-    """A production-ready AI agent for handling voice calls."""
+    """A AI agent for handling voice calls."""
 
     def __init__(self, ctx: Optional[JobContext] = None):
-        # Example of adding an MCP Server to the agent
-        current_dir = pathlib.Path(__file__).parent
-        # IMPORTANT: Make sure these paths are correct for your project structure
-        mcp_server_path = current_dir / "mcp_server_examples" / "mcp_server_example.py"
-        if not mcp_server_path.exists():
-            # Handle case where MCP server example is not found
-            # For now, we'll proceed without it, but you might want to raise an error
-            logger.warning(f"MCP server example not found at: {mcp_server_path}. Agent will start without it.")
-            mcp_servers = []
-        else:
-             mcp_servers=[
-                MCPServerStdio(
-                    command=sys.executable,
-                    args=[str(mcp_server_path)],
-                    client_session_timeout_seconds=30
-                )
-             ]
 
         super().__init__(
             instructions="You are a helpful voice assistant that can answer questions and help with tasks. Be friendly and concise.",
-            tools=[get_weather, self.send_pubsub_message, self.end_call],
-            mcp_servers=mcp_servers
+            tools=[self.end_call],
         )
         self.ctx = ctx
-        logger.info(f"🤖 SIPAIAgent created.")
+        self.greeting_message = "Hello! Thank you for calling. How can I assist you today?"
+        logger.info(f"SIPAIAgent created")
 
     async def on_enter(self) -> None:
-        logger.info("🎤 Agent on_enter() called - saying greeting...")
-        await self.session.say("Hello! How can I help you today?")
+        pass
+
+    async def greet_user(self) -> None:
+        await self.session.say(self.greeting_message)
 
     async def on_exit(self) -> None:
-        logger.info("👋 Agent on_exit() called")
-
-    @function_tool
-    async def send_pubsub_message(self, message: str):
-        """Send a message to the pubsub topic CHAT_MESSAGE"""
-        if self.ctx and self.ctx.room:
-            await self.ctx.room.publish_to_pubsub(
-                PubSubPublishConfig(topic="CHAT_MESSAGE", message=message)
-            )
-            return f"Message sent to pubsub topic CHAT_MESSAGE: {message}"
-        return "Cannot send pubsub message - no context available"
+        pass
 
     @function_tool
     async def end_call(self) -> str:
@@ -127,34 +82,34 @@ async def lifespan(app: FastAPI):
             ngrok.set_auth_token(ngrok_auth_token)
         tunnel = ngrok.connect(port, "http")
         sip_manager.set_base_url(tunnel.public_url)
-        logger.info(f"🌐 Ngrok tunnel created: {tunnel.public_url}")
+        logger.info(f"Ngrok tunnel created: {tunnel.public_url}")
     except Exception as e:
-        logger.error(f"❌ Failed to start ngrok tunnel: {e}")
+        logger.error(f"Failed to start ngrok tunnel: {e}")
     yield
     try:
         ngrok.kill()
-        logger.info("🔚 Ngrok tunnel closed")
+        logger.info("Ngrok tunnel closed")
     except Exception as e:
-        logger.error(f"❌ Error closing ngrok tunnel: {e}")
+        logger.error(f"Error closing ngrok tunnel: {e}")
 
-app = FastAPI(title="Production SIP AI Agent (Using Plugin)", lifespan=lifespan)
+app = FastAPI(title="SIP AI Agent", lifespan=lifespan)
 
 @app.post("/call/make")
 async def make_call(to_number: str):
     if not sip_manager.base_url:
         return {"status": "error", "message": "Service not ready (no base URL)."}
-    agent_config = {"room_name": "Production Call", "enable_pubsub": True}
+    agent_config = {"room_name": "Call", "enable_pubsub": True}
     details = await sip_manager.make_call(
         to_number=to_number,
         agent_class=SIPAIAgent,
-        pipeline_factory=create_agent_pipeline,
+        pipeline=create_agent_pipeline,
         agent_config=agent_config
     )
     return {"status": "success", "details": details}
 
 @app.post("/sip/answer/{room_id}")
 async def answer_webhook(room_id: str):
-    logger.info(f"🔗 Answering call for room: {room_id}")
+    logger.info(f"Answering call for room: {room_id}")
     body, status_code, headers = sip_manager.get_sip_response_for_room(room_id)
     return Response(content=body, status_code=status_code, media_type=headers.get("Content-Type"))
 
@@ -172,7 +127,7 @@ async def incoming_webhook(request: Request):
         body, status_code, headers = await sip_manager.handle_incoming_call(
             webhook_data=webhook_data,
             agent_class=SIPAIAgent,
-            pipeline_factory=create_agent_pipeline,
+            pipeline=create_agent_pipeline,
             agent_config=agent_config
         )
         return Response(content=body, status_code=status_code, media_type=headers.get("Content-Type"))
@@ -186,9 +141,9 @@ async def get_sessions():
 
 @app.get("/")
 async def root():
-    return {"message": "Production SIP AI Agent (Using videosdk-plugins-agentsip)"}
+    return {"message": "SIP AI Agent"}
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
-    logger.info(f"🚀 Starting Production SIP AI Agent (Plugin Version) on port {port}")
+    logger.info(f"Starting SIP AI Agent on port {port}")
     uvicorn.run(app, host="0.0.0.0", port=port) 

@@ -12,35 +12,27 @@ from videosdk import PubSubSubscribeConfig
 logger = logging.getLogger(__name__)
 
 def on_pubsub_message(message):
-    logger.info(f"📨 Pubsub message received: {message}")
+    logger.info(f"Pubsub message received: {message}")
 
-async def _agent_entrypoint(ctx: JobContext, agent_class: Type[Agent], pipeline_factory: Callable, agent_config: dict):
+async def _agent_entrypoint(ctx: JobContext, agent_class: Type[Agent], pipeline: Callable, agent_config: dict):
     """The generic entrypoint for any agent job."""
     room_id = ctx.room_options.room_id
-    logger.info(f"🚀 Generic agent entrypoint starting for room: {room_id}")
     session: Optional[AgentSession] = None
 
     try:
-        pipeline = pipeline_factory()
-        logger.info(f"[{room_id}] Pipeline created using factory: {type(pipeline).__name__}")
+        pipeline = pipeline()
         agent = agent_class(ctx=ctx)
         session = AgentSession(agent=agent, pipeline=pipeline)
 
         await ctx.connect()
-        logger.info(f"[{room_id}] Agent connected to room.")
-
-        logger.info(f"[{room_id}] Waiting for participant to join...")
-        await ctx.room.wait_for_participant()
-        logger.info(f"[{room_id}] Participant joined.")
-
         await session.start()
-        logger.info(f"[{room_id}] Voice agent session started. Awaiting interaction...")
+        await ctx.room.wait_for_participant()
+        await agent.greet_user()
 
         if agent_config.get("enable_pubsub", False):
             await ctx.room.subscribe_to_pubsub(
                 PubSubSubscribeConfig(topic="CHAT_MESSAGE", cb=on_pubsub_message)
             )
-        
         await asyncio.Event().wait()
 
     except Exception as e:
@@ -57,7 +49,7 @@ def _make_context(room_id: str, room_name: str) -> JobContext:
 def launch_agent_job(
     room_id: str,
     agent_class: Type[Agent],
-    pipeline_factory: Callable[[], RealTimePipeline | CascadingPipeline],
+    pipeline: Callable,
     agent_config: Optional[Dict[str, Any]] = None,
 ) -> WorkerJob:
     """Creates and starts a WorkerJob using a pipeline factory."""
@@ -67,7 +59,7 @@ def launch_agent_job(
     entrypoint_partial = functools.partial(
         _agent_entrypoint,
         agent_class=agent_class,
-        pipeline_factory=pipeline_factory,
+        pipeline=pipeline,
         agent_config=agent_config
     )
     context_factory_partial = functools.partial(
@@ -85,12 +77,16 @@ class VideoSDKMeeting:
         self.auth_token = auth_token
         self.base_url = "https://api.videosdk.live/v2"
 
-    async def create_room(self, geo_fence: str = "us002") -> str:
+    async def create_room(self) -> str:
         url = f"{self.base_url}/rooms"
         headers = {"Authorization": self.auth_token}
+        payload = {}
+        region = os.getenv("VIDEOSDK_REGION")
+        if region:
+            payload["geoFence"] = region
         async with httpx.AsyncClient() as client:
             try:
-                response = await client.post(url, headers=headers)
+                response = await client.post(url, headers=headers, json=payload)
                 response.raise_for_status()
                 room_id = response.json().get("roomId")
                 if not room_id: raise ValueError("roomId not found")
@@ -117,19 +113,19 @@ class SIPManager:
         self.base_url: Optional[str] = None
         self.meeting_service = VideoSDKMeeting(auth_token=videosdk_token)
         self.active_sessions: Dict[str, WorkerJob] = {}
-        logger.info(f"SIPManager initialized with provider: {provider.__class__.__name__}")
+        logger.info(f"SIP Manager initialized with provider: {provider.__class__.__name__}")
 
     def set_base_url(self, base_url: str):
         if "?" in base_url: 
             base_url = base_url.split("?")[0]
         self.base_url = base_url
-        logger.info(f"🌐 Base URL set: {self.base_url}")
+        logger.info(f"Base URL set: {self.base_url}")
 
     async def make_call(
         self,
         to_number: str,
         agent_class: Type[Agent],
-        pipeline_factory: Callable[[], RealTimePipeline | CascadingPipeline],
+        pipeline: Callable,
         agent_config: Optional[Dict[str, Any]] = None
     ):
         try:
@@ -138,7 +134,7 @@ class SIPManager:
             agent_job = launch_agent_job(
                 room_id=room_id,
                 agent_class=agent_class,
-                pipeline_factory=pipeline_factory,
+                pipeline=pipeline,
                 agent_config=agent_config
             )
             self.active_sessions[room_id] = agent_job
@@ -153,7 +149,7 @@ class SIPManager:
         self,
         webhook_data: Dict[str, Any],
         agent_class: Type[Agent],
-        pipeline_factory: Callable[[], RealTimePipeline | CascadingPipeline],
+        pipeline: Callable,
         agent_config: Optional[Dict[str, Any]] = None
     ) -> tuple:
         try:
@@ -161,7 +157,7 @@ class SIPManager:
             agent_job = launch_agent_job(
                 room_id=room_id,
                 agent_class=agent_class,
-                pipeline_factory=pipeline_factory,
+                pipeline=pipeline,
                 agent_config=agent_config
             )
             self.active_sessions[room_id] = agent_job
