@@ -1,5 +1,5 @@
 uvicorn
-videosdk>=0.1.0
+videosdk>=0.2.0
 numpy
 httpx
 librosa
