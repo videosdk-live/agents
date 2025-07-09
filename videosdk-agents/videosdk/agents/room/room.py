@@ -70,6 +70,7 @@ class VideoSDKHandler:
                 on_meeting_left=self.on_meeting_left,
                 on_participant_joined=self.on_participant_joined,
                 on_participant_left=self.on_participant_left,
+                on_error=self.on_error,
             )
         )
 
@@ -82,6 +83,9 @@ class VideoSDKHandler:
         for video_task in self.video_listener_tasks.values():
             video_task.cancel()
         self.meeting.leave()
+
+    def on_error(self, data):
+        print(f"Error: {data}")
 
     def on_meeting_joined(self, data):
         print(f"Agent joined the meeting")
@@ -201,7 +205,13 @@ class VideoSDKHandler:
         return old_messages
     
     async def publish_to_pubsub(self, pubsub_config: PubSubPublishConfig):
-        await self.meeting.pubsub.publish(pubsub_config)         
+        await self.meeting.pubsub.publish(pubsub_config) 
+    
+    async def upload_file(self, base64_data, file_name):
+        return self.meeting.upload_base64(base64_data, self.auth_token, file_name)
+    
+    async def fetch_file(self, url):
+        return self.meeting.fetch_base64(url, self.auth_token)
               
     async def cleanup(self):
         """Add cleanup method"""
