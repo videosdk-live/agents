@@ -22,6 +22,8 @@ classifiers = [
 ]
 dependencies = [
     "videosdk-agents>=0.0.19",
+    "resampy",
+    "numpy>=1.26"
 ]
 
 [tool.hatch.version]
