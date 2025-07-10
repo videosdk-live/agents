@@ -67,53 +67,29 @@ class VideoSDKTelemetry:
             
             self.tracer = trace.get_tracer(self.peer_id)
             
-            self._create_root_span()
-            
         except Exception as e:
             print(f"[TELEMETRY ERROR] Failed to initialize telemetry: {e}")
     
-    def _create_root_span(self):
-        """Create root span for the session"""
-        if not self.tracer:
-            return
-            
-        try:
-            span_name = f"room_{self.room_id}_peer_{self.peer_id}_sdk_{self.sdk_name}"
-            self.root_span = self.tracer.start_span(span_name)
-            
-            self.root_span.set_attribute("roomId", self.room_id)
-            self.root_span.set_attribute("peerId", self.peer_id)
-            self.root_span.set_attribute("sdkName", self.sdk_name)
-            
-        except Exception as e:
-            print(f"[TELEMETRY ERROR] Failed to create root span: {e}")
-    
     def trace(self, span_name: str, attributes: Dict[str, Any] = None, parent_span: Optional[Span] = None) -> Optional[Span]:
         """
-        Create a new trace span
-        
-        Args:
-            span_name: Name of the span
-            attributes: Key-value attributes to add to span
-            parent_span: Parent span (optional, uses root span if None)
-            
-        Returns:
-            Span object or None if tracing disabled
+        Create a new trace span. If a parent is provided, the new span will be a
+        child of it. Otherwise, it will be a child of the currently active span
+        in the context.
         """
         if not self.traces_enabled or not self.tracer:
             return None
             
         try:
-            parent = parent_span or self.root_span
-
-            with trace.use_span(parent):
-                span = self.tracer.start_span(span_name)
+ 
+            ctx = trace.set_span_in_context(parent_span) if parent_span else None
+            
+            span = self.tracer.start_span(span_name, context=ctx)
                 
-                if attributes:
-                    for key, value in attributes.items():
-                        span.set_attribute(key, str(value))
-                
-                return span
+            if attributes:
+                for key, value in attributes.items():
+                    span.set_attribute(key, str(value))
+            
+            return span
                 
         except Exception as e:
             print(f"[TELEMETRY ERROR] Failed to create span '{span_name}': {e}")
