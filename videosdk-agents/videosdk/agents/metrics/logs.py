@@ -4,6 +4,7 @@ import requests
 import logging
 from datetime import datetime
 from typing import Dict, Any, Optional
+from opentelemetry.trace import get_current_span
 
 
 class VideoSDKLogs:
@@ -59,10 +60,14 @@ class VideoSDKLogs:
             return None
             
         try:
+            trace_id = attributes.get("traceId")
+            span_id = attributes.get("spanId")
             log_attributes = {
                 "roomId": self.meeting_id,
                 "peerId": self.peer_id,
                 "sessionId": self.session_id,
+                "traceId": trace_id,
+                "spanId": span_id,
                 **self.sdk_info,
             }
             
@@ -74,7 +79,8 @@ class VideoSDKLogs:
                 "logText": log_text,
                 "attributes": log_attributes,
                 "debugMode": False,
-                "dashboardLog": False
+                "dashboardLog": False,
+                "serviceName": "videosdk-otel-telemetry-agents"
             }
             
             headers = {
@@ -108,6 +114,17 @@ class VideoSDKLogs:
             log_level: Log level (DEBUG, INFO, WARN, ERROR)
             attributes: Additional attributes
         """
+
+        span = get_current_span()
+        span_context = span.get_span_context() if span else None
+
+        if attributes is None:
+            attributes = {}
+
+        if span_context and span_context.is_valid:
+            attributes["traceId"] = format(span_context.trace_id, "032x")
+            attributes["spanId"] = format(span_context.span_id, "016x")
+
         return self.push_logs(
             log_type=log_level,
             log_text=message,
