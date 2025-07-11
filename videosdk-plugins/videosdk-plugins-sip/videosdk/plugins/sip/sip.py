@@ -3,10 +3,10 @@ import logging
 import httpx
 import os
 import functools
-from typing import Dict, Any, Optional, Callable, Type
+from typing import Dict, Any, Optional, Callable, Type, AsyncIterator
 from fastapi import HTTPException
 from .providers import create_sip_provider, SIPProvider
-from videosdk.agents import Agent, AgentSession, JobContext, RoomOptions, WorkerJob, RealTimePipeline, CascadingPipeline
+from videosdk.agents import Agent, AgentSession, JobContext, RoomOptions, WorkerJob, RealTimePipeline, CascadingPipeline, ConversationFlow, ChatRole
 from videosdk import PubSubSubscribeConfig
 
 logger = logging.getLogger(__name__)
@@ -14,15 +14,52 @@ logger = logging.getLogger(__name__)
 def on_pubsub_message(message):
     logger.info(f"Pubsub message received: {message}")
 
+class DefaultConversationFlow(ConversationFlow):
+    """Default conversation flow for cascading pipelines in SIP calls."""
+    
+    def __init__(self, agent, stt=None, llm=None, tts=None):
+        super().__init__(agent, stt, llm, tts)
+
+    async def run(self, transcript: str) -> AsyncIterator[str]:
+        """Main conversation loop: handle a user turn."""
+        await self.on_turn_start(transcript)
+
+        processed_transcript = transcript.lower().strip()
+        self.agent.chat_context.add_message(role=ChatRole.USER, content=processed_transcript)
+        
+        async for response_chunk in self.process_with_llm():
+            yield response_chunk
+
+        await self.on_turn_end()
+
+    async def on_turn_start(self, transcript: str) -> None:
+        """Called at the start of a user turn."""
+        self.is_turn_active = True
+
+    async def on_turn_end(self) -> None:
+        """Called at the end of a user turn."""
+        self.is_turn_active = False
+
 async def _agent_entrypoint(ctx: JobContext, agent_class: Type[Agent], pipeline: Callable, agent_config: dict):
     """The generic entrypoint for any agent job."""
     room_id = ctx.room_options.room_id
     session: Optional[AgentSession] = None
 
     try:
-        pipeline = pipeline()
+        pipeline_instance = pipeline()
         agent = agent_class(ctx=ctx)
-        session = AgentSession(agent=agent, pipeline=pipeline)
+        
+        # Check if we need a conversation flow for CascadingPipeline
+        conversation_flow = None
+        if isinstance(pipeline_instance, CascadingPipeline):
+            conversation_flow = DefaultConversationFlow(agent)
+            logger.info(f"[{room_id}] Using DefaultConversationFlow for CascadingPipeline")
+        
+        session = AgentSession(
+            agent=agent, 
+            pipeline=pipeline_instance,
+            conversation_flow=conversation_flow
+        )
 
         await ctx.connect()
         await session.start()
@@ -192,8 +229,12 @@ class SIPManager:
 
 def create_sip_manager(
     provider: str,
-    videosdk_token: str,
+    videosdk_token: Optional[str] = None,
     provider_config: Optional[Dict[str, Any]] = None,
 ) -> SIPManager:
+    videosdk_token = videosdk_token or os.getenv("VIDEOSDK_TOKEN")
+    if not videosdk_token:
+        raise ValueError("videosdk_token must be provided or VIDEOSDK_TOKEN environment variable must be set")
+    
     sip_provider = create_sip_provider(provider, provider_config)
     return SIPManager(provider=sip_provider, videosdk_token=videosdk_token)
