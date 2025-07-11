@@ -37,7 +37,15 @@ class ImageContent(BaseModel):
 
     def to_data_url(self) -> str:
         if isinstance(self.image, str):
-            return self.image
+            if self.image.startswith("data:image"):
+                return self.image
+            
+            try:
+                base64.b64decode(self.image, validate=True)
+                return f"data:image/{self.encode_options.format.lower()};base64,{self.image}"
+            except Exception:
+                # Not base64, assume it's a URL
+                return self.image
 
         encoded_image = images.encode(self.image, self.encode_options)
         b64_image = base64.b64encode(encoded_image).decode("utf-8")
