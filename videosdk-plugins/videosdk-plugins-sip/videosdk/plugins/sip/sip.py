@@ -23,9 +23,6 @@ class DefaultConversationFlow(ConversationFlow):
     async def run(self, transcript: str) -> AsyncIterator[str]:
         """Main conversation loop: handle a user turn."""
         await self.on_turn_start(transcript)
-
-        processed_transcript = transcript.lower().strip()
-        self.agent.chat_context.add_message(role=ChatRole.USER, content=processed_transcript)
         
         async for response_chunk in self.process_with_llm():
             yield response_chunk
@@ -232,9 +229,9 @@ def create_sip_manager(
     videosdk_token: Optional[str] = None,
     provider_config: Optional[Dict[str, Any]] = None,
 ) -> SIPManager:
-    videosdk_token = videosdk_token or os.getenv("VIDEOSDK_TOKEN")
+    videosdk_token = videosdk_token or os.getenv("VIDEOSDK_AUTH_TOKEN")
     if not videosdk_token:
-        raise ValueError("videosdk_token must be provided or VIDEOSDK_TOKEN environment variable must be set")
+        raise ValueError("videosdk_token must be provided or VIDEOSDK_AUTH_TOKEN environment variable must be set")
     
     sip_provider = create_sip_provider(provider, provider_config)
     return SIPManager(provider=sip_provider, videosdk_token=videosdk_token)
