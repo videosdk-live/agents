@@ -4,5 +4,5 @@ This plugin provides a seamless bridge between telephony (using SIP providers) a
 ## Installation
 
 ```bash
-pip install videosdk-plugins-agent-sip
+pip install videosdk-plugins-sip
 ```
