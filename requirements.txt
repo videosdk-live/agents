@@ -2,7 +2,6 @@ uvicorn
 videosdk>=0.1.0
 numpy
 httpx
-librosa
 aiohttp
 openai
 av
