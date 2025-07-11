@@ -8,7 +8,7 @@ from transformers import BertTokenizer
 
 logger = logging.getLogger(__name__)
 
-def pre_download_model(overwrite_existing: bool = False):
+def pre_download_videosdk_model(overwrite_existing: bool = False):
     from .download_model import download_model_files_to_directory
     download_model_files_to_directory(
         base_cdn_url=VIDEOSDK_MODEL_URL,
@@ -18,7 +18,7 @@ def pre_download_model(overwrite_existing: bool = False):
     )
     BertTokenizer.from_pretrained(MODEL_DIR)
 
-class TurnDetector(EOU):
+class VideoSDKTurnDetector(EOU):
     """
     A lightweight end-of-utterance detection model using VideoSDK's Turn Detection model.
     Based on BERT, doing binary classification for turn detection.
@@ -37,9 +37,9 @@ class TurnDetector(EOU):
             
             if not os.path.exists(MODEL_DIR):
                 logger.warning(f"Model directory {MODEL_DIR} does not exist. Running pre_download_model()...")
-                pre_download_model(overwrite_existing=True)
+                pre_download_videosdk_model(overwrite_existing=True)
             
-            pre_download_model(overwrite_existing=False)
+            pre_download_videosdk_model(overwrite_existing=False)
             
             self.tokenizer = BertTokenizer.from_pretrained(MODEL_DIR)
             
