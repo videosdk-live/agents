@@ -273,7 +273,7 @@ class GoogleLLM(LLM):
                 )
                 contents.append(
                     types.Content(
-                        role="tool", parts=[types.Part(function_response=function_response)]
+                        role="user", parts=[types.Part(function_response=function_response)]
                     )
                 )
 
