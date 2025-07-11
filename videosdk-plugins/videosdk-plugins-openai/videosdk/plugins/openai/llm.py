@@ -1,12 +1,25 @@
 from __future__ import annotations
 
 import os
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, List, Union
 import json
 
 import httpx
 import openai
-from videosdk.agents import LLM, LLMResponse, ChatContext, ChatRole, ChatMessage, FunctionCall, FunctionCallOutput, ToolChoice, FunctionTool, is_function_tool, build_openai_schema
+from videosdk.agents import (
+    LLM,
+    LLMResponse,
+    ChatContext,
+    ChatRole,
+    ChatMessage,
+    FunctionCall,
+    FunctionCallOutput,
+    ToolChoice,
+    FunctionTool,
+    is_function_tool,
+    build_openai_schema,
+)
+from videosdk.agents.llm.chat_context import ChatContent, ImageContent
 
 class OpenAILLM(LLM):
     
@@ -62,35 +75,55 @@ class OpenAILLM(LLM):
         Yields:
             LLMResponse objects containing the model's responses
         """
+        def _format_content(content: Union[str, List[ChatContent]]):
+            if isinstance(content, str):
+                return content
+
+            formatted_parts = []
+            for part in content:
+                if isinstance(part, str):
+                    formatted_parts.append({"type": "text", "text": part})
+                elif isinstance(part, ImageContent):
+                    image_url_data = {"url": part.to_data_url()}
+                    if part.inference_detail != "auto":
+                        image_url_data["detail"] = part.inference_detail
+                    formatted_parts.append(
+                        {
+                            "type": "image_url",
+                            "image_url": image_url_data,
+                        }
+                    )
+            return formatted_parts
+
         completion_params = {
             "model": self.model,
             "messages": [
                 {
                     "role": msg.role.value,
-                    "content": msg.content,
-                    **({"name": msg.name} if hasattr(msg, 'name') else {})
-                } if isinstance(msg, ChatMessage) else
-                {
+                    "content": _format_content(msg.content),
+                    **({"name": msg.name} if hasattr(msg, "name") else {}),
+                }
+                if isinstance(msg, ChatMessage)
+                else {
                     "role": "assistant",
                     "content": None,
-                    "function_call": {
-                        "name": msg.name,
-                        "arguments": msg.arguments
-                    }
-                } if isinstance(msg, FunctionCall) else
-                {
+                    "function_call": {"name": msg.name, "arguments": msg.arguments},
+                }
+                if isinstance(msg, FunctionCall)
+                else {
                     "role": "function",
                     "name": msg.name,
-                    "content": msg.output
-                } if isinstance(msg, FunctionCallOutput) else None
+                    "content": msg.output,
+                }
+                if isinstance(msg, FunctionCallOutput)
+                else None
                 for msg in messages.items
-                if msg is not None 
+                if msg is not None
             ],
             "temperature": self.temperature,
             "stream": True,
             "max_tokens": self.max_completion_tokens,
         }
-
         if tools:
             formatted_tools = []
             for tool in tools:
