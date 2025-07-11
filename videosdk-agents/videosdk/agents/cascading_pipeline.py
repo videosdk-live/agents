@@ -14,6 +14,7 @@ from .agent import Agent
 from .room.room import VideoSDKHandler, TeeCustomAudioStreamTrack
 from .eou import EOU
 from .job import get_current_job_context
+from .denoise import Denoise
 
 class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
     """
@@ -29,6 +30,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         vad: VAD | None = None,
         turn_detector: EOU | None = None,
         avatar: Any | None = None,
+        denoise: Denoise | None = None,
     ) -> None:
         """
         Initialize the cascading pipeline.
@@ -46,7 +48,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         self.agent = None
         self.conversation_flow = None
         self.avatar = avatar
-        
+        self.denoise = denoise
         super().__init__()
         
     def set_agent(self, agent: Agent) -> None:
@@ -69,11 +71,11 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         self.conversation_flow.agent = self.agent
         self.conversation_flow.vad = self.vad
         self.conversation_flow.turn_detector = self.turn_detector
+        self.conversation_flow.denoise = self.denoise
         if self.conversation_flow.stt:
             self.conversation_flow.stt.on_stt_transcript(self.conversation_flow.on_stt_transcript)
         if self.conversation_flow.vad:
             self.conversation_flow.vad.on_vad_event(self.conversation_flow.on_vad_event)
-        
     async def start(self, **kwargs: Any) -> None:
         if self.conversation_flow:
             await self.conversation_flow.start()
