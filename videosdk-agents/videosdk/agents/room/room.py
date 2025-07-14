@@ -9,6 +9,13 @@ import asyncio
 import os
 from asyncio import AbstractEventLoop
 from .audio_stream import TeeCustomAudioStreamTrack
+from opentelemetry.trace import StatusCode, Span
+from ..metrics.integration import create_span, complete_span, create_log
+from ..metrics.traces_flow import TracesFlowManager
+from ..metrics import metrics_collector
+from ..metrics.integration import auto_initialize_telemetry_and_logs
+from typing import Optional, Any
+ 
 
 
 load_dotenv()
@@ -19,6 +26,13 @@ class VideoSDKHandler:
         self.loop = loop
         self.meeting_id = meeting_id
         self.name = name
+        self._meeting_joined_data = None
+        self.agent_meeting = None
+        self._session_id: Optional[str] = None
+        self._session_id_collected = False
+        
+        self.traces_flow_manager = TracesFlowManager(room_id=self.meeting_id)
+        metrics_collector.set_traces_flow_manager(self.traces_flow_manager)
 
         if custom_microphone_audio_track:
             self.audio_track = custom_microphone_audio_track
@@ -63,7 +77,8 @@ class VideoSDKHandler:
             "sdk" : "agents",
             "sdk-version" : "0.0.19" 
         }
-        self.meeting = VideoSDK.init_meeting(**self.meeting_config, sdk_metadata=sdk_metadata)
+        self.agent_meeting = create_span("Agent Init Meeting",{**sdk_metadata})
+        self.meeting = VideoSDK.init_meeting(**self.meeting_config, sdk_metadata=sdk_metadata,signaling_base_url="dev-api.videosdk.live")
         self.meeting.add_event_listener(
             MeetingHandler(
                 on_meeting_joined=self.on_meeting_joined,
@@ -81,10 +96,15 @@ class VideoSDKHandler:
             audio_task.cancel()
         for video_task in self.video_listener_tasks.values():
             video_task.cancel()
+        if self.traces_flow_manager:
+            self.traces_flow_manager.end_agent_joined_meeting()
+
         self.meeting.leave()
 
     def on_meeting_joined(self, data):
-        print(f"Agent joined the meeting")
+        self._meeting_joined_data = data
+        self.loop.create_task(self._collect_session_id())
+        self.loop.create_task(self._collect_meeting_attributes())
 
     def on_meeting_left(self, data):
         print(f"Meeting Left", data)
@@ -208,3 +228,56 @@ class VideoSDKHandler:
         
         if hasattr(self, "audio_track"):
             await self.audio_track.cleanup()
+
+    async def _collect_session_id(self) -> None:
+        """Collect session ID from room and set it in metrics collector"""
+        if self.meeting and not self._session_id_collected:
+            try:
+                session_id = getattr(self.meeting, 'session_id', None)
+                if session_id:
+                    self._session_id = session_id
+                    metrics_collector.set_session_id(session_id)
+                    self._session_id_collected = True
+                    if self.traces_flow_manager:
+                        self.traces_flow_manager.set_session_id(session_id)
+            except Exception as e:
+                print(f"Error collecting session ID: {e}")
+
+    async def _collect_meeting_attributes(self) -> None:
+        """
+        Collect meeting attributes from room and initialize telemetry and logs.
+        Also creates parent-child spans and logs after meeting is joined.
+        """
+        if not self.meeting:
+            print("Meeting not initialized")
+            return
+
+        try:
+            if hasattr(self.meeting, 'get_attributes'):
+                attributes = self.meeting.get_attributes()
+
+                if attributes:
+                    peer_id = getattr(self.meeting, 'participant_id', 'agent')
+                    auto_initialize_telemetry_and_logs(
+                        room_id=self.meeting_id,
+                        peer_id=peer_id,
+                        room_attributes=attributes,
+                        session_id=self._session_id
+                    )
+                else:
+                    print("No meeting attributes found")
+            else:
+                print("Meeting object does not have 'get_attributes' method")
+
+            if self._meeting_joined_data and self.traces_flow_manager:
+                print("Creating Agent Joined span tree using TracesFlowManager...")
+
+                agent_joined_attributes = {
+                    "meeting_id": self.meeting_id,
+                    "session_id": self._session_id,
+                    "agent_name": self.name,
+                }
+
+                self.traces_flow_manager.start_agent_joined_meeting(agent_joined_attributes)
+        except Exception as e:
+            print(f"Error collecting meeting attributes and creating spans: {e}")
