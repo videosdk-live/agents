@@ -114,7 +114,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         if stt_response.event_type == SpeechEventType.FINAL:
             user_text = stt_response.data.text
             
-            metrics_collector.start_new_interaction(user_text)
+            metrics_collector.set_user_transcript(user_text)
             metrics_collector.on_stt_complete()
             
             if not self.vad:
@@ -286,6 +286,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             asyncio.create_task(self.tts.interrupt())
 
     def on_speech_stopped(self) -> None:
+        metrics_collector.start_new_interaction()
         metrics_collector.on_stt_start()
         
         if not self.vad:
