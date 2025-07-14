@@ -5,8 +5,6 @@ import os
 import asyncio
 from contextvars import ContextVar
 from dataclasses import dataclass
-from .metrics import metrics_collector
-from .metrics.integration import auto_initialize_telemetry_and_logs
 
 _current_job_context: ContextVar[Optional['JobContext']] = ContextVar('current_job_context', default=None)
 
@@ -50,8 +48,6 @@ class JobContext:
         self.videosdk_auth = self.room_options.auth_token or os.getenv("VIDEOSDK_AUTH_TOKEN")
         self.room: Optional[VideoSDKHandler] = None
         self._shutdown_callbacks: list[Callable[[], Coroutine[None, None, None]]] = []
-        self._session_id_collected = False
-        self._session_id: Optional[str] = None
     
     def _set_pipeline_internal(self, pipeline: Any) -> None:
         """Internal method called by pipeline constructors"""
@@ -96,9 +92,6 @@ class JobContext:
         if self.room and self.room_options.join_meeting:
             self.room.init_meeting()
             await self.room.join()
-            await asyncio.sleep(2)
-            await self._collect_session_id()
-            await self._collect_meeting_attributes()
         
         if self.room_options.playground and self.room_options.join_meeting:
             if self.videosdk_auth:
@@ -108,39 +101,6 @@ class JobContext:
                 print("\033[1;4;94m" + playground_url + "\033[0m")
             else:
                 raise ValueError("VIDEOSDK_AUTH_TOKEN environment variable not found")
-
-    async def _collect_session_id(self) -> None:
-        """Collect session ID from room and set it in metrics collector"""
-        if self.room and self.room.meeting and not self._session_id_collected:
-            try:
-                session_id = getattr(self.room.meeting, 'session_id', None)
-                if session_id:
-                    self._session_id = session_id
-                    metrics_collector.set_session_id(session_id)
-                    self._session_id_collected = True
-            except Exception as e:
-                print(f"Error collecting session ID: {e}")
-
-    async def _collect_meeting_attributes(self) -> None:
-        """Collect meeting attributes from room and initialize telemetry and logs"""
-        if self.room and self.room.meeting:
-            try:
-                if hasattr(self.room.meeting, 'get_attributes'):
-                    attributes = self.room.meeting.get_attributes()
-                    if attributes:
-                        peer_id = getattr(self.room.meeting, 'participant_id', 'agent')
-                        auto_initialize_telemetry_and_logs(
-                            room_id=self.room_options.room_id,
-                            peer_id=peer_id,
-                            room_attributes=attributes,
-                            session_id=self._session_id
-                        )
-                    else:
-                        print("No meeting attributes found")
-                else:
-                    print("Meeting object does not have get_attributes method")
-            except Exception as e:
-                print(f"Error collecting meeting attributes: {e}")
 
     async def shutdown(self) -> None:
         """Called by Worker during graceful shutdown"""
@@ -176,4 +136,3 @@ def _set_current_job_context(ctx: 'JobContext') -> Any:
 def _reset_current_job_context(token: Any) -> None:
     """Reset the current job context (used by Worker)"""
     _current_job_context.reset(token)
-

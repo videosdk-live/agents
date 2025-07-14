@@ -1,10 +1,11 @@
 import time
 import hashlib
 from typing import Dict, List, Optional, Any
-from dataclasses import asdict
-
+from dataclasses import asdict, field, fields
+from opentelemetry.trace import Span
 from .models import TimelineEvent, InteractionMetrics, MetricsData
 from .analytics import AnalyticsClient
+from .traces_flow import TracesFlowManager
 
 
 class MetricsCollector:
@@ -13,7 +14,13 @@ class MetricsCollector:
     def __init__(self):
         self.data = MetricsData()
         self.analytics_client = AnalyticsClient()
+        self.traces_flow_manager: Optional[TracesFlowManager] = None
+        self.active_spans: Dict[str, Span] = {}
         
+    def set_traces_flow_manager(self, manager: TracesFlowManager):
+        """Set the TracesFlowManager instance"""
+        self.traces_flow_manager = manager
+
     def _generate_interaction_id(self) -> str:
         """Generate a hash-based interaction ID"""
         timestamp = str(time.time())
@@ -146,6 +153,10 @@ class MetricsCollector:
         """Complete and store the current interaction"""
         if self.data.current_interaction:
             self._calculate_e2e_metrics(self.data.current_interaction)
+
+            if self.traces_flow_manager:
+                self.traces_flow_manager.create_interaction_trace(self.data.current_interaction)
+
             self.data.interactions.append(self.data.current_interaction)
             interaction_data = asdict(self.data.current_interaction)
             interaction_data['timeline'] = [asdict(event) for event in self.data.current_interaction.timeline]
