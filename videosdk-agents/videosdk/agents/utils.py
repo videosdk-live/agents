@@ -56,46 +56,47 @@ def function_tool(func: Optional[Callable] = None, *, name: Optional[str] = None
     
     return create_wrapper(func)
 
-def function_arguments_to_pydantic_model(func: Callable) -> type[BaseModel]:
-    """Create a Pydantic model from a function's signature."""
-    
-    fnc_name = func.__name__.split("_")
-    fnc_name = "".join(x.capitalize() for x in fnc_name)
-    model_name = fnc_name + "Args"
-    docstring = parse_from_object(func)
-    param_docs = {p.arg_name: p.description for p in docstring.params}
-    signature = inspect.signature(func)
-    type_hints = get_type_hints(func, include_extras=True)
-    fields: dict[str, Any] = {}
+def build_pydantic_args_model(func: Callable[..., Any]) -> type[BaseModel]:
+    """
+    Dynamically construct a Pydantic BaseModel class representing all
+    valid positional arguments of the given function, complete with types,
+    default values, and docstring descriptions.
+    """
+    name_parts = func.__name__.split("_")
+    class_name = "".join(part.title() for part in name_parts) + "Args"
 
-    for param_name, param in signature.parameters.items():
-        if param_name in ('self', 'cls'):
+    docs = parse_from_object(func)
+    descriptions = {param.arg_name: param.description for param in docs.params}
+
+    sig = inspect.signature(func)
+    hints = get_type_hints(func, include_extras=True)
+
+    model_fields: dict[str, Any] = {}
+    for arg, param in sig.parameters.items():
+        if arg in ("self", "cls") or arg not in hints:
             continue
 
-        if param_name not in type_hints:
-            continue
-
-        type_hint = type_hints[param_name]
-        default_value = param.default if param.default is not param.empty else ...
+        hint = hints[arg]
+        default = param.default if param.default is not inspect.Parameter.empty else ...
         field_info = Field()
 
-        if get_origin(type_hint) is Annotated:
-            annotated_args = get_args(type_hint)
-            type_hint = annotated_args[0]
-            field_info = next(
-                (x for x in annotated_args[1:] if isinstance(x, FieldInfo)), 
-                field_info
-            )
+        if get_origin(hint) is Annotated:
+            base_type, *extras = get_args(hint)
+            hint = base_type
+            for extra in extras:
+                if isinstance(extra, FieldInfo):
+                    field_info = extra
+                    break
 
-        if default_value is not ... and field_info.default is PydanticUndefined:
-            field_info.default = default_value
+        if default is not ... and field_info.default is PydanticUndefined:
+            field_info.default = default
 
         if field_info.description is None:
-            field_info.description = param_docs.get(param_name, None)
+            field_info.description = descriptions.get(arg)
 
-        fields[param_name] = (type_hint, field_info)
+        model_fields[arg] = (hint, field_info)
 
-    return create_model(model_name, **fields)
+    return create_model(class_name, **model_fields)
 
 def build_openai_schema(function_tool: FunctionTool) -> dict[str, Any]:
     """Build OpenAI-compatible schema from a function tool"""
@@ -106,7 +107,7 @@ def build_openai_schema(function_tool: FunctionTool) -> dict[str, Any]:
     if tool_info.parameters_schema is not None:
         params_schema_to_use = tool_info.parameters_schema
     else:
-        model = function_arguments_to_pydantic_model(function_tool)
+        model = build_pydantic_args_model(function_tool)
         params_schema_to_use = model.model_json_schema()
 
     final_params_schema = params_schema_to_use if params_schema_to_use is not None else {"type": "object", "properties": {}}
@@ -120,9 +121,11 @@ def build_openai_schema(function_tool: FunctionTool) -> dict[str, Any]:
         
 
 class _GeminiJsonSchema:
-    """Transforms JSON Schema to be suitable for Gemini."""
-    
-    TYPE_MAPPING: dict[str, types.Type] = {
+    """
+    Transforms a JSON Schema into a format that is suitable for Gemini models.
+    """
+
+    _TYPE_MAPPING: dict[str, types.Type] = {
         "string": types.Type.STRING,
         "number": types.Type.NUMBER,
         "integer": types.Type.INTEGER,
@@ -131,35 +134,45 @@ class _GeminiJsonSchema:
         "object": types.Type.OBJECT,
     }
 
+    _SUPPORTED_TYPES = set(_TYPE_MAPPING.keys())
+    _FIELDS_TO_REMOVE = ("title", "default", "additionalProperties", "$defs")
+
     def __init__(self, schema: dict[str, Any]):
-        self.schema = schema.copy()
-        self.defs = self.schema.pop("$defs", {})
+        self._schema = schema.copy()
 
     def simplify(self) -> dict[str, Any] | None:
-        """Simplify the schema to Gemini format"""
-        self._simplify(self.schema, refs_stack=())
-        if self.schema.get("type") == types.Type.OBJECT and not self.schema.get("properties"):
+        """
+        Simplifies the schema to the Gemini format by modifying it in place.
+        """
+        self._simplify_node(self._schema)
+        
+        if (
+            self._schema.get("type") == types.Type.OBJECT
+            and not self._schema.get("properties")
+        ):
             return None
-        return self.schema
+            
+        return self._schema
 
-    def _simplify(self, schema: dict[str, Any], refs_stack: tuple[str, ...]) -> None:
-        """Internal method to simplify schema recursively"""
-        for field in ["title", "default", "additionalProperties"]:
-            schema.pop(field, None)
+    def _simplify_node(self, schema_node: dict[str, Any]) -> None:
+        """
+        Recursively simplifies a node within the schema.
+        """
+        for field in self._FIELDS_TO_REMOVE:
+            schema_node.pop(field, None)
 
-        if "type" in schema and schema["type"] != "null":
-            json_type = schema["type"]
-            if json_type in self.TYPE_MAPPING:
-                schema["type"] = self.TYPE_MAPPING[json_type]
+        json_type = schema_node.get("type")
+        if isinstance(json_type, str) and json_type in self._SUPPORTED_TYPES:
+            schema_node["type"] = self._TYPE_MAPPING[json_type]
 
-        type_ = schema.get("type")
-        if type_ == types.Type.OBJECT:
-            if properties := schema.get("properties"):
-                for value in properties.values():
-                    self._simplify(value, refs_stack)
-        elif type_ == types.Type.ARRAY:
-            if items := schema.get("items"):
-                self._simplify(items, refs_stack)
+        node_type = schema_node.get("type")
+        if node_type == types.Type.OBJECT:
+            if properties := schema_node.get("properties"):
+                for prop_schema in properties.values():
+                    self._simplify_node(prop_schema)
+        elif node_type == types.Type.ARRAY:
+            if items := schema_node.get("items"):
+                self._simplify_node(items)
 
 def build_gemini_schema(function_tool: FunctionTool) -> types.FunctionDeclaration:
     """Build Gemini-compatible schema from a function tool"""
@@ -193,7 +206,7 @@ def build_mcp_schema(function_tool: FunctionTool) -> dict:
     return {
         "name": tool_info.name,
         "description": tool_info.description,
-        "parameters": function_arguments_to_pydantic_model(function_tool).model_json_schema()
+        "parameters": build_pydantic_args_model(function_tool).model_json_schema()
     }
 
 class ToolError(Exception):
@@ -283,7 +296,7 @@ def build_nova_sonic_schema(function_tool: FunctionTool) -> dict[str, Any]:
     if tool_info.parameters_schema is not None:
         params_schema_to_use = tool_info.parameters_schema
     else:
-        model = function_arguments_to_pydantic_model(function_tool)
+        model = build_pydantic_args_model(function_tool)
         params_schema_to_use = model.model_json_schema()
     
 

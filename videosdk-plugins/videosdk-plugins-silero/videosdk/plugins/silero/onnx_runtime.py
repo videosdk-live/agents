@@ -8,9 +8,7 @@ import onnxruntime
 _resource_files = ExitStack()
 atexit.register(_resource_files.close)
 
-
 SUPPORTED_SAMPLE_RATES = [8000, 16000]
-
 
 def new_inference_session(force_cpu: bool) -> onnxruntime.InferenceSession:
     res = importlib.resources.files("videosdk.plugins.silero.model") / "silero_vad.onnx"
