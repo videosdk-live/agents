@@ -330,7 +330,7 @@ When contributing, consider developing new plugins or enhancing existing ones to
 
 ### 🛠️ Building Custom Plugins
 
-Want to create your own STT, LLM, or TTS plugin? Check out our comprehensive guide: **[BUILD_YOUR_OWN_PLUGIN.md](BUILD_YOUR_OWN_PLUGIN.md)**
+Want to create your own STT, LLM, or TTS plugin? Check out our comprehensive guide: **[BUILD YOUR OWN PLUGIN ](BUILD_YOUR_OWN_PLUGIN.md)**
 
 This guide provides:
 - Step-by-step instructions for creating custom plugins
