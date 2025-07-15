@@ -189,6 +189,7 @@ class TracesFlowManager:
 
         agent_say_span = create_span(
             "Agent Say",
+            {"Agent Say Message": message},
             parent_span=current_span if current_span else self.agent_session_span
         )
 
