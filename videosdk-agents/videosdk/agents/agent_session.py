@@ -55,17 +55,20 @@ class AgentSession:
         if traces_flow_manager:
             config_attributes = {
                 "system_instructions": self.agent.instructions,
-                "tools": [tool.name for tool in self.agent.tools] if self.agent.tools else [],
-                "pipeline": self.pipeline.__class__.__name__,
-            }
-            if hasattr(self.pipeline, 'stt') and self.pipeline.stt:
-                config_attributes["stt_provider"] = self.pipeline.stt.label
-            if hasattr(self.pipeline, 'llm') and self.pipeline.llm:
-                config_attributes["llm_provider"] = self.pipeline.llm.label
-            if hasattr(self.pipeline, 'tts') and self.pipeline.tts:
-                config_attributes["tts_provider"] = self.pipeline.tts.label
-            
 
+                "function_tools": [
+                    getattr(tool, "name", tool.__name__ if callable(tool) else str(tool))
+                    for tool in (
+                        [tool for tool in self.agent.tools if tool not in self.agent.mcp_manager.tools]
+                        if self.agent.mcp_manager else self.agent.tools
+                    )
+                ] if self.agent.tools else [],
+
+                "pipeline": self.pipeline.__class__.__name__,
+                "stt_provider": self.pipeline.stt.__class__.__name__ if self.pipeline.stt else None,
+                "tts_provider": self.pipeline.tts.__class__.__name__ if self.pipeline.tts else None,
+                "llm_provider": self.pipeline.llm.__class__.__name__ if self.pipeline.llm else None,
+            }
             await traces_flow_manager.start_agent_session_config(config_attributes)
             await traces_flow_manager.start_agent_session({})
 
@@ -80,6 +83,9 @@ class AgentSession:
         """
         Send an initial message to the agent.
         """
+        traces_flow_manager = metrics_collector.traces_flow_manager
+        if traces_flow_manager:
+            traces_flow_manager.agent_say_called(message)
         self.agent.chat_context.add_message(role=ChatRole.ASSISTANT, content=message)
         await self.pipeline.send_message(message)
     
