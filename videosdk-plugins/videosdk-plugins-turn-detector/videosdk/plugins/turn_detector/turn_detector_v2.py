@@ -105,8 +105,6 @@ class VideoSDKTurnDetector(EOU):
 
     def detect_turn(self, sentence: str):
         """
-        Detect turn based on sentence (following reference code exactly)
-        
         Args:
             sentence: Input sentence to analyze
             
