@@ -328,11 +328,23 @@ The Agents framework is under active development in a rapidly evolving field. We
 
 When contributing, consider developing new plugins or enhancing existing ones to expand the framework's capabilities. Your contributions can help integrate more AI models and tools, making the framework even more versatile.
 
+### 🛠️ Building Custom Plugins
+
+Want to create your own STT, LLM, or TTS plugin? Check out our comprehensive guide: **[BUILD YOUR OWN PLUGIN ](BUILD_YOUR_OWN_PLUGIN.md)**
+
+This guide provides:
+- Step-by-step instructions for creating custom plugins
+- Directory structure and file requirements
+- Implementation examples for STT, LLM, and TTS plugins
+- Testing and submission guidelines
+- Reference to existing plugin examples
+
 We love our contributors! Here's how you can contribute:
 
 - [Open an issue](https://github.com/videosdk-live/agents/issues) if you believe you've encountered a bug.
 - Follow the [documentation guide](https://docs.videosdk.live/ai_agents/introduction) to get your local dev environment set up.
 - Make a [pull request](https://github.com/videosdk-live/agents/pull) to add new features/make quality-of-life improvements/fix bugs.
+- Create custom plugins following our [plugin development guide](BUILD_YOUR_OWN_PLUGIN.md).
 
 <a href="https://github.com/videosdk-live/agents/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=videosdk-live/agents" />
