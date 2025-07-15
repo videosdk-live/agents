@@ -51,6 +51,8 @@ class AgentSession:
         Raises:
         ValueError: If meetingId is not provided in the context
         """       
+        await self.agent.initialize_mcp()
+
         traces_flow_manager = metrics_collector.traces_flow_manager
         if traces_flow_manager:
             config_attributes = {
@@ -64,6 +66,11 @@ class AgentSession:
                     )
                 ] if self.agent.tools else [],
 
+                "mcp_tools": [
+                    tool._tool_info.name
+                    for tool in self.agent.mcp_manager.tools
+                ] if self.agent.mcp_manager else [],
+
                 "pipeline": self.pipeline.__class__.__name__,
                 "stt_provider": self.pipeline.stt.__class__.__name__ if self.pipeline.stt else None,
                 "tts_provider": self.pipeline.tts.__class__.__name__ if self.pipeline.tts else None,
@@ -72,7 +79,6 @@ class AgentSession:
             await traces_flow_manager.start_agent_session_config(config_attributes)
             await traces_flow_manager.start_agent_session({})
 
-        await self.agent.initialize_mcp()
         if hasattr(self.pipeline, 'set_agent'):
             self.pipeline.set_agent(self.agent)
         
