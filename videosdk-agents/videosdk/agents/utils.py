@@ -1,3 +1,5 @@
+# Portions derived from Apache 2.0-licensed code in LiveKit Agents
+
 from __future__ import annotations
 
 from dataclasses import dataclass

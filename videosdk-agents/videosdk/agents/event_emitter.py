@@ -1,3 +1,5 @@
+# Portions derived from Apache 2.0-licensed code in LiveKit Agents
+
 from typing import Any, Callable, Dict, Set, TypeVar, Generic
 import inspect
 import asyncio

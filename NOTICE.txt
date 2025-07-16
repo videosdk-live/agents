@@ -11,3 +11,10 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+# -----------------------------------------------------------------------
+# Third-party Attributions (per Apache 2.0 §4.d)
+# -----------------------------------------------------------------------
+
+Portions derived from LiveKit Agents (Apache 2.0; Copyright 2023 LiveKit, Inc.), including ONNX runtime loading, event emitter, and schema/model utilities.
+Modifications by Zujo Tech Private Limited, 2025.

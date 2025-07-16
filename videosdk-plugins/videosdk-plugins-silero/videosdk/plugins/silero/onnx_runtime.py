@@ -1,3 +1,4 @@
+# Portions derived from Apache 2.0-licensed code in LiveKit Agents
 
 import atexit
 import importlib.resources
