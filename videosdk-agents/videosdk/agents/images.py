@@ -12,46 +12,30 @@ av.logging.set_level(av.logging.ERROR)
 
 @dataclass
 class EncodeOptions:
-    """Options for encoding av.VideoFrame to portable image formats."""
+    """Configuration settings for converting av.VideoFrame into standard image formats."""
 
     format: Literal["JPEG", "PNG"] = "JPEG"
-    """The format to encode the image."""
+    """The encoding format for the image."""
 
     resize_options: ResizeOptions = field(default_factory=lambda: ResizeOptions(
         width=320,  
-        height=240,
-        strategy="scale_aspect_fit"
+        height=240
     ))
-    """Options for resizing the image."""
+    """Settings for adjusting the image size."""
 
     quality: int = 90 
-    """Image compression quality, 0-100. Only applies to JPEG."""
+    """Compression level for the image, ranging from 0 to 100. Applicable only to JPEG."""
 
 
 @dataclass
 class ResizeOptions:
-    """Options for resizing av.VideoFrame as part of encoding to a portable image format."""
+    """Configuration for resizing av.VideoFrame during the process of encoding to a standard image format."""
 
     width: int
-    """The desired resize width"""
+    """The target width for resizing"""
 
     height: int
-    """The desired height to resize the image to."""
-
-    strategy: Literal[
-        "center_aspect_fit",
-        "center_aspect_cover",
-        "scale_aspect_fit",
-        "scale_aspect_cover",
-        "skew",
-    ] = "scale_aspect_fit"
-    """The strategy to use when resizing the image:
-    - center_aspect_fit: Fit the image into the provided dimensions, with letterboxing
-    - center_aspect_cover: Fill the provided dimensions, with cropping
-    - scale_aspect_fit: Fit the image into the provided dimensions, preserving its original aspect ratio
-    - scale_aspect_cover: Fill the provided dimensions, preserving its original aspect ratio (image will be larger than the provided dimensions)
-    - skew: Precisely resize the image to the provided dimensions
-    """
+    """The target height for resizing the image."""
 
 def encode(frame: av.VideoFrame, options: EncodeOptions) -> bytes:
     """Encode with optimized pipeline"""
