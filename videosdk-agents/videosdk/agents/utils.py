@@ -56,46 +56,47 @@ def function_tool(func: Optional[Callable] = None, *, name: Optional[str] = None
     
     return create_wrapper(func)
 
-def function_arguments_to_pydantic_model(func: Callable) -> type[BaseModel]:
-    """Create a Pydantic model from a function's signature."""
+def signature_to_pydantic(schema_func: Callable) -> type[BaseModel]:
+    """Generate Pydantic model from function params."""
+    from docstring_parser import parse
     
-    fnc_name = func.__name__.split("_")
-    fnc_name = "".join(x.capitalize() for x in fnc_name)
-    model_name = fnc_name + "Args"
-    docstring = parse_from_object(func)
-    param_docs = {p.arg_name: p.description for p in docstring.params}
-    signature = inspect.signature(func)
-    type_hints = get_type_hints(func, include_extras=True)
-    fields: dict[str, Any] = {}
-
-    for param_name, param in signature.parameters.items():
-        if param_name in ('self', 'cls'):
+    base_name = "".join(word.capitalize() for word in schema_func.__name__.split("_"))
+    generated_model = base_name + "Params"
+    
+    parsed_doc = parse(schema_func.__doc__ or "")
+    doc_descriptions = {param.arg_name: param.description for param in parsed_doc.params}
+    
+    func_params = inspect.signature(schema_func).parameters
+    annotations = get_type_hints(schema_func, include_extras=True)
+    
+    model_fields = {}
+    for name, details in func_params.items():
+        if name not in annotations or name in ('self', 'cls'):
             continue
-
-        if param_name not in type_hints:
-            continue
-
-        type_hint = type_hints[param_name]
-        default_value = param.default if param.default is not param.empty else ...
-        field_info = Field()
-
-        if get_origin(type_hint) is Annotated:
-            annotated_args = get_args(type_hint)
-            type_hint = annotated_args[0]
-            field_info = next(
-                (x for x in annotated_args[1:] if isinstance(x, FieldInfo)), 
-                field_info
-            )
-
-        if default_value is not ... and field_info.default is PydanticUndefined:
-            field_info.default = default_value
-
-        if field_info.description is None:
-            field_info.description = param_docs.get(param_name, None)
-
-        fields[param_name] = (type_hint, field_info)
-
-    return create_model(model_name, **fields)
+            
+        param_type = annotations[name]
+        default_val = details.default if details.default != inspect.Parameter.empty else ...
+        
+        if get_origin(param_type) is Annotated:
+            base_type, *extras = get_args(param_type)
+            param_type = base_type
+            for extra in extras:
+                if isinstance(extra, FieldInfo):
+                    field_info = extra
+                    break
+            else:
+                field_info = Field()
+        else:
+            field_info = Field()
+            
+        if default_val is not ...:
+            field_info.default = default_val
+            
+        field_info.description = doc_descriptions.get(name) or field_info.description
+        
+        model_fields[name] = (param_type, field_info)
+    
+    return create_model(generated_model, **model_fields)
 
 def build_openai_schema(function_tool: FunctionTool) -> dict[str, Any]:
     """Build OpenAI-compatible schema from a function tool"""
@@ -106,7 +107,7 @@ def build_openai_schema(function_tool: FunctionTool) -> dict[str, Any]:
     if tool_info.parameters_schema is not None:
         params_schema_to_use = tool_info.parameters_schema
     else:
-        model = function_arguments_to_pydantic_model(function_tool)
+        model = signature_to_pydantic(function_tool)
         params_schema_to_use = model.model_json_schema()
 
     final_params_schema = params_schema_to_use if params_schema_to_use is not None else {"type": "object", "properties": {}}
@@ -117,9 +118,8 @@ def build_openai_schema(function_tool: FunctionTool) -> dict[str, Any]:
             "parameters": final_params_schema,
             "type": "function",
     }
-        
 
-class _GeminiJsonSchema:
+class GeminiSchemaAdapter:
     """Transforms JSON Schema to be suitable for Gemini."""
     
     TYPE_MAPPING: dict[str, types.Type] = {
@@ -169,13 +169,13 @@ def build_gemini_schema(function_tool: FunctionTool) -> types.FunctionDeclaratio
 
     if tool_info.parameters_schema is not None:
          if tool_info.parameters_schema and tool_info.parameters_schema.get("properties", True) is not None:
-            simplified_schema = _GeminiJsonSchema(tool_info.parameters_schema).simplify()
+            simplified_schema = GeminiSchemaAdapter(tool_info.parameters_schema).simplify()
             parameter_json_schema_for_gemini = simplified_schema
     else:
         openai_schema = build_openai_schema(function_tool) 
 
         if openai_schema.get("parameters") and openai_schema["parameters"].get("properties", True) is not None:
-             simplified_schema = _GeminiJsonSchema(openai_schema["parameters"]).simplify()
+             simplified_schema = GeminiSchemaAdapter(openai_schema["parameters"]).simplify()
              parameter_json_schema_for_gemini = simplified_schema
 
     func_declaration = types.FunctionDeclaration(
@@ -193,7 +193,7 @@ def build_mcp_schema(function_tool: FunctionTool) -> dict:
     return {
         "name": tool_info.name,
         "description": tool_info.description,
-        "parameters": function_arguments_to_pydantic_model(function_tool).model_json_schema()
+        "parameters": signature_to_pydantic(function_tool).model_json_schema()
     }
 
 class ToolError(Exception):
@@ -283,7 +283,7 @@ def build_nova_sonic_schema(function_tool: FunctionTool) -> dict[str, Any]:
     if tool_info.parameters_schema is not None:
         params_schema_to_use = tool_info.parameters_schema
     else:
-        model = function_arguments_to_pydantic_model(function_tool)
+        model = signature_to_pydantic(function_tool)
         params_schema_to_use = model.model_json_schema()
     
 
