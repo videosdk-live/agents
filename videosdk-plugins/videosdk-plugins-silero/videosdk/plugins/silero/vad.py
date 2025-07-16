@@ -6,7 +6,7 @@ from typing import Any, AsyncIterator, Literal
 import time
 from scipy import signal
 
-from .onnx_runtime import OnnxModel, new_inference_session, SUPPORTED_SAMPLE_RATES
+from .onnx_runtime import SileroOnnx, inference_session, SUPPORTED_SAMPLE_RATES
 from videosdk.agents.vad import VAD as BaseVAD, VADResponse, VADEventType, VADData
 
 class SileroVAD(BaseVAD):
@@ -39,8 +39,8 @@ class SileroVAD(BaseVAD):
         self._needs_resampling = input_sample_rate != model_sample_rate
         self._prefix_padding_duration = prefix_padding_duration
         
-        self._session = new_inference_session(force_cpu)
-        self._model = OnnxModel(onnx_session=self._session, sample_rate=model_sample_rate)
+        self._session = inference_session(force_cpu)
+        self._model = SileroOnnx(onnx_session=self._session, sample_rate=model_sample_rate)
         
         self._exp_filter = 0.0
         

@@ -11,8 +11,7 @@ atexit.register(_resource_files.close)
 
 SUPPORTED_SAMPLE_RATES = [8000, 16000]
 
-
-def new_inference_session(force_cpu: bool) -> onnxruntime.InferenceSession:
+def inference_session(force_cpu: bool) -> onnxruntime.InferenceSession:
     res = importlib.resources.files("videosdk.plugins.silero.model") / "silero_vad.onnx"
     ctx = importlib.resources.as_file(res)
     path = str(_resource_files.enter_context(ctx))
@@ -33,49 +32,45 @@ def new_inference_session(force_cpu: bool) -> onnxruntime.InferenceSession:
 
     return session
 
-class OnnxModel:
+class SileroOnnx:
     def __init__(self, *, onnx_session: onnxruntime.InferenceSession, sample_rate: int) -> None:
-        self._sess = onnx_session
+        self._session = onnx_session
         self._sample_rate = sample_rate
 
-        if sample_rate not in SUPPORTED_SAMPLE_RATES:
-            raise ValueError("Silero VAD only supports 8KHz and 16KHz sample rates")
-
-        if sample_rate == 8000:
-            self._window_size_samples = 256
-            self._context_size = 32
-        elif sample_rate == 16000:
-            self._window_size_samples = 512
+        if sample_rate == 16000:
+            self._window_size = 512
             self._context_size = 64
+        elif sample_rate == 8000:
+            self._window_size = 256
+            self._context_size = 32
+        else:
+            raise ValueError("Supported sample rates are 8000 or 16000")
 
-        self._sample_rate_nd = np.array(sample_rate, dtype=np.int64)
+        self._recurrent_state = np.zeros((2, 1, 128), dtype=np.float32)
         self._context = np.zeros((1, self._context_size), dtype=np.float32)
-        self._rnn_state = np.zeros((2, 1, 128), dtype=np.float32)
         self._input_buffer = np.zeros(
-            (1, self._context_size + self._window_size_samples), dtype=np.float32
+            (1, self._context_size + self._window_size), dtype=np.float32
         )
 
     @property
-    def sample_rate(self) -> int:
-        return self._sample_rate
-
-    @property
     def window_size_samples(self) -> int:
-        return self._window_size_samples
-
+        return self._window_size
+    
     @property
     def context_size(self) -> int:
         return self._context_size
 
-    def __call__(self, x: np.ndarray) -> float:
-        self._input_buffer[:, : self._context_size] = self._context
-        self._input_buffer[:, self._context_size :] = x
+    def __call__(self, audio_frame: np.ndarray) -> float:
+        self._input_buffer[:, :self._context_size] = self._context
+        self._input_buffer[:, self._context_size:] = audio_frame
 
-        ort_inputs = {
+        model_inputs = {
             "input": self._input_buffer,
-            "state": self._rnn_state,
-            "sr": self._sample_rate_nd,
+            "state": self._recurrent_state,
+            "sr": np.array(self._sample_rate, dtype=np.int64),
         }
-        out, self._state = self._sess.run(None, ort_inputs)
-        self._context = self._input_buffer[:, -self._context_size :]
-        return out.item()
+        output_prob, _ = self._session.run(None, model_inputs)
+
+        self._context = self._input_buffer[:, -self._context_size:]
+
+        return output_prob.item()
