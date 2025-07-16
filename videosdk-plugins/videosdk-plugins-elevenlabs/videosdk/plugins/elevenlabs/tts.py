@@ -122,9 +122,13 @@ class ElevenLabsTTS(TTS):
             ) as response:
                 response.raise_for_status()
                 
+                audio_data = b""
                 async for chunk in response.aiter_bytes():
                     if chunk:
-                        self.loop.create_task(self.audio_track.add_new_bytes(chunk))
+                        audio_data += chunk
+
+                if audio_data:
+                    await self._stream_audio_chunks(audio_data)
                         
         except httpx.HTTPStatusError as e:
             self.emit("error", f"HTTP error {e.response.status_code}: {e.response.text}")
@@ -165,13 +169,14 @@ class ElevenLabsTTS(TTS):
                     eos_message = {"text": ""}
                     await ws.send_str(json.dumps(eos_message))
                     
+                    audio_data = b""
                     async for msg in ws:
                         if msg.type == aiohttp.WSMsgType.TEXT:
                             data = json.loads(msg.data)
                             if data.get("audio"):
                                 import base64
                                 audio_chunk = base64.b64decode(data["audio"])
-                                self.loop.create_task(self.audio_track.add_new_bytes(audio_chunk))
+                                audio_data += audio_chunk
                             elif data.get("isFinal"):
                                 break
                             elif data.get("error"):
@@ -180,9 +185,27 @@ class ElevenLabsTTS(TTS):
                         elif msg.type == aiohttp.WSMsgType.ERROR:
                             self.emit("error", f"WebSocket connection error: {ws.exception()}")
                             break
+
+                    if audio_data:
+                        await self._stream_audio_chunks(audio_data)
                             
         except Exception as e:
             self.emit("error", f"Streaming synthesis failed: {str(e)}")
+
+    async def _stream_audio_chunks(self, audio_bytes: bytes) -> None:
+        """Stream audio data in chunks for smooth playback"""
+        chunk_size = int(ELEVENLABS_SAMPLE_RATE * ELEVENLABS_CHANNELS * 2 * 20 / 1000)
+        
+        for i in range(0, len(audio_bytes), chunk_size):
+            chunk = audio_bytes[i:i + chunk_size]
+            
+            if len(chunk) < chunk_size and len(chunk) > 0:
+                padding_needed = chunk_size - len(chunk)
+                chunk += b'\x00' * padding_needed
+            
+            if len(chunk) == chunk_size:
+                self.loop.create_task(self.audio_track.add_new_bytes(chunk))
+                await asyncio.sleep(0.001)
 
     async def aclose(self) -> None:
         """Cleanup resources"""
