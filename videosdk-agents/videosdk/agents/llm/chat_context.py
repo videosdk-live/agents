@@ -28,7 +28,7 @@ class ImageContent(BaseModel):
             format="JPEG",
             quality=90,
             resize_options=ResizeOptions(
-                width=320, height=240, strategy="scale_aspect_fit"
+                width=320, height=240
             ),
         )
     )

@@ -64,15 +64,15 @@ def build_pydantic_args_model(func: Callable[..., Any]) -> type[BaseModel]:
     """
     name_parts = func.__name__.split("_")
     class_name = "".join(part.title() for part in name_parts) + "Args"
-
     docs = parse_from_object(func)
-    descriptions = {param.arg_name: param.description for param in docs.params}
-
+    
     sig = inspect.signature(func)
     hints = get_type_hints(func, include_extras=True)
-
+    
     model_fields: dict[str, Any] = {}
-    for arg, param in sig.parameters.items():
+    params = sig.parameters
+    for arg in params:
+        param = params[arg]
         if arg in ("self", "cls") or arg not in hints:
             continue
 
@@ -81,9 +81,9 @@ def build_pydantic_args_model(func: Callable[..., Any]) -> type[BaseModel]:
         field_info = Field()
 
         if get_origin(hint) is Annotated:
-            base_type, *extras = get_args(hint)
-            hint = base_type
-            for extra in extras:
+            args = get_args(hint)
+            hint = args[0]
+            for extra in args[1:]:
                 if isinstance(extra, FieldInfo):
                     field_info = extra
                     break
@@ -92,7 +92,10 @@ def build_pydantic_args_model(func: Callable[..., Any]) -> type[BaseModel]:
             field_info.default = default
 
         if field_info.description is None:
-            field_info.description = descriptions.get(arg)
+            for doc_param in docs.params:
+                if doc_param.arg_name == arg:
+                    field_info.description = doc_param.description
+                    break
 
         model_fields[arg] = (hint, field_info)
 
@@ -120,12 +123,12 @@ def build_openai_schema(function_tool: FunctionTool) -> dict[str, Any]:
     }
         
 
-class _GeminiJsonSchema:
+def simplify_gemini_schema(schema: dict[str, Any]) -> dict[str, Any] | None:
     """
-    Transforms a JSON Schema into a format that is suitable for Gemini models.
+    Transforms a JSON Schema into Gemini compatible format.
     """
 
-    _TYPE_MAPPING: dict[str, types.Type] = {
+    TYPE_MAPPING: dict[str, types.Type] = {
         "string": types.Type.STRING,
         "number": types.Type.NUMBER,
         "integer": types.Type.INTEGER,
@@ -134,45 +137,46 @@ class _GeminiJsonSchema:
         "object": types.Type.OBJECT,
     }
 
-    _SUPPORTED_TYPES = set(_TYPE_MAPPING.keys())
-    _FIELDS_TO_REMOVE = ("title", "default", "additionalProperties", "$defs")
+    SUPPORTED_TYPES = set(TYPE_MAPPING.keys())
+    FIELDS_TO_REMOVE = ("title", "default", "additionalProperties", "$defs")
 
-    def __init__(self, schema: dict[str, Any]):
-        self._schema = schema.copy()
+    def process_node(node: dict[str, Any]) -> dict[str, Any] | None:
+        new_node = node.copy()
+        for field in FIELDS_TO_REMOVE:
+            if field in new_node:
+                del new_node[field]
 
-    def simplify(self) -> dict[str, Any] | None:
-        """
-        Simplifies the schema to the Gemini format by modifying it in place.
-        """
-        self._simplify_node(self._schema)
-        
-        if (
-            self._schema.get("type") == types.Type.OBJECT
-            and not self._schema.get("properties")
-        ):
-            return None
-            
-        return self._schema
+        json_type = new_node.get("type")
+        if json_type in SUPPORTED_TYPES:
+            new_node["type"] = TYPE_MAPPING[json_type]
 
-    def _simplify_node(self, schema_node: dict[str, Any]) -> None:
-        """
-        Recursively simplifies a node within the schema.
-        """
-        for field in self._FIELDS_TO_REMOVE:
-            schema_node.pop(field, None)
-
-        json_type = schema_node.get("type")
-        if isinstance(json_type, str) and json_type in self._SUPPORTED_TYPES:
-            schema_node["type"] = self._TYPE_MAPPING[json_type]
-
-        node_type = schema_node.get("type")
+        node_type = new_node.get("type")
         if node_type == types.Type.OBJECT:
-            if properties := schema_node.get("properties"):
-                for prop_schema in properties.values():
-                    self._simplify_node(prop_schema)
+            if "properties" in new_node:
+                new_props = {}
+                for key, prop in new_node["properties"].items():
+                    simplified = process_node(prop)
+                    if simplified is not None:
+                        new_props[key] = simplified
+                new_node["properties"] = new_props
+                if not new_props:
+                    return None
+            else:
+                return None
         elif node_type == types.Type.ARRAY:
-            if items := schema_node.get("items"):
-                self._simplify_node(items)
+            if "items" in new_node:
+                simplified_items = process_node(new_node["items"])
+                if simplified_items is not None:
+                    new_node["items"] = simplified_items
+                else:
+                    del new_node["items"]
+
+        return new_node
+
+    result = process_node(schema)
+    if result and result.get("type") == types.Type.OBJECT and not result.get("properties"):
+        return None
+    return result
 
 def build_gemini_schema(function_tool: FunctionTool) -> types.FunctionDeclaration:
     """Build Gemini-compatible schema from a function tool"""
@@ -182,13 +186,13 @@ def build_gemini_schema(function_tool: FunctionTool) -> types.FunctionDeclaratio
 
     if tool_info.parameters_schema is not None:
          if tool_info.parameters_schema and tool_info.parameters_schema.get("properties", True) is not None:
-            simplified_schema = _GeminiJsonSchema(tool_info.parameters_schema).simplify()
+            simplified_schema = simplify_gemini_schema(tool_info.parameters_schema)
             parameter_json_schema_for_gemini = simplified_schema
     else:
         openai_schema = build_openai_schema(function_tool) 
 
         if openai_schema.get("parameters") and openai_schema["parameters"].get("properties", True) is not None:
-             simplified_schema = _GeminiJsonSchema(openai_schema["parameters"]).simplify()
+             simplified_schema = simplify_gemini_schema(openai_schema["parameters"])
              parameter_json_schema_for_gemini = simplified_schema
 
     func_declaration = types.FunctionDeclaration(
