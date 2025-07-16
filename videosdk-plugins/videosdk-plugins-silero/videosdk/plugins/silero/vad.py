@@ -6,7 +6,7 @@ from typing import Any, AsyncIterator, Literal
 import time
 from scipy import signal
 
-from .onnx_runtime import SileroOnnx, inference_session, SUPPORTED_SAMPLE_RATES
+from .onnx_runtime import VadModelWrapper, create_onnx_session, SUPPORTED_SAMPLE_RATES
 from videosdk.agents.vad import VAD as BaseVAD, VADResponse, VADEventType, VADData
 
 class SileroVAD(BaseVAD):
@@ -39,8 +39,8 @@ class SileroVAD(BaseVAD):
         self._needs_resampling = input_sample_rate != model_sample_rate
         self._prefix_padding_duration = prefix_padding_duration
         
-        self._session = inference_session(force_cpu)
-        self._model = SileroOnnx(onnx_session=self._session, sample_rate=model_sample_rate)
+        self._session = create_onnx_session(force_cpu)
+        self._model = VadModelWrapper(session=self._session, rate=model_sample_rate)
         
         self._exp_filter = 0.0
         
@@ -92,26 +92,23 @@ class SileroVAD(BaseVAD):
             input_float = input_frame_data.astype(np.float32) / 32768.0
             self._inference_accumulator = np.concatenate([self._inference_accumulator, input_float])
         
-        while len(self._inference_accumulator) >= self._model.window_size_samples:
-            inference_window = self._inference_accumulator[:self._model.window_size_samples]
+        while len(self._inference_accumulator) >= self._model.frame_size:
+            inference_window = self._inference_accumulator[:self._model.frame_size]
             self._inference_count += 1
-            
-            window_rms = np.sqrt(np.mean(np.square(inference_window)))
-            window_max = np.max(np.abs(inference_window))
             
             start_time = time.perf_counter()
             
-            raw_prob = self._model(inference_window)
+            raw_prob = self._model.process(inference_window)
             
             alpha = 0.6
             self._exp_filter = alpha * raw_prob + (1 - alpha) * self._exp_filter
             
-            window_duration = self._model.window_size_samples / self._model_sample_rate
+            window_duration = self._model.frame_size / self._model_sample_rate
             self._pub_timestamp += window_duration
 
             resampling_ratio = self._input_sample_rate / self._model_sample_rate
-            input_samples_for_window = int(self._model.window_size_samples * resampling_ratio + self._input_copy_remaining_fract)
-            self._input_copy_remaining_fract = (self._model.window_size_samples * resampling_ratio + self._input_copy_remaining_fract) - input_samples_for_window
+            input_samples_for_window = int(self._model.frame_size * resampling_ratio + self._input_copy_remaining_fract)
+            self._input_copy_remaining_fract = (self._model.frame_size * resampling_ratio + self._input_copy_remaining_fract) - input_samples_for_window
             
             if len(self._input_accumulator) >= input_samples_for_window:
                 input_window = self._input_accumulator[:input_samples_for_window]
@@ -187,7 +184,7 @@ class SileroVAD(BaseVAD):
             if inference_duration > 0.1:
                 print(f"Warning: Slow inference detected ({inference_duration:.3f}s)")
             
-            self._inference_accumulator = self._inference_accumulator[self._model.window_size_samples:]
+            self._inference_accumulator = self._inference_accumulator[self._model.frame_size:]
                 
     def _reset_speech_buffer(self) -> None:
         if self._speech_buffer_index <= self._prefix_padding_samples:

@@ -1,3 +1,4 @@
+
 import atexit
 import importlib.resources
 from contextlib import ExitStack
@@ -11,66 +12,54 @@ atexit.register(_resource_files.close)
 
 SUPPORTED_SAMPLE_RATES = [8000, 16000]
 
-def inference_session(force_cpu: bool) -> onnxruntime.InferenceSession:
-    res = importlib.resources.files("videosdk.plugins.silero.model") / "silero_vad.onnx"
-    ctx = importlib.resources.as_file(res)
-    path = str(_resource_files.enter_context(ctx))
-
-    opts = onnxruntime.SessionOptions()
-    opts.add_session_config_entry("session.intra_op.allow_spinning", "0")
-    opts.add_session_config_entry("session.inter_op.allow_spinning", "0")
-    opts.inter_op_num_threads = 1
-    opts.intra_op_num_threads = 1
-    opts.execution_mode = onnxruntime.ExecutionMode.ORT_SEQUENTIAL
-
-    if force_cpu and "CPUExecutionProvider" in onnxruntime.get_available_providers():
-        session = onnxruntime.InferenceSession(
-            path, providers=["CPUExecutionProvider"], sess_options=opts
-        )
-    else:
-        session = onnxruntime.InferenceSession(path, sess_options=opts)
-
-    return session
-
-class SileroOnnx:
-    def __init__(self, *, onnx_session: onnxruntime.InferenceSession, sample_rate: int) -> None:
-        self._session = onnx_session
-        self._sample_rate = sample_rate
-
-        if sample_rate == 16000:
-            self._window_size = 512
-            self._context_size = 64
-        elif sample_rate == 8000:
-            self._window_size = 256
-            self._context_size = 32
-        else:
-            raise ValueError("Supported sample rates are 8000 or 16000")
-
-        self._recurrent_state = np.zeros((2, 1, 128), dtype=np.float32)
-        self._context = np.zeros((1, self._context_size), dtype=np.float32)
-        self._input_buffer = np.zeros(
-            (1, self._context_size + self._window_size), dtype=np.float32
+def create_onnx_session(use_cpu_only: bool) -> onnxruntime.InferenceSession:
+    model_path = importlib.resources.files("videosdk.plugins.silero.model") / "silero_vad.onnx"
+    with importlib.resources.as_file(model_path) as temp_path:
+        session_opts = onnxruntime.SessionOptions()
+        session_opts.inter_op_num_threads = 1
+        session_opts.intra_op_num_threads = 1
+        session_opts.execution_mode = onnxruntime.ExecutionMode.ORT_SEQUENTIAL
+        
+        providers = ["CPUExecutionProvider"] if use_cpu_only and "CPUExecutionProvider" in onnxruntime.get_available_providers() else None
+        
+        return onnxruntime.InferenceSession(
+            str(temp_path),
+            sess_options=session_opts,
+            providers=providers
         )
 
+class VadModelWrapper:
+    def __init__(self, *, session: onnxruntime.InferenceSession, rate: int) -> None:
+        if rate not in SUPPORTED_SAMPLE_RATES:
+            raise ValueError(f"Rate {rate} not supported; use 8000 or 16000")
+        
+        self._model_session = session
+        self._audio_rate = rate
+        self._frame_size = 256 if rate == 8000 else 512
+        self._history_len = 32 if rate == 8000 else 64
+        
+        self._hidden_state = np.zeros((2, 1, 128), dtype=np.float32)
+        self._prev_context = np.zeros((1, self._history_len), dtype=np.float32)
+        
     @property
-    def window_size_samples(self) -> int:
-        return self._window_size
+    def frame_size(self) -> int:
+        return self._frame_size
     
     @property
-    def context_size(self) -> int:
-        return self._context_size
+    def history_len(self) -> int:
+        return self._history_len
 
-    def __call__(self, audio_frame: np.ndarray) -> float:
-        self._input_buffer[:, :self._context_size] = self._context
-        self._input_buffer[:, self._context_size:] = audio_frame
-
-        model_inputs = {
-            "input": self._input_buffer,
-            "state": self._recurrent_state,
-            "sr": np.array(self._sample_rate, dtype=np.int64),
+    def process(self, input_audio: np.ndarray) -> float:
+        buffer = np.concatenate((self._prev_context, input_audio.reshape(1, -1)), axis=1)
+        
+        inputs = {
+            "input": buffer.astype(np.float32),
+            "state": self._hidden_state,
+            "sr": np.array([self._audio_rate], dtype=np.int64),
         }
-        output_prob, _ = self._session.run(None, model_inputs)
-
-        self._context = self._input_buffer[:, -self._context_size:]
-
-        return output_prob.item()
+        
+        prob, _ = self._model_session.run(None, inputs)
+        
+        self._prev_context = buffer[:, -self._history_len:]
+        
+        return prob.item()
