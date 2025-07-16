@@ -40,7 +40,7 @@ AUDIO_SAMPLE_RATE = 48000
 DEFAULT_IMAGE_ENCODE_OPTIONS = EncodeOptions(
     format="JPEG",
     quality=75,
-    resize_options=ResizeOptions(width=1024, height=1024, strategy="scale_aspect_fit"),
+    resize_options=ResizeOptions(width=1024, height=1024),
 )
 
 GeminiEventTypes = Literal[
