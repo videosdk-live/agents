@@ -64,15 +64,15 @@ def build_pydantic_args_model(func: Callable[..., Any]) -> type[BaseModel]:
     """
     name_parts = func.__name__.split("_")
     class_name = "".join(part.title() for part in name_parts) + "Args"
-
     docs = parse_from_object(func)
-    descriptions = {param.arg_name: param.description for param in docs.params}
-
+    
     sig = inspect.signature(func)
     hints = get_type_hints(func, include_extras=True)
-
+    
     model_fields: dict[str, Any] = {}
-    for arg, param in sig.parameters.items():
+    params = sig.parameters
+    for arg in params:
+        param = params[arg]
         if arg in ("self", "cls") or arg not in hints:
             continue
 
@@ -81,9 +81,9 @@ def build_pydantic_args_model(func: Callable[..., Any]) -> type[BaseModel]:
         field_info = Field()
 
         if get_origin(hint) is Annotated:
-            base_type, *extras = get_args(hint)
-            hint = base_type
-            for extra in extras:
+            args = get_args(hint)
+            hint = args[0]
+            for extra in args[1:]:
                 if isinstance(extra, FieldInfo):
                     field_info = extra
                     break
@@ -92,7 +92,10 @@ def build_pydantic_args_model(func: Callable[..., Any]) -> type[BaseModel]:
             field_info.default = default
 
         if field_info.description is None:
-            field_info.description = descriptions.get(arg)
+            for doc_param in docs.params:
+                if doc_param.arg_name == arg:
+                    field_info.description = doc_param.description
+                    break
 
         model_fields[arg] = (hint, field_info)
 
