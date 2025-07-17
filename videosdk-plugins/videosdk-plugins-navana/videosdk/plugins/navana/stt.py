@@ -3,15 +3,9 @@ from __future__ import annotations
 import asyncio
 import os
 from typing import Any, Optional
-
 import numpy as np
 from videosdk.agents import STT as BaseSTT, STTResponse, SpeechData, SpeechEventType, global_event_emitter
-
-# Attempt to import required libraries and provide helpful error messages
-try:
-    from bodhi import BodhiClient, TranscriptionConfig, TranscriptionResponse, LiveTranscriptionEvents
-except ImportError:
-    raise ImportError("The 'bodhi-sdk' is not installed. Please install it using 'pip install bodhi-sdk'.")
+from bodhi import BodhiClient, TranscriptionConfig, TranscriptionResponse, LiveTranscriptionEvents
 
 try:
     from scipy import signal
@@ -120,25 +114,15 @@ class NavanaSTT(BaseSTT):
                 await self.client.start_connection(config=config)
                 self._connection_started = True
             
-            # --- ROBUST STEREO TO MONO CONVERSION ---
-            # 1. Interpret the incoming bytes as a NumPy array of 16-bit integers.
             raw_audio_data = np.frombuffer(audio_frames, dtype=np.int16)
-
-            # 2. Reshape into two columns for stereo. This will fail if audio is not stereo, which is a good guard.
             stereo_audio = raw_audio_data.reshape(-1, 2)
-
-            # 3. Average the two channels to create a robust mono signal. Change dtype to float for the mean operation.
             mono_audio_float = stereo_audio.astype(np.float32).mean(axis=1)
-
-            # 4. Resample the clean mono audio to Navana's required 8kHz.
             resampled_data = signal.resample(
                 mono_audio_float, 
                 int(len(mono_audio_float) * self.target_sample_rate / self.input_sample_rate)
             )
             
-            # 5. Convert the resampled audio back to 16-bit integer format for the SDK.
             audio_bytes = resampled_data.astype(np.int16).tobytes()
-            # ---------------------------------------------
             
             await self.client.send_audio_stream(audio_bytes)
             
@@ -146,7 +130,6 @@ class NavanaSTT(BaseSTT):
             error_message = f"Audio processing error: {str(e)}"
             print(error_message)
             self.emit("error", error_message)
-            # Reset connection on fatal error
             self._connection_started = False
             if self.client._live_client and not self.client._live_client.is_closed:
                 await self.client.close_connection()

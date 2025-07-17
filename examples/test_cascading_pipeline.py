@@ -25,6 +25,7 @@ from videosdk.plugins.rime import RimeTTS
 from videosdk.plugins.speechify import SpeechifyTTS
 from videosdk.plugins.groq import GroqTTS
 from videosdk.plugins.navana import NavanaSTT
+from videosdk.plugins.papla import PaplaTTS
 
 import logging
 import pathlib
@@ -210,6 +211,7 @@ async def entrypoint(ctx: JobContext):
         # tts=RimeTTS(api_key=os.getenv("RIME_API_KEY")),
         tts=SpeechifyTTS(api_key=os.getenv("SPEECHIFY_API_KEY")),
         # tts=GroqTTS(api_key=os.getenv("GROQ_API_KEY")),
+        # tts=PaplaTTS(api_key=os.getenv("PAPLA_API_KEY")),
 
         vad=SileroVAD(),
         turn_detector=TurnDetector(threshold=0.8)
