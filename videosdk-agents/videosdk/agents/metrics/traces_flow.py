@@ -22,6 +22,8 @@ class TracesFlowManager:
         self.agent_session_closed_span: Optional[Span] = None
         self._interaction_count = 0
         self.root_span_ready = asyncio.Event()
+        self.a2a_span: Optional[Span] = None
+        self._a2a_interaction_count = 0
 
     def set_session_id(self, session_id: str):
         """Set the session ID for the trace manager."""
@@ -194,6 +196,62 @@ class TracesFlowManager:
         )
 
         self.end_span(agent_say_span, "Agent say span created")    
+
+    def create_a2a_trace(self, name: str, attributes: Dict[str, Any]) -> Optional[Span]:
+        """Creates an A2A trace under the main interaction span."""
+        if not self.main_interaction_span:
+            print("Cannot create A2A trace without main interaction span.")
+            return None
+
+        if not self.a2a_span:
+            self.a2a_span = create_span(
+                "Agent-to-Agent Communications",
+                {"total_a2a_interactions": self._a2a_interaction_count},
+                parent_span=self.main_interaction_span
+            )
+            if self.a2a_span:
+                with trace.use_span(self.a2a_span):
+                    create_log("A2A communication started", "INFO")
+
+        if not self.a2a_span:
+            print("Failed to create A2A parent span")
+            return None
+
+        self._a2a_interaction_count += 1
+        span_name = f"A2A {self._a2a_interaction_count}: {name}"
+        
+        a2a_span = create_span(
+            span_name, 
+            {
+                **attributes,
+                "a2a_interaction_number": self._a2a_interaction_count,
+                "parent_span": "Agent-to-Agent Communications"
+            }, 
+            parent_span=self.a2a_span
+        )
+        
+        if a2a_span:
+            with trace.use_span(a2a_span):
+                create_log(f"A2A event: {name}", "INFO", attributes)
+        
+        return a2a_span
+
+    def end_a2a_trace(self, span: Optional[Span], message: str = ""):
+        """Ends an A2A trace span."""
+        if span:
+            with trace.use_span(span):
+                if message:
+                    create_log(message, "INFO")
+            complete_span(span, StatusCode.OK)
+
+    def end_a2a_communication(self):
+        """Ends the A2A communication parent span."""
+        if self.a2a_span:
+            with trace.use_span(self.a2a_span):
+                create_log(f"A2A communication ended with {self._a2a_interaction_count} interactions", "INFO")
+            complete_span(self.a2a_span, StatusCode.OK)
+            self.a2a_span = None
+            self._a2a_interaction_count = 0  
 
     def end_agent_session(self):
         """Completes the agent session span."""

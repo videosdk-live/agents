@@ -5,6 +5,7 @@ import uuid
 from .card import AgentCard 
 import asyncio
 from ..event_bus import global_event_emitter
+from ..metrics import metrics_collector
 
 @dataclass
 class A2AMessage:
@@ -41,6 +42,36 @@ class AgentRegistry:
         if agent_instance:
             self.agent_instances[card.id] = agent_instance
 
+            traces_flow_manager = metrics_collector.traces_flow_manager if metrics_collector else None
+            
+            if traces_flow_manager:
+                total_agents = len(self.agents)
+                attributes = {
+                    "agent_id": card.id,
+                    "agent_name": card.name,
+                    "agent_domain": card.domain,
+                    "agent_capabilities": ", ".join(card.capabilities),
+                    "agent_description": card.description,
+                    "registration_order": total_agents,
+                    "total_registered_agents": total_agents,
+                    "agent_role": "primary" if total_agents == 1 else "secondary",
+                }
+                
+                if card.metadata:
+                    attributes.update(card.metadata)
+                
+                try:
+                    reg_span = traces_flow_manager.create_a2a_trace(
+                        "Agent Registration",
+                        attributes
+                    )
+                    if reg_span:
+                        traces_flow_manager.end_a2a_trace(
+                            reg_span,
+                            f"Agent {card.name} registered successfully"
+                        )
+                except Exception as e:
+                    print(f"Failed to create A2A registration trace: {e}")
     
     async def unregister_agent(self, agent_id: str):
         """Remove an agent from the registry"""
@@ -87,6 +118,14 @@ class A2AProtocol:
 
     async def unregister(self) -> None:
         """Unregister the agent and clean up event handlers"""
+        traces_flow_manager = metrics_collector.traces_flow_manager if metrics_collector else None
+        
+        if traces_flow_manager:
+            try:
+                traces_flow_manager.end_a2a_communication()
+            except Exception as e:
+                print(f"Failed to end A2A communication trace: {e}")
+
         for message_type in list(self._message_handlers.keys()):
             for handler in self._message_handlers[message_type]:
                 self.off_message(message_type, handler)
@@ -169,9 +208,46 @@ class A2AProtocol:
             metadata=metadata
         )
 
+        traces_flow_manager = metrics_collector.traces_flow_manager if metrics_collector else None
+
+        sender_span = None
+        if traces_flow_manager:
+            try:
+                attributes = {
+                    "from_agent": message.from_agent,
+                    "to_agent": message.to_agent,
+                    "message_type": message.type,
+                    "direction": "outgoing",
+                    "content_preview": str(content)[:100] + "..." if len(str(content)) > 100 else str(content)
+                }
+                sender_span = traces_flow_manager.create_a2a_trace(
+                    "Message Sent",
+                    attributes
+                )
+            except Exception as e:
+                print(f"Failed to create sender A2A trace: {e}")
+
         if hasattr(target_agent, 'a2a'):
             target_agent.a2a._last_sender = self.agent.id
 
+        receiver_span = None
+        if traces_flow_manager:
+            try:
+                attributes = {
+                    "from_agent": message.from_agent,
+                    "to_agent": message.to_agent,
+                    "message_type": message.type,
+                    "direction": "incoming",
+                    "content_preview": str(content)[:100] + "..." if len(str(content)) > 100 else str(content)
+                }
+                receiver_span = traces_flow_manager.create_a2a_trace(
+                    "Message Received",
+                    attributes
+                )
+            except Exception as e:
+                print(f"Failed to create receiver A2A trace: {e}")
+
+        # Handle message
         if hasattr(target_agent, 'a2a') and message_type in target_agent.a2a._message_handlers:
             handlers = target_agent.a2a._message_handlers[message_type]
             for handler_func in handlers:
@@ -186,3 +262,14 @@ class A2AProtocol:
             elif hasattr(target_agent.session.pipeline, 'send_text_message'):
                 await target_agent.session.pipeline.send_text_message(content.get("query", ""))
 
+        if traces_flow_manager:
+            if receiver_span:
+                traces_flow_manager.end_a2a_trace(
+                    receiver_span,
+                    f"Message from {message.from_agent} processed"
+                )
+            if sender_span:
+                traces_flow_manager.end_a2a_trace(
+                    sender_span,
+                    f"Message to {message.to_agent} delivered"
+                )

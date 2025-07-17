@@ -78,7 +78,7 @@ class VideoSDKHandler:
             "sdk-version" : "0.0.19" 
         }
         self.agent_meeting = create_span("Agent Init Meeting",{**sdk_metadata})
-        self.meeting = VideoSDK.init_meeting(**self.meeting_config, sdk_metadata=sdk_metadata,signaling_base_url="dev-api.videosdk.live")
+        self.meeting = VideoSDK.init_meeting(**self.meeting_config, sdk_metadata=sdk_metadata,signaling_base_url="api.videosdk.live")
         self.meeting.add_event_listener(
             MeetingHandler(
                 on_meeting_joined=self.on_meeting_joined,
