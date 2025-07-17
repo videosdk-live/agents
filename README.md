@@ -126,6 +126,10 @@ class VoiceAgent(Agent):
     async def on_enter(self) -> None:
         """Called when the agent first joins the meeting"""
         await self.session.say("Hi there! How can I help you today?")
+    
+    async def on_exit(self) -> None:
+      """Called when the agent exits the meeting"""
+        await self.session.say("Goodbye!")
 ```
 
 This code defines a basic voice agent with:
@@ -244,7 +248,7 @@ def make_context() -> JobContext:
         auth_token = "<VIDEOSDK_AUTH_TOKEN>", # When VIDEOSDK_AUTH_TOKEN is set in .env - DON'T include videosdk_auth
         name="Test Agent", 
         playground=True,
-        vision: True # Only available when using the Google Gemini Live API
+        # vision= True # Only available when using the Google Gemini Live API
     )
     
     return JobContext(room_options=room_options)

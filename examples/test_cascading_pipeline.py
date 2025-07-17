@@ -24,6 +24,7 @@ from videosdk.plugins.humeai import HumeAITTS
 from videosdk.plugins.rime import RimeTTS
 from videosdk.plugins.speechify import SpeechifyTTS
 from videosdk.plugins.groq import GroqTTS
+from videosdk.plugins.navana import NavanaSTT
 
 import logging
 import pathlib
@@ -174,6 +175,8 @@ async def entrypoint(ctx: JobContext):
         # STT Based Providers 
         stt= DeepgramSTT(api_key=os.getenv("DEEPGRAM_API_KEY")),
         # stt=CartesiaSTT(api_key=os.getenv("CARTESIA_API_KEY")),
+        # stt=NavanaSTT(api_key=os.getenv("NAVANA_API_KEY"), 
+        #               customer_id=os.getenv("NAVANA_CUSTOMER_ID")),
        
         # OpenAI - All Three 
         # stt= OpenAISTT(api_key=os.getenv("OPENAI_API_KEY")),
