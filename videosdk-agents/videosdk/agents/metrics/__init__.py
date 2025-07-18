@@ -6,12 +6,16 @@ from .integration import (
     complete_span,
     create_log,
 )
+from .realtime_collector import RealtimeMetricsCollector
 
 metrics_collector = MetricsCollector()
+realtime_metrics_collector = RealtimeMetricsCollector()
 
 __all__ = [
     'metrics_collector',
     'MetricsCollector',
+    'realtime_metrics_collector',
+    'RealtimeMetricsCollector',
     'TimelineEvent',
     'InteractionMetrics', 
     'MetricsData',

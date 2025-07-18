@@ -8,6 +8,9 @@ from .conversation_flow import ConversationFlow
 from .pipeline import Pipeline
 import os
 from .metrics import metrics_collector
+from .metrics.realtime_collector import realtime_metrics_collector
+from .realtime_pipeline import RealTimePipeline
+
 
 class AgentSession:
     """
@@ -53,33 +56,36 @@ class AgentSession:
         """       
         await self.agent.initialize_mcp()
 
-        traces_flow_manager = metrics_collector.traces_flow_manager
-        if traces_flow_manager:
-            config_attributes = {
-                "system_instructions": self.agent.instructions,
+        if isinstance(self.pipeline, RealTimePipeline):
+            realtime_metrics_collector.start_session(self.agent, self.pipeline)
+        else:
+            traces_flow_manager = metrics_collector.traces_flow_manager
+            if traces_flow_manager:
+                config_attributes = {
+                    "system_instructions": self.agent.instructions,
 
-                "function_tools": [
-                    getattr(tool, "name", tool.__name__ if callable(tool) else str(tool))
-                    for tool in (
-                        [tool for tool in self.agent.tools if tool not in self.agent.mcp_manager.tools]
-                        if self.agent.mcp_manager else self.agent.tools
-                    )
-                ] if self.agent.tools else [],
+                    "function_tools": [
+                        getattr(tool, "name", tool.__name__ if callable(tool) else str(tool))
+                        for tool in (
+                            [tool for tool in self.agent.tools if tool not in self.agent.mcp_manager.tools]
+                            if self.agent.mcp_manager else self.agent.tools
+                        )
+                    ] if self.agent.tools else [],
 
-                "mcp_tools": [
-                    tool._tool_info.name
-                    for tool in self.agent.mcp_manager.tools
-                ] if self.agent.mcp_manager else [],
+                    "mcp_tools": [
+                        tool._tool_info.name
+                        for tool in self.agent.mcp_manager.tools
+                    ] if self.agent.mcp_manager else [],
 
-                "pipeline": self.pipeline.__class__.__name__,
-                **({
-                    "stt_provider": self.pipeline.stt.__class__.__name__ if self.pipeline.stt else None,
-                    "tts_provider": self.pipeline.tts.__class__.__name__ if self.pipeline.tts else None, 
-                    "llm_provider": self.pipeline.llm.__class__.__name__ if self.pipeline.llm else None
-                } if self.pipeline.__class__.__name__ == "CascadingPipeline" else {}),
-            }
-            await traces_flow_manager.start_agent_session_config(config_attributes)
-            await traces_flow_manager.start_agent_session({})
+                    "pipeline": self.pipeline.__class__.__name__,
+                    **({
+                        "stt_provider": self.pipeline.stt.__class__.__name__ if self.pipeline.stt else None,
+                        "tts_provider": self.pipeline.tts.__class__.__name__ if self.pipeline.tts else None, 
+                        "llm_provider": self.pipeline.llm.__class__.__name__ if self.pipeline.llm else None
+                    } if self.pipeline.__class__.__name__ == "CascadingPipeline" else {}),
+                }
+                await traces_flow_manager.start_agent_session_config(config_attributes)
+                await traces_flow_manager.start_agent_session({})
 
         if hasattr(self.pipeline, 'set_agent'):
             self.pipeline.set_agent(self.agent)
@@ -101,10 +107,13 @@ class AgentSession:
         """
         Close the agent session.
         """
-        traces_flow_manager = metrics_collector.traces_flow_manager
-        if traces_flow_manager:
-            await traces_flow_manager.start_agent_session_closed({})
-            traces_flow_manager.end_agent_session_closed()
+        if isinstance(self.pipeline, RealTimePipeline):
+            realtime_metrics_collector.finalize_session()
+        else:
+            traces_flow_manager = metrics_collector.traces_flow_manager
+            if traces_flow_manager:
+                await traces_flow_manager.start_agent_session_closed({})
+                traces_flow_manager.end_agent_session_closed()
 
         await self.agent.on_exit()
         await self.pipeline.cleanup()

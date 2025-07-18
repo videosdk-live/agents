@@ -15,6 +15,7 @@ from ..metrics.traces_flow import TracesFlowManager
 from ..metrics import metrics_collector
 from ..metrics.integration import auto_initialize_telemetry_and_logs
 from typing import Optional, Any
+from ..metrics.realtime_collector import realtime_metrics_collector
  
 
 
@@ -237,6 +238,7 @@ class VideoSDKHandler:
                 if session_id:
                     self._session_id = session_id
                     metrics_collector.set_session_id(session_id)
+                    realtime_metrics_collector.set_session_id(session_id)
                     self._session_id_collected = True
                     if self.traces_flow_manager:
                         self.traces_flow_manager.set_session_id(session_id)
