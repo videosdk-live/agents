@@ -159,7 +159,27 @@ class RealtimeMetricsCollector:
         if self.current_interaction and tool_name not in self.current_interaction.function_tools_called:
             self.current_interaction.function_tools_called.append(tool_name)
 
+    async def set_agent_response(self, text: str) -> None:
+        if self.current_interaction:
+            self.current_interaction.timeline.append(
+                TimelineEvent(
+                    event="agent_responds_with_text",
+                    timestamp=time.perf_counter(),
+                    data={"response": text},
+                )
+            )
 
+    async def set_user_transcript(self, text: str) -> None:
+        if self.current_interaction:
+            self.current_interaction.timeline.append(
+                TimelineEvent(
+                    event="user_transcript",
+                    timestamp=time.perf_counter(),
+                    data={"transcript": text},
+                )
+            )
+
+            
     async def set_interrupted(self) -> None:
         if self.current_interaction:
             self.current_interaction.interrupted = True
