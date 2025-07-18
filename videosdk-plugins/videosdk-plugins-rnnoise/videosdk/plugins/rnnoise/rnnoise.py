@@ -1,7 +1,21 @@
 import ctypes,numpy,os
+import platform
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
-lib_path = os.path.join(script_dir, "files", "librnnoise.dylib")
+
+
+sys_name = platform.system()
+if sys_name == "Darwin":
+    lib_name = "librnnoise.dylib"
+elif sys_name == "Linux":
+    lib_name = "librnnoise.so"
+elif sys_name == "Windows":
+    lib_name = "rnnoise.dll"
+else:
+    raise OSError(f"Unsupported OS: {sys_name}")
+
+lib_path = os.path.join(script_dir, "files", lib_name)
+
 try:
     lib = ctypes.cdll.LoadLibrary(lib_path)
 except OSError as e:
