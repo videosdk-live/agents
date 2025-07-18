@@ -1,9 +1,9 @@
-# VideoSDK Deepgram Plugin
+# VideoSDK Navana Plugin
 
-Agent Framework plugin for STT services from Deepgram.
+Agent Framework plugin for STT services from Navana Tech.
 
 ## Installation
 
 ```bash
-pip install videosdk-plugins-deepgram
+pip install videosdk-plugins-navana
 ```

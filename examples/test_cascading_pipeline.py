@@ -26,6 +26,7 @@ from videosdk.plugins.speechify import SpeechifyTTS
 from videosdk.plugins.groq import GroqTTS
 from videosdk.plugins.navana import NavanaSTT
 from videosdk.plugins.papla import PaplaTTS
+from videosdk.plugins.assemblyai import AssemblyAISTT
 
 import logging
 import pathlib
@@ -176,8 +177,8 @@ async def entrypoint(ctx: JobContext):
         # STT Based Providers 
         stt= DeepgramSTT(api_key=os.getenv("DEEPGRAM_API_KEY")),
         # stt=CartesiaSTT(api_key=os.getenv("CARTESIA_API_KEY")),
-        # stt=NavanaSTT(api_key=os.getenv("NAVANA_API_KEY"), 
-        #               customer_id=os.getenv("NAVANA_CUSTOMER_ID")),
+        # stt=AssemblyAISTT(api_key=os.getenv("ASSEMBLYAI_API_KEY")),
+        # stt=NavanaSTT(api_key=os.getenv("NAVANA_API_KEY"), customer_id=os.getenv("NAVANA_CUSTOMER_ID")),
        
         # OpenAI - All Three 
         # stt= OpenAISTT(api_key=os.getenv("OPENAI_API_KEY")),

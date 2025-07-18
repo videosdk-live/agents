@@ -1,4 +1,4 @@
-# VideoSDK ElevenLabs Plugin
+# VideoSDK Papla Media Plugin
 
 Agent Framework plugin for TTS services from Papla Media.
 
