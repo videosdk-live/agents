@@ -73,7 +73,36 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
             self.conversation_flow.stt.on_stt_transcript(self.conversation_flow.on_stt_transcript)
         if self.conversation_flow.vad:
             self.conversation_flow.vad.on_vad_event(self.conversation_flow.on_vad_event)
-        
+
+    async def change_component(
+        self,
+        stt: STT | None = None,
+        llm: LLM | None = None,
+        tts: TTS | None = None,
+    ) -> None:
+        """Dynamically change pipeline components.
+        This will close the old components and set the new ones.
+        """
+        if stt and self.stt:
+            await self.stt.aclose()
+        if llm and self.llm:
+            await self.llm.aclose()
+        if tts and self.tts:
+            await self.tts.aclose()
+
+        if stt:
+            self.stt = stt
+            self.conversation_flow.stt = stt
+            if self.conversation_flow.stt:
+                self.conversation_flow.stt.on_stt_transcript(self.conversation_flow.on_stt_transcript)
+        if llm:
+            self.llm = llm
+            self.conversation_flow.llm = llm
+        if tts:
+            self.tts = tts
+            self._configure_components()
+            self.conversation_flow.tts = tts
+    
     async def start(self, **kwargs: Any) -> None:
         if self.conversation_flow:
             await self.conversation_flow.start()
