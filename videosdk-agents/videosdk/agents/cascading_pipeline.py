@@ -92,14 +92,16 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
 
         if stt:
             self.stt = stt
+            self.conversation_flow.stt = stt
+            if self.conversation_flow.stt:
+                self.conversation_flow.stt.on_stt_transcript(self.conversation_flow.on_stt_transcript)
         if llm:
             self.llm = llm
+            self.conversation_flow.llm = llm
         if tts:
             self.tts = tts
-
-        self._configure_components()
-        if self.conversation_flow:
-            self.set_conversation_flow(self.conversation_flow)
+            self._configure_components()
+            self.conversation_flow.tts = tts
     
     async def start(self, **kwargs: Any) -> None:
         if self.conversation_flow:
