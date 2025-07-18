@@ -1,7 +1,7 @@
 <!--BEGIN_BANNER_IMAGE-->
 <p align="center">
-  <a href="https://www.producthunt.com/products/video-sdk/launches/voice-agent-sdk?embed=true&utm_source=badge-featured&utm_medium=badge&utm_source=badge-voice&#0045;agent&#0045;sdk" target="_blank"><img src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=991216&theme=light&t=1752567949948" alt="Voice&#0032;Agent&#0032;SDK - The&#0032;Open&#0045;Source&#0032;Framework&#0032;For&#0032;Real&#0045;Time&#0032;AI&#0032;Voice | Product Hunt" style="width: 250px; height: 54px;" width="250" height="54" /></a>
   <img src="https://raw.githubusercontent.com/videosdk-community/ai-agent-examples/main/.github/banner.png" alt="VideoSDK AI Agents Banner" style="width:100%;">
+  <a href="https://www.producthunt.com/products/video-sdk/launches/voice-agent-sdk?embed=true&utm_source=badge-featured&utm_medium=badge&utm_source=badge-voice&#0045;agent&#0045;sdk" target="_blank"><img src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=991216&theme=light&t=1752567949948" alt="Voice&#0032;Agent&#0032;SDK - The&#0032;Open&#0045;Source&#0032;Framework&#0032;For&#0032;Real&#0045;Time&#0032;AI&#0032;Voice | Product Hunt" style="width: 250px; height: 54px;" width="250" height="54" /></a>
 </p>
 <!--END_BANNER_IMAGE-->
 
@@ -126,6 +126,10 @@ class VoiceAgent(Agent):
     async def on_enter(self) -> None:
         """Called when the agent first joins the meeting"""
         await self.session.say("Hi there! How can I help you today?")
+    
+    async def on_exit(self) -> None:
+      """Called when the agent exits the meeting"""
+        await self.session.say("Goodbye!")
 ```
 
 This code defines a basic voice agent with:
@@ -244,7 +248,7 @@ def make_context() -> JobContext:
         auth_token = "<VIDEOSDK_AUTH_TOKEN>", # When VIDEOSDK_AUTH_TOKEN is set in .env - DON'T include videosdk_auth
         name="Test Agent", 
         playground=True,
-        vision: True # Only available when using the Google Gemini Live API
+        # vision= True # Only available when using the Google Gemini Live API
     )
     
     return JobContext(room_options=room_options)
