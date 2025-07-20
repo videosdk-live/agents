@@ -286,7 +286,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
                 await self._handle_audio_delta(data)
                 
             elif event_type == "response.audio_transcript.delta":
-                await self._handle_transcript_delta(data)
+                await self._handle_audio_transcript_delta(data)
                 
             elif event_type == "response.done":
                 await self._handle_response_done(data)
@@ -407,19 +407,26 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         if self.audio_track:
             self.audio_track.interrupt()
             
-    async def _handle_transcript_delta(self, data: dict) -> None:
+    async def _handle_audio_transcript_delta(self, data: dict) -> None:
         """Handle transcript chunk"""
-        pass
-    
+        delta_content = data.get("delta", "")
+        if not hasattr(self, '_current_audio_transcript'):
+            self._current_audio_transcript = ""
+        self._current_audio_transcript += delta_content
+
     async def _handle_input_audio_transcription_completed(self, data: dict) -> None:
-        """Handle input audio transcription completion"""
+        """Handle input audio transcription completion for user transcript"""
         transcript = data.get("transcript", "")
         if transcript:
             print(f"User Transcript (final): {transcript}")
 
     async def _handle_response_done(self, data: dict) -> None:
-        """Handle response completion"""
-        await self.create_response()
+        """Handle response completion for agent transcript"""
+        if hasattr(self, '_current_audio_transcript') and self._current_audio_transcript:
+            print(f"Agent Transcript (final): {self._current_audio_transcript}")
+            global_event_emitter.emit("text_response", {"text": self._current_audio_transcript, "type": "done"})
+            self._current_audio_transcript = ""
+        pass
 
     async def _handle_function_call_arguments_delta(self, data: dict) -> None:
         """Handle function call arguments delta"""
@@ -570,12 +577,3 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         })
         await self.create_response()
 
-    async def _handle_text_done(self, data: dict) -> None:
-        """Handle text response completion"""
-        try:
-            text_content = data.get("text", "")
-            if text_content:
-                print(f"Agent Transcript (final): {text_content}")
-                global_event_emitter.emit("text_response", {"text": text_content, "type": "done"})
-        except Exception as e:
-            print(f"[ERROR] Error handling text done: {e}")
