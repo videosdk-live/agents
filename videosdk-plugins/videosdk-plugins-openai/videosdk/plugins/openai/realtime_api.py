@@ -343,9 +343,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
                         tool_info = get_tool_info(tool)
                         if tool_info.name == name:
                             try:
-                                if realtime_metrics_collector.is_collecting():
-                                    await realtime_metrics_collector.add_tool_call(name)
-                                    print(f"Tool call: {name}")
+                                await realtime_metrics_collector.add_tool_call(name)
                                 result = await tool(**arguments)
                                 await self.send_event({
                                     "type": "conversation.item.create",
@@ -418,12 +416,12 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         """Handle input audio transcription completion for user transcript"""
         transcript = data.get("transcript", "")
         if transcript:
-            print(f"User Transcript (final): {transcript}")
+            await realtime_metrics_collector.set_user_transcript(transcript)
 
     async def _handle_response_done(self, data: dict) -> None:
         """Handle response completion for agent transcript"""
         if hasattr(self, '_current_audio_transcript') and self._current_audio_transcript:
-            print(f"Agent Transcript (final): {self._current_audio_transcript}")
+            await realtime_metrics_collector.set_agent_response(self._current_audio_transcript)
             global_event_emitter.emit("text_response", {"text": self._current_audio_transcript, "type": "done"})
             self._current_audio_transcript = ""
         pass

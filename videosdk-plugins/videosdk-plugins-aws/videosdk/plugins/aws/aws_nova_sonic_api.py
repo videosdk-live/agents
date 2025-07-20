@@ -28,6 +28,8 @@ from smithy_aws_core.credentials_resolvers.environment import EnvironmentCredent
 
 from videosdk.agents import Agent, RealtimeBaseModel, build_nova_sonic_schema, get_tool_info, is_function_tool, FunctionTool
 
+from videosdk.agents import realtime_metrics_collector
+
 NOVA_INPUT_SAMPLE_RATE = 16000  
 NOVA_OUTPUT_SAMPLE_RATE = 24000 
 
@@ -350,7 +352,10 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                     if 'content' in text_output:
                                         transcript = text_output['content']
                                         role = text_output.get('role', 'UNKNOWN')
-                                        print(f"Transcript [{role}]: {transcript}")
+                                        if role == 'USER':
+                                            await realtime_metrics_collector.set_user_transcript(transcript)
+                                        elif role == 'ASSISTANT':
+                                            await realtime_metrics_collector.set_agent_response(transcript)
 
                                 elif 'audioOutput' in json_data['event']:                                    
                                     audio_output = json_data['event']['audioOutput']
@@ -378,6 +383,7 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
 
                                 elif 'toolUse' in json_data['event']:
                                      tool_use = json_data['event']['toolUse']
+                                     await realtime_metrics_collector.add_tool_call(tool_use['toolName'])
                                      asyncio.create_task(self._execute_tool_and_send_result(tool_use))
 
                                 elif 'completionEnd' in json_data['event']:
@@ -585,7 +591,6 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             return
 
         try:
-            print(f"Tool call: {tool_name}")   
             result = await target_tool(**tool_input_args)
             result_content_str = json.dumps(result)
 
