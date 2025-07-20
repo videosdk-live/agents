@@ -288,10 +288,10 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                     tool_info = get_tool_info(tool)
                     if tool_info.name == tool_call.name:
                         if accumulated_input_text:
+                            await realtime_metrics_collector.set_user_transcript(accumulated_input_text)
                             accumulated_input_text = ""
                         try:
-                            if realtime_metrics_collector.is_collecting():
-                                await realtime_metrics_collector.add_tool_call(tool_info.name)
+                            await realtime_metrics_collector.add_tool_call(tool_info.name)
                             result = await tool(**tool_call.args)
                             await self.send_tool_response([
                                 FunctionResponse(
@@ -332,8 +332,6 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                         "text": accumulated_input_text,
                                         "is_final": False
                                     })
-                                if realtime_metrics_collector.is_collecting():
-                                    await realtime_metrics_collector.set_user_transcript(accumulated_input_text)
 
                             if (output_transcription := server_content.output_transcription):
                                 if output_transcription.text:
@@ -342,8 +340,6 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                         "text": final_transcription,
                                         "is_final": False
                                     })
-                                if realtime_metrics_collector.is_collecting():
-                                    await realtime_metrics_collector.set_agent_response(final_transcription)
 
                             if not active_response_id:
                                 active_response_id = f"response_{id(response)}"
@@ -361,8 +357,8 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
 
                             if model_turn := server_content.model_turn:
                                 if accumulated_input_text:
-                                    if realtime_metrics_collector.is_collecting():
-                                        await realtime_metrics_collector.set_user_transcript(accumulated_input_text)
+
+                                    await realtime_metrics_collector.set_user_transcript(accumulated_input_text)
                                     accumulated_input_text = ""
                                 for part in model_turn.parts:
                                     if hasattr(part, 'inline_data') and part.inline_data:
@@ -371,8 +367,6 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                             continue
                                         
                                         if "AUDIO" in self.config.response_modalities:
-                                            if realtime_metrics_collector.is_collecting():
-                                                await realtime_metrics_collector.set_agent_speech_start()
                                             chunk_number += 1
                                             
                                             if self.audio_track and self.loop:
@@ -388,9 +382,11 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                         accumulated_text += part.text
 
                             if server_content.turn_complete and active_response_id:
+                                if accumulated_input_text:
+                                    await realtime_metrics_collector.set_user_transcript(accumulated_input_text)
+                                    accumulated_input_text = ""
                                 if final_transcription:
-                                    if realtime_metrics_collector.is_collecting():
-                                        await realtime_metrics_collector.set_agent_response(final_transcription)
+                                    await realtime_metrics_collector.set_agent_response(final_transcription)
                                 if "TEXT" in self.config.response_modalities and accumulated_text:
                                     global_event_emitter.emit("text_response", {
                                         "type": "done",
