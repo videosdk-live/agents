@@ -75,13 +75,13 @@ class RealtimeMetricsCollector:
     async def set_user_speech_start(self) -> None:
         if self.current_interaction:
             self._finalize_interaction_and_send()
-            
+        
         await self._start_new_interaction()
         if self.current_interaction and self.current_interaction.user_speech_start_time is None:
             self.current_interaction.user_speech_start_time = time.perf_counter()
 
     async def set_user_speech_end(self) -> None:
-        if self.current_interaction:
+        if self.current_interaction and self.current_interaction.user_speech_end_time is None:
             self.current_interaction.user_speech_end_time = time.perf_counter()
 
     async def set_agent_speech_start(self) -> None:
@@ -154,7 +154,7 @@ class RealtimeMetricsCollector:
     async def add_timeline_event(self, event: TimelineEvent) -> None:
         if self.current_interaction:
             self.current_interaction.timeline.append(event)
-    
+
     async def add_tool_call(self, tool_name: str) -> None:
         if self.current_interaction and tool_name not in self.current_interaction.function_tools_called:
             self.current_interaction.function_tools_called.append(tool_name)
@@ -162,34 +162,42 @@ class RealtimeMetricsCollector:
     async def set_user_transcript(self, text: str) -> None:
         """Set the user transcript for the current interaction and update timeline"""
         if self.current_interaction:
+            if self.current_interaction.user_speech_start_time is None:
+                self.current_interaction.user_speech_start_time = time.perf_counter()
+            if self.current_interaction.user_speech_end_time is None:
+                self.current_interaction.user_speech_end_time = time.perf_counter()
             for event in reversed(self.current_interaction.timeline):
-                if event.event == "user_speech" and not hasattr(event.data, 'transcript'):
-                    event.data['transcript'] = text
+                if event.event_type == "user_speech" and not event.text:
+                    event.text = text
                     break
             else:
                 self.current_interaction.timeline.append(
                     TimelineEvent(
-                        event="user_speech",
-                        timestamp=time.perf_counter(),
-                        data={"transcript": text},
+                        event_type="user_speech",
+                        start_time=time.perf_counter(),
+                        text=text
                     )
                 )
+
 
     async def set_agent_response(self, text: str) -> None:
         """Set the agent response for the current interaction and update timeline"""
         if self.current_interaction:
+            if self.current_interaction.agent_speech_start_time is None:
+                self.current_interaction.agent_speech_start_time = time.perf_counter()
             for event in reversed(self.current_interaction.timeline):
-                if event.event == "agent_speech" and not hasattr(event.data, 'response'):
-                    event.data['response'] = text
+                if event.event_type == "agent_speech" and not event.text:
+                    event.text = text
                     break
             else:
                 self.current_interaction.timeline.append(
                     TimelineEvent(
-                        event="agent_speech",
-                        timestamp=time.perf_counter(),
-                        data={"response": text},
+                        event_type="agent_speech",
+                        start_time=time.perf_counter(),
+                        text=text
                     )
                 )
+
 
     async def set_interrupted(self) -> None:
         if self.current_interaction:
