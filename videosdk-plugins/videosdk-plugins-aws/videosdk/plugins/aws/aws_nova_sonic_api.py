@@ -346,7 +346,11 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                         except (json.JSONDecodeError, KeyError) as e:
                                             print(f"Error parsing additionalModelFields: {e}")
                                 elif 'textOutput' in json_data['event']:
-                                    pass
+                                    text_output = json_data['event']['textOutput']
+                                    if 'content' in text_output:
+                                        transcript = text_output['content']
+                                        role = text_output.get('role', 'UNKNOWN')
+                                        print(f"Transcript [{role}]: {transcript}")
 
                                 elif 'audioOutput' in json_data['event']:                                    
                                     audio_output = json_data['event']['audioOutput']
@@ -581,6 +585,7 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             return
 
         try:
+            print(f"Tool call: {tool_name}")   
             result = await target_tool(**tool_input_args)
             result_content_str = json.dumps(result)
 
