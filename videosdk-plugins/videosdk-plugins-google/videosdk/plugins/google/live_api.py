@@ -368,6 +368,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                         
                                         if "AUDIO" in self.config.response_modalities:
                                             chunk_number += 1
+                                            await realtime_metrics_collector.set_agent_speech_start()
                                             
                                             if self.audio_track and self.loop:
                                                 if len(raw_audio) % 2 != 0: 
@@ -400,6 +401,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                 active_response_id = None
                                 accumulated_text = "" 
                                 final_transcription = ""
+                                await realtime_metrics_collector.set_agent_speech_end(timeout=1.0)
                 
                 except Exception as e:
                     if "1000 (OK)" in str(e):
@@ -453,6 +455,8 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         if "AUDIO" not in self.config.response_modalities:
             return
 
+        await realtime_metrics_collector.set_user_speech_start()
+
         audio_data = np.frombuffer(audio_data, dtype=np.int16)
         audio_data = signal.resample(audio_data, int(len(audio_data) * self.target_sample_rate / self.input_sample_rate))
         audio_data = audio_data.astype(np.int16).tobytes()
@@ -460,6 +464,8 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         await self._session.session.send_realtime_input(
             audio=Blob(data=audio_data, mime_type=f"audio/pcm;rate={AUDIO_SAMPLE_RATE}")
         )
+
+        await realtime_metrics_collector.set_user_speech_end()
 
     async def handle_video_input(self, video_data: av.VideoFrame) -> None:
         """Improved video input handler with error prevention"""
@@ -499,6 +505,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                 turns=Content(parts=[Part(text="stop")], role="user"),
                 turn_complete=True
             )
+            await realtime_metrics_collector.set_interrupted()
             if self.audio_track and "AUDIO" in self.config.response_modalities:
                 self.audio_track.interrupt()
         except Exception as e:
