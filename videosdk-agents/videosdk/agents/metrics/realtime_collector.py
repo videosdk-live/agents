@@ -159,27 +159,38 @@ class RealtimeMetricsCollector:
         if self.current_interaction and tool_name not in self.current_interaction.function_tools_called:
             self.current_interaction.function_tools_called.append(tool_name)
 
-    async def set_agent_response(self, text: str) -> None:
-        if self.current_interaction:
-            self.current_interaction.timeline.append(
-                TimelineEvent(
-                    event="agent_responds_with_text",
-                    timestamp=time.perf_counter(),
-                    data={"response": text},
-                )
-            )
-
     async def set_user_transcript(self, text: str) -> None:
+        """Set the user transcript for the current interaction and update timeline"""
         if self.current_interaction:
-            self.current_interaction.timeline.append(
-                TimelineEvent(
-                    event="user_transcript",
-                    timestamp=time.perf_counter(),
-                    data={"transcript": text},
+            for event in reversed(self.current_interaction.timeline):
+                if event.event == "user_speech" and not hasattr(event.data, 'transcript'):
+                    event.data['transcript'] = text
+                    break
+            else:
+                self.current_interaction.timeline.append(
+                    TimelineEvent(
+                        event="user_speech",
+                        timestamp=time.perf_counter(),
+                        data={"transcript": text},
+                    )
                 )
-            )
 
-            
+    async def set_agent_response(self, text: str) -> None:
+        """Set the agent response for the current interaction and update timeline"""
+        if self.current_interaction:
+            for event in reversed(self.current_interaction.timeline):
+                if event.event == "agent_speech" and not hasattr(event.data, 'response'):
+                    event.data['response'] = text
+                    break
+            else:
+                self.current_interaction.timeline.append(
+                    TimelineEvent(
+                        event="agent_speech",
+                        timestamp=time.perf_counter(),
+                        data={"response": text},
+                    )
+                )
+
     async def set_interrupted(self) -> None:
         if self.current_interaction:
             self.current_interaction.interrupted = True
