@@ -32,21 +32,9 @@ class CustomAudioStreamTrack(CustomAudioTrack):
     def interrupt(self):
         self.frame_buffer.clear()
         self.audio_data_buffer.clear()
-        if realtime_metrics_collector.is_collecting():
-            asyncio.run_coroutine_threadsafe(realtime_metrics_collector.set_interrupted(), self.loop)
-
-    async def notify_agent_speech(self):
-        if realtime_metrics_collector.is_collecting():
-            await realtime_metrics_collector.set_agent_speech_end()
             
     async def add_new_bytes(self, audio_data: bytes):
-        if realtime_metrics_collector.is_collecting():
-            await realtime_metrics_collector.set_agent_speech_start()
-
         self.audio_data_buffer += audio_data
-
-        if realtime_metrics_collector.is_collecting():
-            asyncio.create_task(self.notify_agent_speech())
 
         while len(self.audio_data_buffer) >= self.chunk_size:
             chunk = self.audio_data_buffer[:self.chunk_size]
