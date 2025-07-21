@@ -27,7 +27,7 @@ class RoomOptions:
     on_room_error: Optional[Callable[[Any], None]] = None
     # Session management options
     auto_end_session: bool = True
-    session_timeout_seconds: Optional[int] = None
+    session_timeout_seconds: Optional[int] = 30
 
 
 class WorkerJob:
