@@ -1,10 +1,3 @@
-"""
-Job Process Lazy Main for VideoSDK Agents IPC.
-
-This module runs inside the job process and handles job execution,
-similar to implementation but adapted for VideoSDK.
-"""
-
 import asyncio
 import multiprocessing
 import os

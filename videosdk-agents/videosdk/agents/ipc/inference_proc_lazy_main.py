@@ -1,10 +1,3 @@
-"""
-Inference Process Lazy Main for VideoSDK Agents IPC.
-
-This module runs inside the inference process and handles AI model inference,
-similar to implementation but adapted for VideoSDK.
-"""
-
 import asyncio
 import multiprocessing
 import os

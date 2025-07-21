@@ -1,9 +1,3 @@
-"""
-Job Executor for VideoSDK Agents IPC.
-
-This module provides the interface for job execution in the IPC system.
-"""
-
 from typing import Any, Dict
 import logging
 

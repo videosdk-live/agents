@@ -1,9 +1,3 @@
-"""
-Inference Executor for VideoSDK Agents IPC.
-
-This module provides the interface for inference execution in the IPC system.
-"""
-
 from typing import Any, Dict
 import logging
 

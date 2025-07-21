@@ -1,10 +1,3 @@
-"""
-Inference Process Executor for VideoSDK Agents IPC.
-
-This module handles inference process creation, management, and communication,
-similar to implementation but adapted for VideoSDK.
-"""
-
 import asyncio
 import multiprocessing
 import os
@@ -23,7 +16,6 @@ class InferenceProcExecutor:
     """
     Manages a single inference process for VideoSDK agents.
 
-    Similar to InferenceProcExecutor but adapted for VideoSDK.
     """
 
     def __init__(

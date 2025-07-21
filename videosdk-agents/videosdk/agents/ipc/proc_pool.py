@@ -1,57 +1,38 @@
-"""
-Process Pool Manager for VideoSDK Agents IPC.
-
-This module manages pools of job processes/threads and a single shared inference executor,
-similar to implementation but adapted for VideoSDK.
-"""
-
 import asyncio
-import multiprocessing
-import time
-import weakref
-from typing import Any, Callable, Dict, List, Optional, Tuple
-from dataclasses import dataclass
-from enum import Enum
 import logging
+import time
+from typing import Any, Dict, List, Optional
+from dataclasses import dataclass
+
+from .process_manager import ProcessManager, ExecutorType, ProcPoolConfig
 
 logger = logging.getLogger(__name__)
 
 
-class ProcessType(Enum):
-    JOB = "job"
-    INFERENCE = "inference"
-
-
-class ExecutorType(Enum):
-    PROCESS = "process"
-    THREAD = "thread"
-
-
 @dataclass
-class ProcPoolConfig:
-    """Configuration for process pools."""
+class PoolStats:
+    """Statistics for the process pool."""
 
-    num_idle_processes: int = 2
-    initialize_timeout: float = 10.0
-    close_timeout: float = 60.0
-    memory_warn_mb: float = 500.0
-    memory_limit_mb: float = 0.0  # 0 = no limit
-    ping_interval: float = 30.0
-    max_processes: int = 10
+    total_processes: int
+    available_processes: int
+    busy_processes: int
+    failed_processes: int
+    memory_usage_mb: float
+    uptime_seconds: float
 
 
 class ProcPool:
     """
-    Manages pools of job processes and a single shared inference executor.
+    Process pool for agents.
 
-    Similar to ProcPool but adapted for VideoSDK agents.
+    for agent execution with load balancing and health monitoring.
     """
 
     def __init__(
         self,
         *,
-        initialize_process_fnc: Callable[[Any], Any],
-        job_entrypoint_fnc: Callable[[Any], Any],
+        initialize_process_fnc: Any,
+        job_entrypoint_fnc: Any,
         num_idle_processes: int = 2,
         initialize_timeout: float = 10.0,
         close_timeout: float = 60.0,
