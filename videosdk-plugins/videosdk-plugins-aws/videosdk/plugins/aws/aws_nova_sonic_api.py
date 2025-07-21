@@ -104,6 +104,7 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
         self.audio_content_name = f"audio_{str(uuid.uuid4())}"
         self.is_active = False
         self.response_task = None
+        self._agent_speaking = False
         self._initialize_bedrock_client()
         self.input_sample_rate = 48000
         self.target_sample_rate = 16000
@@ -288,8 +289,6 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
         if not self.is_active or self._closing:
             return
             
-        await realtime_metrics_collector.set_user_speech_start()
-        
         try:
             audio_array = np.frombuffer(audio_data, dtype=np.int16)
             
@@ -320,8 +319,6 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
 
         except Exception as e:
             print(f"Resampling error: {e}")
-
-        await realtime_metrics_collector.set_user_speech_end()
 
     async def _process_responses(self):
         """Process responses from the bidirectional stream"""
@@ -357,7 +354,9 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                         transcript = text_output['content']
                                         role = text_output.get('role', 'UNKNOWN')
                                         if role == 'USER':
+                                            await realtime_metrics_collector.set_user_speech_start()
                                             await realtime_metrics_collector.set_user_transcript(transcript)
+                                            await realtime_metrics_collector.set_user_speech_end()
                                         elif role == 'ASSISTANT':
                                             await realtime_metrics_collector.set_agent_response(transcript)
 
@@ -372,7 +371,9 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                     
                                     try:
                                         audio_bytes = base64.b64decode(audio_content)
-                                        await realtime_metrics_collector.set_agent_speech_start()
+                                        if not self._agent_speaking:
+                                            await realtime_metrics_collector.set_agent_speech_start()
+                                            self._agent_speaking = True
 
                                         if self.audio_track and self.loop and not self._closing:
                                             self.loop.create_task(self.audio_track.add_new_bytes(audio_bytes))
@@ -381,7 +382,10 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                         print(f"AUDIO PROCESSING ERROR: {e}")
                                 
                                 elif 'contentEnd' in json_data['event']: 
-                                    pass
+                                    content_end = json_data['event']['contentEnd']
+                                    if content_end.get('stopReason', '') == 'END_TURN' and self._agent_speaking:
+                                        await realtime_metrics_collector.set_agent_speech_end(timeout=1.0)
+                                        self._agent_speaking = False
 
                                 elif 'usageEvent' in json_data['event']:
                                     pass
@@ -392,9 +396,10 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                      asyncio.create_task(self._execute_tool_and_send_result(tool_use))
 
                                 elif 'completionEnd' in json_data['event']:
-                                     completion_end = json_data['event']['completionEnd']
-                                     print(f"Nova completionEnd: {json.dumps(completion_end, indent=2)}")
-                                     await realtime_metrics_collector.set_agent_speech_end(timeout=1.0)
+                                    completion_end = json_data['event']['completionEnd']
+                                    print(f"Nova completionEnd received: {json.dumps(completion_end, indent=2)}")
+                                    await realtime_metrics_collector.set_agent_speech_end(timeout=1.0)
+                                    self._agent_speaking = False
 
                                 else:
                                     print(f"Unhandled event type from Nova: {event_keys} - {json.dumps(json_data['event'], indent=2)}")
@@ -488,6 +493,10 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
         if self.audio_track:
             self.audio_track.interrupt()
         await realtime_metrics_collector.set_interrupted()
+        if self._agent_speaking:
+            print("Interrupting agent speech, calling set_agent_speech_end")
+            await realtime_metrics_collector.set_agent_speech_end(timeout=1.0)
+            self._agent_speaking = False
         
         content_end_payload = {
             "event": {

@@ -144,6 +144,8 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         self.config: GeminiLiveConfig = config or GeminiLiveConfig()
         self.target_sample_rate = 24000
         self.input_sample_rate = 48000
+        self._user_speaking = False
+        self._agent_speaking = False
 
 
     def set_agent(self, agent: Agent) -> None:
@@ -327,6 +329,9 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                         if (server_content := response.server_content):
                             if (input_transcription := server_content.input_transcription):
                                 if input_transcription.text:
+                                    if not self._user_speaking:
+                                        await realtime_metrics_collector.set_user_speech_start()
+                                        self._user_speaking = True
                                     accumulated_input_text += input_transcription.text
                                     global_event_emitter.emit("input_transcription", {
                                         "text": accumulated_input_text,
@@ -356,8 +361,10 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                 continue
 
                             if model_turn := server_content.model_turn:
+                                if self._user_speaking:
+                                    await realtime_metrics_collector.set_user_speech_end()
+                                    self._user_speaking = False
                                 if accumulated_input_text:
-
                                     await realtime_metrics_collector.set_user_transcript(accumulated_input_text)
                                     accumulated_input_text = ""
                                 for part in model_turn.parts:
@@ -368,7 +375,9 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                         
                                         if "AUDIO" in self.config.response_modalities:
                                             chunk_number += 1
-                                            await realtime_metrics_collector.set_agent_speech_start()
+                                            if not self._agent_speaking:
+                                                await realtime_metrics_collector.set_agent_speech_start()
+                                                self._agent_speaking = True
                                             
                                             if self.audio_track and self.loop:
                                                 if len(raw_audio) % 2 != 0: 
@@ -402,6 +411,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                 accumulated_text = "" 
                                 final_transcription = ""
                                 await realtime_metrics_collector.set_agent_speech_end(timeout=1.0)
+                                self._agent_speaking = False
                 
                 except Exception as e:
                     if "1000 (OK)" in str(e):
@@ -455,8 +465,6 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         if "AUDIO" not in self.config.response_modalities:
             return
 
-        await realtime_metrics_collector.set_user_speech_start()
-
         audio_data = np.frombuffer(audio_data, dtype=np.int16)
         audio_data = signal.resample(audio_data, int(len(audio_data) * self.target_sample_rate / self.input_sample_rate))
         audio_data = audio_data.astype(np.int16).tobytes()
@@ -464,8 +472,6 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         await self._session.session.send_realtime_input(
             audio=Blob(data=audio_data, mime_type=f"audio/pcm;rate={AUDIO_SAMPLE_RATE}")
         )
-
-        await realtime_metrics_collector.set_user_speech_end()
 
     async def handle_video_input(self, video_data: av.VideoFrame) -> None:
         """Improved video input handler with error prevention"""
