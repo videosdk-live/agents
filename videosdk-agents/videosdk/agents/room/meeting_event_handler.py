@@ -5,8 +5,8 @@ from typing import Callable, Any
 class MeetingHandler(MeetingEventHandler):
     def __init__(
         self,
-        on_meeting_joined: Callable[[str], None],
-        on_meeting_left: Callable[[str], None],
+        on_meeting_joined: Callable[[], None] | Callable[[str], None],
+        on_meeting_left: Callable[[], None] | Callable[[str], None],
         on_participant_joined: Callable[[Participant], None],
         on_participant_left: Callable[[Participant], None],
         on_error: Callable[[Any], None],

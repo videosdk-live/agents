@@ -1,3 +1,4 @@
+import logging
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Callable, Any
 import time
@@ -5,6 +6,8 @@ import uuid
 from .card import AgentCard 
 import asyncio
 from ..event_bus import global_event_emitter
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class A2AMessage:
@@ -158,7 +161,7 @@ class A2AProtocol:
         target_agent = self.registry.get_agent_instance(to_agent)
 
         if not target_agent:
-            print(f"Target agent {to_agent} not found in registry.")
+            logger.warning(f"Target agent {to_agent} not found in registry.")
             return
 
         message = A2AMessage(
@@ -178,7 +181,7 @@ class A2AProtocol:
                 try:
                     await handler_func(message)
                 except Exception as e:
-                    print(f"Error in message handler for {message_type} on agent {to_agent}: {e}")
+                    logger.error(f"Error in message handler for {message_type} on agent {to_agent}: {e}")
 
         elif message_type == "specialist_query" and hasattr(target_agent, 'session') and hasattr(target_agent.session, 'pipeline'):
             if hasattr(target_agent.session.pipeline, 'model'):

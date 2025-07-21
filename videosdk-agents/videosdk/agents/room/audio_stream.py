@@ -1,3 +1,4 @@
+import logging
 import asyncio
 from fractions import Fraction
 from time import time
@@ -5,6 +6,8 @@ import traceback
 from av import AudioFrame
 import numpy as np
 from videosdk import CustomAudioTrack
+
+logger = logging.getLogger(__name__)
 
 AUDIO_PTIME = 0.02
 
@@ -41,17 +44,17 @@ class CustomAudioStreamTrack(CustomAudioTrack):
                 audio_frame = self.buildAudioFrames(chunk)
                 self.frame_buffer.append(audio_frame)
             except Exception as e:
-                print(f"Error building audio frame: {e}")
+                logger.error(f"Error building audio frame: {e}")
                 break
 
     def buildAudioFrames(self, chunk: bytes) -> AudioFrame:
         if len(chunk) != self.chunk_size:
-            print(f"Warning: Incorrect chunk size received {len(chunk)}, expected {self.chunk_size}")
+            logger.warning(f"Incorrect chunk size received {len(chunk)}, expected {self.chunk_size}")
 
         data = np.frombuffer(chunk, dtype=np.int16)
         expected_samples = self.samples * self.channels
         if len(data) != expected_samples:
-            print(f"Warning: Incorrect number of samples in chunk {len(data)}, expected {expected_samples}")
+            logger.warning(f"Incorrect number of samples in chunk {len(data)}, expected {expected_samples}")
 
         data = data.reshape(-1, self.channels)
         layout = "mono" if self.channels == 1 else "stereo"
@@ -96,7 +99,7 @@ class CustomAudioStreamTrack(CustomAudioTrack):
             return frame
         except Exception as e:
             traceback.print_exc()
-            print("error while creating tts->rtc frame", e)
+            logger.error(f"Error while creating tts->rtc frame: {e}")
             
     async def cleanup(self):
         self.interrupt()

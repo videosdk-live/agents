@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from typing import Awaitable, Callable, Literal, AsyncIterator
 import time
@@ -17,15 +18,28 @@ from .event_bus import global_event_emitter
 from .vad import VAD, VADResponse, VADEventType
 from .eou import EOU
 
+logger = logging.getLogger(__name__)
+
+
 class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
     """
     Manages the conversation flow by listening to transcription events.
     """
 
-    def __init__(self, agent: Agent, stt: STT | None = None, llm: LLM | None = None, tts: TTS | None = None, vad: VAD | None = None, turn_detector: EOU | None = None) -> None:
+    def __init__(
+        self,
+        agent: Agent,
+        stt: STT | None = None,
+        llm: LLM | None = None,
+        tts: TTS | None = None,
+        vad: VAD | None = None,
+        turn_detector: EOU | None = None,
+    ) -> None:
         """Initialize conversation flow with event emitter capabilities"""
-        super().__init__() 
-        self.transcription_callback: Callable[[STTResponse], Awaitable[None]] | None = None
+        super().__init__()
+        self.transcription_callback: Callable[[STTResponse], Awaitable[None]] | None = (
+            None
+        )
         self.stt = stt
         self.llm = llm
         self.tts = tts
@@ -33,12 +47,12 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self.turn_detector = turn_detector
         self.agent = agent
         self.is_turn_active = False
-        
+
         if self.stt:
             self.stt.on_stt_transcript(self.on_stt_transcript)
         if self.vad:
             self.vad.on_vad_event(self.on_vad_event)
-        
+
     async def start(self) -> None:
         global_event_emitter.on("speech_started", self.on_speech_started)
         global_event_emitter.on("speech_stopped", self.on_speech_stopped)
@@ -46,7 +60,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
     def on_transcription(self, callback: Callable[[str], None]) -> None:
         """
         Set the callback for transcription events.
-        
+
         Args:
             callback: Function to call when transcription occurs, takes transcribed text as argument
         """
@@ -60,36 +74,35 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             await self.stt.process_audio(audio_data)
         if self.vad:
             await self.vad.process_audio(audio_data)
-                        
+
     async def on_vad_event(self, vad_response: VADResponse) -> None:
         if vad_response.event_type == VADEventType.START_OF_SPEECH:
             self.on_speech_started()
         elif vad_response.event_type == VADEventType.END_OF_SPEECH:
             self.on_speech_stopped()
-            
+
     async def on_stt_transcript(self, stt_response: STTResponse) -> None:
         if stt_response.event_type == SpeechEventType.FINAL:
             user_text = stt_response.data.text
-            
-            self.agent.chat_context.add_message(
-                role=ChatRole.USER,
-                content=user_text
-            )
-            
-            if self.turn_detector and self.turn_detector.detect_end_of_utterance(self.agent.chat_context):
+
+            self.agent.chat_context.add_message(role=ChatRole.USER, content=user_text)
+
+            if self.turn_detector and self.turn_detector.detect_end_of_utterance(
+                self.agent.chat_context
+            ):
                 if self.tts:
                     await self.tts.synthesize(self.run(user_text))
                 else:
                     async for _ in self.run(user_text):
                         pass
-            
+
             if not self.turn_detector:
                 if self.tts:
                     await self.tts.synthesize(self.run(user_text))
                 else:
                     async for _ in self.run(user_text):
                         pass
-            
+
     async def process_with_llm(self) -> AsyncIterator[str]:
         """
         Process the current chat context with LLM and yield response chunks.
@@ -97,42 +110,48 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         """
         if not self.llm:
             return
-            
+
         full_response = ""
         prev_content_length = 0
-        
+
         async for llm_chunk_resp in self.llm.chat(
-            self.agent.chat_context,
-            tools=self.agent._tools
+            self.agent.chat_context, tools=self.agent._tools
         ):
             if llm_chunk_resp.metadata and "function_call" in llm_chunk_resp.metadata:
                 func_call = llm_chunk_resp.metadata["function_call"]
-                
+
                 self.agent.chat_context.add_function_call(
                     name=func_call["name"],
                     arguments=json.dumps(func_call["arguments"]),
-                    call_id=func_call.get("call_id", f"call_{int(time.time())}")
+                    call_id=func_call.get("call_id", f"call_{int(time.time())}"),
                 )
-                
+
                 try:
                     tool = next(
-                        (t for t in self.agent.tools if hasattr(t, '_tool_info') and t._tool_info.name == func_call["name"]),
-                        None
+                        (
+                            t
+                            for t in self.agent.tools
+                            if hasattr(t, "_tool_info")
+                            and t._tool_info.name == func_call["name"]
+                        ),
+                        None,
                     )
                 except Exception as e:
-                    print(f"Error while selecting tool: {e}")
+                    logger.error(f"Error while selecting tool: {e}")
                     continue
-                    
+
                 if tool:
                     try:
                         result = await tool(**func_call["arguments"])
-                        
+
                         self.agent.chat_context.add_function_output(
                             name=func_call["name"],
                             output=json.dumps(result),
-                            call_id=func_call.get("call_id", f"call_{int(time.time())}")
+                            call_id=func_call.get(
+                                "call_id", f"call_{int(time.time())}"
+                            ),
                         )
-                        
+
                         async for new_resp in self.llm.chat(self.agent.chat_context):
                             new_content = new_resp.content[prev_content_length:]
                             if new_content:
@@ -140,21 +159,20 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                             full_response = new_resp.content
                             prev_content_length = len(new_resp.content)
                     except Exception as e:
-                        print(f"Error executing function {func_call['name']}: {e}")
+                        logger.error(f"Error executing function {func_call['name']}: {e}")
                         continue
             else:
                 new_content = llm_chunk_resp.content[prev_content_length:]
-                if new_content: 
+                if new_content:
                     yield new_content
                 full_response = llm_chunk_resp.content
                 prev_content_length = len(llm_chunk_resp.content)
-        
+
         if full_response:
             self.agent.chat_context.add_message(
-                role=ChatRole.ASSISTANT,
-                content=full_response
+                role=ChatRole.ASSISTANT, content=full_response
             )
-                            
+
     async def say(self, message: str) -> None:
         if self.tts:
             await self.tts.synthesize(message)
@@ -164,19 +182,15 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         Process text input directly (for A2A communication).
         This bypasses STT and directly processes the text through the LLM.
         """
-        self.agent.chat_context.add_message(
-            role=ChatRole.USER,
-            content=text
-        )
-        
+        self.agent.chat_context.add_message(role=ChatRole.USER, content=text)
+
         full_response = ""
         async for response_chunk in self.process_with_llm():
             full_response += response_chunk
-        
+
         if full_response:
             global_event_emitter.emit("text_response", {"text": full_response})
-    
-    
+
     async def run(self, transcript: str) -> AsyncIterator[str]:
         """
         Main conversation loop: handle a user turn.
@@ -184,11 +198,11 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         """
         async for response in self.process_with_llm():
             yield response
-    
+
     async def on_turn_start(self, transcript: str) -> None:
         """Called at the start of a user turn."""
         pass
-    
+
     async def on_turn_end(self) -> None:
         """Called at the end of a user turn."""
         pass
@@ -199,3 +213,39 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
     def on_speech_stopped(self) -> None:
         pass
+
+
+class DefaultConversationFlow(ConversationFlow):
+    """
+    Default conversation flow implementation that provides basic functionality.
+    This makes ConversationFlow optional for simple use cases.
+    """
+
+    def __init__(
+        self,
+        agent: Agent,
+        stt: STT | None = None,
+        llm: LLM | None = None,
+        tts: TTS | None = None,
+        vad: VAD | None = None,
+        turn_detector: EOU | None = None,
+    ) -> None:
+        super().__init__(agent, stt, llm, tts, vad, turn_detector)
+
+    async def run(self, transcript: str) -> AsyncIterator[str]:
+        """Default conversation loop: handle a user turn."""
+        await self.on_turn_start(transcript)
+
+        # Process the transcript through LLM
+        async for response_chunk in self.process_with_llm():
+            yield response_chunk
+
+        await self.on_turn_end()
+
+    async def on_turn_start(self, transcript: str) -> None:
+        """Called at the start of a user turn."""
+        self.is_turn_active = True
+
+    async def on_turn_end(self) -> None:
+        """Called at the end of a user turn."""
+        self.is_turn_active = False
