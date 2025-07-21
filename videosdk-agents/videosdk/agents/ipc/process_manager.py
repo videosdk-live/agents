@@ -1,11 +1,3 @@
-"""
-Process Manager for VideoSDK Agents IPC.
-
-This module coordinates all IPC components and provides a unified interface
-for managing job processes/threads and a single shared inference executor,
-similar to implementation.
-"""
-
 import asyncio
 import sys
 import time

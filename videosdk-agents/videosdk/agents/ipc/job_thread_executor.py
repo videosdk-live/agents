@@ -1,10 +1,3 @@
-"""
-Thread Job Executor for VideoSDK Agents IPC.
-
-This module provides thread-based job execution as an alternative to process-based execution,
-similar to ThreadJobExecutor but adapted for VideoSDK agents.
-"""
-
 import asyncio
 import threading
 import time

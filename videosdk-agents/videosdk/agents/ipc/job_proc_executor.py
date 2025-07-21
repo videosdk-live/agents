@@ -1,10 +1,3 @@
-"""
-Job Process Executor for VideoSDK Agents IPC.
-
-This module handles job process creation, management, and communication,
-similar to implementation but adapted for VideoSDK.
-"""
-
 import asyncio
 import multiprocessing
 import os
@@ -21,9 +14,9 @@ logger = logging.getLogger(__name__)
 
 class JobProcExecutor:
     """
-    Manages a single job process for VideoSDK agents.
+    Manages a single job process for agents.
 
-    Similar to JobProcExecutor but adapted for VideoSDK.
+    JobProcExecutor to handle agent job execution
     """
 
     def __init__(
