@@ -135,6 +135,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         self.config: OpenAIRealtimeConfig = config or OpenAIRealtimeConfig()
         self.input_sample_rate = 48000
         self.target_sample_rate = 16000
+        self._agent_speaking = False
     
     def set_agent(self, agent: Agent) -> None:
         self._instructions = agent.instructions
@@ -156,7 +157,6 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
     async def handle_audio_input(self, audio_data: bytes) -> None:
         """Handle incoming audio data from the user"""
         if self._session and not self._closing and "audio" in self.config.modalities:
-            await realtime_metrics_collector.set_user_speech_start()
             audio_data = np.frombuffer(audio_data, dtype=np.int16)
             audio_data = signal.resample(audio_data, int(len(audio_data) * self.target_sample_rate / self.input_sample_rate))
             audio_data = audio_data.astype(np.int16).tobytes()
@@ -166,7 +166,6 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
                 "audio": base64_audio_data
             }
             await self.send_event(audio_event)
-            await realtime_metrics_collector.set_user_speech_end()
 
     async def _ensure_http_session(self) -> aiohttp.ClientSession:
         """Ensure we have an HTTP session"""
@@ -320,10 +319,11 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
             await self.interrupt()
             if self.audio_track:
                 self.audio_track.interrupt()
+        await realtime_metrics_collector.set_user_speech_start()
 
     async def _handle_speech_stopped(self, data: dict) -> None:
         """Handle speech detection end"""
-        pass
+        await realtime_metrics_collector.set_user_speech_end()
 
     async def _handle_response_created(self, data: dict) -> None:
         """Handle initial response creation"""
@@ -386,7 +386,9 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
             return
             
         try:
-            await realtime_metrics_collector.set_agent_speech_start()
+            if not self._agent_speaking:
+                await realtime_metrics_collector.set_agent_speech_start()
+                self._agent_speaking = True
             base64_audio_data = base64.b64decode(data.get("delta"))
             if base64_audio_data:
                 if self.audio_track and self.loop:
@@ -406,6 +408,9 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
             await realtime_metrics_collector.set_interrupted()
         if self.audio_track:
             self.audio_track.interrupt()
+        if self._agent_speaking:
+            await realtime_metrics_collector.set_agent_speech_end(timeout=1.0)
+            self._agent_speaking = False
             
     async def _handle_audio_transcript_delta(self, data: dict) -> None:
         """Handle transcript chunk"""
@@ -427,6 +432,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
             global_event_emitter.emit("text_response", {"text": self._current_audio_transcript, "type": "done"})
             self._current_audio_transcript = ""
         await realtime_metrics_collector.set_agent_speech_end(timeout=1.0)
+        self._agent_speaking = False
         pass
 
     async def _handle_function_call_arguments_delta(self, data: dict) -> None:
