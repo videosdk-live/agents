@@ -7,9 +7,8 @@ import json
 import asyncio
 from .event_emitter import EventEmitter
 from .stt.stt import STT, STTResponse
-from .llm.llm import LLM, LLMResponse
-from .llm.chat_context import ChatRole, ChatContext, ChatMessage
-from .utils import is_function_tool, get_tool_info, FunctionTool, FunctionToolInfo
+from .llm.llm import LLM
+from .llm.chat_context import ChatRole
 from .tts.tts import TTS
 from .stt.stt import SpeechEventType
 from .agent import Agent
@@ -34,6 +33,10 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self.agent = agent
         self.is_turn_active = False
         
+        self.stt_lock = asyncio.Lock()
+        self.llm_lock = asyncio.Lock()
+        self.tts_lock = asyncio.Lock()
+        
         if self.stt:
             self.stt.on_stt_transcript(self.on_stt_transcript)
         if self.vad:
@@ -56,8 +59,9 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         """
         Send audio delta to the STT
         """
-        if self.stt:
-            await self.stt.process_audio(audio_data)
+        async with self.stt_lock:
+            if self.stt:
+                await self.stt.process_audio(audio_data)
         if self.vad:
             await self.vad.process_audio(audio_data)
                         
@@ -76,89 +80,95 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 content=user_text
             )
             
-            if self.turn_detector and self.turn_detector.detect_end_of_utterance(self.agent.chat_context):
-                if self.tts:
-                    await self.tts.synthesize(self.run(user_text))
-                else:
-                    async for _ in self.run(user_text):
-                        pass
+            await self.on_turn_start(user_text)
             
+            if self.turn_detector and self.turn_detector.detect_end_of_utterance(self.agent.chat_context):
+                async with self.tts_lock:
+                    if self.tts:
+                        await self.tts.synthesize(self.run(user_text))
+                    else:
+                        async for _ in self.run(user_text):
+                            pass
             if not self.turn_detector:
-                if self.tts:
-                    await self.tts.synthesize(self.run(user_text))
-                else:
-                    async for _ in self.run(user_text):
-                        pass
+                async with self.tts_lock:
+                    if self.tts:
+                        await self._synthesize_with_tts(self.run(user_text))
+                    else:
+                        async for _ in self.run(user_text):
+                            pass
+                        
+            await self.on_turn_end()
             
     async def process_with_llm(self) -> AsyncIterator[str]:
         """
         Process the current chat context with LLM and yield response chunks.
         This method can be called by user implementations to get LLM responses.
         """
-        if not self.llm:
-            return
+        async with self.llm_lock:
+            if not self.llm:
+                return
+            full_response = ""
+            prev_content_length = 0
             
-        full_response = ""
-        prev_content_length = 0
-        
-        async for llm_chunk_resp in self.llm.chat(
-            self.agent.chat_context,
-            tools=self.agent._tools
-        ):
-            if llm_chunk_resp.metadata and "function_call" in llm_chunk_resp.metadata:
-                func_call = llm_chunk_resp.metadata["function_call"]
-                
-                self.agent.chat_context.add_function_call(
-                    name=func_call["name"],
-                    arguments=json.dumps(func_call["arguments"]),
-                    call_id=func_call.get("call_id", f"call_{int(time.time())}")
-                )
-                
-                try:
-                    tool = next(
-                        (t for t in self.agent.tools if hasattr(t, '_tool_info') and t._tool_info.name == func_call["name"]),
-                        None
-                    )
-                except Exception as e:
-                    print(f"Error while selecting tool: {e}")
-                    continue
+            async for llm_chunk_resp in self.llm.chat(
+                self.agent.chat_context,
+                tools=self.agent._tools
+            ):
+                if llm_chunk_resp.metadata and "function_call" in llm_chunk_resp.metadata:
+                    func_call = llm_chunk_resp.metadata["function_call"]
                     
-                if tool:
+                    self.agent.chat_context.add_function_call(
+                        name=func_call["name"],
+                        arguments=json.dumps(func_call["arguments"]),
+                        call_id=func_call.get("call_id", f"call_{int(time.time())}")
+                    )
+                    
                     try:
-                        result = await tool(**func_call["arguments"])
-                        
-                        self.agent.chat_context.add_function_output(
-                            name=func_call["name"],
-                            output=json.dumps(result),
-                            call_id=func_call.get("call_id", f"call_{int(time.time())}")
+                        tool = next(
+                            (t for t in self.agent.tools if hasattr(t, '_tool_info') and t._tool_info.name == func_call["name"]),
+                            None
                         )
-                        
-                        async for new_resp in self.llm.chat(self.agent.chat_context):
-                            new_content = new_resp.content[prev_content_length:]
-                            if new_content:
-                                yield new_content
-                            full_response = new_resp.content
-                            prev_content_length = len(new_resp.content)
                     except Exception as e:
-                        print(f"Error executing function {func_call['name']}: {e}")
+                        print(f"Error while selecting tool: {e}")
                         continue
-            else:
-                new_content = llm_chunk_resp.content[prev_content_length:]
-                if new_content: 
-                    yield new_content
-                full_response = llm_chunk_resp.content
-                prev_content_length = len(llm_chunk_resp.content)
-        
-        if full_response:
-            self.agent.chat_context.add_message(
-                role=ChatRole.ASSISTANT,
-                content=full_response
-            )
+                        
+                    if tool:
+                        try:
+                            result = await tool(**func_call["arguments"])
+                            
+                            self.agent.chat_context.add_function_output(
+                                name=func_call["name"],
+                                output=json.dumps(result),
+                                call_id=func_call.get("call_id", f"call_{int(time.time())}")
+                            )
+                            
+                            async for new_resp in self.llm.chat(self.agent.chat_context):
+                                new_content = new_resp.content[prev_content_length:]
+                                if new_content:
+                                    yield new_content
+                                full_response = new_resp.content
+                                prev_content_length = len(new_resp.content)
+                        except Exception as e:
+                            print(f"Error executing function {func_call['name']}: {e}")
+                            continue
+                else:
+                    new_content = llm_chunk_resp.content[prev_content_length:]
+                    if new_content: 
+                        yield new_content
+                    full_response = llm_chunk_resp.content
+                    prev_content_length = len(llm_chunk_resp.content)
+            
+            if full_response:
+                self.agent.chat_context.add_message(
+                    role=ChatRole.ASSISTANT,
+                    content=full_response
+                )
                             
     async def say(self, message: str) -> None:
-        if self.tts:
-            await self.tts.synthesize(message)
-
+        async with self.tts_lock:
+            if self.tts:
+                await self.tts.synthesize(message)
+                
     async def process_text_input(self, text: str) -> None:
         """
         Process text input directly (for A2A communication).
@@ -197,7 +207,34 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
     def on_speech_started(self) -> None:
         if self.tts:
-            asyncio.create_task(self.tts.interrupt())
+            asyncio.create_task(self._interrupt_tts())
 
+    async def _interrupt_tts(self) -> None:
+        async with self.tts_lock:
+            await self.tts.interrupt()
+    
     def on_speech_stopped(self) -> None:
         pass
+
+    async def _synthesize_with_tts(self, response_gen: AsyncIterator[str]) -> None:
+        """
+        Stream LLM response chunks to TTS with buffering to sentences or pauses.
+        Synthesizes at natural breaks (., !, ?, ;).
+        """
+        buffer = ""
+        delimiters = {'.', '!', '?', ';'}
+        
+        async for chunk in response_gen:
+            buffer += chunk
+            while buffer:
+                delimiter_pos = min((buffer.find(d) for d in delimiters if buffer.find(d) != -1), default=-1)
+                if delimiter_pos != -1:
+                    to_speak = buffer[:delimiter_pos + 1]
+                    buffer = buffer[delimiter_pos + 1:].lstrip() 
+                    
+                    await self.tts.synthesize(to_speak)
+                else:
+                    break
+        
+        if buffer:
+            await self.tts.synthesize(buffer)

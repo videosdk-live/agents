@@ -11,7 +11,6 @@ from .tts.tts import TTS
 from .vad import VAD
 from .conversation_flow import ConversationFlow
 from .agent import Agent
-from .room.room import VideoSDKHandler, TeeCustomAudioStreamTrack
 from .eou import EOU
 from .job import get_current_job_context
 
@@ -84,24 +83,23 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         This will close the old components and set the new ones.
         """
         if stt and self.stt:
-            await self.stt.aclose()
+            async with self.conversation_flow.stt_lock:
+                await self.stt.aclose()
+                self.stt = stt
+                self.conversation_flow.stt = stt
+                if self.conversation_flow.stt:
+                    self.conversation_flow.stt.on_stt_transcript(self.conversation_flow.on_stt_transcript)
         if llm and self.llm:
-            await self.llm.aclose()
+            async with self.conversation_flow.llm_lock:
+                await self.llm.aclose()
+                self.llm = llm
+                self.conversation_flow.llm = llm
         if tts and self.tts:
-            await self.tts.aclose()
-
-        if stt:
-            self.stt = stt
-            self.conversation_flow.stt = stt
-            if self.conversation_flow.stt:
-                self.conversation_flow.stt.on_stt_transcript(self.conversation_flow.on_stt_transcript)
-        if llm:
-            self.llm = llm
-            self.conversation_flow.llm = llm
-        if tts:
-            self.tts = tts
-            self._configure_components()
-            self.conversation_flow.tts = tts
+            async with self.conversation_flow.tts_lock:
+                await self.tts.aclose()
+                self.tts = tts
+                self._configure_components()
+                self.conversation_flow.tts = tts
     
     async def start(self, **kwargs: Any) -> None:
         if self.conversation_flow:

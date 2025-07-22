@@ -5,21 +5,17 @@ from sarvamai import SarvamAI
 from videosdk.agents import Agent, AgentSession, CascadingPipeline, WorkerJob, ConversationFlow, JobContext, RoomOptions
 from videosdk.plugins.openai import OpenAILLM
 from videosdk.plugins.silero import SileroVAD
-from videosdk.plugins.turn_detector import TurnSenseEOU, pre_download_turn_sense
 from videosdk.plugins.deepgram import DeepgramSTT
-# from videosdk.plugins.elevenlabs import ElevenLabsTTS
 from videosdk.plugins.sarvamai import SarvamAISTT, SarvamAITTS
 
 import logging
 
 logging.getLogger().setLevel(logging.CRITICAL)
 
-pre_download_turn_sense()
-
 class TranslatorAgent(Agent):
     def __init__(self, ctx: Optional[JobContext] = None):
         super().__init__(
-            instructions="You are a helpful translator assistant that can translate the user's speech to the target language.",
+            instructions="You are a helpful translator assistant that can speak to user in their language.",
         )
         self.ctx = ctx
         
@@ -35,13 +31,8 @@ class TranslatorConversationFlow(ConversationFlow):
         self.language_code = "en-IN"
 
     async def run(self, transcript: str) -> AsyncIterator[str]:
-        """Main conversation loop: handle a user turn."""
-        await self.on_turn_start(transcript)
-        
         async for response_chunk in self.process_with_llm():
             yield response_chunk
-
-        await self.on_turn_end()
 
     async def on_turn_start(self, transcript: str) -> None:
         """Called at the start of a user turn."""
@@ -82,8 +73,7 @@ async def entrypoint(ctx: JobContext):
         stt = DeepgramSTT(api_key=os.getenv("DEEPGRAM_API_KEY"), language="multi"),
         llm=OpenAILLM(api_key=os.getenv("OPENAI_API_KEY")), 
         tts=SarvamAITTS(api_key=os.getenv("SARVAMAI_API_KEY")),
-        vad=SileroVAD(),
-        turn_detector=TurnSenseEOU(threshold=0.8)
+        vad=SileroVAD()
     )
     session = AgentSession(
         agent=agent, 
@@ -93,14 +83,13 @@ async def entrypoint(ctx: JobContext):
 
     try:
         await ctx.connect()
-        print("Waiting for participant...")
+        print("Waiting for participant")
         await ctx.room.wait_for_participant()
         print("Participant joined")
         await session.start()
-        print("Connection established. Press Ctrl+C to exit.")
         await asyncio.Event().wait()
     except KeyboardInterrupt:
-        print("\nShutting down gracefully...")
+        pass
     finally:
         await session.close()
         await ctx.shutdown()
