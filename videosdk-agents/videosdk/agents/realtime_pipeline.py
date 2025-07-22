@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Literal
 import asyncio
 import av
@@ -10,6 +11,8 @@ from .realtime_base_model import RealtimeBaseModel
 from .room.room import VideoSDKHandler
 from .agent import Agent
 from .job import get_current_job_context
+
+logger = logging.getLogger(__name__)
 
 class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtime_end","user_audio_input_data"]]):
     """
@@ -55,7 +58,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
                 
                 model_name = self.model.__class__.__name__
                 if requested_vision and model_name != 'GeminiRealtime':
-                    print(f"Warning: Vision mode requested but {model_name} doesn't support video input. Only GeminiRealtime supports vision. Disabling vision.")
+                    logger.warning(f"Vision mode requested but {model_name} doesn't support video input. Only GeminiRealtime supports vision. Disabling vision.")
                     self.vision = False
                 
                 if self.avatar:
