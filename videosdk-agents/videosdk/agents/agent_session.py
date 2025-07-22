@@ -57,13 +57,12 @@ class AgentSession:
         await self.agent.initialize_mcp()
 
         if isinstance(self.pipeline, RealTimePipeline):
-            realtime_metrics_collector.start_session(self.agent, self.pipeline)
+            await realtime_metrics_collector.start_session(self.agent, self.pipeline)
         else:
             traces_flow_manager = metrics_collector.traces_flow_manager
             if traces_flow_manager:
                 config_attributes = {
                     "system_instructions": self.agent.instructions,
-
                     "function_tools": [
                         getattr(tool, "name", tool.__name__ if callable(tool) else str(tool))
                         for tool in (
@@ -97,9 +96,10 @@ class AgentSession:
         """
         Send an initial message to the agent.
         """
-        traces_flow_manager = metrics_collector.traces_flow_manager
-        if traces_flow_manager:
-            traces_flow_manager.agent_say_called(message)
+        if not isinstance(self.pipeline, RealTimePipeline):
+            traces_flow_manager = metrics_collector.traces_flow_manager
+            if traces_flow_manager:
+                traces_flow_manager.agent_say_called(message)
         self.agent.chat_context.add_message(role=ChatRole.ASSISTANT, content=message)
         await self.pipeline.send_message(message)
     
@@ -109,6 +109,10 @@ class AgentSession:
         """
         if isinstance(self.pipeline, RealTimePipeline):
             realtime_metrics_collector.finalize_session()
+            traces_flow_manager = realtime_metrics_collector.traces_flow_manager
+            if traces_flow_manager:
+                await traces_flow_manager.start_agent_session_closed({})
+                traces_flow_manager.end_agent_session_closed()
         else:
             traces_flow_manager = metrics_collector.traces_flow_manager
             if traces_flow_manager:

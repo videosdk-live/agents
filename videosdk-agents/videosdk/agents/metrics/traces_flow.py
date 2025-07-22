@@ -2,8 +2,7 @@ from typing import Dict, Any, Optional
 from opentelemetry.trace import Span, StatusCode
 from opentelemetry import trace
 from .integration import create_span, complete_span, create_log
-from .models import InteractionMetrics
-from contextlib import contextmanager
+from .models import InteractionMetrics, RealtimeInteractionData, TimelineEvent
 import asyncio
 
 class TracesFlowManager:
@@ -275,3 +274,71 @@ class TracesFlowManager:
         """Completes a given span with a status."""
         if span:
             complete_span(span, status_code, message) 
+
+    def create_realtime_interaction_trace(self, interaction_data: RealtimeInteractionData):
+        """
+        Creates a full trace for a single realtime interaction from its collected metrics data.
+        This includes the parent interaction span and child spans for speech events, tools, and latencies.
+        """
+        if not self.main_interaction_span:
+            print("ERROR: Cannot create realtime interaction trace without a main interaction span.")
+            return
+
+        self._interaction_count += 1
+        interaction_name = f"Interaction {self._interaction_count}"
+        
+        interaction_span = create_span(interaction_name, 
+                                       {"interaction_id": interaction_data.interaction_id}, 
+                                       parent_span=self.main_interaction_span)
+        if interaction_span:
+            with trace.use_span(interaction_span):
+                create_log(f"Realtime Interaction {interaction_name} started", "INFO", {
+                    "interaction_id": interaction_data.interaction_id
+                })
+
+        if not interaction_span:
+            return
+
+        with trace.use_span(interaction_span, end_on_exit=False):
+
+            if interaction_data.timeline:
+                user_speech_count = 1
+                agent_speech_count = 1
+                for event in interaction_data.timeline:
+                    if event.event_type == "user_speech":
+                        span_name = f"User Speech {user_speech_count}"
+                        user_speech_span = create_span(span_name, {
+                            "duration_ms": event.duration_ms, 
+                            "text": event.text
+                        }, parent_span=interaction_span)
+                        self.end_span(user_speech_span)
+                        user_speech_count += 1
+                    elif event.event_type == "agent_speech":
+                        span_name = f"Agent Speech {agent_speech_count}"
+                        agent_speech_span = create_span(span_name, {
+                            "duration_ms": event.duration_ms, 
+                            "text": event.text
+                        }, parent_span=interaction_span)
+                        self.end_span(agent_speech_span)
+                        agent_speech_count += 1
+
+            if interaction_data.function_tools_called:
+                for i, tool in enumerate(interaction_data.function_tools_called, 1):
+                    tool_span = create_span(f"Function Tool Called {i}", {
+                        "tool_name": tool
+                    }, parent_span=interaction_span)
+                    self.end_span(tool_span)
+
+            if interaction_data.ttfw is not None:
+                ttfw_span = create_span("TTFW", {"duration_ms": interaction_data.ttfw}, parent_span=interaction_span)
+                self.end_span(ttfw_span)
+
+            if interaction_data.thinking_delay is not None:
+                thinking_span = create_span("Thinking Delay", {"duration_ms": interaction_data.thinking_delay}, parent_span=interaction_span)
+                self.end_span(thinking_span)
+
+            if interaction_data.e2e_latency is not None:
+                e2e_span = create_span("E2E Latency", {"duration_ms": interaction_data.e2e_latency}, parent_span=interaction_span)
+                self.end_span(e2e_span)
+        
+        self.end_span(interaction_span, message="Realtime interaction trace created from data.") 
