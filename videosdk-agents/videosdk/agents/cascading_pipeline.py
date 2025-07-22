@@ -105,3 +105,53 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
             await self.llm.aclose()
         if self.tts:
             await self.tts.aclose()
+
+    def get_component_configs(self) -> dict[str, dict[str, Any]]:
+        """Return a dictionary of component configurations (STT, LLM, TTS) with their instance attributes.
+
+        Returns:
+            A nested dictionary with keys 'stt', 'llm', 'tts', each containing a dictionary of
+            public instance attributes and extracted model information.
+        """
+
+        def extract_model_info(config_dict: Dict[str, Any]) -> Dict[str, Any]:
+            """Helper to extract model-related info from a dictionary with limited nesting."""
+            model_info = {}
+            model_keys = ['model', 'model_id', 'model_name', 'voice', 'voice_id', 'name']
+            try:
+                for k, v in config_dict.items():
+                    if k in model_keys and v is not None:
+                        model_info[k] = v
+                    elif k in ['config', '_config', 'voice_config'] and isinstance(v, dict):
+                        for nk, nv in v.items():
+                            if nk in model_keys and nv is not None:
+                                model_info[nk] = nv
+                    elif k in ['voice_config', 'config'] and hasattr(v, '__dict__'):
+                        for nk, nv in v.__dict__.items():
+                            if nk in model_keys and nv is not None and not nk.startswith('_'):
+                                model_info[nk] = nv
+            except Exception as e:
+                pass
+            return model_info
+
+        configs: Dict[str, Dict[str, Any]] = {}
+        for comp_name, comp in [('stt', self.stt), ('llm', self.llm), ('tts', self.tts)]:
+            if comp:
+                try:
+                    configs[comp_name] = {k: v for k, v in comp.__dict__.items() if not k.startswith('_') and not callable(v)}
+
+                    model_info = extract_model_info(comp.__dict__)
+                    if model_info:
+                        if 'model' not in configs[comp_name] and 'model' in model_info:
+                            configs[comp_name]['model'] = model_info['model']
+                        elif 'model' not in configs[comp_name] and 'name' in model_info:
+                            configs[comp_name]['model'] = model_info['name']
+                        configs[comp_name].update({k: v for k, v in model_info.items() if k != 'model' and k != 'name' and k not in configs[comp_name]})
+                except Exception as e:
+                    configs[comp_name] = configs.get(comp_name, {})
+
+        sensitive_keys = ['api_key', 'token', 'secret', 'key', 'password', 'credential']
+        for comp in configs.values():
+            for key in sensitive_keys:
+                comp.pop(key, None)
+        return configs
