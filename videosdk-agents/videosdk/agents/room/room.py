@@ -42,6 +42,8 @@ class VideoSDKHandler:
         auto_end_session: bool = True,
         session_timeout_seconds: Optional[int] = None,
         on_session_end: Optional[Callable[[str], None]] = None,
+        # VideoSDK connection options
+        signaling_base_url: Optional[str] = None,
     ):
         self.meeting_id = meeting_id
         self.auth_token = auth_token
@@ -60,6 +62,9 @@ class VideoSDKHandler:
         self._session_ended = False
         self._session_end_task = None
         self._has_left_meeting = False  # Track if we've already left the meeting
+
+        # VideoSDK connection
+        self.signaling_base_url = signaling_base_url
 
         # Participant tracking
         self._non_agent_participant_count = 0
@@ -121,8 +126,14 @@ class VideoSDKHandler:
 
     def init_meeting(self):
         sdk_metadata = {"sdk": "agents", "sdk_version": "0.0.21"}
+
+        # Add signaling base URL to meeting config if provided
+        meeting_config = self.meeting_config.copy()
+        if self.signaling_base_url:
+            meeting_config["signaling_base_url"] = self.signaling_base_url
+
         self.meeting = VideoSDK.init_meeting(
-            **self.meeting_config, sdk_metadata=sdk_metadata
+            **meeting_config, sdk_metadata=sdk_metadata
         )
         self.meeting.add_event_listener(
             MeetingHandler(

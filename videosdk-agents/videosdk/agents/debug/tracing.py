@@ -1,10 +1,3 @@
-"""
-Tracing system for VideoSDK Agents.
-
-This module provides tracing capabilities for monitoring performance,
-debugging, and collecting metrics similar to tracing system.
-"""
-
 import json
 import time
 from dataclasses import dataclass, field

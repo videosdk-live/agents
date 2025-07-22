@@ -1,10 +1,3 @@
-"""
-HTTP Server for VideoSDK Agents debugging.
-
-This module provides an HTTP server for debugging and monitoring
-VideoSDK agents, similar to debug HTTP server.
-"""
-
 import asyncio
 import json
 import logging

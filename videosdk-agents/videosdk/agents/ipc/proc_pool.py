@@ -4,7 +4,7 @@ import time
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
 
-from .process_manager import ProcessManager, ExecutorType, ProcPoolConfig
+from .types import ExecutorType, ProcPoolConfig
 
 logger = logging.getLogger(__name__)
 

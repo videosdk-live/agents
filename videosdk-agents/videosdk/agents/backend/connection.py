@@ -1,10 +1,3 @@
-"""
-WebSocket connection manager for VideoSDK Agents.
-
-This module provides WebSocket connection functionality for communicating
-with the VideoSDK backend server, similar to connection handling.
-"""
-
 import asyncio
 import json
 import logging
@@ -76,19 +69,23 @@ class BackendConnection:
     def _get_worker_id_file_path(self) -> str:
         """Get the path to the worker ID file."""
         # Use agent ID to create a unique file path
-        safe_agent_id = "".join(c for c in self.agent_id if c.isalnum() or c in ('-', '_')).rstrip()
+        safe_agent_id = "".join(
+            c for c in self.agent_id if c.isalnum() or c in ("-", "_")
+        ).rstrip()
         if not safe_agent_id:
             safe_agent_id = "default"
-        
+
         # Create a directory for worker IDs if it doesn't exist
         worker_id_dir = os.path.expanduser("~/.videosdk-agents/worker-ids")
         os.makedirs(worker_id_dir, exist_ok=True)
-        
+
         return os.path.join(worker_id_dir, f"{safe_agent_id}.worker_id")
 
     def _get_worker_id_env_key(self) -> str:
         """Get the environment variable key for worker ID."""
-        safe_agent_id = "".join(c for c in self.agent_id if c.isalnum() or c in ('-', '_')).rstrip()
+        safe_agent_id = "".join(
+            c for c in self.agent_id if c.isalnum() or c in ("-", "_")
+        ).rstrip()
         if not safe_agent_id:
             safe_agent_id = "default"
         return f"VIDEOSDK_WORKER_ID_{safe_agent_id.upper()}"
@@ -119,14 +116,14 @@ class BackendConnection:
         if existing_worker_id:
             logger.info(f"Using existing worker ID: {existing_worker_id}")
             return existing_worker_id
-        
+
         # Generate new worker ID
         new_worker_id = str(uuid.uuid4())
         logger.info(f"Generated new worker ID: {new_worker_id}")
-        
+
         # Save the new worker ID
         self._save_persistent_worker_id(new_worker_id)
-        
+
         return new_worker_id
 
     @property
@@ -327,7 +324,9 @@ class BackendConnection:
         if worker_id:
             logger.info(f"Using previously assigned worker ID: {worker_id}")
         else:
-            logger.info("No previously assigned worker ID found, requesting new assignment from registry")
+            logger.info(
+                "No previously assigned worker ID found, requesting new assignment from registry"
+            )
             worker_id = ""  # Empty string tells registry to assign a new ID
 
         register_msg = WorkerMessage(
@@ -341,11 +340,11 @@ class BackendConnection:
             token=self.auth_token,
         )
 
-        logger.debug(f"Sending registration message for worker: {worker_id or 'NEW_ASSIGNMENT'}")
-        logger.debug(f"Registration message: {register_msg.dict()}")
         logger.debug(
-            f"Agent ID: '{self.agent_id}', Worker type: '{self.worker_type}'"
+            f"Sending registration message for worker: {worker_id or 'NEW_ASSIGNMENT'}"
         )
+        logger.debug(f"Registration message: {register_msg.dict()}")
+        logger.debug(f"Agent ID: '{self.agent_id}', Worker type: '{self.worker_type}'")
 
         await self._ws.send_str(json.dumps(register_msg.dict()))
 
@@ -360,10 +359,14 @@ class BackendConnection:
 
                 # Store the assigned worker ID in memory for future use
                 if assigned_worker_id and assigned_worker_id != worker_id:
-                    logger.info(f"Registry assigned new worker ID: {assigned_worker_id}")
+                    logger.info(
+                        f"Registry assigned new worker ID: {assigned_worker_id}"
+                    )
                     self._save_memory_worker_id(assigned_worker_id)
                 elif assigned_worker_id == worker_id:
-                    logger.info(f"Registry confirmed existing worker ID: {assigned_worker_id}")
+                    logger.info(
+                        f"Registry confirmed existing worker ID: {assigned_worker_id}"
+                    )
                 else:
                     logger.warning("Registry did not provide a worker ID")
 
