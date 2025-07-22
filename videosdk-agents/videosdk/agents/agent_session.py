@@ -80,7 +80,10 @@ class AgentSession:
                     **({
                         "stt_provider": self.pipeline.stt.__class__.__name__ if self.pipeline.stt else None,
                         "tts_provider": self.pipeline.tts.__class__.__name__ if self.pipeline.tts else None, 
-                        "llm_provider": self.pipeline.llm.__class__.__name__ if self.pipeline.llm else None
+                        "llm_provider": self.pipeline.llm.__class__.__name__ if self.pipeline.llm else None,
+                        "stt_model": self.pipeline.get_component_configs()['stt'].get('model') if hasattr(self.pipeline, 'get_component_configs') and self.pipeline.stt else None,
+                        "llm_model": self.pipeline.get_component_configs()['llm'].get('model') if hasattr(self.pipeline, 'get_component_configs') and self.pipeline.llm else None,
+                        "tts_model": self.pipeline.get_component_configs()['tts'].get('model') if hasattr(self.pipeline, 'get_component_configs') and self.pipeline.tts else None
                     } if self.pipeline.__class__.__name__ == "CascadingPipeline" else {}),
                 }
                 await traces_flow_manager.start_agent_session_config(config_attributes)
