@@ -1,11 +1,3 @@
-import multiprocessing
-import functools
-
-"""
-This module provides a worker implementation for VideoSDK agents,
-similar to worker but adapted for VideoSDK.
-"""
-
 import asyncio
 import os
 import sys
@@ -14,6 +6,8 @@ from typing import Any, Callable, Dict, Optional, Set
 from dataclasses import dataclass, field
 from enum import Enum
 import logging
+
+from .init_config import fetch_agent_init_config
 
 from .ipc import ProcessManager, ExecutorType, ProcPoolConfig
 from .job import JobContext, RoomOptions, JobAcceptArguments, RunningJobInfo
@@ -113,8 +107,8 @@ class WorkerOptions:
     register: bool = True
     """Whether to register with the backend."""
 
-    backend_url: str = "ws://localhost:8081"
-    """Backend registry server URL."""
+    signaling_base_url: str = "api.videosdk.live"
+    """Signaling base URL for VideoSDK services. Defaults to api.videosdk.live."""
 
     host: str = "0.0.0.0"
     """Host for the debug HTTP server."""
@@ -168,10 +162,10 @@ class Worker:
     def __init__(self, options: WorkerOptions):
         """Initialize the worker."""
         self.options = options
-        
+
         # Setup logging with the specified log level from options
         self._setup_logging()
-        
+
         self._shutdown = False
         self._draining = False
         self._worker_load = 0.0
@@ -208,7 +202,7 @@ class Worker:
         """Setup logging with the specified log level from WorkerOptions."""
         from . import setup_logging
         import logging
-        
+
         # Convert string log level to logging constant
         log_level_map = {
             "DEBUG": logging.DEBUG,
@@ -216,10 +210,10 @@ class Worker:
             "WARNING": logging.WARNING,
             "ERROR": logging.ERROR,
         }
-        
+
         level = log_level_map.get(self.options.log_level.upper(), logging.INFO)
         setup_logging(level=level)
-        
+
         logger.info(f"Logging configured with level: {self.options.log_level.upper()}")
 
     @staticmethod
@@ -230,7 +224,7 @@ class Worker:
         Run a VideoSDK worker with the given options.
 
         This is the main entry point for running a VideoSDK worker,
-        similar to cli.run_app function.
+        providing a high-level interface for worker initialization, job management, and lifecycle control.
 
         Args:
             options: Worker configuration options
@@ -239,17 +233,17 @@ class Worker:
         Example:
             ```python
             from videosdk.agents import Worker, WorkerOptions
-            
+
             def my_agent(job_ctx):
                 # Your agent code here
                 pass
-            
+
             # Configure worker with custom log level - logging is automatically configured!
             options = WorkerOptions(
                 entrypoint_fnc=my_agent,
                 log_level="DEBUG"  # Options: DEBUG, INFO, WARNING, ERROR
             )
-            
+
             # Run the worker - no manual logging setup needed!
             Worker.run_worker(options)
             ```
@@ -320,13 +314,25 @@ class Worker:
         if not self.options.register:
             return
 
+        # Fetch agent init config to get registry URL
+        try:
+            logger.info("Fetching agent init config...")
+            registry_url = await fetch_agent_init_config(
+                auth_token=self.options.auth_token,
+                api_base_url=f"https://{self.options.signaling_base_url}",
+            )
+            logger.info(f"Using registry URL: {registry_url}")
+        except Exception as e:
+            logger.error(f"Failed to fetch agent init config: {e}")
+            raise RuntimeError(f"Agent init config is mandatory. Error: {e}")
+
         self.backend_connection = BackendConnection(
             auth_token=self.options.auth_token,
             agent_id=self.options.agent_id,
             worker_type=self.options.worker_type.value,
             version="1.0.0",
             max_retry=self.options.max_retry,
-            backend_url=self.options.backend_url,
+            backend_url=registry_url,
         )
 
         # Set up message handlers
@@ -634,6 +640,7 @@ class Worker:
                 room_id=assignment.room_id,
                 name=assignment.room_name,  # Use 'name' instead of 'room_name'
                 auth_token=auth_token,
+                signaling_base_url=self.options.signaling_base_url,
             )
 
             # Apply RoomOptions from assignment if provided

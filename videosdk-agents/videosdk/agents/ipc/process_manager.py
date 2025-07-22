@@ -4,7 +4,8 @@ import time
 from typing import Any, Callable, Dict, List, Optional
 import logging
 
-from .proc_pool import ProcPool, ProcPoolConfig, ExecutorType
+from .proc_pool import ProcPool
+from .types import ExecutorType, ProcPoolConfig
 from .job_executor import JobExecutor
 from .inference_executor import InferenceExecutor
 

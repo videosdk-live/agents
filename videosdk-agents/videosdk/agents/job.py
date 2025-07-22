@@ -28,6 +28,8 @@ class RoomOptions:
     # Session management options
     auto_end_session: bool = True
     session_timeout_seconds: Optional[int] = 30
+    # VideoSDK connection options
+    signaling_base_url: Optional[str] = None
 
 
 class WorkerJob:
@@ -111,6 +113,7 @@ class JobContext:
                     on_room_error=self.room_options.on_room_error,
                     auto_end_session=self.room_options.auto_end_session,
                     session_timeout_seconds=self.room_options.session_timeout_seconds,
+                    signaling_base_url=self.room_options.signaling_base_url,
                 )
             if self._pipeline and hasattr(self._pipeline, "_set_loop_and_audio_track"):
                 self._pipeline._set_loop_and_audio_track(
