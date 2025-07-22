@@ -9,6 +9,7 @@ from dataclasses import asdict
 
 from .models import RealtimeInteractionData, TimelineEvent
 from .analytics import AnalyticsClient
+from .traces_flow import TracesFlowManager
 
 
 if TYPE_CHECKING:
@@ -33,12 +34,17 @@ class RealtimeMetricsCollector:
         self.agent_speech_end_timer: Optional[asyncio.TimerHandle] = None
         self.analytics_client = AnalyticsClient()
         self.session_id: Optional[str] = None
+        self.traces_flow_manager: Optional[TracesFlowManager] = None
 
     def set_session_id(self, session_id: str):
         """Set the session ID for metrics tracking"""
         self.session_id = session_id
         self.analytics_client.set_session_id(session_id)
 
+    def set_traces_flow_manager(self, manager: TracesFlowManager):
+        """Set the TracesFlowManager instance for realtime tracing"""
+        self.traces_flow_manager = manager
+        
     def _transform_to_camel_case(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Converts snake_case to camelCase for analytics reporting."""
         
@@ -52,7 +58,7 @@ class RealtimeMetricsCollector:
             return {to_camel_case(k): self._transform_to_camel_case(v) for k, v in data.items()}
         return data
 
-    def start_session(self, agent: Agent, pipeline: Pipeline) -> None:
+    async def start_session(self, agent: Agent, pipeline: Pipeline) -> None:
         RealtimeMetricsCollector._agent_info = {
             "provider_class_name": pipeline.model.__class__.__name__,
             "provider_model_name": getattr(pipeline.model, "model", None),
@@ -71,6 +77,20 @@ class RealtimeMetricsCollector:
         }
         self.interactions = []
         self.current_interaction = None
+        from . import metrics_collector as _metrics_collector
+
+        traces_flow_manager = _metrics_collector.traces_flow_manager
+        if traces_flow_manager:
+            self.set_traces_flow_manager(traces_flow_manager)
+
+            config_attributes = {
+                **RealtimeMetricsCollector._agent_info,
+                "pipeline": pipeline.__class__.__name__,
+                "llm_provider": pipeline.model.__class__.__name__,
+            }
+
+            await traces_flow_manager.start_agent_session_config(config_attributes)
+            await traces_flow_manager.start_agent_session({})
 
     async def _start_new_interaction(self) -> None:
         async with self.lock:
@@ -152,6 +172,14 @@ class RealtimeMetricsCollector:
             return
 
         self.current_interaction.compute_latencies()
+        if not hasattr(self, 'traces_flow_manager') or self.traces_flow_manager is None:
+            try:
+                from . import metrics_collector as _metrics_collector
+                self.traces_flow_manager = _metrics_collector.traces_flow_manager
+            except Exception:
+                pass
+        if self.traces_flow_manager:
+            self.traces_flow_manager.create_realtime_interaction_trace(self.current_interaction)
         interaction_data = asdict(self.current_interaction)
         
         if len(self.interactions) > 1:
