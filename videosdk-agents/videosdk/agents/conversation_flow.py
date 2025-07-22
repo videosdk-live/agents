@@ -59,8 +59,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         """
         Send audio delta to the STT
         """
-        async with self.stt_lock:
-            if self.stt:
+        if self.stt:
+            async with self.stt_lock:
                 await self.stt.process_audio(audio_data)
         if self.vad:
             await self.vad.process_audio(audio_data)
@@ -83,19 +83,19 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             await self.on_turn_start(user_text)
             
             if self.turn_detector and self.turn_detector.detect_end_of_utterance(self.agent.chat_context):
-                async with self.tts_lock:
-                    if self.tts:
+                if self.tts:
+                    async with self.tts_lock:
                         await self.tts.synthesize(self.run(user_text))
-                    else:
-                        async for _ in self.run(user_text):
-                            pass
+                else:
+                    async for _ in self.run(user_text):
+                        pass
             if not self.turn_detector:
-                async with self.tts_lock:
-                    if self.tts:
+                if self.tts:
+                    async with self.tts_lock:
                         await self._synthesize_with_tts(self.run(user_text))
-                    else:
-                        async for _ in self.run(user_text):
-                            pass
+                else:
+                    async for _ in self.run(user_text):
+                        pass
                         
             await self.on_turn_end()
             
