@@ -23,8 +23,10 @@ from .llm.chat_context import (
     ChatContext,
     ChatRole,
     ChatMessage,
+    ChatContent,
     FunctionCall,
     FunctionCallOutput,
+    ImageContent,
 )
 from .stt.stt import STT, STTResponse, SpeechEventType, SpeechData
 from .tts.tts import TTS
@@ -58,6 +60,7 @@ __all__ = [
     "ChatContext",
     "ChatRole",
     "ChatMessage",
+    "ChatContent",
     "FunctionCall",
     "FunctionCallOutput",
     "LLMResponse",
@@ -86,4 +89,5 @@ __all__ = [
     "JobContext",
     "RoomOptions",
     "realtime_metrics_collector",
+    "ImageContent",
 ]

@@ -268,12 +268,10 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         async for response in self.process_with_llm():
             yield response
     
-    @abstractmethod
     async def on_turn_start(self, transcript: str) -> None:
         """Called at the start of a user turn."""
         pass
     
-    @abstractmethod
     async def on_turn_end(self) -> None:
         """Called at the end of a user turn."""
         pass

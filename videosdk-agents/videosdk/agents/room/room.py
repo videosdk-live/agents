@@ -17,13 +17,11 @@ from ..metrics.integration import auto_initialize_telemetry_and_logs
 from typing import Optional, Any
 from ..metrics.realtime_collector import realtime_metrics_collector
  
-
-
 load_dotenv()
 
 class VideoSDKHandler:
     def __init__(self, *, meeting_id: str, auth_token: str | None = None, name: str, pipeline: Pipeline, loop: AbstractEventLoop, vision: bool = False,custom_camera_video_track=None, 
-        custom_microphone_audio_track=None,audio_sinks=None):
+        custom_microphone_audio_track=None,audio_sinks=None, on_room_error: Optional[Callable[[Any], None]] = None):
         self.loop = loop
         self.meeting_id = meeting_id
         self.name = name
@@ -70,13 +68,14 @@ class VideoSDKHandler:
         self.participants_data = {}
         self.video_listener_tasks = {}
         self.vision = vision
+        self.on_room_error = on_room_error
         self._participant_joined_events: dict[str, asyncio.Event] = {}
         self._first_participant_event = asyncio.Event()
         
     def init_meeting(self):
         self.sdk_metadata = {
             "sdk" : "agents",
-            "sdk-version" : "0.0.19" 
+            "sdk_version" : "0.0.21" 
         }
         
         self.meeting = VideoSDK.init_meeting(**self.meeting_config, sdk_metadata=self.sdk_metadata)
@@ -86,6 +85,7 @@ class VideoSDKHandler:
                 on_meeting_left=self.on_meeting_left,
                 on_participant_joined=self.on_participant_joined,
                 on_participant_left=self.on_participant_left,
+                on_error=self.on_error,
             )
         )
 
@@ -101,6 +101,10 @@ class VideoSDKHandler:
             self.traces_flow_manager.end_agent_joined_meeting()
 
         self.meeting.leave()
+
+    def on_error(self, data):
+        if self.on_room_error:
+            self.on_room_error(data)
 
     def on_meeting_joined(self, data):
         self._meeting_joined_data = data
@@ -222,7 +226,13 @@ class VideoSDKHandler:
         return old_messages
     
     async def publish_to_pubsub(self, pubsub_config: PubSubPublishConfig):
-        await self.meeting.pubsub.publish(pubsub_config)         
+        await self.meeting.pubsub.publish(pubsub_config) 
+    
+    async def upload_file(self, base64_data, file_name):
+        return self.meeting.upload_base64(base64_data, self.auth_token, file_name)
+    
+    async def fetch_file(self, url):
+        return self.meeting.fetch_base64(url, self.auth_token)
               
     async def cleanup(self):
         """Add cleanup method"""

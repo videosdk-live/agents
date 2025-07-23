@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import base64
 import time
-from dataclasses import dataclass
 from enum import Enum
 from typing import List, Optional, Union, Literal
+import av
 from pydantic import BaseModel, Field
 
+from .. import images
+from ..images import EncodeOptions, ResizeOptions
 from ..utils import FunctionTool, is_function_tool, get_tool_info
 
 
@@ -15,10 +18,33 @@ class ChatRole(str, Enum):
     ASSISTANT = "assistant"
 
 
-@dataclass
-class ChatContent:
-    """Base class for chat content"""
-    text: str
+class ImageContent(BaseModel):
+    id: str = Field(default_factory=lambda: f"img_{int(time.time())}")
+    type: Literal["image"] = "image"
+    image: Union[av.VideoFrame, str]
+    inference_detail: Literal["auto", "high", "low"] = "auto"
+    encode_options: EncodeOptions = Field(
+        default_factory=lambda: EncodeOptions(
+            format="JPEG",
+            quality=90,
+            resize_options=ResizeOptions(
+                width=320, height=240
+            ),
+        )
+    )
+    class Config:
+        arbitrary_types_allowed = True
+
+    def to_data_url(self) -> str:
+        if isinstance(self.image, str):
+            return self.image
+
+        encoded_image = images.encode(self.image, self.encode_options)
+        b64_image = base64.b64encode(encoded_image).decode("utf-8")
+        return f"data:image/{self.encode_options.format.lower()};base64,{b64_image}"
+
+
+ChatContent = Union[str, ImageContent]
 
 
 class FunctionCall(BaseModel):
@@ -40,19 +66,14 @@ class FunctionCallOutput(BaseModel):
     is_error: bool = False
 
 
-@dataclass
-class ChatMessage:
+class ChatMessage(BaseModel):
     """Represents a single message in the chat context"""
     role: ChatRole
     content: Union[str, List[ChatContent]]
     id: str = Field(default_factory=lambda: f"msg_{int(time.time())}")
     type: Literal["message"] = "message"
-    created_at: Optional[float] = None
+    created_at: float = Field(default_factory=time.time)
     interrupted: bool = False
-
-    def __post_init__(self):
-        if self.created_at is None:
-            self.created_at = time.time()
 
 
 ChatItem = Union[ChatMessage, FunctionCall, FunctionCallOutput]
@@ -82,11 +103,14 @@ class ChatContext:
         created_at: Optional[float] = None,
     ) -> ChatMessage:
         """Add a new message to the context"""
+        if isinstance(content, str):
+            content = [content]
+
         message = ChatMessage(
             role=role,
             content=content,
             id=message_id or f"msg_{int(time.time())}",
-            created_at=created_at
+            created_at=created_at or time.time(),
         )
         self._items.append(message)
         return message
