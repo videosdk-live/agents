@@ -1,0 +1,92 @@
+import time
+from typing import Dict, List, Optional, Any
+from dataclasses import dataclass, field, asdict
+
+
+@dataclass
+class TimelineEvent:
+    """Data structure for a single timeline event"""
+    event_type: str 
+    start_time: float
+    end_time: Optional[float] = None
+    duration_ms: Optional[float] = None
+    text: str = "" 
+
+@dataclass
+class InteractionMetrics:
+    """Data structure for a single user-agent interaction"""
+    interaction_id: str  
+    user_speech_start_time: Optional[float] = None
+    user_speech_end_time: Optional[float] = None
+    stt_latency: Optional[float] = None
+    llm_latency: Optional[float] = None
+    tts_latency: Optional[float] = None 
+    ttfb: Optional[float] = None
+    e2e_latency: Optional[float] = None
+    interrupted: bool = False
+    timestamp: float = field(default_factory=time.time)
+    function_tools_called: List[str] = field(default_factory=list)
+    system_instructions: str = ""
+    timeline: List[TimelineEvent] = field(default_factory=list)
+    errors: List[Dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass
+class MetricsData:
+    """Data structure to hold all metrics for a session"""
+    session_id: Optional[str] = None
+    session_start_time: float = field(default_factory=time.time)
+    system_instructions: str = ""
+    total_interruptions: int = 0
+    total_interactions: int = 0
+    interactions: List[InteractionMetrics] = field(default_factory=list)
+    current_interaction: Optional[InteractionMetrics] = None
+    user_speech_end_time: Optional[float] = None
+    agent_speech_start_time: Optional[float] = None
+    stt_start_time: Optional[float] = None
+    llm_start_time: Optional[float] = None
+    tts_start_time: Optional[float] = None
+    user_input_start_time: Optional[float] = None
+    is_agent_speaking: bool = False
+    is_user_speaking: bool = False
+    tts_first_byte_time: Optional[float] = None 
+
+@dataclass
+class RealtimeInteractionData:
+    """
+    Captures a single interaction between user and agent.
+    Interaction = one user utterance + one agent response.
+    """
+
+    interaction_id: str
+    provider_class_name: Optional[str] = None 
+    provider_model_name: Optional[str] = None 
+    system_instructions: Optional[str] = None 
+    function_tools: Optional[List[str]] = None
+    mcp_tools: Optional[List[str]] = None
+    user_speech_start_time: Optional[float] = None
+    user_speech_end_time: Optional[float] = None
+    agent_speech_start_time: Optional[float] = None
+    agent_speech_end_time: Optional[float] = None
+    ttfw: Optional[float] = None
+    thinking_delay: Optional[float] = None
+    e2e_latency: Optional[float] = None
+    agent_speech_duration: Optional[float] = None
+    interrupted: bool = False
+    function_tools_called: List[str] = field(default_factory=list)
+    timeline: List[TimelineEvent] = field(default_factory=list)
+
+
+    def compute_latencies(self):
+        if self.user_speech_start_time and self.agent_speech_start_time:
+            self.ttfw = (self.agent_speech_start_time - self.user_speech_start_time) * 1000
+        if self.user_speech_end_time and self.agent_speech_start_time:
+            self.thinking_delay = (self.agent_speech_start_time - self.user_speech_end_time) * 1000
+        if self.user_speech_start_time and self.agent_speech_end_time:
+            self.e2e_latency = (self.agent_speech_end_time - self.user_speech_start_time) * 1000
+        if self.agent_speech_start_time and self.agent_speech_end_time:
+            self.agent_speech_duration = (self.agent_speech_end_time - self.agent_speech_start_time) * 1000
+
+    def to_dict(self) -> Dict:
+        self.compute_latencies()
+        return asdict(self)

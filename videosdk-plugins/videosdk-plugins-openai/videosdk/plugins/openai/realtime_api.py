@@ -24,6 +24,8 @@ from videosdk.agents import (
     global_event_emitter,
     Agent
 )
+from videosdk.agents import realtime_metrics_collector
+
 
 load_dotenv()
 from openai.types.beta.realtime.session import InputAudioTranscription, TurnDetection
@@ -133,6 +135,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         self.config: OpenAIRealtimeConfig = config or OpenAIRealtimeConfig()
         self.input_sample_rate = 48000
         self.target_sample_rate = 16000
+        self._agent_speaking = False
     
     def set_agent(self, agent: Agent) -> None:
         self._instructions = agent.instructions
@@ -277,11 +280,14 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
             elif event_type == "response.content_part.added":
                 await self._handle_content_part_added(data)
                 
+            elif event_type == "response.text.delta":
+                await self._handle_text_delta(data)
+
             elif event_type == "response.audio.delta":
                 await self._handle_audio_delta(data)
                 
             elif event_type == "response.audio_transcript.delta":
-                await self._handle_transcript_delta(data)
+                await self._handle_audio_transcript_delta(data)
                 
             elif event_type == "response.done":
                 await self._handle_response_done(data)
@@ -313,10 +319,11 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
             await self.interrupt()
             if self.audio_track:
                 self.audio_track.interrupt()
+        await realtime_metrics_collector.set_user_speech_start()
 
     async def _handle_speech_stopped(self, data: dict) -> None:
         """Handle speech detection end"""
-        pass
+        await realtime_metrics_collector.set_user_speech_end()
 
     async def _handle_response_created(self, data: dict) -> None:
         """Handle initial response creation"""
@@ -338,6 +345,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
                         tool_info = get_tool_info(tool)
                         if tool_info.name == name:
                             try:
+                                await realtime_metrics_collector.add_tool_call(name)
                                 result = await tool(**arguments)
                                 await self.send_event({
                                     "type": "conversation.item.create",
@@ -368,12 +376,19 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
     async def _handle_content_part_added(self, data: dict) -> None:
         """Handle new content part"""
 
+    async def _handle_text_delta(self, data: dict) -> None:
+        """Handle text delta chunk"""
+        pass
+
     async def _handle_audio_delta(self, data: dict) -> None:
         """Handle audio chunk"""
         if "audio" not in self.config.modalities:
             return
             
         try:
+            if not self._agent_speaking:
+                await realtime_metrics_collector.set_agent_speech_start()
+                self._agent_speaking = True
             base64_audio_data = base64.b64decode(data.get("delta"))
             if base64_audio_data:
                 if self.audio_track and self.loop:
@@ -390,18 +405,36 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
                 "event_id": str(uuid.uuid4())
             }
             await self.send_event(cancel_event)
+            await realtime_metrics_collector.set_interrupted()
         if self.audio_track:
             self.audio_track.interrupt()
+        if self._agent_speaking:
+            await realtime_metrics_collector.set_agent_speech_end(timeout=1.0)
+            self._agent_speaking = False
             
-    async def _handle_transcript_delta(self, data: dict) -> None:
+    async def _handle_audio_transcript_delta(self, data: dict) -> None:
         """Handle transcript chunk"""
-    
+        delta_content = data.get("delta", "")
+        if not hasattr(self, '_current_audio_transcript'):
+            self._current_audio_transcript = ""
+        self._current_audio_transcript += delta_content
+
     async def _handle_input_audio_transcription_completed(self, data: dict) -> None:
-        """Handle input audio transcription completion"""
+        """Handle input audio transcription completion for user transcript"""
+        transcript = data.get("transcript", "")
+        if transcript:
+            await realtime_metrics_collector.set_user_transcript(transcript)
 
     async def _handle_response_done(self, data: dict) -> None:
-        """Handle response completion"""
-    
+        """Handle response completion for agent transcript"""
+        if hasattr(self, '_current_audio_transcript') and self._current_audio_transcript:
+            await realtime_metrics_collector.set_agent_response(self._current_audio_transcript)
+            global_event_emitter.emit("text_response", {"text": self._current_audio_transcript, "type": "done"})
+            self._current_audio_transcript = ""
+        await realtime_metrics_collector.set_agent_speech_end(timeout=1.0)
+        self._agent_speaking = False
+        pass
+
     async def _handle_function_call_arguments_delta(self, data: dict) -> None:
         """Handle function call arguments delta"""
 
@@ -551,11 +584,3 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         })
         await self.create_response()
 
-    async def _handle_text_done(self, data: dict) -> None:
-        """Handle text response completion"""
-        try:
-            text_content = data.get("text", "")
-            if text_content:
-                global_event_emitter.emit("text_response", {"text": text_content, "type": "done"})
-        except Exception as e:
-            print(f"[ERROR] Error handling text done: {e}")

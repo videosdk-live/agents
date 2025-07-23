@@ -138,4 +138,3 @@ def _set_current_job_context(ctx: 'JobContext') -> Any:
 def _reset_current_job_context(token: Any) -> None:
     """Reset the current job context (used by Worker)"""
     _current_job_context.reset(token)
-

@@ -13,6 +13,7 @@ from videosdk.agents import Agent,CustomAudioStreamTrack, RealtimeBaseModel, bui
 import av 
 import time
 from videosdk.agents.event_bus import global_event_emitter
+from videosdk.agents import realtime_metrics_collector
 from google import genai
 from google.genai.live import AsyncSession
 from google.genai.types import (
@@ -67,6 +68,7 @@ class GeminiLiveConfig:
         presence_penalty: Penalizes tokens based on their presence in the text so far. Range -2.0 to 2.0. Defaults to None
         frequency_penalty: Penalizes tokens based on their frequency in the text so far. Range -2.0 to 2.0. Defaults to None
         response_modalities: List of enabled response types. Options: ["TEXT", "AUDIO"]. Defaults to both
+        input_audio_transcription: Configuration for audio transcription features. Defaults to None
         output_audio_transcription: Configuration for audio transcription features. Defaults to None
     """
     voice: Voice | None = "Puck"
@@ -79,7 +81,9 @@ class GeminiLiveConfig:
     presence_penalty: float | None = None
     frequency_penalty: float | None = None
     response_modalities: List[Modality] | None = field(default_factory=lambda: ["TEXT", "AUDIO"])
-    output_audio_transcription: AudioTranscriptionConfig | None = None
+    input_audio_transcription: AudioTranscriptionConfig | None = field(default_factory=dict)
+    output_audio_transcription: AudioTranscriptionConfig | None = field(default_factory=dict)
+
 
 @dataclass
 class GeminiSession:
@@ -140,6 +144,8 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         self.config: GeminiLiveConfig = config or GeminiLiveConfig()
         self.target_sample_rate = 24000
         self.input_sample_rate = 48000
+        self._user_speaking = False
+        self._agent_speaking = False
 
 
     def set_agent(self, agent: Agent) -> None:
@@ -214,7 +220,8 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                 language_code=self.config.language_code
             ),
             tools=self.formatted_tools or None,
-            output_audio_transcription=self.config.output_audio_transcription if self.config.output_audio_transcription else None
+            input_audio_transcription=self.config.input_audio_transcription,
+            output_audio_transcription=self.config.output_audio_transcription
         )
         try:
             session_cm = self.client.aio.live.connect(model=self.model, config=config)
@@ -270,10 +277,10 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                 await asyncio.sleep(reconnect_delay)
                 self._session_should_close.clear()
     
-    async def _handle_tool_calls(self, response, active_response_id: str) -> None:
+    async def _handle_tool_calls(self, response, active_response_id: str, accumulated_input_text: str) -> str:
         """Handle tool calls from Gemini"""
         if not response.tool_call:
-            return
+            return accumulated_input_text
         for tool_call in response.tool_call.function_calls:
 
             if self.tools:
@@ -282,7 +289,11 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                         continue
                     tool_info = get_tool_info(tool)
                     if tool_info.name == tool_call.name:
+                        if accumulated_input_text:
+                            await realtime_metrics_collector.set_user_transcript(accumulated_input_text)
+                            accumulated_input_text = ""
                         try:
+                            await realtime_metrics_collector.add_tool_call(tool_info.name)
                             result = await tool(**tool_call.args)
                             await self.send_tool_response([
                                 FunctionResponse(
@@ -295,6 +306,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                             logger.error(f"Error executing function {tool_call.name}: {e}")
                             traceback.print_exc()
                         break
+        return accumulated_input_text
 
     async def _receive_loop(self, session: GeminiSession) -> None:
         """Process incoming messages from Gemini"""
@@ -302,6 +314,8 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
             active_response_id = None
             chunk_number = 0
             accumulated_text = "" 
+            final_transcription = ""
+            accumulated_input_text = ""
             
             while not self._closing:
                 try:
@@ -310,29 +324,28 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                             break
                         
                         if response.tool_call:
-                            await self._handle_tool_calls(response, active_response_id)
+                            accumulated_input_text = await self._handle_tool_calls(response, active_response_id, accumulated_input_text)
                         
                         if (server_content := response.server_content):
-                            try:
-                                if (input_transcription := server_content.input_transcription):
-                                    if input_transcription.text:
-                                        global_event_emitter.emit("input_transcription", {
-                                            "text": input_transcription.text,
-                                            "is_final": False
-                                        })
+                            if (input_transcription := server_content.input_transcription):
+                                if input_transcription.text:
+                                    if not self._user_speaking:
+                                        await realtime_metrics_collector.set_user_speech_start()
+                                        self._user_speaking = True
+                                    accumulated_input_text += input_transcription.text
+                                    global_event_emitter.emit("input_transcription", {
+                                        "text": accumulated_input_text,
+                                        "is_final": False
+                                    })
 
-                                if (output_transcription := server_content.output_transcription):
-                                    if output_transcription.text:
-                                        global_event_emitter.emit("output_transcription", {
-                                            "text": output_transcription.text,
-                                            "is_final": False
-                                        })
+                            if (output_transcription := server_content.output_transcription):
+                                if output_transcription.text:
+                                    final_transcription += output_transcription.text
+                                    global_event_emitter.emit("output_transcription", {
+                                        "text": final_transcription,
+                                        "is_final": False
+                                    })
 
-                            except Exception as e:
-                                logger.error(f"Transcription handling error: {e}")
-                                traceback.print_exc()
-
-                        if server_content:
                             if not active_response_id:
                                 active_response_id = f"response_{id(response)}"
                                 chunk_number = 0
@@ -346,8 +359,14 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                 if self.audio_track and "AUDIO" in self.config.response_modalities:
                                     self.audio_track.interrupt()
                                 continue
-                            
+
                             if model_turn := server_content.model_turn:
+                                if self._user_speaking:
+                                    await realtime_metrics_collector.set_user_speech_end()
+                                    self._user_speaking = False
+                                if accumulated_input_text:
+                                    await realtime_metrics_collector.set_user_transcript(accumulated_input_text)
+                                    accumulated_input_text = ""
                                 for part in model_turn.parts:
                                     if hasattr(part, 'inline_data') and part.inline_data:
                                         raw_audio = part.inline_data.data
@@ -356,6 +375,9 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                         
                                         if "AUDIO" in self.config.response_modalities:
                                             chunk_number += 1
+                                            if not self._agent_speaking:
+                                                await realtime_metrics_collector.set_agent_speech_start()
+                                                self._agent_speaking = True
                                             
                                             if self.audio_track and self.loop:
                                                 if len(raw_audio) % 2 != 0: 
@@ -370,13 +392,26 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                         accumulated_text += part.text
 
                             if server_content.turn_complete and active_response_id:
-                                if "TEXT" in self.config.response_modalities:
+                                if accumulated_input_text:
+                                    await realtime_metrics_collector.set_user_transcript(accumulated_input_text)
+                                    accumulated_input_text = ""
+                                if final_transcription:
+                                    await realtime_metrics_collector.set_agent_response(final_transcription)
+                                if "TEXT" in self.config.response_modalities and accumulated_text:
                                     global_event_emitter.emit("text_response", {
                                         "type": "done",
                                         "text": accumulated_text
                                     })
+                                elif "TEXT" not in self.config.response_modalities and final_transcription:
+                                    global_event_emitter.emit("text_response", {
+                                        "type": "done",
+                                        "text": final_transcription
+                                    })
                                 active_response_id = None
                                 accumulated_text = "" 
+                                final_transcription = ""
+                                await realtime_metrics_collector.set_agent_speech_end(timeout=1.0)
+                                self._agent_speaking = False
                 
                 except Exception as e:
                     if "1000 (OK)" in str(e):
@@ -476,6 +511,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                 turns=Content(parts=[Part(text="stop")], role="user"),
                 turn_complete=True
             )
+            await realtime_metrics_collector.set_interrupted()
             if self.audio_track and "AUDIO" in self.config.response_modalities:
                 self.audio_track.interrupt()
         except Exception as e:
