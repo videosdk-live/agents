@@ -34,7 +34,13 @@ class TracesFlowManager:
             print("Root span 'Agent Joined Meeting' already exists.")
             return
         
-        self.root_span = create_span("Agent Joined Meeting", attributes)
+        agent_name = attributes.get('agent_name', 'UnknownAgent')
+        agent_id = attributes.get('peerId', 'UnknownID')
+
+        span_name = f"agent_{agent_name}_agentId_{agent_id}"
+
+        self.root_span = create_span(span_name, attributes)
+
         if self.root_span:
             self.root_span_ready.set()
             with trace.use_span(self.root_span):
@@ -143,22 +149,37 @@ class TracesFlowManager:
 
         with trace.use_span(interaction_span, end_on_exit=False):
 
-            if interaction_data.stt_latency is not None:
-                stt_span = create_span("STT Processing Time", {"duration_ms": interaction_data.stt_latency}, parent_span=interaction_span)
-                self.end_span(stt_span)
+            stt_errors = [e for e in interaction_data.errors if e['source'] == 'STT']
+            if interaction_data.stt_latency is not None or stt_errors:
+                attrs = {"duration_ms": interaction_data.stt_latency} if interaction_data.stt_latency is not None else {}
+                stt_span = create_span("STT Processing Time", attrs, parent_span=interaction_span)
+                for error in stt_errors:
+                    stt_span.add_event("error", attributes={"message": error['message'], "timestamp": error['timestamp']})
+                status = StatusCode.ERROR if stt_errors else StatusCode.OK
+                self.end_span(stt_span, status_code=status)
 
-            if interaction_data.llm_latency is not None:
-                llm_span = create_span("LLM Processing Time", {"duration_ms": interaction_data.llm_latency, "llm_latency": interaction_data.llm_latency}, parent_span=interaction_span)
-                self.end_span(llm_span)
+            llm_errors = [e for e in interaction_data.errors if e['source'] == 'LLM']
+            if interaction_data.llm_latency is not None or llm_errors:
+                attrs = {"duration_ms": interaction_data.llm_latency, "llm_latency": interaction_data.llm_latency} if interaction_data.llm_latency is not None else {}
+                llm_span = create_span("LLM Processing Time", attrs, parent_span=interaction_span)
+                for error in llm_errors:
+                    llm_span.add_event("error", attributes={"message": error['message'], "timestamp": error['timestamp']})
+                status = StatusCode.ERROR if llm_errors else StatusCode.OK
+                self.end_span(llm_span, status_code=status)
 
             if interaction_data.function_tools_called is not None:
                 for tool in interaction_data.function_tools_called:
                     tool_span = create_span("Function Tool Called", {"tool_name": tool}, parent_span=interaction_span)
                     self.end_span(tool_span)
 
-            if interaction_data.tts_latency is not None:
-                tts_span = create_span("TTS Processing Time ", {"duration_ms": interaction_data.tts_latency, "ttfb_ms": interaction_data.ttfb, "tts_latency": interaction_data.tts_latency}, parent_span=interaction_span)
-                self.end_span(tts_span)
+            tts_errors = [e for e in interaction_data.errors if e['source'] == 'TTS']
+            if interaction_data.tts_latency is not None or tts_errors:
+                attrs = {"duration_ms": interaction_data.tts_latency, "ttfb_ms": interaction_data.ttfb, "tts_latency": interaction_data.tts_latency} if interaction_data.tts_latency is not None else {}
+                tts_span = create_span("TTS Processing Time ", attrs, parent_span=interaction_span)
+                for error in tts_errors:
+                    tts_span.add_event("error", attributes={"message": error['message'], "timestamp": error['timestamp']})
+                status = StatusCode.ERROR if tts_errors else StatusCode.OK
+                self.end_span(tts_span, status_code=status)
 
             if interaction_data.timeline:
                 for event in interaction_data.timeline:
