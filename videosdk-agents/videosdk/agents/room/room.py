@@ -14,7 +14,7 @@ from ..metrics.integration import create_span, complete_span, create_log
 from ..metrics.traces_flow import TracesFlowManager
 from ..metrics import metrics_collector
 from ..metrics.integration import auto_initialize_telemetry_and_logs
-from typing import Optional, Any
+from typing import Callable, Optional, Any
 from ..metrics.realtime_collector import realtime_metrics_collector
  
 load_dotenv()
