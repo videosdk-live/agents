@@ -50,7 +50,22 @@ class TwilioProvider(SIPProvider):
         return {"sid": call.sid, "status": call.status}
 
     async def transfer_call(self, call_id: str, transfer_to: str) -> Dict[str, Any]:
-        raise NotImplementedError("Twilio transfer_call is not yet implemented.")
+        """
+        Transfer an active call to another phone number or SIP URI using Twilio's <Dial> verb.
+        transfer_to must be provided by the caller (agent/session).
+        """
+        from twilio.twiml.voice_response import VoiceResponse
+        logger.info(f"Transferring Twilio call {call_id} to {transfer_to}")
+        response = VoiceResponse()
+        dial = response.dial()
+        if transfer_to.startswith("+"):
+            dial.number(transfer_to)
+        else:
+            dial.sip(transfer_to)
+        twiml_str = str(response)
+        call = self.client.calls(call_id).update(twiml=twiml_str)
+        logger.info(f"Transfer initiated for call {call_id} to {transfer_to}, status: {call.status}")
+        return {"sid": call.sid, "status": call.status}
 
     async def get_call_status(self, call_id: str) -> str:
         call = self.client.calls(call_id).fetch()
