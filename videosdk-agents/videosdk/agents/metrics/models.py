@@ -28,6 +28,7 @@ class InteractionMetrics:
     function_tools_called: List[str] = field(default_factory=list)
     system_instructions: str = ""
     timeline: List[TimelineEvent] = field(default_factory=list)
+    errors: List[Dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass

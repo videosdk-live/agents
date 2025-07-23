@@ -284,10 +284,10 @@ class VideoSDKHandler:
             if self._meeting_joined_data and self.traces_flow_manager:
 
                 agent_joined_attributes = {
-                    "meeting_id": self.meeting_id,
-                    "session_id": self._session_id,
+                    "roomId": self.meeting_id,
+                    "sessionId": self._session_id,
                     "agent_name": self.name,
-                    "peer_id": self.meeting.local_participant.id,
+                    "peerId": self.meeting.local_participant.id,
                     "sdk_metadata": self.sdk_metadata
                 }   
 

@@ -268,3 +268,12 @@ class MetricsCollector:
         """Track when a function tool is called in the current interaction"""
         if self.data.current_interaction:
             self.data.current_interaction.function_tools_called.append(tool_name) 
+
+    def add_error(self, source: str, message: str):
+        """Add an error to the current interaction"""
+        if self.data.current_interaction:
+            self.data.current_interaction.errors.append({
+                "source": source,
+                "message": message,
+                "timestamp": time.time()
+            }) 

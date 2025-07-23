@@ -46,6 +46,13 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         self.agent = None
         self.conversation_flow = None
         self.avatar = avatar
+
+        if self.stt:
+            self.stt.on("error", lambda data: self.on_component_error("STT", data))
+        if self.llm:
+            self.llm.on("error", lambda data: self.on_component_error("LLM", data))
+        if self.tts:
+            self.tts.on("error", lambda data: self.on_component_error("TTS", data))
         
         super().__init__()
         
@@ -155,3 +162,11 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
             for key in sensitive_keys:
                 comp.pop(key, None)
         return configs
+
+
+    def on_component_error(self, source: str, error_data: Any) -> None:
+        """Handle error events from components (STT, LLM, TTS)"""
+        self.emit("error", {"source": source, "details": error_data})
+        from .metrics import metrics_collector
+        metrics_collector.add_error(source, str(error_data))
+        
