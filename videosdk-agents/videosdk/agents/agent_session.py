@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from .agent import Agent
-from .llm.chat_context import ChatMessage, ChatRole
+from .llm.chat_context import ChatRole
 from .conversation_flow import ConversationFlow
 from .pipeline import Pipeline
-import os
+
 class AgentSession:
     """
     Manages an agent session with its associated conversation flow and pipeline.
@@ -17,6 +17,7 @@ class AgentSession:
         agent: Agent,
         pipeline: Pipeline,
         conversation_flow: Optional[ConversationFlow] = None,
+        wake_up: Optional[int] = None,
     ) -> None:
         """
         Initialize an agent session.
@@ -30,7 +31,8 @@ class AgentSession:
         self.pipeline = pipeline
         self.conversation_flow = conversation_flow
         self.agent.session = self
-        
+        self.wake_up = wake_up
+        self.on_wake_up: Callable[[], None] = None
         if hasattr(self.pipeline, 'set_agent'):
             self.pipeline.set_agent(self.agent)
         if hasattr(self.pipeline, 'set_conversation_flow') and self.conversation_flow is not None:

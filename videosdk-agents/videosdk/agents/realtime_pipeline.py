@@ -11,7 +11,7 @@ from .room.room import VideoSDKHandler
 from .agent import Agent
 from .job import get_current_job_context
 
-class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtime_end","user_audio_input_data"]]):
+class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtime_end","user_audio_input_data", "user_speech_started"]]):
     """
     RealTime pipeline implementation that processes data in real-time.
     Inherits from Pipeline base class and adds realtime-specific events.
@@ -72,6 +72,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
             **kwargs: Additional arguments for pipeline configuration
         """
         await self.model.connect()
+        self.model.on("user_speech_started", self.on_user_speech_started)
 
     async def send_message(self, message: str) -> None:
         """
@@ -104,6 +105,12 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         """
         if self.vision and hasattr(self.model, 'handle_video_input'):
             await self.model.handle_video_input(video_data)
+    
+    def on_user_speech_started(self, data: dict) -> None:
+        """
+        Handle user speech started event
+        """
+        print("User speech started")
 
     async def leave(self) -> None:
         """
