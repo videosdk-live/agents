@@ -1,3 +1,3 @@
-from .denoise import RNNoiseDenoise
+from .denoise import RNNoise
 
-__all__ = ["RNNoiseDenoise"]
+__all__ = ["RNNoise"]

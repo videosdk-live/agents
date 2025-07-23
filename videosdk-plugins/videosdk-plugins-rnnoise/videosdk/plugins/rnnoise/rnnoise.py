@@ -30,7 +30,7 @@ lib.rnnoise_process_frame.restype = ctypes.c_float
 lib.rnnoise_create.restype = ctypes.c_void_p
 lib.rnnoise_destroy.argtypes = [ctypes.c_void_p]
 
-class RNNoise(object):
+class RNN(object):
 	def __init__(self):
 		self.obj = lib.rnnoise_create()
 	def process_frame(self,inbuf):

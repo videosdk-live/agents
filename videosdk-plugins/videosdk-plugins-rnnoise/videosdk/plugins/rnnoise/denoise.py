@@ -1,13 +1,13 @@
 from typing import Any
 from videosdk.agents.denoise import Denoise
-from .rnnoise import RNNoise
+from .rnnoise import RNN
 import numpy as np
 import resampy
 
-class RNNoiseDenoise(Denoise):
+class RNNoise(Denoise):
     def __init__(self):
         super().__init__()
-        self.rnnoise = RNNoise()
+        self.rnnoise = RNN()
         self._target_sample_rate = 48000
         self._frame_duration_ms = 20 
         self._rnnoise_frame_size = 480
