@@ -17,6 +17,7 @@ class RoomOptions:
     vision: bool = False
     avatar: Optional[Any] = None
     join_meeting: Optional[bool] = True
+    on_room_error: Optional[Callable[[Any], None]] = None
 
 class WorkerJob:
     def __init__(self, entrypoint, jobctx=None):
@@ -85,6 +86,7 @@ class JobContext:
                     custom_camera_video_track=custom_camera_video_track,
                     custom_microphone_audio_track=custom_microphone_audio_track,
                     audio_sinks=sinks,
+                    on_room_error= self.room_options.on_room_error
                 )
             if self._pipeline and hasattr(self._pipeline, '_set_loop_and_audio_track'):
                 self._pipeline._set_loop_and_audio_track(self._loop, self.room.audio_track)

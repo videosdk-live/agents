@@ -1,0 +1,39 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "videosdk-plugins-sip"
+dynamic = ["version"]
+description = "VideoSDK Agent Framework plugin for SIP integration with multiple providers"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+authors = [{ name = "videosdk"}]
+keywords = ["video", "audio", "ai", "sip", "telephony", "videosdk"]
+classifiers = [
+    "Intended Audience :: Developers",
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Communications :: Conferencing",
+    "Topic :: Communications :: Telephony",
+    "Topic :: Multimedia :: Sound/Audio",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "videosdk-agents>=0.0.21",
+    "fastapi>=0.115.0",
+    "httpx>=0.28.0",
+    "twilio>=9.6.0",
+    "pyngrok>=7.1.6"
+]
+
+[tool.hatch.version]
+path = "videosdk/plugins/sip/version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["videosdk"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/videosdk"]

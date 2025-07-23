@@ -82,27 +82,43 @@ class ResembleTTS(TTS):
             ) as response:
                 response.raise_for_status()
 
+                audio_data = b""
                 header_processed = False
-                buffer = b''
 
                 async for chunk in response.aiter_bytes():
                     if not header_processed:
-                        buffer += chunk
-                        data_pos = buffer.find(b'data')
+                        audio_data += chunk
+                        data_pos = audio_data.find(b'data')
                         if data_pos != -1:
                             header_size = data_pos + 8
-                            audio_data = buffer[header_size:]
-                            if audio_data:
-                                self.loop.create_task(self.audio_track.add_new_bytes(audio_data))
+                            audio_data = audio_data[header_size:]
                             header_processed = True
                     else:
                         if chunk:
-                            self.loop.create_task(self.audio_track.add_new_bytes(chunk))
+                            audio_data += chunk
+
+                if audio_data:
+                    await self._stream_audio_chunks(audio_data)
                         
         except httpx.HTTPStatusError as e:
             self.emit("error", f"HTTP error {e.response.status_code}: {e.response.text}")
         except Exception as e:
             self.emit("error", f"HTTP streaming synthesis failed: {str(e)}")
+
+    async def _stream_audio_chunks(self, audio_bytes: bytes) -> None:
+        """Stream audio data in chunks for smooth playback """
+        chunk_size = int(self.sample_rate * 1 * 2 * 20 / 1000)  
+        
+        for i in range(0, len(audio_bytes), chunk_size):
+            chunk = audio_bytes[i:i + chunk_size]
+            
+            if len(chunk) < chunk_size and len(chunk) > 0:
+                padding_needed = chunk_size - len(chunk)
+                chunk += b'\x00' * padding_needed
+            
+            if len(chunk) == chunk_size:
+                self.loop.create_task(self.audio_track.add_new_bytes(chunk))
+                await asyncio.sleep(0.001)
 
     async def aclose(self) -> None:
         if self._http_client:

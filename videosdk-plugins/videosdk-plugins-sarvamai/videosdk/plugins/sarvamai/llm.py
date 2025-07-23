@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import os
 import json
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, List, Union
 import traceback
 
 import httpx
 from videosdk.agents import (
     LLM, LLMResponse, ChatContext, ChatRole, ChatMessage, 
-    FunctionCall, FunctionCallOutput, ToolChoice, FunctionTool, 
-    is_function_tool, build_openai_schema
+    ToolChoice, FunctionTool, 
+    ChatContent,
 )
 
 SARVAM_CHAT_COMPLETION_URL = "https://api.sarvam.ai/v1/chat/completions" 
@@ -46,30 +46,47 @@ class SarvamAILLM(LLM):
         tools: list[FunctionTool] | None = None,
         **kwargs: Any
     ) -> AsyncIterator[LLMResponse]:
-        
+        def _extract_text_content(content: Union[str, List[ChatContent]]) -> str:
+            if isinstance(content, str):
+                return content
+            text_parts = [part for part in content if isinstance(part, str)]
+            return "\n".join(text_parts)
+
         system_prompt = None
         message_items = list(messages.items)
-        if message_items and message_items[0].role == ChatRole.SYSTEM:
-            system_prompt = {"role": "system", "content": str(message_items.pop(0).content)}
+        if (
+            message_items
+            and isinstance(message_items[0], ChatMessage)
+            and message_items[0].role == ChatRole.SYSTEM
+        ):
+            system_prompt = {
+                "role": "system",
+                "content": _extract_text_content(message_items.pop(0).content),
+            }
 
         cleaned_messages = []
         last_role = None
         for msg in message_items:
-            if not hasattr(msg, 'role'): continue
-            
+            if not isinstance(msg, ChatMessage):
+                continue
+
             current_role_str = msg.role.value
             
             if not cleaned_messages and current_role_str == 'assistant':
                 continue
 
+            text_content = _extract_text_content(msg.content)
+            if not text_content.strip():
+                continue
+
             if last_role == 'user' and current_role_str == 'user':
-                cleaned_messages[-1]['content'] += ' ' + str(msg.content)
+                cleaned_messages[-1]['content'] += ' ' + text_content
                 continue
             
             if last_role == current_role_str:
                 cleaned_messages.pop()
 
-            cleaned_messages.append({"role": current_role_str, "content": str(msg.content)})
+            cleaned_messages.append({"role": current_role_str, "content": text_content})
             last_role = current_role_str
 
         final_messages = [system_prompt] + cleaned_messages if system_prompt else cleaned_messages
