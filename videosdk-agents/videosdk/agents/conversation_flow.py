@@ -16,13 +16,14 @@ from .agent import Agent
 from .event_bus import global_event_emitter
 from .vad import VAD, VADResponse, VADEventType
 from .eou import EOU
+from .denoise import Denoise
 
 class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
     """
     Manages the conversation flow by listening to transcription events.
     """
 
-    def __init__(self, agent: Agent, stt: STT | None = None, llm: LLM | None = None, tts: TTS | None = None, vad: VAD | None = None, turn_detector: EOU | None = None) -> None:
+    def __init__(self, agent: Agent, stt: STT | None = None, llm: LLM | None = None, tts: TTS | None = None, vad: VAD | None = None, turn_detector: EOU | None = None, denoise: Denoise | None = None) -> None:
         """Initialize conversation flow with event emitter capabilities"""
         super().__init__() 
         self.transcription_callback: Callable[[STTResponse], Awaitable[None]] | None = None
@@ -33,6 +34,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self.turn_detector = turn_detector
         self.agent = agent
         self.is_turn_active = False
+        self.denoise = denoise
         self.user_speech_callback: Callable[[], None] | None = None
         if self.stt:
             self.stt.on_stt_transcript(self.on_stt_transcript)
@@ -56,6 +58,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         """
         Send audio delta to the STT
         """
+        if self.denoise:
+            audio_data = await self.denoise.denoise(audio_data)
         if self.stt:
             await self.stt.process_audio(audio_data)
         if self.vad:
