@@ -74,12 +74,12 @@ class VideoSDKHandler:
         self._first_participant_event = asyncio.Event()
         
     def init_meeting(self):
-        sdk_metadata = {
+        self.sdk_metadata = {
             "sdk" : "agents",
             "sdk-version" : "0.0.19" 
         }
-        self.agent_meeting = create_span("Agent Init Meeting",{**sdk_metadata})
-        self.meeting = VideoSDK.init_meeting(**self.meeting_config, sdk_metadata=sdk_metadata,signaling_base_url="api.videosdk.live")
+        
+        self.meeting = VideoSDK.init_meeting(**self.meeting_config, sdk_metadata=self.sdk_metadata)
         self.meeting.add_event_listener(
             MeetingHandler(
                 on_meeting_joined=self.on_meeting_joined,
@@ -272,13 +272,14 @@ class VideoSDKHandler:
                 print("Meeting object does not have 'get_attributes' method")
 
             if self._meeting_joined_data and self.traces_flow_manager:
-                print("Creating Agent Joined span tree using TracesFlowManager...")
 
                 agent_joined_attributes = {
                     "meeting_id": self.meeting_id,
                     "session_id": self._session_id,
                     "agent_name": self.name,
-                }
+                    "peer_id": self.meeting.local_participant.id,
+                    "sdk_metadata": self.sdk_metadata
+                }   
 
                 self.traces_flow_manager.start_agent_joined_meeting(agent_joined_attributes)
         except Exception as e:
