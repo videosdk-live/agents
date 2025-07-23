@@ -33,7 +33,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self.turn_detector = turn_detector
         self.agent = agent
         self.is_turn_active = False
-        
+        self.user_speech_callback: Callable[[], None] | None = None
         if self.stt:
             self.stt.on_stt_transcript(self.on_stt_transcript)
         if self.vad:
@@ -194,6 +194,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         pass
 
     def on_speech_started(self) -> None:
+        if self.user_speech_callback:
+            self.user_speech_callback()
         if self.tts:
             asyncio.create_task(self.tts.interrupt())
 

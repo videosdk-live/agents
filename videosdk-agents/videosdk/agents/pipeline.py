@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, Literal
+from typing import Any, Literal, Optional, Callable
 import asyncio
 
 from .event_emitter import EventEmitter
@@ -16,6 +16,7 @@ class Pipeline(EventEmitter[Literal["start"]], ABC):
         super().__init__()
         self.loop: asyncio.AbstractEventLoop | None = None
         self.audio_track: CustomAudioStreamTrack | None = None
+        self._wake_up_callback: Optional[Callable[[], None]] = None
         self._auto_register()
         
     def _auto_register(self) -> None:
@@ -37,6 +38,13 @@ class Pipeline(EventEmitter[Literal["start"]], ABC):
     def _configure_components(self) -> None:
         """Configure pipeline components with the loop - to be overridden by subclasses"""
         pass
+
+    def set_wake_up_callback(self, callback: Callable[[], None]) -> None:
+        self._wake_up_callback = callback
+
+    def _notify_speech_started(self) -> None:
+        if self._wake_up_callback:
+            self._wake_up_callback()
 
     @abstractmethod
     async def start(self, **kwargs: Any) -> None:
