@@ -1,10 +1,10 @@
 from __future__ import annotations
 import os
 import json
-from typing import Any, AsyncIterator, Optional
+from typing import Any, AsyncIterator, List, Union
 import httpx
 import anthropic
-from videosdk.agents import LLM, LLMResponse, ChatContext, ChatRole, ChatMessage, FunctionCall, FunctionCallOutput, ToolChoice, FunctionTool, is_function_tool, build_openai_schema
+from videosdk.agents import LLM, LLMResponse, ChatContext, ChatRole, ChatMessage, FunctionCall, FunctionCallOutput, ToolChoice, FunctionTool, is_function_tool, build_openai_schema, ImageContent, ChatContent
 
 class AnthropicLLM(LLM):
     
@@ -66,7 +66,6 @@ class AnthropicLLM(LLM):
         """
         try:
             anthropic_messages, system_content = self._convert_messages_to_anthropic_format(messages)
-
             completion_params = {
                 "model": self.model,
                 "messages": anthropic_messages,
@@ -184,24 +183,66 @@ class AnthropicLLM(LLM):
 
     def _convert_messages_to_anthropic_format(self, messages: ChatContext) -> tuple[list[dict], str | None]:
         """Convert ChatContext to Anthropic message format"""
+
+        def _format_content(content: Union[str, List[ChatContent]]):
+            if isinstance(content, str):
+                return content
+
+            has_images = any(isinstance(p, ImageContent) for p in content)
+
+            if not has_images and len(content) == 1 and isinstance(content[0], str):
+                return content[0]
+
+            formatted_parts = []
+            image_parts = [p for p in content if isinstance(p, ImageContent)]
+            text_parts = [p for p in content if isinstance(p, str)]
+
+            for part in image_parts:
+                data_url = part.to_data_url()
+
+                if data_url.startswith("data:"):
+                    header, b64_data = data_url.split(",", 1)
+                    media_type = header.split(";")[0].split(":")[1]
+                    formatted_parts.append(
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": media_type,
+                                "data": b64_data,
+                            },
+                        }
+                    )
+                else:
+                    formatted_parts.append(
+                        {
+                            "type": "image",
+                            "source": {"type": "url", "url": data_url},
+                        }
+                    )
+
+            for part in text_parts:
+                formatted_parts.append({"type": "text", "text": part})
+
+            return formatted_parts
+
         anthropic_messages = []
         system_content = None
-        
+
         for item in messages.items:
             if isinstance(item, ChatMessage):
                 if item.role == ChatRole.SYSTEM:
-                    system_content = str(item.content)
+                    if isinstance(item.content, list):
+                        system_content = next(
+                            (str(p) for p in item.content if isinstance(p, str)), ""
+                        )
+                    else:
+                        system_content = str(item.content)
                     continue
-                elif item.role == ChatRole.USER:
-                    anthropic_messages.append({
-                        "role": "user",
-                        "content": str(item.content)
-                    })
-                elif item.role == ChatRole.ASSISTANT:
-                    anthropic_messages.append({
-                        "role": "assistant", 
-                        "content": str(item.content)
-                    })
+                else:
+                    anthropic_messages.append(
+                        {"role": item.role.value, "content": _format_content(item.content)}
+                    )
             elif isinstance(item, FunctionCall):
                 anthropic_messages.append({
                     "role": "assistant",

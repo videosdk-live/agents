@@ -1,4 +1,5 @@
 import multiprocessing
+import functools
 
 def _job_runner(entrypoint, job_ctx_factory):
     """
@@ -27,9 +28,10 @@ class Worker:
         self.processes = []
 
     def run(self):
-        jobctx_factory = self.job.jobctx
+        job_context = functools.partial(self.job.jobctx)
+        entrypoint = functools.partial(self.job.entrypoint)
         p = multiprocessing.Process(
-            target=_job_runner, args=(self.job.entrypoint, jobctx_factory)
+            target=_job_runner, args=(entrypoint, job_context)
         )
         p.start()
         self.processes.append((p.pid, p))

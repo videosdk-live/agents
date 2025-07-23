@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Literal
+from typing import Any, Callable, Dict, Literal
 import asyncio
 
 from .pipeline import Pipeline
@@ -72,6 +72,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         self.conversation_flow.vad = self.vad
         self.conversation_flow.turn_detector = self.turn_detector
         self.conversation_flow.denoise = self.denoise
+        self.conversation_flow.user_speech_callback = self.on_user_speech_started
         if self.conversation_flow.stt:
             self.conversation_flow.stt.on_stt_transcript(self.conversation_flow.on_stt_transcript)
         if self.conversation_flow.vad:
@@ -98,6 +99,13 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         Handle incoming audio data from the user
         """
         await self.conversation_flow.send_audio_delta(audio_data)
+    
+    def on_user_speech_started(self) -> None:
+        """
+        Handle user speech started event
+        """
+        print("user speech started")
+        self._notify_speech_started()
 
     async def cleanup(self) -> None:
         """Cleanup all pipeline components"""

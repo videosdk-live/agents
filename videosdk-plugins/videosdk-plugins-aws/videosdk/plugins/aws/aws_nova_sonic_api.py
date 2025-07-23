@@ -33,8 +33,8 @@ NOVA_OUTPUT_SAMPLE_RATE = 24000
 
 # Event types
 NovaSonicEventTypes = Literal[
-    "audio_output",
-    "transcription",
+    "user_speech_started",
+    "text_response",
     "error"
 ]
 
@@ -346,7 +346,12 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                         except (json.JSONDecodeError, KeyError) as e:
                                             print(f"Error parsing additionalModelFields: {e}")
                                 elif 'textOutput' in json_data['event']:
-                                    pass
+                                    text_output = json_data['event']['textOutput']
+                                    if 'content' in text_output:
+                                        transcript = text_output['content']
+                                        role = text_output.get('role', 'UNKNOWN')
+                                        if role == 'USER':
+                                            self._safe_emit("user_speech_started", {"type": "done"})
 
                                 elif 'audioOutput' in json_data['event']:                                    
                                     audio_output = json_data['event']['audioOutput']
@@ -449,7 +454,7 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
     async def emit(self, event_type: NovaSonicEventTypes, data: Dict[str, Any]) -> None:
         """Emit an event to subscribers"""
         try:
-            await super().emit(event_type, data)
+            super().emit(event_type, data)
         except Exception as e:
             print(f"Error in emit for {event_type}: {e}")
 
