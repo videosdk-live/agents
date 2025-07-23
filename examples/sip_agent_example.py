@@ -16,6 +16,8 @@ load_dotenv()
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
 
+HUMAN_SUPPORT_NUMBER = "+1234567890"  # Set your support number here
+
 
 def create_agent_pipeline():
     """Function to create the specific pipeline for our agent."""
@@ -32,15 +34,19 @@ def create_agent_pipeline():
 class SIPAIAgent(Agent):
     """A AI agent for handling voice calls."""
 
-    def __init__(self, ctx: Optional[JobContext] = None):
-
+    def __init__(self, ctx: Optional[JobContext] = None, call_id: Optional[str] = None):
+        resolved_call_id = call_id
+        if not resolved_call_id and ctx and hasattr(ctx, 'call_id'):
+            resolved_call_id = getattr(ctx, 'call_id')
+        if not resolved_call_id and ctx and hasattr(ctx, 'room_options') and hasattr(ctx.room_options, 'call_id'):
+            resolved_call_id = getattr(ctx.room_options, 'call_id')
         super().__init__(
             instructions="You are a helpful voice assistant that can answer questions and help with tasks. Be friendly and concise.",
-            tools=[self.end_call],
         )
         self.ctx = ctx
+        self.call_id = resolved_call_id
         self.greeting_message = "Hello! Thank you for calling. How can I assist you today?"
-        logger.info(f"SIPAIAgent created")
+        logger.info(f"SIPAIAgent created with call_id={self.call_id}")
 
     async def on_enter(self) -> None:
         pass
@@ -58,6 +64,28 @@ class SIPAIAgent(Agent):
         await asyncio.sleep(1)
         await self.session.leave()
         return "Call ended gracefully"
+
+    @function_tool
+    async def transfer_to_human(self) -> dict:
+        """Transfer the current call to a human support agent (predefined number)."""
+        sip_provider = sip_manager.provider
+        if not self.call_id:
+            logger.error("[TRANSFER] No active call to transfer. call_id is None.")
+            return {"error": "No active call to transfer."}
+        logger.info(f"[TRANSFER] Attempting transfer: call_id={self.call_id}, to={HUMAN_SUPPORT_NUMBER}")
+        try:
+            result = await sip_provider.transfer_call(self.call_id, transfer_to=HUMAN_SUPPORT_NUMBER)
+            logger.info(f"[TRANSFER] Twilio transfer_call result: {result}")
+            await self.session.say("Transferring you to a human agent.")
+            return {
+                "result": f"Call transferred to human at {HUMAN_SUPPORT_NUMBER}, status: {result.get('status')}",
+                "twilio_result": result
+            }
+        except Exception as e:
+            logger.error(f"[TRANSFER] Exception during transfer: {e}", exc_info=True)
+            return {
+                "error": f"Exception during transfer: {e}",
+            }
 
 
 sip_manager = create_sip_manager(
@@ -105,6 +133,11 @@ async def make_call(to_number: str):
         pipeline=create_agent_pipeline,
         agent_config=agent_config
     )
+    call_id = details.get("sid")
+    room_id = details.get("room_id")
+    job = sip_manager.active_sessions.get(room_id)
+    if job and hasattr(job, "entrypoint"):
+        logger.info(f"[CALL_MAKE] Set call_id={call_id} for room_id={room_id}")
     return {"status": "success", "details": details}
 
 @app.post("/sip/answer/{room_id}")
@@ -123,7 +156,10 @@ async def incoming_webhook(request: Request):
             webhook_data = await request.json()
         logger.info(f"Received incoming webhook: {webhook_data}")
 
-        agent_config = {"room_name": "Incoming Call", "enable_pubsub": True}
+        caller_number = webhook_data.get("From", "Unknown")
+        call_id = webhook_data.get("CallSid")
+        agent_config = {"room_name": "Incoming Call", "enable_pubsub": True, "caller_number": caller_number, "call_id": call_id}
+        logger.info(f"[WEBHOOK_INCOMING] Set call_id={call_id} for incoming call from {caller_number}")
         body, status_code, headers = await sip_manager.handle_incoming_call(
             webhook_data=webhook_data,
             agent_class=SIPAIAgent,
