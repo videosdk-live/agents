@@ -42,7 +42,6 @@ class SIPAIAgent(Agent):
             resolved_call_id = getattr(ctx.room_options, 'call_id')
         super().__init__(
             instructions="You are a helpful voice assistant that can answer questions and help with tasks. Be friendly and concise.",
-            tools=[self.end_call, self.transfer_to_human],
         )
         self.ctx = ctx
         self.call_id = resolved_call_id
