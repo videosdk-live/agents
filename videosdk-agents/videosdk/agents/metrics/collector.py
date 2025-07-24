@@ -59,7 +59,7 @@ class MetricsCollector:
             'stt_model_name': 'sttModelName',
             'tts_provider_class': 'ttsProviderClass',
             'tts_model_name': 'ttsModelName',
-            'hand_off_count': 'handOffCount'
+            'handoff_occurred': 'handOffOccurred'
         }
         
         timeline_field_mapping = {
@@ -204,7 +204,7 @@ class MetricsCollector:
             ]
 
             if not self.data.current_interaction.is_a2a_enabled: 
-                always_remove_fields.append("handoff_occurred")
+                always_remove_fields.append("handOffOccurred")
 
             for field in always_remove_fields:
                 if field in transformed_data:
