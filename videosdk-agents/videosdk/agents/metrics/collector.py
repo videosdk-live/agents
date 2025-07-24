@@ -44,7 +44,13 @@ class MetricsCollector:
             'tts_latency': 'ttsLatency',
             'e2e_latency': 'e2eLatency',
             'function_tools_called': 'functionToolsCalled',
-            'system_instructions': 'systemInstructions'
+            'system_instructions': 'systemInstructions',
+            'llm_provider_class': 'llmProviderClass',
+            'llm_model_name': 'llmModelName',
+            'stt_provider_class': 'sttProviderClass',
+            'stt_model_name': 'sttModelName',
+            'tts_provider_class': 'ttsProviderClass',
+            'tts_model_name': 'ttsModelName'
         }
         
         timeline_field_mapping = {
@@ -120,6 +126,17 @@ class MetricsCollector:
         """Set the system instructions for this session"""
         self.data.system_instructions = instructions
     
+    def set_provider_info(self, llm_provider: str = "", llm_model: str = "", 
+                         stt_provider: str = "", stt_model: str = "",
+                         tts_provider: str = "", tts_model: str = ""):
+        """Set the provider class and model information for this session"""
+        self.data.llm_provider_class = llm_provider
+        self.data.llm_model_name = llm_model
+        self.data.stt_provider_class = stt_provider
+        self.data.stt_model_name = stt_model
+        self.data.tts_provider_class = tts_provider
+        self.data.tts_model_name = tts_model
+    
     def start_new_interaction(self, user_transcript: str = "") -> None:
         """Start tracking a new user-agent interaction"""
         if self.data.current_interaction:
@@ -130,7 +147,13 @@ class MetricsCollector:
         
         self.data.current_interaction = InteractionMetrics(
             interaction_id=interaction_id,
-            system_instructions=self.data.system_instructions if self.data.total_interactions == 1 else ""
+            system_instructions=self.data.system_instructions if self.data.total_interactions == 1 else "",
+            llm_provider_class=self.data.llm_provider_class if self.data.total_interactions == 1 else "",
+            llm_model_name=self.data.llm_model_name if self.data.total_interactions == 1 else "",
+            stt_provider_class=self.data.stt_provider_class if self.data.total_interactions == 1 else "",
+            stt_model_name=self.data.stt_model_name if self.data.total_interactions == 1 else "",
+            tts_provider_class=self.data.tts_provider_class if self.data.total_interactions == 1 else "",
+            tts_model_name=self.data.tts_model_name if self.data.total_interactions == 1 else ""
         )
         
         if self.data.is_user_speaking and self.data.user_input_start_time:
@@ -212,6 +235,7 @@ class MetricsCollector:
         if self.data.tts_start_time:
             total_tts_latency = agent_speech_end_time - self.data.tts_start_time
             if self.data.current_interaction:
+                self.data.current_interaction.tts_end_time = agent_speech_end_time
                 self.data.current_interaction.tts_latency = self._round_latency(total_tts_latency)
             self.data.tts_start_time = None
             self.data.tts_first_byte_time = None
@@ -219,24 +243,33 @@ class MetricsCollector:
     def on_stt_start(self):
         """Called when STT processing starts"""
         self.data.stt_start_time = time.perf_counter()
+        if self.data.current_interaction:
+            self.data.current_interaction.stt_start_time = self.data.stt_start_time
     
     def on_stt_complete(self):
         """Called when STT processing completes"""
         if self.data.stt_start_time:
-            stt_latency = time.perf_counter() - self.data.stt_start_time
+            stt_end_time = time.perf_counter()
+            stt_latency = stt_end_time - self.data.stt_start_time
             if self.data.current_interaction:
+                self.data.current_interaction.stt_end_time = stt_end_time
                 self.data.current_interaction.stt_latency = self._round_latency(stt_latency)
             self.data.stt_start_time = None
     
     def on_llm_start(self):
         """Called when LLM processing starts"""
         self.data.llm_start_time = time.perf_counter()
+        
+        if self.data.current_interaction:
+            self.data.current_interaction.llm_start_time = self.data.llm_start_time
     
     def on_llm_complete(self):
         """Called when LLM processing completes"""
         if self.data.llm_start_time:
-            llm_latency = time.perf_counter() - self.data.llm_start_time
+            llm_end_time = time.perf_counter()
+            llm_latency = llm_end_time - self.data.llm_start_time
             if self.data.current_interaction:
+                self.data.current_interaction.llm_end_time = llm_end_time
                 self.data.current_interaction.llm_latency = self._round_latency(llm_latency)
             self.data.llm_start_time = None
     
@@ -244,6 +277,8 @@ class MetricsCollector:
         """Called when TTS processing starts"""
         self.data.tts_start_time = time.perf_counter()
         self.data.tts_first_byte_time = None
+        if self.data.current_interaction:
+            self.data.current_interaction.tts_start_time = self.data.tts_start_time
     
     def on_tts_first_byte(self):
         """Called when TTS produces first audio byte - this is our TTS latency"""
@@ -267,7 +302,13 @@ class MetricsCollector:
     def add_function_tool_call(self, tool_name: str):
         """Track when a function tool is called in the current interaction"""
         if self.data.current_interaction:
-            self.data.current_interaction.function_tools_called.append(tool_name) 
+            self.data.current_interaction.function_tools_called.append(tool_name)
+            tool_timestamp = {
+                "tool_name": tool_name,
+                "timestamp": time.perf_counter(),
+                "readable_time": time.strftime("%H:%M:%S", time.localtime())
+            }
+            self.data.current_interaction.function_tool_timestamps.append(tool_timestamp)
 
     def add_error(self, source: str, message: str):
         """Add an error to the current interaction"""
