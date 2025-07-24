@@ -5,7 +5,7 @@ import uuid
 from .card import AgentCard 
 import asyncio
 from ..event_bus import global_event_emitter
-from ..metrics import metrics_collector
+from ..metrics import metrics_collector, realtime_metrics_collector
 
 @dataclass
 class A2AMessage:
@@ -229,6 +229,28 @@ class A2AProtocol:
 
         if hasattr(target_agent, 'a2a'):
             target_agent.a2a._last_sender = self.agent.id
+
+        if message_type == "specialist_query":
+            sender_is_realtime = False
+            if hasattr(self.agent, 'session') and hasattr(self.agent.session, 'pipeline'):
+                from ..realtime_pipeline import RealTimePipeline
+                sender_is_realtime = isinstance(self.agent.session.pipeline, RealTimePipeline)
+            
+            receiver_is_realtime = False
+            if hasattr(target_agent, 'session') and hasattr(target_agent.session, 'pipeline'):
+                from ..realtime_pipeline import RealTimePipeline
+                receiver_is_realtime = isinstance(target_agent.session.pipeline, RealTimePipeline)
+            
+            if sender_is_realtime == receiver_is_realtime:
+                if sender_is_realtime:
+                    await realtime_metrics_collector.set_a2a_handoff()
+                else:
+                    metrics_collector.set_a2a_handoff()
+            else:
+                if sender_is_realtime:
+                    await realtime_metrics_collector.set_a2a_handoff()
+                else:
+                    metrics_collector.set_a2a_handoff()
 
         receiver_span = None
         if traces_flow_manager:

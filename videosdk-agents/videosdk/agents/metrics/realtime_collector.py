@@ -136,6 +136,12 @@ class RealtimeMetricsCollector:
             self.agent_speech_end_timer = loop.call_later(timeout, self._finalize_interaction_and_send)
             await self.end_timeline_event("agent_speech")
 
+    async def set_a2a_handoff(self) -> None:
+        """Set the A2A enabled and handoff occurred flags for the current interaction in A2A scenarios."""
+        if self.current_interaction:
+            self.current_interaction.is_a2a_enabled = True
+            self.current_interaction.handoff_occurred = True
+
     def _finalize_agent_speech(self) -> None:
         if not self.current_interaction or self.current_interaction.agent_speech_end_time is not None:
             return
@@ -182,14 +188,18 @@ class RealtimeMetricsCollector:
             self.traces_flow_manager.create_realtime_interaction_trace(self.current_interaction)
         interaction_data = asdict(self.current_interaction)
         
+        fields_to_remove = ["realtime_model_errors","is_a2a_enabled"]
+        
         if len(self.interactions) > 1:
-            fields_to_remove = [
-                "provider_class_name", "provider_model_name", "system_instructions",
-                "function_tools", "mcp_tools"
-            ]
-            for field in fields_to_remove:
-                if field in interaction_data:
-                    del interaction_data[field]
+            fields_to_remove.extend([
+                "provider_class_name", "provider_model_name", "system_instructions","function_tools", "mcp_tools"])
+       
+        if not self.current_interaction.is_a2a_enabled: 
+            fields_to_remove.extend(["handoff_occurred"])
+        
+        for field in fields_to_remove:
+            if field in interaction_data:
+                del interaction_data[field]
                     
         transformed_data = self._transform_to_camel_case(interaction_data)
         self.analytics_client.send_interaction_analytics_safe({
