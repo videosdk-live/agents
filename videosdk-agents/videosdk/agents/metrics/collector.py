@@ -58,7 +58,8 @@ class MetricsCollector:
             'stt_provider_class': 'sttProviderClass',
             'stt_model_name': 'sttModelName',
             'tts_provider_class': 'ttsProviderClass',
-            'tts_model_name': 'ttsModelName'
+            'tts_model_name': 'ttsModelName',
+            'hand_off_count': 'handOffCount'
         }
         
         timeline_field_mapping = {
@@ -198,8 +199,13 @@ class MetricsCollector:
                 'functionToolTimestamps',
                 'sttStartTime', 'sttEndTime',
                 'ttsStartTime', 'ttsEndTime',
-                'llmStartTime', 'llmEndTime'
+                'llmStartTime', 'llmEndTime',
+                'is_a2a_enabled'
             ]
+
+            if not self.data.current_interaction.is_a2a_enabled: 
+                always_remove_fields.append("handoff_occurred")
+
             for field in always_remove_fields:
                 if field in transformed_data:
                     del transformed_data[field]
@@ -347,4 +353,10 @@ class MetricsCollector:
                 "source": source,
                 "message": message,
                 "timestamp": time.time()
-            }) 
+            })
+
+    def set_a2a_handoff(self):
+        """Set the A2A enabled and handoff occurred flags for the current interaction in A2A scenarios."""
+        if self.data.current_interaction:
+            self.data.current_interaction.is_a2a_enabled = True
+            self.data.current_interaction.handoff_occurred = True
