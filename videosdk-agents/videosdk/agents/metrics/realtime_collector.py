@@ -253,6 +253,11 @@ class RealtimeMetricsCollector:
                 await self.start_timeline_event("agent_speech")
             await self.update_timeline_event_text("agent_speech", text)
 
+    def set_realtime_model_error(self, error: Dict[str, Any]) -> None:
+        """Set a realtime model-specific error for the current interaction"""
+        if self.current_interaction:
+            self.current_interaction.realtime_model_errors.append(error)
+
     async def set_interrupted(self) -> None:
         if self.current_interaction:
             self.current_interaction.interrupted = True
