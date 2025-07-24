@@ -26,7 +26,7 @@ from aws_sdk_bedrock_runtime.config import (
 )
 from smithy_aws_core.credentials_resolvers.environment import EnvironmentCredentialsResolver
 
-from videosdk.agents import Agent, RealtimeBaseModel, build_nova_sonic_schema, get_tool_info, is_function_tool, FunctionTool
+from videosdk.agents import Agent, RealtimeBaseModel, build_nova_sonic_schema, get_tool_info, is_function_tool, FunctionTool, realtime_metrics_collector
 
 from videosdk.agents import realtime_metrics_collector
 
@@ -87,8 +87,10 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
         self.aws_secret_access_key = aws_secret_access_key or os.getenv("AWS_SECRET_ACCESS_KEY")
         
         if not self.region:
+            self.emit("error", "AWS region is required (pass as parameter or set AWS_DEFAULT_REGIONenvironment variable)")
             raise ValueError("AWS region is required (pass as parameter or set AWS_DEFAULT_REGIONenvironment variable)")
         if not self.aws_access_key_id or not self.aws_secret_access_key:
+            self.emit("error", "AWS credentials required (pass as parameters or set AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY environment variables)")
             raise ValueError("AWS credentials required (pass as parameters or set AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY environment variables)")
         
         self.bedrock_client = None
@@ -135,7 +137,7 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             self.bedrock_client = BedrockRuntimeClient(config=config)
             
         except Exception as e:
-            print(f"Error initializing Bedrock client: {e}")
+            self.emit("error", f"Error initializing Bedrock client: {e}")
             raise
 
     async def connect(self) -> None:
@@ -256,7 +258,7 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             await self.stream.input_stream.send(event)
             
         except Exception as e:
-            print(f"Error sending event: {e}")
+            self.emit("error", f"Error sending event: {e}")
 
     async def _start_audio_input(self):
         """Start audio input stream"""
@@ -318,7 +320,7 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             await self._send_event(json.dumps(audio_event_payload))
 
         except Exception as e:
-            print(f"Resampling error: {e}")
+            self.emit("error", f"Resampling error: {e}")
 
     async def _process_responses(self):
         """Process responses from the bidirectional stream"""
@@ -347,7 +349,7 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                         try:
                                             additional_fields = json.loads(content_start['additionalModelFields'])
                                         except (json.JSONDecodeError, KeyError) as e:
-                                            print(f"Error parsing additionalModelFields: {e}")
+                                            self.emit("error", f"Error parsing additionalModelFields: {e}")
                                 elif 'textOutput' in json_data['event']:
                                     text_output = json_data['event']['textOutput']
                                     if 'content' in text_output:
@@ -379,7 +381,7 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                             self.loop.create_task(self.audio_track.add_new_bytes(audio_bytes))
 
                                     except Exception as e:
-                                        print(f"AUDIO PROCESSING ERROR: {e}")
+                                        self.emit("error", f"AUDIO PROCESSING ERROR: {e}")
                                 
                                 elif 'contentEnd' in json_data['event']: 
                                     content_end = json_data['event']['contentEnd']
@@ -407,11 +409,11 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                 print(f"Non-event response: {json_data}")
                                 
                         except json.JSONDecodeError as e:
-                            print(f"Failed to parse response: {e}")
-                            print(f"Raw data: {response_data[:200]}...")
+                            self.emit("error", f"Failed to parse response: {e}")
+                            self.emit("error", f"Raw data: {response_data[:200]}...")
                         
                 except Exception as e:
-                    print(f"Error processing response: {e}")
+                    self.emit("error", f"Error processing response: {e}")
                     if not self.is_active or self._closing:
                         break
                         
@@ -465,14 +467,14 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             
             
         except Exception as e:
-            print(f"Error sending message: {e}")
+            self.emit("error", f"Error sending message: {e}")
 
     async def emit(self, event_type: NovaSonicEventTypes, data: Dict[str, Any]) -> None:
         """Emit an event to subscribers"""
         try:
             await super().emit(event_type, data)
         except Exception as e:
-            print(f"Error in emit for {event_type}: {e}")
+            self.emit("error", f"Error in emit for {event_type}: {e}")
 
     def _safe_emit(self, event_type: NovaSonicEventTypes, data: Dict[str, Any]) -> None:
         """Safely emit an event without requiring await"""
@@ -483,7 +485,7 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                     self.loop
                 )
         except Exception as e:
-            print(f"Error safely emitting event {event_type}: {e}")
+            self.emit("error", f"Error safely emitting event {event_type}: {e}")
 
     async def interrupt(self) -> None:
         """Interrupt current response"""
@@ -547,7 +549,7 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             if self.stream and hasattr(self.stream, 'input_stream'):
                 await self.stream.input_stream.close()
         except Exception as e:
-            print(f"Error during cleanup: {e}")
+            self.emit("error", f"Error during cleanup: {e}")
         finally:
             self.is_active = False
             
@@ -575,7 +577,7 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                 try:
                     await self.audio_track.cleanup()
                 except Exception as e:
-                    print(f"Error cleaning up audio track: {e}")
+                    self.emit("error", f"Error cleaning up audio track: {e}")
             self.audio_track = None
         
     async def _execute_tool_and_send_result(self, tool_use_event: Dict[str, Any]) -> None:
@@ -585,13 +587,13 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
         tool_input_str = tool_use_event.get("content", "{}")
 
         if not tool_name or not tool_use_id:
-            print(f"Error: Missing toolName or toolUseId in toolUse event: {tool_use_event}")
+            self.emit("error", f"Error: Missing toolName or toolUseId in toolUse event: {tool_use_event}")
             return
 
         try:
             tool_input_args = json.loads(tool_input_str)
         except json.JSONDecodeError as e:
-            print(f"Error decoding tool input JSON: {e}. Input string: {tool_input_str}")
+            self.emit("error", f"Error decoding tool input JSON: {e}. Input string: {tool_input_str}")
             return
 
         target_tool: Optional[FunctionTool] = None
@@ -603,7 +605,7 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                     break
         
         if not target_tool:
-            print(f"Error: Tool '{tool_name}' not found in registered tools.")
+            self.emit("error", f"Error: Tool '{tool_name}' not found in registered tools.")
             return
 
         try:
@@ -653,5 +655,5 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             }
             await self._send_event(json.dumps(tool_content_end_payload))
 
-        except Exception as e:
-            print(f"Error executing tool {tool_name} or sending result: {e}")
+        except Exception as e:  
+            self.emit("error", f"Error executing tool {tool_name} or sending result: {e}")

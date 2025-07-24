@@ -161,6 +161,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         else:
             self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
             if not self.api_key:
+                self.emit("error", "GOOGLE_API_KEY or service account required")
                 raise ValueError("GOOGLE_API_KEY or service account required")
             self.client = genai.Client(
                 api_key=self.api_key,
@@ -181,6 +182,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
             if not self.audio_track and self.loop and "AUDIO" in self.config.response_modalities:
                 self.audio_track = CustomAudioStreamTrack(self.loop)
             elif not self.loop and "AUDIO" in self.config.response_modalities:
+                self.emit("error", "Event loop not initialized. Audio playback will not work.")
                 raise RuntimeError("Event loop not initialized. Audio playback will not work.")
             
             
@@ -189,13 +191,13 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                 if initial_session:
                     self._session = initial_session
             except Exception as e:
-                logger.error(f"Initial session creation failed, will retry: {e}")
+                self.emit("error", f"Initial session creation failed, will retry: {e}")
             
             if not self._main_task or self._main_task.done():
                 self._main_task = asyncio.create_task(self._session_loop(), name="gemini-main-loop")
             
         except Exception as e:
-            logger.error(f"Error connecting to Gemini Live API: {e}")
+            self.emit("error", f"Error connecting to Gemini Live API: {e}")
             traceback.print_exc()
             raise
     
@@ -228,7 +230,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
             session = await session_cm.__aenter__()
             return GeminiSession(session=session, session_cm=session_cm, tasks=[])
         except Exception as e:
-            logger.error(f"Connection error: {e}")
+            self.emit("error", f"Connection error: {e}")
             traceback.print_exc()
             raise
     
@@ -247,9 +249,9 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                 except Exception as e:
                     reconnect_attempts += 1
                     reconnect_delay = min(30, reconnect_delay * 2)
-                    logger.error(f"Session creation attempt {reconnect_attempts} failed: {e}")
+                    self.emit("error", f"session creation attempt {reconnect_attempts} failed: {e}")
                     if reconnect_attempts >= max_reconnect_attempts:
-                        logger.error("Max reconnection attempts reached")
+                        self.emit("error", "Max reconnection attempts reached")
                         break
                     await asyncio.sleep(reconnect_delay)
                     continue
@@ -269,7 +271,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                 try:
                     await asyncio.gather(*session.tasks, return_exceptions=True)
                 except Exception as e:
-                    logger.error(f"Error during task cleanup: {e}")
+                    self.emit("error", f"Error during task cleanup: {e}")
             
             if not self._closing:
                 await self._cleanup_session(session)
@@ -303,7 +305,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                 )
                             ])
                         except Exception as e:
-                            logger.error(f"Error executing function {tool_call.name}: {e}")
+                            self.emit("error", f"Error executing function {tool_call.name}: {e}")
                             traceback.print_exc()
                         break
         return accumulated_input_text
@@ -426,9 +428,9 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                 await asyncio.sleep(0.1)
         
         except asyncio.CancelledError:
-            logger.debug("Receive loop cancelled")
+            self.emit("error", "Receive loop cancelled")
         except Exception as e:
-            logger.error(f"Fatal error in receive loop: {e}")
+            self.emit("error", e)
             traceback.print_exc()
             self._session_should_close.set()
     
@@ -450,7 +452,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                     if "closed" in str(e).lower():
                         self._session_should_close.set()
                         break
-                    logger.error(f"Keep-alive error: {e}")
+                    self.emit("error", f"Keep-alive error: {e}")
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -498,8 +500,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                 video=Blob(data=processed_jpeg, mime_type="image/jpeg")
             )
         except Exception as e:
-            logger.error(f"Video processing error: {str(e)}")
-            logger.debug(f"Failed frame details: {vars(video_data)}")
+            self.emit("error", f"Video processing error: {str(e)}")
 
     async def interrupt(self) -> None:
         """Interrupt current response"""
@@ -515,7 +516,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
             if self.audio_track and "AUDIO" in self.config.response_modalities:
                 self.audio_track.interrupt()
         except Exception as e:
-            logger.error(f"Interrupt error: {e}")
+            self.emit("error", f"Interrupt error: {e}")
     
     async def send_message(self, message: str) -> None:
         """Send a text message to get audio response"""
@@ -538,7 +539,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
             )
             await asyncio.sleep(0.1)
         except Exception as e:
-            logger.error(f"Error sending message: {e}")
+            self.emit("error", f"Error sending message: {e}")
             self._session_should_close.set()
 
     async def send_text_message(self, message: str) -> None:
@@ -548,7 +549,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         while not self._session or not self._session.session:
             if retry_count >= max_retries:
                 raise RuntimeError("No active Gemini session after maximum retries")
-            logger.debug("No active session, waiting for connection...")
+            self.emit("error", "No active session, waiting for connection...")
             await asyncio.sleep(1)
             retry_count += 1
         
@@ -558,7 +559,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                 turn_complete=True
             )
         except Exception as e:
-            logger.error(f"Error sending text message: {e}")
+            self.emit("error", f"Error sending text message: {e}")
             self._session_should_close.set()
     
     async def _cleanup_session(self, session: GeminiSession) -> None:
@@ -570,7 +571,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         try:
             await session.session_cm.__aexit__(None, None, None)
         except Exception as e:
-            logger.error(f"Error closing session: {e}")
+            self.emit("error", f"Error closing session: {e}")
     
     async def aclose(self) -> None:
         """Clean up all resources"""
@@ -602,7 +603,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
             try:
                 await self.audio_track.cleanup()
             except Exception as e:
-                logger.error(f"Error cleaning up audio track: {e}")
+                self.emit("error", f"Error cleaning up audio track: {e}")
                 
         self._buffered_audio = bytearray()
     
@@ -622,7 +623,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                 function_responses=function_responses
             )
         except Exception as e:
-            logger.error(f"Error sending tool response: {e}")
+            self.emit("error", f"Error sending tool response: {e}")
             self._session_should_close.set()
 
     def _convert_tools_to_gemini_format(self, tools: List[FunctionTool]) -> List[Tool]:
@@ -637,6 +638,6 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                 function_declaration = build_gemini_schema(tool)
                 function_declarations.append(function_declaration)
             except Exception as e:
-                logger.error(f"Failed to format tool {tool}: {e}")
+                self.emit("error", f"Failed to format tool {tool}: {e}")
                 continue
         return [Tool(function_declarations=function_declarations)] if function_declarations else []

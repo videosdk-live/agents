@@ -123,6 +123,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         self.base_url = base_url or OPENAI_BASE_URL
         if not self.api_key:
+            self.emit("error", "OpenAI API key must be provided or set in OPENAI_API_KEY environment variable")
             raise ValueError("OpenAI API key must be provided or set in OPENAI_API_KEY environment variable")
         self._http_session: Optional[aiohttp.ClientSession] = None
         self._session: Optional[OpenAISession] = None
@@ -205,6 +206,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
     async def create_response(self) -> None:
         """Create a response to the OpenAI realtime API"""
         if not self._session:
+            self.emit("error", "No active WebSocket session")
             raise RuntimeError("No active WebSocket session")
             
         response_event = {
@@ -248,15 +250,15 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
                 msg = await session.ws.receive()
                 
                 if msg.type == aiohttp.WSMsgType.CLOSED:
-                    print("WebSocket closed with reason:", msg.extra)
+                    self.emit("error", f"WebSocket closed with reason: {msg.extra}")
                     break
                 elif msg.type == aiohttp.WSMsgType.ERROR:
-                    print("WebSocket error:", msg.data)
+                    self.emit("error", f"WebSocket error: {msg.data}")
                     break
                 elif msg.type == aiohttp.WSMsgType.TEXT:
                     await self._handle_message(json.loads(msg.data))
         except Exception as e:
-            print("WebSocket receive error:", str(e))
+            self.emit("error", f"WebSocket receive error: {str(e)}")
         finally:
             await self._cleanup_session(session)
 
@@ -311,7 +313,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
                 await self._handle_text_done(data)
 
         except Exception as e:
-            self.emit_error(f"Error handling event {event_type}: {str(e)}")
+            self.emit("error", f"Error handling event {event_type}: {str(e)}")
 
     async def _handle_speech_started(self, data: dict) -> None:
         """Handle speech detection start"""
@@ -368,10 +370,10 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
                                 })
                                 
                             except Exception as e:
-                                print(f"Error executing function {name}: {e}")
+                                self.emit("error", f"Error executing function {name}: {e}")
                             break
         except Exception as e:
-            print(f"Error handling output item done: {e}")
+            self.emit("error", f"Error handling output item done: {e}")
 
     async def _handle_content_part_added(self, data: dict) -> None:
         """Handle new content part"""
@@ -394,7 +396,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
                 if self.audio_track and self.loop:
                     self.loop.create_task(self.audio_track.add_new_bytes(base64_audio_data))
         except Exception as e:
-            print(f"[ERROR] Error handling audio delta: {e}")
+            self.emit("error", f"Error handling audio delta: {e}")
             traceback.print_exc()
     
     async def interrupt(self) -> None:
@@ -567,6 +569,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
     async def send_text_message(self, message: str) -> None:
         """Send a text message to the OpenAI realtime API"""
         if not self._session:
+            self.emit("error", "No active WebSocket session")
             raise RuntimeError("No active WebSocket session")
             
         await self.send_event({
