@@ -45,6 +45,14 @@ class MetricsCollector:
             'e2e_latency': 'e2eLatency',
             'function_tools_called': 'functionToolsCalled',
             'system_instructions': 'systemInstructions',
+            'errors': 'errors',
+            'function_tool_timestamps': 'functionToolTimestamps',
+            'stt_start_time': 'sttStartTime',
+            'stt_end_time': 'sttEndTime',
+            'tts_start_time': 'ttsStartTime',
+            'tts_end_time': 'ttsEndTime',
+            'llm_start_time': 'llmStartTime',
+            'llm_end_time': 'llmEndTime',
             'llm_provider_class': 'llmProviderClass',
             'llm_model_name': 'llmModelName',
             'stt_provider_class': 'sttProviderClass',
@@ -184,6 +192,28 @@ class MetricsCollector:
             interaction_data = asdict(self.data.current_interaction)
             interaction_data['timeline'] = [asdict(event) for event in self.data.current_interaction.timeline]
             transformed_data = self._transform_to_camel_case(interaction_data)
+
+            always_remove_fields = [
+                'errors',
+                'functionToolTimestamps',
+                'sttStartTime', 'sttEndTime',
+                'ttsStartTime', 'ttsEndTime',
+                'llmStartTime', 'llmEndTime'
+            ]
+            for field in always_remove_fields:
+                if field in transformed_data:
+                    del transformed_data[field]
+
+            if len(self.data.interactions) > 1: 
+                provider_fields = [
+                    'systemInstructions',
+                    'llmProviderClass', 'llmModelName',
+                    'sttProviderClass', 'sttModelName',
+                    'ttsProviderClass', 'ttsModelName'
+                ]
+                for field in provider_fields:
+                    if field in transformed_data:
+                        del transformed_data[field]
 
             interaction_payload = {
                 "sessionId": self.data.session_id,           
