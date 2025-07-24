@@ -95,7 +95,7 @@ class RealtimeInteractionData:
     interrupted: bool = False
     function_tools_called: List[str] = field(default_factory=list)
     timeline: List[TimelineEvent] = field(default_factory=list)
-
+    realtime_model_errors: List[Dict[str, Any]] = field(default_factory=list)
 
     def compute_latencies(self):
         if self.user_speech_start_time and self.agent_speech_start_time:

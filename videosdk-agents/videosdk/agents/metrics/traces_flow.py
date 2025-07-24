@@ -476,9 +476,21 @@ class TracesFlowManager:
             if interaction_data.thinking_delay is not None:
                 thinking_span = create_span("Thinking Delay", {"duration_ms": interaction_data.thinking_delay}, parent_span=interaction_span)
                 self.end_span(thinking_span)
+            if interaction_data.realtime_model_errors:
+                for error in interaction_data.realtime_model_errors:
+                    interaction_span.add_event(
+                        name="model_error",
+                        attributes={
+                            "message": error.get("message", "Unknown error"),
+                            "timestamp": error.get("timestamp", "N/A"),
+                        }
+                    )
+                model_status = StatusCode.ERROR
+            else:
+                model_status = StatusCode.OK
 
             if interaction_data.e2e_latency is not None:
                 e2e_span = create_span("E2E Latency", {"duration_ms": interaction_data.e2e_latency}, parent_span=interaction_span)
                 self.end_span(e2e_span)
-        
-        self.end_span(interaction_span, message="Realtime interaction trace created from data.") 
+            
+        self.end_span(interaction_span, message="Realtime interaction trace created from data.", status_code=model_status) 
