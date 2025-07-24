@@ -89,6 +89,17 @@ class AgentSession:
                 await traces_flow_manager.start_agent_session_config(config_attributes)
                 await traces_flow_manager.start_agent_session({})
 
+            if self.pipeline.__class__.__name__ == "CascadingPipeline":
+                configs = self.pipeline.get_component_configs() if hasattr(self.pipeline, 'get_component_configs') else {}
+                metrics_collector.set_provider_info(
+                    llm_provider=self.pipeline.llm.__class__.__name__ if self.pipeline.llm else "",
+                    llm_model=configs.get('llm', {}).get('model', "") if self.pipeline.llm else "",
+                    stt_provider=self.pipeline.stt.__class__.__name__ if self.pipeline.stt else "",
+                    stt_model=configs.get('stt', {}).get('model', "") if self.pipeline.stt else "",
+                    tts_provider=self.pipeline.tts.__class__.__name__ if self.pipeline.tts else "",
+                    tts_model=configs.get('tts', {}).get('model', "") if self.pipeline.tts else ""
+                )
+        
         if hasattr(self.pipeline, 'set_agent'):
             self.pipeline.set_agent(self.agent)
         

@@ -4,6 +4,7 @@ from opentelemetry import trace
 from .integration import create_span, complete_span, create_log
 from .models import InteractionMetrics, RealtimeInteractionData, TimelineEvent
 import asyncio
+import time
 
 class TracesFlowManager:
     """
@@ -150,36 +151,154 @@ class TracesFlowManager:
         with trace.use_span(interaction_span, end_on_exit=False):
 
             stt_errors = [e for e in interaction_data.errors if e['source'] == 'STT']
-            if interaction_data.stt_latency is not None or stt_errors:
-                attrs = {"duration_ms": interaction_data.stt_latency} if interaction_data.stt_latency is not None else {}
-                stt_span = create_span("STT Processing Time", attrs, parent_span=interaction_span)
-                for error in stt_errors:
-                    stt_span.add_event("error", attributes={"message": error['message'], "timestamp": error['timestamp']})
-                status = StatusCode.ERROR if stt_errors else StatusCode.OK
-                self.end_span(stt_span, status_code=status)
+            if interaction_data.stt_start_time is not None or interaction_data.stt_end_time is not None or stt_errors:
+
+                stt_span_name = "STT Processing"
+                if interaction_data.stt_latency:
+                    stt_span_name = f"STT Processing (took {interaction_data.stt_latency}ms)"
+                    
+                stt_attrs = {}
+                if interaction_data.stt_start_time:
+                    stt_attrs["stt_start_timestamp"] = interaction_data.stt_start_time
+                    stt_attrs["stt_start_time_readable"] = time.strftime("%H:%M:%S", time.localtime(interaction_data.stt_start_time))
+                if interaction_data.stt_end_time:
+                    stt_attrs["stt_end_timestamp"] = interaction_data.stt_end_time
+                    stt_attrs["stt_end_time_readable"] = time.strftime("%H:%M:%S", time.localtime(interaction_data.stt_end_time))
+                if interaction_data.stt_latency:
+                    stt_attrs["duration_ms"] = interaction_data.stt_latency
+                    
+                stt_span = create_span(stt_span_name, stt_attrs, parent_span=interaction_span)
+
+                if stt_span:
+                    if interaction_data.stt_start_time:
+                        audio_input_attrs = {
+                            "exact_timestamp": interaction_data.stt_start_time,
+                            "readable_time": time.strftime("%H:%M:%S", time.localtime(interaction_data.stt_start_time))
+                        }
+                        audio_input_span = create_span("Taking input started", audio_input_attrs, parent_span=stt_span)
+                        self.end_span(audio_input_span)
+
+                    if interaction_data.stt_end_time:
+                        convert_text_attrs = {
+                            "exact_timestamp": interaction_data.stt_end_time,
+                            "readable_time": time.strftime("%H:%M:%S", time.localtime(interaction_data.stt_end_time))
+                        }
+                        if interaction_data.stt_latency is not None:
+                            convert_text_attrs["convert_text_latency"] = interaction_data.stt_latency
+                        convert_span = create_span("Text Conversion Completed", convert_text_attrs, parent_span=stt_span)
+                        self.end_span(convert_span)
+
+                    for error in stt_errors:
+                        stt_span.add_event("error", attributes={
+                            "message": error["message"],
+                            "timestamp": error["timestamp"]
+                        })
+
+                    status = StatusCode.ERROR if stt_errors else StatusCode.OK
+                    self.end_span(stt_span, status_code=status)
 
             llm_errors = [e for e in interaction_data.errors if e['source'] == 'LLM']
-            if interaction_data.llm_latency is not None or llm_errors:
-                attrs = {"duration_ms": interaction_data.llm_latency, "llm_latency": interaction_data.llm_latency} if interaction_data.llm_latency is not None else {}
-                llm_span = create_span("LLM Processing Time", attrs, parent_span=interaction_span)
-                for error in llm_errors:
-                    llm_span.add_event("error", attributes={"message": error['message'], "timestamp": error['timestamp']})
-                status = StatusCode.ERROR if llm_errors else StatusCode.OK
-                self.end_span(llm_span, status_code=status)
+            if interaction_data.llm_start_time is not None or interaction_data.llm_end_time is not None or llm_errors:
 
-            if interaction_data.function_tools_called is not None:
-                for tool in interaction_data.function_tools_called:
-                    tool_span = create_span("Function Tool Called", {"tool_name": tool}, parent_span=interaction_span)
-                    self.end_span(tool_span)
+                llm_span_name = "LLM Processing"
+                if interaction_data.llm_latency:
+                    llm_span_name = f"LLM Processing (took {interaction_data.llm_latency}ms)"
+                    
+                llm_attrs = {}
+                if interaction_data.llm_start_time:
+                    llm_attrs["llm_start_timestamp"] = interaction_data.llm_start_time
+                    llm_attrs["llm_start_time_readable"] = time.strftime("%H:%M:%S", time.localtime(interaction_data.llm_start_time))
+                if interaction_data.llm_end_time:
+                    llm_attrs["llm_end_timestamp"] = interaction_data.llm_end_time
+                    llm_attrs["llm_end_time_readable"] = time.strftime("%H:%M:%S", time.localtime(interaction_data.llm_end_time))
+                if interaction_data.llm_latency:
+                    llm_attrs["duration_ms"] = interaction_data.llm_latency
+                    
+                llm_span = create_span(llm_span_name, llm_attrs, parent_span=interaction_span)
+
+                if llm_span:
+
+                    if interaction_data.llm_start_time:
+                        query_start_attrs = {
+                            "exact_timestamp": interaction_data.llm_start_time,
+                            "readable_time": time.strftime("%H:%M:%S", time.localtime(interaction_data.llm_start_time))
+                        }
+                        query_start_span = create_span("Query Process start", query_start_attrs, parent_span=llm_span)
+                        self.end_span(query_start_span)
+
+                    if interaction_data.llm_end_time:
+                        generate_output_attrs = {
+                            "exact_timestamp": interaction_data.llm_end_time,
+                            "readable_time": time.strftime("%H:%M:%S", time.localtime(interaction_data.llm_end_time))
+                        }
+                        generate_output_span = create_span("Generated Output", generate_output_attrs, parent_span=llm_span)
+                        self.end_span(generate_output_span)
+
+                    if interaction_data.function_tool_timestamps:
+                        for tool_data in interaction_data.function_tool_timestamps:
+                            tool_attrs = {
+                                "tool_name": tool_data["tool_name"],
+                                "exact_timestamp": tool_data["timestamp"],
+                                "readable_time": tool_data.get("readable_time", time.strftime("%H:%M:%S", time.localtime(tool_data["timestamp"])))
+                            }
+                            tool_span = create_span(f"Tool Calling: {tool_data['tool_name']}", tool_attrs, parent_span=llm_span)
+                            self.end_span(tool_span)
+
+                    for error in llm_errors:
+                        llm_span.add_event("error", attributes={
+                            "message": error["message"],
+                            "timestamp": error["timestamp"]
+                        })
+
+                    llm_status = StatusCode.ERROR if llm_errors else StatusCode.OK
+                    self.end_span(llm_span, status_code=llm_status)
 
             tts_errors = [e for e in interaction_data.errors if e['source'] == 'TTS']
-            if interaction_data.tts_latency is not None or tts_errors:
-                attrs = {"duration_ms": interaction_data.tts_latency, "ttfb_ms": interaction_data.ttfb, "tts_latency": interaction_data.tts_latency} if interaction_data.tts_latency is not None else {}
-                tts_span = create_span("TTS Processing Time ", attrs, parent_span=interaction_span)
-                for error in tts_errors:
-                    tts_span.add_event("error", attributes={"message": error['message'], "timestamp": error['timestamp']})
-                status = StatusCode.ERROR if tts_errors else StatusCode.OK
-                self.end_span(tts_span, status_code=status)
+            if interaction_data.tts_start_time is not None or interaction_data.tts_end_time is not None or tts_errors:
+
+                tts_span_name = "TTS Processing"
+                if interaction_data.tts_latency:
+                    tts_span_name = f"TTS Processing (took {interaction_data.tts_latency}ms)"
+                    
+                tts_attrs = {}
+                if interaction_data.tts_start_time:
+                    tts_attrs["tts_start_timestamp"] = interaction_data.tts_start_time
+                    tts_attrs["tts_start_time_readable"] = time.strftime("%H:%M:%S", time.localtime(interaction_data.tts_start_time))
+                if interaction_data.tts_end_time:
+                    tts_attrs["tts_end_timestamp"] = interaction_data.tts_end_time
+                    tts_attrs["tts_end_time_readable"] = time.strftime("%H:%M:%S", time.localtime(interaction_data.tts_end_time))
+                if interaction_data.tts_latency:
+                    tts_attrs["duration_ms"] = interaction_data.tts_latency
+                if interaction_data.ttfb:
+                    tts_attrs["ttfb_ms"] = interaction_data.ttfb
+                    
+                tts_span = create_span(tts_span_name, tts_attrs, parent_span=interaction_span)
+
+                if tts_span:
+                    if interaction_data.tts_start_time:
+                        input_start_attrs = {
+                            "exact_timestamp": interaction_data.tts_start_time,
+                            "readable_time": time.strftime("%H:%M:%S", time.localtime(interaction_data.tts_start_time))
+                        }
+                        input_audio_span = create_span("Taking input started", input_start_attrs, parent_span=tts_span)
+                        self.end_span(input_audio_span)
+
+                    if interaction_data.tts_end_time:
+                        audio_complete_attrs = {
+                            "exact_timestamp": interaction_data.tts_end_time,
+                            "readable_time": time.strftime("%H:%M:%S", time.localtime(interaction_data.tts_end_time))
+                        }
+                        speak_span = create_span("Audio Generation Completed", audio_complete_attrs, parent_span=tts_span)
+                        self.end_span(speak_span)
+
+                    for error in tts_errors:
+                        tts_span.add_event("error", attributes={
+                            "message": error["message"],
+                            "timestamp": error["timestamp"]
+                        })
+
+                    tts_status = StatusCode.ERROR if tts_errors else StatusCode.OK
+                    self.end_span(tts_span, status_code=tts_status)
 
             if interaction_data.timeline:
                 for event in interaction_data.timeline:

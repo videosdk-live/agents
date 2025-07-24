@@ -18,15 +18,35 @@ class InteractionMetrics:
     interaction_id: str  
     user_speech_start_time: Optional[float] = None
     user_speech_end_time: Optional[float] = None
+    
+    stt_start_time: Optional[float] = None
+    stt_end_time: Optional[float] = None
     stt_latency: Optional[float] = None
+    
+    llm_start_time: Optional[float] = None
+    llm_end_time: Optional[float] = None
     llm_latency: Optional[float] = None
+    
+    tts_start_time: Optional[float] = None
+    tts_end_time: Optional[float] = None
     tts_latency: Optional[float] = None 
     ttfb: Optional[float] = None
+    
+    function_tool_timestamps: List[Dict[str, Any]] = field(default_factory=list)
+    
     e2e_latency: Optional[float] = None
     interrupted: bool = False
     timestamp: float = field(default_factory=time.time)
     function_tools_called: List[str] = field(default_factory=list)
     system_instructions: str = ""
+    
+    llm_provider_class: str = ""
+    llm_model_name: str = ""
+    stt_provider_class: str = ""
+    stt_model_name: str = ""
+    tts_provider_class: str = ""
+    tts_model_name: str = ""
+    
     timeline: List[TimelineEvent] = field(default_factory=list)
     errors: List[Dict[str, Any]] = field(default_factory=list)
 
