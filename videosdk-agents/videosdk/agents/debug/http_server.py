@@ -540,7 +540,7 @@ class HttpServer:
           // Collapsible runner title
           const title = document.createElement("div");
           title.className = "collapsible-title";
-          title.innerText = `room: ${r.room} — status: ${r.status}, job_id: ${r.job_id}  ${r.id}`;
+          title.innerText = `room: ${r.room} — status: ${r.status}, task_id: ${r.task_id}  ${r.id}`;
           wrap.appendChild(title);
 
           // Collapsible content
@@ -627,18 +627,47 @@ class HttpServer:
 
             # Add worker stats as key-value data if not already present
             if not tracing_data.get("kv"):
-                stats = self._worker.get_stats()
-                tracing_data["kv"] = {
-                    "agent_name": stats.get("agent_name", "Unknown"),
-                    "worker_type": stats.get("worker_type", "Unknown"),
-                    "worker_load": stats.get("worker_load", 0.0),
-                    "current_jobs": stats.get("current_jobs", 0),
-                    "max_processes": stats.get("max_processes", 0),
-                    "backend_connected": stats.get("backend_connected", False),
-                    "worker_id": stats.get("worker_id", "unregistered"),
-                    "draining": stats.get("draining", False),
-                    "register": stats.get("register", False),
-                }
+                try:
+                    stats = self._worker.get_stats()
+                    tracing_data["kv"] = {
+                        "agent_id": stats.get("agent_id", "Unknown"),
+                        "executor_type": (
+                            getattr(
+                                self._worker.options, "executor_type", "Unknown"
+                            ).value
+                            if hasattr(self._worker.options, "executor_type")
+                            else "Unknown"
+                        ),
+                        "worker_load": stats.get("worker_load", 0.0),
+                        "current_jobs": stats.get("current_jobs", 0),
+                        "max_processes": stats.get("max_processes", 0),
+                        "backend_connected": stats.get("backend_connected", False),
+                        "worker_id": stats.get("worker_id", "unregistered"),
+                        "draining": stats.get("draining", False),
+                        "register": stats.get("register", False),
+                    }
+                except Exception as stats_error:
+                    logger.error(f"Error getting worker stats: {stats_error}")
+                    tracing_data["kv"] = {
+                        "agent_id": getattr(
+                            self._worker.options, "agent_id", "Unknown"
+                        ),
+                        "executor_type": (
+                            getattr(
+                                self._worker.options, "executor_type", "Unknown"
+                            ).value
+                            if hasattr(self._worker.options, "executor_type")
+                            else "Unknown"
+                        ),
+                        "worker_load": 0.0,
+                        "current_jobs": 0,
+                        "max_processes": 0,
+                        "backend_connected": False,
+                        "worker_id": "unregistered",
+                        "draining": False,
+                        "register": getattr(self._worker.options, "register", False),
+                        "error": f"Stats error: {str(stats_error)}",
+                    }
 
             # Add some default events if none exist
             if not tracing_data.get("events"):
@@ -646,18 +675,29 @@ class HttpServer:
                     {
                         "timestamp": time.time(),
                         "name": "worker_started",
-                        "data": {"agent_name": self._worker.options.agent_name},
+                        "data": {
+                            "agent_id": getattr(
+                                self._worker.options, "agent_id", "Unknown"
+                            )
+                        },
                     }
                 ]
 
             # Add graphs if available
-            if hasattr(self._worker, "_worker_load_graph"):
-                graph_data = self._worker._worker_load_graph.export()
-                if graph_data.get("data"):
-                    tracing_data["graph"] = [graph_data]
+            try:
+                if (
+                    hasattr(self._worker, "_worker_load_graph")
+                    and self._worker._worker_load_graph
+                ):
+                    graph_data = self._worker._worker_load_graph.export()
+                    if graph_data.get("data"):
+                        tracing_data["graph"] = [graph_data]
+            except Exception as graph_error:
+                logger.error(f"Error getting worker load graph: {graph_error}")
 
             return web.json_response({"tracing": tracing_data})
         except Exception as e:
+            logger.error(f"Error in worker debug endpoint: {e}")
             return web.json_response({"error": str(e)}, status=500)
 
     async def _runners_list(self, request: web.Request) -> web.Response:
@@ -685,7 +725,7 @@ class HttpServer:
                                 "id": job_id,
                                 "room": getattr(room_options, "room_id", "unknown"),
                                 "status": "running",  # Default status
-                                "job_id": job_id,
+                                "task_id": job_id,  # Changed from job_id to task_id
                             }
                         )
                     except Exception as e:
@@ -696,29 +736,45 @@ class HttpServer:
                                 "id": job_id,
                                 "room": "error",
                                 "status": "error",
-                                "job_id": job_id,
+                                "task_id": job_id,  # Changed from job_id to task_id
                             }
                         )
 
             # If no runners found and we're in direct mode, create a placeholder
-            if not runners and not self._worker.options.register:
+            if not runners and not getattr(self._worker.options, "register", False):
                 # Check if we have any active processes/threads
-                if (
-                    hasattr(self._worker, "process_manager")
-                    and self._worker.process_manager
-                ):
-                    stats = self._worker.process_manager.get_stats()
-                    active_jobs = stats.get("active_jobs", [])
+                try:
+                    if (
+                        hasattr(self._worker, "process_manager")
+                        and self._worker.process_manager
+                    ):
+                        stats = self._worker.process_manager.get_stats()
+                        # New execution module returns different stats format
+                        executor_stats = stats.get("executor_stats", {})
+                        active_tasks = executor_stats.get("pending_tasks", 0)
+                        running_tasks = executor_stats.get("running_tasks", 0)
+                        total_active = active_tasks + running_tasks
 
-                    for i, job in enumerate(active_jobs):
-                        runners.append(
-                            {
-                                "id": f"direct_job_{i}",
-                                "room": "direct_mode",
-                                "status": "running",
-                                "job_id": f"direct_job_{i}",
-                            }
-                        )
+                        for i in range(total_active):
+                            runners.append(
+                                {
+                                    "id": f"direct_job_{i}",
+                                    "room": "direct_mode",
+                                    "status": "running",
+                                    "task_id": f"direct_job_{i}",  # Changed from job_id to task_id
+                                }
+                            )
+                except Exception as e:
+                    logger.warning(f"Error getting process manager stats: {e}")
+                    # Add a default runner if we can't get stats
+                    runners.append(
+                        {
+                            "id": "direct_job_0",
+                            "room": "direct_mode",
+                            "status": "unknown",
+                            "task_id": "direct_job_0",  # Changed from job_id to task_id
+                        }
+                    )
 
             # If still no runners, add a placeholder for the current worker
             if not runners:
@@ -727,7 +783,7 @@ class HttpServer:
                         "id": "worker_main",
                         "room": "main_worker",
                         "status": "idle",
-                        "job_id": "worker_main",
+                        "task_id": "worker_main",  # Changed from job_id to task_id
                     }
                 )
 
@@ -757,15 +813,43 @@ class HttpServer:
                 tracing_data = Tracing.export_for_handle("worker")
 
                 # Add worker-specific key-value data
-                stats = self._worker.get_stats()
-                tracing_data["kv"] = {
-                    "runner_id": runner_id,
-                    "type": "main_worker",
-                    "status": "idle",
-                    "agent_name": stats.get("agent_name", "Unknown"),
-                    "worker_type": stats.get("worker_type", "Unknown"),
-                    "register": stats.get("register", False),
-                }
+                try:
+                    stats = self._worker.get_stats()
+                    tracing_data["kv"] = {
+                        "runner_id": runner_id,
+                        "type": "main_worker",
+                        "status": "idle",
+                        "agent_id": stats.get("agent_id", "Unknown"),
+                        "executor_type": (
+                            getattr(
+                                self._worker.options, "executor_type", "Unknown"
+                            ).value
+                            if hasattr(self._worker.options, "executor_type")
+                            else "Unknown"
+                        ),
+                        "register": stats.get("register", False),
+                    }
+                except Exception as e:
+                    logger.warning(
+                        f"Error getting worker stats for runner details: {e}"
+                    )
+                    tracing_data["kv"] = {
+                        "runner_id": runner_id,
+                        "type": "main_worker",
+                        "status": "idle",
+                        "agent_id": getattr(
+                            self._worker.options, "agent_id", "Unknown"
+                        ),
+                        "executor_type": (
+                            getattr(
+                                self._worker.options, "executor_type", "Unknown"
+                            ).value
+                            if hasattr(self._worker.options, "executor_type")
+                            else "Unknown"
+                        ),
+                        "register": getattr(self._worker.options, "register", False),
+                        "error": f"Stats error: {str(e)}",
+                    }
 
                 return web.json_response({"tracing": tracing_data})
 
@@ -808,7 +892,7 @@ class HttpServer:
                     room_options = job_info.job.get("room_options", {})
 
             tracing_data["kv"] = {
-                "job_id": runner_id,
+                "task_id": runner_id,  # Changed from job_id to task_id
                 "room_id": getattr(room_options, "room_id", "unknown"),
                 "room_name": getattr(room_options, "name", "unknown"),
                 "status": "running",
@@ -858,8 +942,8 @@ class HttpServer:
                             else "unregistered"
                         ),
                         "options": {
-                            "agent_name": getattr(
-                                self._worker.options, "agent_name", "Unknown"
+                            "agent_id": getattr(
+                                self._worker.options, "agent_id", "Unknown"
                             ),
                             "executor_type": (
                                 getattr(
@@ -867,6 +951,15 @@ class HttpServer:
                                 ).value
                                 if hasattr(self._worker.options, "executor_type")
                                 else "Unknown"
+                            ),
+                            "register": getattr(
+                                self._worker.options, "register", False
+                            ),
+                            "max_processes": getattr(
+                                self._worker.options, "max_processes", 0
+                            ),
+                            "log_level": getattr(
+                                self._worker.options, "log_level", "INFO"
                             ),
                         },
                     }
@@ -914,29 +1007,49 @@ class HttpServer:
         if not self._worker:
             return web.json_response({"error": "Worker not available"})
 
-        status = {
-            "agent_name": getattr(self._worker.options, "agent_name", "Unknown"),
-            "worker_type": (
-                getattr(self._worker.options, "worker_type", "Unknown").value
-                if hasattr(self._worker.options, "worker_type")
-                else "Unknown"
-            ),
-            "active_jobs": (
-                len(self._worker.process_manager.get_stats().get("active_jobs", []))
-                if self._worker.process_manager
+        try:
+            # Get current jobs count from the worker
+            current_jobs = (
+                len(self._worker._current_jobs)
+                if hasattr(self._worker, "_current_jobs")
                 else 0
-            ),
-            "connected": (
-                self._worker.backend_connection.is_connected
-                if self._worker.backend_connection
-                else False
-            ),
-            "worker_id": (
-                self._worker.backend_connection.worker_id
-                if self._worker.backend_connection
-                else "unregistered"
-            ),
-        }
+            )
+
+            status = {
+                "agent_id": getattr(self._worker.options, "agent_id", "Unknown"),
+                "executor_type": (
+                    getattr(self._worker.options, "executor_type", "Unknown").value
+                    if hasattr(self._worker.options, "executor_type")
+                    else "Unknown"
+                ),
+                "active_jobs": current_jobs,
+                "connected": (
+                    self._worker.backend_connection.is_connected
+                    if self._worker.backend_connection
+                    else False
+                ),
+                "worker_id": (
+                    self._worker.backend_connection.worker_id
+                    if self._worker.backend_connection
+                    else "unregistered"
+                ),
+                "register": getattr(self._worker.options, "register", False),
+                "draining": getattr(self._worker, "_draining", False),
+                "worker_load": getattr(self._worker, "_worker_load", 0.0),
+            }
+        except Exception as e:
+            logger.error(f"Error getting worker status: {e}")
+            status = {
+                "agent_id": getattr(self._worker.options, "agent_id", "Unknown"),
+                "executor_type": "Unknown",
+                "active_jobs": 0,
+                "connected": False,
+                "worker_id": "unregistered",
+                "register": getattr(self._worker.options, "register", False),
+                "draining": False,
+                "worker_load": 0.0,
+                "error": str(e),
+            }
 
         return web.json_response(status)
 
@@ -945,44 +1058,79 @@ class HttpServer:
         if not self._worker:
             return web.json_response({"error": "Worker not available"})
 
-        stats = self._worker.get_stats()
-        return web.json_response(stats)
+        try:
+            stats = self._worker.get_stats()
+            return web.json_response(stats)
+        except Exception as e:
+            logger.error(f"Error getting worker stats: {e}")
+            return web.json_response(
+                {
+                    "error": str(e),
+                    "agent_id": getattr(self._worker.options, "agent_id", "Unknown"),
+                    "executor_type": "Unknown",
+                    "current_jobs": 0,
+                    "max_processes": getattr(self._worker.options, "max_processes", 0),
+                    "register": getattr(self._worker.options, "register", False),
+                }
+            )
 
     async def _debug_info(self, request: web.Request) -> web.Response:
         """Debug information endpoint."""
-        debug_info = {
-            "server": {
-                "host": self._host,
-                "port": self._port,
-                "endpoints": ["/", "/health", "/worker", "/stats", "/debug"],
-            },
-            "worker": {
-                "available": self._worker is not None,
-                "options": (
-                    {
-                        "agent_name": (
-                            getattr(self._worker.options, "agent_name", "Unknown")
-                            if self._worker
-                            else None
-                        ),
-                        "executor_type": (
-                            getattr(
-                                self._worker.options, "executor_type", "Unknown"
-                            ).value
-                            if self._worker
-                            and hasattr(self._worker.options, "executor_type")
-                            else "Unknown"
-                        ),
-                        "register": (
-                            getattr(self._worker.options, "register", False)
-                            if self._worker
-                            else None
-                        ),
-                    }
-                    if self._worker
-                    else None
-                ),
-            },
-        }
+        try:
+            debug_info = {
+                "server": {
+                    "host": self._host,
+                    "port": self._port,
+                    "endpoints": ["/", "/health", "/worker", "/stats", "/debug"],
+                },
+                "worker": {
+                    "available": self._worker is not None,
+                    "options": (
+                        {
+                            "agent_id": (
+                                getattr(self._worker.options, "agent_id", "Unknown")
+                                if self._worker
+                                else None
+                            ),
+                            "executor_type": (
+                                getattr(
+                                    self._worker.options, "executor_type", "Unknown"
+                                ).value
+                                if self._worker
+                                and hasattr(self._worker.options, "executor_type")
+                                else "Unknown"
+                            ),
+                            "register": (
+                                getattr(self._worker.options, "register", False)
+                                if self._worker
+                                else None
+                            ),
+                            "max_processes": (
+                                getattr(self._worker.options, "max_processes", 0)
+                                if self._worker
+                                else 0
+                            ),
+                        }
+                        if self._worker
+                        else None
+                    ),
+                },
+            }
 
-        return web.json_response(debug_info)
+            return web.json_response(debug_info)
+        except Exception as e:
+            logger.error(f"Error in debug info endpoint: {e}")
+            return web.json_response(
+                {
+                    "error": str(e),
+                    "server": {
+                        "host": self._host,
+                        "port": self._port,
+                        "endpoints": ["/", "/health", "/worker", "/stats", "/debug"],
+                    },
+                    "worker": {
+                        "available": self._worker is not None,
+                        "options": None,
+                    },
+                }
+            )

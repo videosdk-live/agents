@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Optional
 
 from .agent import Agent
@@ -7,6 +8,8 @@ from .llm.chat_context import ChatMessage, ChatRole
 from .conversation_flow import ConversationFlow, DefaultConversationFlow
 from .pipeline import Pipeline
 import os
+
+logger = logging.getLogger(__name__)
 
 
 class AgentSession:

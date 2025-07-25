@@ -5,8 +5,17 @@ from typing import Callable, Coroutine, Optional, Any
 import os
 import asyncio
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum, unique
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .worker import ExecutorType, WorkerPermissions, _default_executor_type
+else:
+    # Import at runtime to avoid circular imports
+    ExecutorType = None
+    WorkerPermissions = None
+    _default_executor_type = None
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +26,7 @@ _current_job_context: ContextVar[Optional["JobContext"]] = ContextVar(
 
 @dataclass
 class RoomOptions:
-    room_id: str
+    room_id: Optional[str] = None
     auth_token: Optional[str] = None
     name: Optional[str] = "Agent"
     playground: bool = True
@@ -32,22 +41,142 @@ class RoomOptions:
     signaling_base_url: Optional[str] = None
 
 
+@dataclass
+class Options:
+    """Configuration options for WorkerJob execution."""
+
+    executor_type: Any = None  # Will be set in __post_init__
+    """Which executor to use to run jobs. Automatically selected based on platform."""
+
+    num_idle_processes: int = 1
+    """Number of idle processes/threads to keep warm."""
+
+    initialize_timeout: float = 10.0
+    """Maximum amount of time to wait for a process/thread to initialize/prewarm"""
+
+    close_timeout: float = 60.0
+    """Maximum amount of time to wait for a job to shut down gracefully"""
+
+    memory_warn_mb: float = 500.0
+    """Memory warning threshold in MB."""
+
+    memory_limit_mb: float = 0.0
+    """Maximum memory usage for a job in MB. Defaults to 0 (disabled)."""
+
+    ping_interval: float = 30.0
+    """Interval between health check pings."""
+
+    max_processes: int = 1
+    """Maximum number of processes/threads."""
+
+    agent_id: str = "VideoSDKAgent"
+    """ID of the agent."""
+
+    auth_token: Optional[str] = None
+    """VideoSDK authentication token. Uses VIDEOSDK_AUTH_TOKEN env var if not provided."""
+
+    permissions: Any = None  # Will be set in __post_init__
+    """Permissions for the agent participant."""
+
+    max_retry: int = 16
+    """Maximum number of times to retry connecting to VideoSDK."""
+
+    load_threshold: float = 0.75
+    """Load threshold above which worker is marked as unavailable."""
+
+    register: bool = False
+    """Whether to register with the backend. Defaults to False for local development."""
+
+    signaling_base_url: str = "api.videosdk.live"
+    """Signaling base URL for VideoSDK services. Defaults to api.videosdk.live."""
+
+    host: str = "0.0.0.0"
+    """Host for the debug HTTP server."""
+
+    port: int = 8081
+    """Port for the debug HTTP server."""
+
+    log_level: str = "INFO"
+    """Log level for SDK logging. Options: DEBUG, INFO, WARNING, ERROR. Defaults to INFO."""
+
+    def __post_init__(self):
+        """Post-initialization setup."""
+        # Import here to avoid circular imports
+        from .worker import ExecutorType, WorkerPermissions, _default_executor_type
+
+        if self.executor_type is None:
+            self.executor_type = _default_executor_type
+
+        if self.permissions is None:
+            self.permissions = WorkerPermissions()
+
+        if not self.auth_token:
+            self.auth_token = os.getenv("VIDEOSDK_AUTH_TOKEN")
+
+
 class WorkerJob:
-    def __init__(self, entrypoint, jobctx=None):
+    def __init__(self, entrypoint, jobctx=None, options: Optional[Options] = None):
         """
         :param entrypoint: An async function accepting one argument: jobctx
         :param jobctx: A static object or a callable that returns a context per job
+        :param options: Configuration options for job execution
         """
         if not asyncio.iscoroutinefunction(entrypoint):
             raise TypeError("entrypoint must be a coroutine function")
         self.entrypoint = entrypoint
         self.jobctx = jobctx
+        self.options = options or Options()
 
     def start(self):
-        from .worker import Worker
+        from .worker import Worker, WorkerOptions
 
-        worker = Worker(self)
-        worker.run()
+        # Convert JobOptions to WorkerOptions for compatibility
+        worker_options = WorkerOptions(
+            entrypoint_fnc=self.entrypoint,
+            agent_id=self.options.agent_id,
+            auth_token=self.options.auth_token,
+            executor_type=self.options.executor_type,
+            num_idle_processes=self.options.num_idle_processes,
+            initialize_timeout=self.options.initialize_timeout,
+            close_timeout=self.options.close_timeout,
+            memory_warn_mb=self.options.memory_warn_mb,
+            memory_limit_mb=self.options.memory_limit_mb,
+            ping_interval=self.options.ping_interval,
+            max_processes=self.options.max_processes,
+            permissions=self.options.permissions,
+            max_retry=self.options.max_retry,
+            load_threshold=self.options.load_threshold,
+            register=self.options.register,
+            signaling_base_url=self.options.signaling_base_url,
+            host=self.options.host,
+            port=self.options.port,
+            log_level=self.options.log_level,
+        )
+
+        # Create worker and run with job context
+        worker = Worker(worker_options)
+
+        # If register=True, run the worker in backend mode (don't execute entrypoint immediately)
+        if self.options.register:
+            # Run the worker normally (for backend registration mode)
+            Worker.run_worker(worker_options)
+        else:
+            # Direct mode - run entrypoint immediately if we have a job context
+            if self.jobctx:
+                if callable(self.jobctx):
+                    job_context = self.jobctx()
+                else:
+                    job_context = self.jobctx
+
+                # Set the current job context and run the entrypoint
+                token = _set_current_job_context(job_context)
+                try:
+                    asyncio.run(self.entrypoint(job_context))
+                finally:
+                    _reset_current_job_context(token)
+            else:
+                # No job context provided, run worker normally
+                Worker.run_worker(worker_options)
 
 
 class JobContext:

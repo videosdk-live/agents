@@ -81,13 +81,13 @@ class VideoSDKHandler:
             self.audio_track = custom_microphone_audio_track
             if audio_sinks:
                 self.agent_audio_track = TeeCustomAudioStreamTrack(
-                    loop=self.loop, sinks=audio_sinks
+                    loop=self.loop, sinks=audio_sinks, pipeline=pipeline
                 )
             else:
                 self.agent_audio_track = None
         else:
             self.audio_track = TeeCustomAudioStreamTrack(
-                loop=self.loop, sinks=audio_sinks
+                loop=self.loop, sinks=audio_sinks, pipeline=pipeline
             )
             self.agent_audio_track = None
 
@@ -277,9 +277,12 @@ class VideoSDKHandler:
 
         def on_stream_enabled(stream: Stream):
             if stream.kind == "audio":
-                self.audio_listener_tasks[stream.id] = self.loop.create_task(
-                    self.add_audio_listener(stream)
-                )
+                logger.info(f"Audio stream enabled for participant: {peer_name}")
+                try:
+                    task = asyncio.create_task(self.add_audio_listener(stream))
+                    self.audio_listener_tasks[stream.id] = task
+                except Exception as e:
+                    logger.error(f"Error creating audio listener task: {e}")
             if stream.kind == "video" and self.vision:
                 self.video_listener_tasks[stream.id] = self.loop.create_task(
                     self.add_video_listener(stream)
@@ -297,13 +300,14 @@ class VideoSDKHandler:
                     video_task.cancel()
                     del self.video_listener_tasks[stream.id]
 
-        participant.add_event_listener(
-            ParticipantHandler(
-                participant_id=participant.id,
-                on_stream_enabled=on_stream_enabled,
-                on_stream_disabled=on_stream_disabled,
+        if participant.id != self.meeting.local_participant.id:
+            participant.add_event_listener(
+                ParticipantHandler(
+                    participant_id=participant.id,
+                    on_stream_enabled=on_stream_enabled,
+                    on_stream_disabled=on_stream_disabled,
+                )
             )
-        )
 
     def on_participant_left(self, participant: Participant):
         logger.info(f"Participant left: {participant.display_name}")
@@ -328,18 +332,46 @@ class VideoSDKHandler:
             self._schedule_session_end(self.session_timeout_seconds)
 
     async def add_audio_listener(self, stream: Stream):
-        while True:
-            try:
-                await asyncio.sleep(0.01)
-                frame = await stream.track.recv()
-                audio_data = frame.to_ndarray()[0]
-                pcm_frame = audio_data.flatten().astype(np.int16).tobytes()
-                if self.pipeline:
-                    await self.pipeline.on_audio_delta(pcm_frame)
+        try:
+            # Get the participant ID for this stream to check if it's the agent's own stream
+            stream_participant_id = None
+            for participant in self.meeting.participants.values():
+                for participant_stream in participant.streams.values():
+                    if participant_stream.id == stream.id:
+                        stream_participant_id = participant.id
+                        break
+                if stream_participant_id:
+                    break
 
-            except Exception as e:
-                logger.error(f"Audio processing error: {e}")
-                break
+            # Check if this is the agent's own audio stream
+            is_agent_stream = False
+            if stream_participant_id:
+                if self.meeting and self.meeting.local_participant:
+                    is_agent_stream = (
+                        stream_participant_id == self.meeting.local_participant.id
+                    )
+
+            # Skip processing if this is the agent's own stream
+            if is_agent_stream:
+                return
+
+            while True:
+                try:
+                    await asyncio.sleep(0.01)
+                    frame = await stream.track.recv()
+                    audio_data = frame.to_ndarray()[0]
+                    pcm_frame = audio_data.flatten().astype(np.int16).tobytes()
+                    if self.pipeline:
+                        await self.pipeline.on_audio_delta(pcm_frame)
+                    else:
+                        logger.warning("No pipeline available for audio processing")
+
+                except Exception as e:
+                    logger.error(f"Audio processing error: {e}")
+                    break
+
+        except Exception as e:
+            logger.error(f"Error in add_audio_listener: {e}")
 
     async def add_video_listener(self, stream: Stream):
         while True:

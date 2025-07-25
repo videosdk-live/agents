@@ -28,7 +28,7 @@ async def fetch_agent_init_config(
     Raises:
         RuntimeError: If the API call fails or returns invalid data
     """
-    url = f"{api_base_url}/v1/agent/init-config"
+    url = f"{api_base_url}/v2/agent/init-config"
     headers = {"Authorization": f"{auth_token}", "Content-Type": "application/json"}
 
     try:

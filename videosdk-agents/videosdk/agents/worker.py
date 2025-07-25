@@ -9,7 +9,14 @@ import logging
 
 from .init_config import fetch_agent_init_config
 
-from .ipc import ProcessManager, ExecutorType, ProcPoolConfig
+# Updated imports to use new execution module
+from .execution import (
+    ExecutorType,
+    ResourceType,
+    ResourceConfig,
+    TaskType,
+    TaskExecutor,
+)
 from .job import JobContext, RoomOptions, JobAcceptArguments, RunningJobInfo
 from .backend import (
     BackendConnection,
@@ -104,8 +111,8 @@ class WorkerOptions:
     load_threshold: float = 0.75
     """Load threshold above which worker is marked as unavailable."""
 
-    register: bool = True
-    """Whether to register with the backend."""
+    register: bool = False
+    """Whether to register with the backend. Defaults to False for local development."""
 
     signaling_base_url: str = "api.videosdk.live"
     """Signaling base URL for VideoSDK services. Defaults to api.videosdk.live."""
@@ -138,8 +145,8 @@ class JobRequest:
 
 
 @dataclass
-class SimulateJobInfo:
-    """Information for simulating a job with direct room joining."""
+class DirectRoomOptions:
+    """Information for direct room joining without backend registration."""
 
     room_id: str
     participant_identity: Optional[str] = None
@@ -172,7 +179,9 @@ class Worker:
         self._current_jobs: Dict[str, RunningJobInfo] = {}
         self._tasks: Set[asyncio.Task] = set()
         self.backend_connection: Optional[BackendConnection] = None
-        self.process_manager: Optional[ProcessManager] = None
+        self.process_manager: Optional[TaskExecutor] = (
+            None  # Changed from ProcessManager
+        )
         self._http_server: Optional[HttpServer] = None
 
         # Add debounce mechanism for status updates
@@ -218,7 +227,7 @@ class Worker:
 
     @staticmethod
     def run_worker(
-        options: WorkerOptions, simulate_job: Optional[SimulateJobInfo | str] = None
+        options: WorkerOptions, simulate_job: Optional[DirectRoomOptions | str] = None
     ):
         """
         Run a VideoSDK worker with the given options.
@@ -255,7 +264,9 @@ class Worker:
                 await worker.initialize()
 
                 if simulate_job:
-                    # Direct room joining mode
+                    # Direct room joining mode - force register=False for simulation
+                    logger.info("Simulation mode: forcing register=False")
+                    worker.options.register = False
                     await worker.simulate_job(simulate_job)
                 elif options.register:
                     # Backend registration mode
@@ -279,21 +290,34 @@ class Worker:
         """Initialize the worker."""
         logger.info("Initializing VideoSDK worker")
 
-        # Initialize process manager
-        self.process_manager = ProcessManager(
-            job_entrypoint_fnc=self.options.entrypoint_fnc,
-            initialize_process_fnc=self.options.initialize_process_fnc,
-            config=ProcPoolConfig(
-                num_idle_processes=self.options.num_idle_processes,
-                initialize_timeout=self.options.initialize_timeout,
-                close_timeout=self.options.close_timeout,
-                memory_warn_mb=self.options.memory_warn_mb,
-                memory_limit_mb=self.options.memory_limit_mb,
-                max_processes=self.options.max_processes,
-            ),
-            executor_type=self.options.executor_type,
+        # Initialize task executor with new execution architecture
+        # Convert ExecutorType to ResourceType
+        resource_type = (
+            ResourceType.THREAD
+            if self.options.executor_type == ExecutorType.THREAD
+            else ResourceType.PROCESS
         )
-        await self.process_manager.initialize()
+
+        config = ResourceConfig(
+            resource_type=resource_type,
+            num_idle_resources=self.options.num_idle_processes,
+            max_resources=self.options.max_processes,
+            initialize_timeout=self.options.initialize_timeout,
+            close_timeout=self.options.close_timeout,
+            memory_warn_mb=self.options.memory_warn_mb,
+            memory_limit_mb=self.options.memory_limit_mb,
+            ping_interval=self.options.ping_interval,
+            load_threshold=self.options.load_threshold,
+            max_concurrent_tasks=1,  # Each resource handles one task at a time
+            executor_type=self.options.executor_type,
+            # Legacy IPC compatibility - dedicated inference process
+            use_dedicated_inference_process=False,  # Disable dedicated inference process for now
+            inference_process_timeout=30.0,  # Longer timeout for AI model loading
+            inference_memory_warn_mb=1000.0,  # Higher threshold for AI models
+        )
+
+        self.process_manager = TaskExecutor(config)
+        await self.process_manager.start()
 
         # Initialize backend connection if registering
         if self.options.register:
@@ -333,6 +357,8 @@ class Worker:
             version="1.0.0",
             max_retry=self.options.max_retry,
             backend_url=registry_url,
+            load_threshold=self.options.load_threshold,
+            max_processes=self.options.max_processes,
         )
 
         # Set up message handlers
@@ -868,16 +894,60 @@ class Worker:
             logger.error(f"Error updating worker status: {e}")
 
     async def execute_job(self, job_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute a job with the given data."""
+        """Execute a job using the task executor."""
         if not self.process_manager:
-            raise RuntimeError("Process manager not initialized")
-        return await self.process_manager.execute_job(job_data)
+            raise RuntimeError("Task executor not initialized")
+
+        # Extract entrypoint function from job data
+        entrypoint = job_data.get("entrypoint", self.options.entrypoint_fnc)
+
+        # Execute using new task executor
+        result = await self.process_manager.execute(
+            entrypoint=entrypoint,
+            task_type=TaskType.JOB,
+            timeout=job_data.get("timeout", 300.0),
+            retry_count=job_data.get("retry_count", 3),
+            priority=job_data.get("priority", 0),
+            *job_data.get("args", ()),
+            **job_data.get("kwargs", {}),
+        )
+
+        # Convert TaskResult to expected format
+        return {
+            "status": result.status.value,
+            "result": result.result,
+            "error": result.error,
+            "execution_time": result.execution_time,
+            "task_id": result.task_id,
+        }
 
     async def execute_inference(self, inference_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute inference with the given data."""
+        """Execute an inference using the task executor."""
         if not self.process_manager:
-            raise RuntimeError("Process manager not initialized")
-        return await self.process_manager.execute_inference(inference_data)
+            raise RuntimeError("Task executor not initialized")
+
+        # Extract entrypoint function from inference data
+        entrypoint = inference_data.get("entrypoint", self.options.entrypoint_fnc)
+
+        # Execute using new task executor
+        result = await self.process_manager.execute(
+            entrypoint=entrypoint,
+            task_type=TaskType.INFERENCE,
+            timeout=inference_data.get("timeout", 300.0),
+            retry_count=inference_data.get("retry_count", 3),
+            priority=inference_data.get("priority", 0),
+            *inference_data.get("args", ()),
+            **inference_data.get("kwargs", {}),
+        )
+
+        # Convert TaskResult to expected format
+        return {
+            "status": result.status.value,
+            "result": result.result,
+            "error": result.error,
+            "execution_time": result.execution_time,
+            "task_id": result.task_id,
+        }
 
     async def launch_direct_job(self, room_options: "RoomOptions") -> None:
         """Launch a job directly without backend registration."""
@@ -902,12 +972,12 @@ class Worker:
         # Execute the job using the worker's entrypoint function
         await self.options.entrypoint_fnc(job_context)
 
-    async def simulate_job(self, info: SimulateJobInfo | str) -> None:
+    async def simulate_job(self, info: DirectRoomOptions | str) -> None:
         """Simulate a job for testing purposes."""
         if isinstance(info, str):
             # Simple string format: "room_id"
             room_id = info
-            info = SimulateJobInfo(room_id=room_id)
+            info = DirectRoomOptions(room_id=room_id)
 
         logger.info(f"Simulating job for room: {info.room_id}")
 
@@ -916,7 +986,7 @@ class Worker:
             room_id=info.room_id,
             name=info.room_name or f"test_room_{info.room_id}",
             auth_token=info.auth_token or self.options.auth_token,
-            # Enable automatic session ending for simulation
+            signaling_base_url=self.options.signaling_base_url,
             auto_end_session=True,
         )
 
@@ -925,13 +995,16 @@ class Worker:
 
     def get_stats(self) -> Dict[str, Any]:
         """Get worker statistics."""
+        # Calculate current load dynamically
+        job_count = len(self._current_jobs)
+        current_load = min(job_count / self.options.max_processes, 1.0)
+
         stats = {
-            "worker_load": self._worker_load,
+            "worker_load": current_load,
             "draining": self._draining,
-            "current_jobs": len(self._current_jobs),
+            "current_jobs": job_count,
             "max_processes": self.options.max_processes,
-            "agent_name": self.options.agent_id,
-            "worker_type": self.options.worker_type.value,
+            "agent_id": self.options.agent_id,
             "register": self.options.register,
         }
 
@@ -944,7 +1017,64 @@ class Worker:
             )
 
         if self.process_manager:
-            stats.update(self.process_manager.get_stats())
+            try:
+                process_stats = self.process_manager.get_stats()
+                logger.debug(f"Process manager stats: {process_stats}")
+
+                # Get current resource stats and dedicated inference status
+                if "resource_stats" in process_stats:
+                    stats["resource_stats"] = process_stats["resource_stats"]
+                    logger.debug(f"Resource stats: {process_stats['resource_stats']}")
+                if "dedicated_inference" in process_stats:
+                    stats["dedicated_inference"] = process_stats["dedicated_inference"]
+
+                # Also get current resource info for more detailed stats
+                try:
+                    resource_info = self.process_manager.get_resource_info()
+                    logger.debug(
+                        f"Resource info count: {len(resource_info) if resource_info else 0}"
+                    )
+
+                    if resource_info:
+                        stats["resource_info"] = [
+                            {
+                                "resource_id": info.resource_id,
+                                "resource_type": info.resource_type.value,
+                                "status": info.status.value,
+                                "current_load": info.current_load,
+                                "memory_usage_mb": info.memory_usage_mb,
+                                "cpu_usage_percent": info.cpu_usage_percent,
+                                "active_tasks": info.active_tasks,
+                                "total_tasks_processed": info.total_tasks_processed,
+                                "last_heartbeat": info.last_heartbeat,
+                                "metadata": info.metadata,
+                            }
+                            for info in resource_info
+                        ]
+
+                        # Add summary of resource status
+                        resource_summary = {
+                            "total_resources": len(resource_info),
+                            "available_resources": len(
+                                [r for r in resource_info if r.status == "IDLE"]
+                            ),
+                            "active_resources": len(
+                                [r for r in resource_info if r.status != "IDLE"]
+                            ),
+                            "dedicated_inference_active": any(
+                                r.resource_type == "DEDICATED_INFERENCE"
+                                and r.status != "IDLE"
+                                for r in resource_info
+                            ),
+                        }
+                        stats["resource_summary"] = resource_summary
+                        logger.debug(f"Resource summary: {resource_summary}")
+                except Exception as e:
+                    logger.debug(f"Could not get detailed resource info: {e}")
+            except Exception as e:
+                logger.error(f"Error getting process manager stats: {e}")
+                stats["resource_stats"] = {"error": str(e)}
+                stats["dedicated_inference"] = None
 
         return stats
 
@@ -1047,9 +1177,9 @@ class Worker:
         if self._tasks:
             await asyncio.gather(*self._tasks, return_exceptions=True)
 
-        # Shutdown process manager
+        # Shutdown task executor
         if self.process_manager:
-            await self.process_manager.shutdown()
+            await self.process_manager.stop()
 
         # Stop debug HTTP server
         if self._http_server:
