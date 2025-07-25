@@ -31,7 +31,9 @@ class BackendConnection:
         version: str = "1.0.0",
         max_retry: int = 16,
         http_proxy: Optional[str] = None,
-        backend_url: str = "ws://localhost:8081",
+        backend_url: str = None,
+        load_threshold: float = 0.75,
+        max_processes: int = 10,
     ):
         self.auth_token = auth_token
         self.agent_id = agent_id
@@ -40,6 +42,8 @@ class BackendConnection:
         self.max_retry = max_retry
         self.http_proxy = http_proxy
         self.backend_url = backend_url
+        self.load_threshold = load_threshold
+        self.max_processes = max_processes
 
         # Connection state
         self._closed = True
@@ -104,6 +108,14 @@ class BackendConnection:
         env_key = self._get_worker_id_env_key()
         os.environ[env_key] = worker_id
         logger.info(f"Saved worker ID to memory: {worker_id}")
+
+    def _load_persistent_worker_id(self) -> Optional[str]:
+        """Load worker ID from persistent storage (alias for memory-based method)."""
+        return self._load_memory_worker_id()
+
+    def _save_persistent_worker_id(self, worker_id: str) -> None:
+        """Save worker ID to persistent storage (alias for memory-based method)."""
+        self._save_memory_worker_id(worker_id)
 
     def _get_registry_assigned_worker_id(self) -> Optional[str]:
         """Get the worker ID that was previously assigned by the registry."""
@@ -300,9 +312,9 @@ class BackendConnection:
 
         # Parse backend URL
         parse = urlparse(self.backend_url)
-        scheme = parse.scheme
+        scheme = parse.scheme or "wss"
         if scheme.startswith("http"):
-            scheme = scheme.replace("http", "ws")
+            scheme = scheme.replace("http", "wss")
 
         base = f"{scheme}://{parse.netloc}{parse.path}".rstrip("/") + "/"
         agent_url = urljoin(base, "agent")
@@ -338,6 +350,9 @@ class BackendConnection:
             capabilities=["room", "voice", "stt", "tts"],
             registry_uuid="default",
             token=self.auth_token,
+            # Add workload configuration
+            load_threshold=self.load_threshold,
+            max_processes=self.max_processes,
         )
 
         logger.debug(

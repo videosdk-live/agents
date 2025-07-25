@@ -70,8 +70,12 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         """
         Send audio delta to the STT
         """
+
         if self.stt:
+
             await self.stt.process_audio(audio_data)
+        else:
+            logger.warning("⚠️ No STT component available")
         if self.vad:
             await self.vad.process_audio(audio_data)
 
@@ -82,14 +86,19 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             self.on_speech_stopped()
 
     async def on_stt_transcript(self, stt_response: STTResponse) -> None:
+        logger.info(
+            f"ConversationFlow.on_stt_transcript called: {stt_response.event_type}"
+        )
         if stt_response.event_type == SpeechEventType.FINAL:
             user_text = stt_response.data.text
+            logger.info(f"Final transcript received: '{user_text}'")
 
             self.agent.chat_context.add_message(role=ChatRole.USER, content=user_text)
 
             if self.turn_detector and self.turn_detector.detect_end_of_utterance(
                 self.agent.chat_context
             ):
+                logger.info("Turn detector triggered, processing with LLM")
                 if self.tts:
                     await self.tts.synthesize(self.run(user_text))
                 else:
@@ -97,6 +106,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                         pass
 
             if not self.turn_detector:
+                logger.info("No turn detector, processing with LLM immediately")
                 if self.tts:
                     await self.tts.synthesize(self.run(user_text))
                 else:
@@ -159,7 +169,9 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                             full_response = new_resp.content
                             prev_content_length = len(new_resp.content)
                     except Exception as e:
-                        logger.error(f"Error executing function {func_call['name']}: {e}")
+                        logger.error(
+                            f"Error executing function {func_call['name']}: {e}"
+                        )
                         continue
             else:
                 new_content = llm_chunk_resp.content[prev_content_length:]
@@ -176,6 +188,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
     async def say(self, message: str) -> None:
         if self.tts:
             await self.tts.synthesize(message)
+        else:
+            logger.warning("No TTS component found in conversation flow")
 
     async def process_text_input(self, text: str) -> None:
         """

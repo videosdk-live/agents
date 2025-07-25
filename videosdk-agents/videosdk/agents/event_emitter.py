@@ -6,21 +6,26 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T", contravariant=True)
 
+
 class EventEmitter(Generic[T]):
     def __init__(self) -> None:
         self._handlers: Dict[T, List[Callable[..., Any]]] = {}
 
-    def on(self, event: T, callback: Callable[..., Any] | None = None) -> Callable[..., Any]:
+    def on(
+        self, event: T, callback: Callable[..., Any] | None = None
+    ) -> Callable[..., Any]:
         def register(handler: Callable[..., Any]) -> Callable[..., Any]:
             if asyncio.iscoroutinefunction(handler):
-                raise ValueError("Async handlers are not supported. Use a sync wrapper.")
+                raise ValueError(
+                    "Async handlers are not supported. Use a sync wrapper."
+                )
             handlers = self._handlers.setdefault(event, [])
             if handler not in handlers:
                 handlers.append(handler)
             return handler
 
         return register if callback is None else register(callback)
-    
+
     def off(self, event: T, callback: Callable[..., Any]) -> None:
         if event in self._handlers:
             try:
@@ -48,7 +53,10 @@ class EventEmitter(Generic[T]):
         flags = code.co_flags
         has_varargs = flags & 0x04 != 0
 
-        if has_varargs:
+        # If the function expects no arguments (only self), don't pass any
+        if argcount == 1:  # Only self parameter
+            func()
+        elif has_varargs:
             func(*args)
         else:
             func(*args[:argcount])

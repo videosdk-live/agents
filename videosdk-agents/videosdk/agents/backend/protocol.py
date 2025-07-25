@@ -76,6 +76,10 @@ class WorkerMessage:
     current_load: Optional[float] = None
     token: Optional[str] = None  # Authentication token for registry
 
+    # Workload configuration from agent
+    load_threshold: Optional[float] = None  # Agent's load threshold (e.g., 0.8)
+    max_processes: Optional[int] = None  # Agent's max processes (e.g., 3)
+
     def dict(self) -> Dict[str, Any]:
         """Convert to dictionary, excluding None values."""
         result = {}

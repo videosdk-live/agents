@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, Literal
 import asyncio
 
@@ -15,12 +16,15 @@ from .room.room import VideoSDKHandler, TeeCustomAudioStreamTrack
 from .eou import EOU
 from .job import get_current_job_context
 
+logger = logging.getLogger(__name__)
+
+
 class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
     """
     Cascading pipeline implementation that processes data in sequence (STT -> LLM -> TTS).
     Inherits from Pipeline base class and adds cascade-specific events.
     """
-    
+
     def __init__(
         self,
         stt: STT | None = None,
@@ -32,7 +36,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
     ) -> None:
         """
         Initialize the cascading pipeline.
-        
+
         Args:
             stt: Speech-to-Text processor (optional)
             llm: Language Model processor (optional)
@@ -46,22 +50,40 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         self.agent = None
         self.conversation_flow = None
         self.avatar = avatar
-        
+
         super().__init__()
-        
+
     def set_agent(self, agent: Agent) -> None:
         self.agent = agent
 
     def _configure_components(self) -> None:
         if self.loop and self.tts:
             self.tts.loop = self.loop
+            logger.info("TTS loop configured")
             job_context = get_current_job_context()
             if self.avatar and job_context and job_context.room:
-                self.tts.audio_track = getattr(job_context.room, 'agent_audio_track', None) or job_context.room.audio_track
-            elif hasattr(self, 'audio_track'):
+                self.tts.audio_track = (
+                    getattr(job_context.room, "agent_audio_track", None)
+                    or job_context.room.audio_track
+                )
+                logger.info(f"TTS audio track configured from room (avatar mode)")
+            elif hasattr(self, "audio_track"):
                 self.tts.audio_track = self.audio_track
-    
+                logger.info(f"TTS audio track configured from pipeline")
+            else:
+                logger.warning("No audio track available for TTS configuration")
+
+            if self.tts.audio_track:
+                logger.info(
+                    f"TTS audio track successfully configured: {type(self.tts.audio_track).__name__}"
+                )
+            else:
+                logger.error(
+                    "TTS audio track is None - this will prevent audio playback"
+                )
+
     def set_conversation_flow(self, conversation_flow: ConversationFlow) -> None:
+        logger.info("Setting conversation flow in pipeline")
         self.conversation_flow = conversation_flow
         self.conversation_flow.stt = self.stt
         self.conversation_flow.llm = self.llm
@@ -69,17 +91,37 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         self.conversation_flow.agent = self.agent
         self.conversation_flow.vad = self.vad
         self.conversation_flow.turn_detector = self.turn_detector
+
+        logger.info(f"Conversation flow components configured:")
+        logger.info(
+            f"  - STT: {type(self.conversation_flow.stt).__name__ if self.conversation_flow.stt else 'None'}"
+        )
+        logger.info(
+            f"  - LLM: {type(self.conversation_flow.llm).__name__ if self.conversation_flow.llm else 'None'}"
+        )
+        logger.info(
+            f"  - TTS: {type(self.conversation_flow.tts).__name__ if self.conversation_flow.tts else 'None'}"
+        )
+        logger.info(
+            f"  - VAD: {type(self.conversation_flow.vad).__name__ if self.conversation_flow.vad else 'None'}"
+        )
+
         if self.conversation_flow.stt:
-            self.conversation_flow.stt.on_stt_transcript(self.conversation_flow.on_stt_transcript)
+            self.conversation_flow.stt.on_stt_transcript(
+                self.conversation_flow.on_stt_transcript
+            )
         if self.conversation_flow.vad:
             self.conversation_flow.vad.on_vad_event(self.conversation_flow.on_vad_event)
-        
+
     async def start(self, **kwargs: Any) -> None:
         if self.conversation_flow:
             await self.conversation_flow.start()
 
     async def send_message(self, message: str) -> None:
-        await self.conversation_flow.say(message)
+        if self.conversation_flow:
+            await self.conversation_flow.say(message)
+        else:
+            logger.warning("No conversation flow found in pipeline")
 
     async def send_text_message(self, message: str) -> None:
         """
@@ -95,7 +137,11 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         """
         Handle incoming audio data from the user
         """
-        await self.conversation_flow.send_audio_delta(audio_data)
+
+        if self.conversation_flow:
+            await self.conversation_flow.send_audio_delta(audio_data)
+        else:
+            logger.warning("⚠️ No conversation flow available for audio processing")
 
     async def cleanup(self) -> None:
         """Cleanup all pipeline components"""

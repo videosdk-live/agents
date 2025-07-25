@@ -1,13 +1,14 @@
 import logging
 import sys
 
+
 # Configure logging for the videosdk-agents module
 def setup_logging(level=logging.INFO):
     """Setup logging configuration for videosdk-agents."""
     # Create a formatter
     formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
     )
 
     # Setup console handler
@@ -15,7 +16,7 @@ def setup_logging(level=logging.INFO):
     console_handler.setFormatter(formatter)
 
     # Get the logger for videosdk.agents
-    logger = logging.getLogger('videosdk.agents')
+    logger = logging.getLogger("videosdk.agents")
     logger.setLevel(level)
 
     # Remove existing handlers to avoid duplicates
@@ -29,6 +30,7 @@ def setup_logging(level=logging.INFO):
     logger.propagate = False
 
     return logger
+
 
 # Note: Logging is now configured automatically when creating a Worker instance
 # based on the log_level field in WorkerOptions. No manual setup required.
@@ -51,8 +53,28 @@ from .utils import (
 )
 from .room.audio_stream import CustomAudioStreamTrack, TeeCustomAudioStreamTrack
 from .event_emitter import EventEmitter
-from .job import WorkerJob, JobContext, RoomOptions
-from .worker import Worker, WorkerOptions, WorkerType, SimulateJobInfo
+from .job import WorkerJob, JobContext, RoomOptions, Options
+from .worker import Worker, WorkerOptions, WorkerType, DirectRoomOptions
+
+# New execution module exports
+from .execution import (
+    ExecutorType,
+    ResourceType,
+    TaskType,
+    ResourceConfig,
+    TaskConfig,
+    TaskResult,
+    TaskStatus,
+    ResourceStatus,
+    ResourceInfo,
+    HealthMetrics,
+    ResourceManager,
+    ProcessResource,
+    ThreadResource,
+    TaskExecutor,
+)
+from .execution.inference_resource import DedicatedInferenceResource
+
 from .llm.llm import LLM, LLMResponse
 from .llm.chat_context import (
     ChatContext,
@@ -123,10 +145,27 @@ __all__ = [
     "encode",
     "JobContext",
     "RoomOptions",
+    "Options",
     "ImageContent",
     "Worker",
     "WorkerOptions",
     "WorkerType",
-    "SimulateJobInfo",
+    "DirectRoomOptions",
+    # New execution module exports
+    "ExecutorType",
+    "ResourceType",
+    "TaskType",
+    "ResourceConfig",
+    "TaskConfig",
+    "TaskResult",
+    "TaskStatus",
+    "ResourceStatus",
+    "ResourceInfo",
+    "HealthMetrics",
+    "ResourceManager",
+    "ProcessResource",
+    "ThreadResource",
+    "TaskExecutor",
+    "DedicatedInferenceResource",
     "setup_logging",
 ]
