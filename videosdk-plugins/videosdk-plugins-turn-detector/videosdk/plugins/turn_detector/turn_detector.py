@@ -51,6 +51,7 @@ class TurnDetector(EOU):
             
         except Exception as e:
             logger.error(f"Failed to initialize TurnSense model: {e}")
+            self.emit("error", f"Failed to initialize TurnSense model: {str(e)}")
             raise
     
     def _get_last_user_message(self, chat_context: ChatContext) -> str:
@@ -113,6 +114,7 @@ class TurnDetector(EOU):
             float: Probability score (0.0 to 1.0)
         """
         if not self.session or not self.tokenizer:
+            self.emit("error", "TurnSense model not initialized")
             raise RuntimeError("Model not initialized")
         
         try:
@@ -141,6 +143,7 @@ class TurnDetector(EOU):
             
         except Exception as e:
             logger.error(f"Error getting EOU probability: {e}")
+            self.emit("error", f"Error getting EOU probability: {str(e)}")
             return 0.0
 
     def detect_end_of_utterance(self, chat_context: ChatContext, threshold: Optional[float] = None) -> bool:
@@ -161,9 +164,13 @@ class TurnDetector(EOU):
             probability = self.get_eou_probability(chat_context)
             is_eou = probability >= threshold
             
+            if not is_eou:
+                self.emit("error", f"Turn detection failed: probability {probability} below threshold {threshold}")
+            
             return is_eou
             
         except Exception as e:
             logger.error(f"Error during EOU detection: {e}")
+            self.emit("error", f"Error during EOU detection: {str(e)}")
             return False
 
