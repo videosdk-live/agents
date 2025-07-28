@@ -309,9 +309,24 @@ class TracesFlowManager:
                         agent_speech_span = create_span("Agent Speech", {"duration_ms": event.duration_ms, "text": event.text}, parent_span=interaction_span)
                         self.end_span(agent_speech_span)    
 
-            if interaction_data.e2e_latency is not None:
-                e2e_span = create_span("E2E Processing Time", {"duration_ms": interaction_data.e2e_latency, "e2e_latency": interaction_data.e2e_latency}, parent_span=interaction_span)
-                self.end_span(e2e_span)
+        if interaction_data.errors:
+            vad_turn_errors = [e for e in interaction_data.errors if e['source'] in ['VAD', 'TURN-D']]
+            
+            if vad_turn_errors:
+                sources = set(error['source'] for error in vad_turn_errors)
+                span_name = "VAD Processing Error" if sources == {'VAD'} else "Turn Detector Processing Error"
+
+                vad_turn_span = create_span(span_name, parent_span=interaction_span)
+                if vad_turn_span:
+                    for error in vad_turn_errors:
+                        vad_turn_span.add_event("error", attributes={
+                            "message": error["message"],
+                            "timestamp": error["timestamp"],
+                            "source": error["source"]
+                        })
+                    
+                    status = StatusCode.ERROR
+                    self.end_span(vad_turn_span, status_code=status)
         
         self.end_span(interaction_span, message="Interaction trace created from data.")
 

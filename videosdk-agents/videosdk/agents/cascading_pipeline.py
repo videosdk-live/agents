@@ -53,6 +53,10 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
             self.llm.on("error", lambda data: self.on_component_error("LLM", data))
         if self.tts:
             self.tts.on("error", lambda data: self.on_component_error("TTS", data))
+        if self.vad:
+            self.vad.on("error", lambda data: self.on_component_error("VAD", data))
+        if self.turn_detector:
+            self.turn_detector.on("error", lambda data: self.on_component_error("TURN-D", data))
         
         super().__init__()
         
@@ -165,7 +169,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
 
 
     def on_component_error(self, source: str, error_data: Any) -> None:
-        """Handle error events from components (STT, LLM, TTS)"""
+        """Handle error events from components (STT, LLM, TTS, VAD, TURN-D)"""
         self.emit("error", {"source": source, "details": error_data})
         from .metrics import metrics_collector
         metrics_collector.add_error(source, str(error_data))
