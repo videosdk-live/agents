@@ -16,11 +16,16 @@ from ..metrics import metrics_collector
 from ..metrics.integration import auto_initialize_telemetry_and_logs
 from typing import Callable, Optional, Any
 from ..metrics.realtime_collector import realtime_metrics_collector
+import requests
+
+START_RECORDING_URL = "https://api.videosdk.live/v2/recordings/participant/start"
+STOP_RECORDING_URL = "https://api.videosdk.live/v2/recordings/participant/stop"
+MERGE_RECORDINGS_URL = "https://api.videosdk.live/v2/recordings/participant/merge"
  
 load_dotenv()
 
 class VideoSDKHandler:
-    def __init__(self, *, meeting_id: str, auth_token: str | None = None, name: str, pipeline: Pipeline, loop: AbstractEventLoop, vision: bool = False,custom_camera_video_track=None, 
+    def __init__(self, *, meeting_id: str, auth_token: str | None = None, name: str, pipeline: Pipeline, loop: AbstractEventLoop, vision: bool = False, recording: bool = False, custom_camera_video_track=None, 
         custom_microphone_audio_track=None,audio_sinks=None, on_room_error: Optional[Callable[[Any], None]] = None):
         self.loop = loop
         self.meeting_id = meeting_id
@@ -29,6 +34,7 @@ class VideoSDKHandler:
         self.agent_meeting = None
         self._session_id: Optional[str] = None
         self._session_id_collected = False
+        self.recording = recording
         
         self.traces_flow_manager = TracesFlowManager(room_id=self.meeting_id)
         metrics_collector.set_traces_flow_manager(self.traces_flow_manager)
@@ -99,6 +105,8 @@ class VideoSDKHandler:
             video_task.cancel()
         if self.traces_flow_manager:
             self.traces_flow_manager.end_agent_joined_meeting()
+        if self.recording:
+            self.loop.create_task(self.stop_and_merge_recordings())
 
         self.meeting.leave()
 
@@ -110,6 +118,8 @@ class VideoSDKHandler:
         self._meeting_joined_data = data
         self.loop.create_task(self._collect_session_id())
         self.loop.create_task(self._collect_meeting_attributes())
+        if self.recording:
+            self.loop.create_task(self.start_participants_recording())
 
     def on_meeting_left(self, data):
         print(f"Meeting Left", data)
@@ -294,3 +304,45 @@ class VideoSDKHandler:
                 self.traces_flow_manager.start_agent_joined_meeting(agent_joined_attributes)
         except Exception as e:
             print(f"Error collecting meeting attributes and creating spans: {e}")
+
+    async def start_participants_recording(self) :
+        await self.start_participant_recording(self.meeting.local_participant.id)
+        for participant in self.meeting.participants.values():
+            await self.start_participant_recording(participant.id)
+
+    async def stop_participants_recording(self):
+        await self.stop_participant_recording(self.meeting.local_participant.id)
+        for participant_id in self.participants_data.keys():
+            print("stopping participant", participant_id)
+            await self.stop_participant_recording(participant_id)
+             
+    async def start_participant_recording(self, id: str):
+        headers = {'Authorization' : self.auth_token,'Content-Type' : 'application/json'}
+        response = requests.request("POST", START_RECORDING_URL,json = {
+		"roomId" : self.meeting_id,
+		"participantId" : id
+	    },headers = headers)
+        print("response for id", id, response.text)
+    
+    async def stop_participant_recording(self, id: str):
+        headers = {'Authorization' : self.auth_token,'Content-Type' : 'application/json'}
+        response = requests.request("POST", STOP_RECORDING_URL,json = {
+		"roomId" : self.meeting_id,
+		"participantId" : id
+	    },headers = headers)
+        print("response for id", id, response.text)
+        
+    async def merge_participant_recordings(self):
+        headers = {'Authorization' : self.auth_token,'Content-Type' : 'application/json'}
+        response = requests.request("POST", MERGE_RECORDINGS_URL,json = {
+		"sessionId" : self.meeting.session_id,
+		"channel1" : [{"participantId":self.meeting.local_participant.id}],
+		"channel2" : [{"participantId":participant_id} for participant_id in self.participants_data.keys()],
+	},headers = headers)
+        print(response.text)      
+
+    async def stop_and_merge_recordings(self):
+        await self.stop_participants_recording()
+        await self.merge_participant_recordings() 
+        print("stopped and merged recordings")
+                 
