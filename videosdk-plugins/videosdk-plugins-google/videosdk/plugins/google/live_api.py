@@ -40,13 +40,13 @@ AUDIO_SAMPLE_RATE = 48000
 DEFAULT_IMAGE_ENCODE_OPTIONS = EncodeOptions(
     format="JPEG",
     quality=75,
-    resize_options=ResizeOptions(width=1024, height=1024, strategy="scale_aspect_fit"),
+    resize_options=ResizeOptions(width=1024, height=1024),
 )
 
 GeminiEventTypes = Literal[
-   "tools_updated",
-   "instructions_updated",
+   "user_speech_started",
    "text_response",
+   "error"
 ]
 
 Voice = Literal["Puck", "Charon", "Kore", "Fenrir", "Aoede"]
@@ -79,7 +79,8 @@ class GeminiLiveConfig:
     presence_penalty: float | None = None
     frequency_penalty: float | None = None
     response_modalities: List[Modality] | None = field(default_factory=lambda: ["TEXT", "AUDIO"])
-    output_audio_transcription: AudioTranscriptionConfig | None = None
+    input_audio_transcription: AudioTranscriptionConfig | None = field(default_factory=dict)
+    output_audio_transcription: AudioTranscriptionConfig | None = field(default_factory=dict)
 
 @dataclass
 class GeminiSession:
@@ -214,7 +215,8 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                 language_code=self.config.language_code
             ),
             tools=self.formatted_tools or None,
-            output_audio_transcription=self.config.output_audio_transcription if self.config.output_audio_transcription else None
+            input_audio_transcription=self.config.input_audio_transcription,
+            output_audio_transcription=self.config.output_audio_transcription
         )
         try:
             session_cm = self.client.aio.live.connect(model=self.model, config=config)
@@ -316,6 +318,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                             try:
                                 if (input_transcription := server_content.input_transcription):
                                     if input_transcription.text:
+                                        self.emit("user_speech_started", {"type": "done"})
                                         global_event_emitter.emit("input_transcription", {
                                             "text": input_transcription.text,
                                             "is_final": False
@@ -337,12 +340,10 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                 active_response_id = f"response_{id(response)}"
                                 chunk_number = 0
                                 accumulated_text = "" 
-                            
                             if server_content.interrupted:
                                 if active_response_id:
                                     active_response_id = None
                                     accumulated_text = ""
-
                                 if self.audio_track and "AUDIO" in self.config.response_modalities:
                                     self.audio_track.interrupt()
                                 continue

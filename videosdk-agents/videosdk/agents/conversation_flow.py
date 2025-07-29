@@ -15,13 +15,14 @@ from .agent import Agent
 from .event_bus import global_event_emitter
 from .vad import VAD, VADResponse, VADEventType
 from .eou import EOU
+from .denoise import Denoise
 
 class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
     """
     Manages the conversation flow by listening to transcription events.
     """
 
-    def __init__(self, agent: Agent, stt: STT | None = None, llm: LLM | None = None, tts: TTS | None = None, vad: VAD | None = None, turn_detector: EOU | None = None) -> None:
+    def __init__(self, agent: Agent, stt: STT | None = None, llm: LLM | None = None, tts: TTS | None = None, vad: VAD | None = None, turn_detector: EOU | None = None, denoise: Denoise | None = None) -> None:
         """Initialize conversation flow with event emitter capabilities"""
         super().__init__() 
         self.transcription_callback: Callable[[STTResponse], Awaitable[None]] | None = None
@@ -30,13 +31,14 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self.tts = tts
         self.vad = vad
         self.turn_detector = turn_detector
-        self.agent = agent
-        self.is_turn_active = False
+        self.agent = agent   
+        self.denoise = denoise
         
         self.stt_lock = asyncio.Lock()
         self.llm_lock = asyncio.Lock()
         self.tts_lock = asyncio.Lock()
         
+        self.user_speech_callback: Callable[[], None] | None = None
         if self.stt:
             self.stt.on_stt_transcript(self.on_stt_transcript)
         if self.vad:
@@ -59,6 +61,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         """
         Send audio delta to the STT
         """
+        if self.denoise:
+            audio_data = await self.denoise.denoise(audio_data)
         if self.stt:
             async with self.stt_lock:
                 await self.stt.process_audio(audio_data)
@@ -85,7 +89,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             if self.turn_detector and self.turn_detector.detect_end_of_utterance(self.agent.chat_context):
                 if self.tts:
                     async with self.tts_lock:
-                        await self.tts.synthesize(self.run(user_text))
+                        await self._synthesize_with_tts(self.run(user_text))
                 else:
                     async for _ in self.run(user_text):
                         pass
@@ -195,17 +199,17 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         async for response in self.process_with_llm():
             yield response
     
-    @abstractmethod
     async def on_turn_start(self, transcript: str) -> None:
         """Called at the start of a user turn."""
         pass
     
-    @abstractmethod
     async def on_turn_end(self) -> None:
         """Called at the end of a user turn."""
         pass
 
     def on_speech_started(self) -> None:
+        if self.user_speech_callback:
+            self.user_speech_callback()
         if self.tts:
             asyncio.create_task(self._interrupt_tts())
 

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import os
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, List, Union
 import json
 
 from cerebras.cloud.sdk import Cerebras
-from videosdk.agents import LLM, LLMResponse, ChatContext, ChatRole, ChatMessage, FunctionCall, FunctionCallOutput, ToolChoice, FunctionTool, is_function_tool, build_openai_schema
+from videosdk.agents import LLM, LLMResponse, ChatContext, ChatRole, ChatMessage, FunctionCall, FunctionCallOutput, ToolChoice, FunctionTool, is_function_tool, build_openai_schema, ChatContent
 
 class CerebrasLLM(LLM):
     """
@@ -67,39 +67,46 @@ class CerebrasLLM(LLM):
         Yields:
             LLMResponse objects containing the model's responses
         """
+
+        def _extract_text_content(content: Union[str, List[ChatContent]]) -> str:
+            if isinstance(content, str):
+                return content
+            text_parts = [part for part in content if isinstance(part, str)]
+            return "\n".join(text_parts)
+
         completion_params = {
             "model": self.model,
             "messages": [
                 {
                     "role": msg.role.value,
-                    "content": msg.content,
-                    **({"name": msg.name} if hasattr(msg, 'name') else {})
-                } if isinstance(msg, ChatMessage) else
-                {
+                    "content": _extract_text_content(msg.content),
+                    **({"name": msg.name} if hasattr(msg, "name") else {}),
+                }
+                if isinstance(msg, ChatMessage)
+                else {
                     "role": "assistant",
                     "content": None,
                     "tool_calls": [
                         {
                             "id": f"call_{msg.name}",
-                            "type": "function", 
-                            "function": {
-                                "name": msg.name,
-                                "arguments": msg.arguments
-                            }
+                            "type": "function",
+                            "function": {"name": msg.name, "arguments": msg.arguments},
                         }
-                    ]
-                } if isinstance(msg, FunctionCall) else
-                {
+                    ],
+                }
+                if isinstance(msg, FunctionCall)
+                else {
                     "role": "tool",
                     "tool_call_id": f"call_{msg.name}",
-                    "content": msg.output
-                } if isinstance(msg, FunctionCallOutput) else None
+                    "content": msg.output,
+                }
+                if isinstance(msg, FunctionCallOutput)
+                else None
                 for msg in messages.items
-                if msg is not None 
+                if msg is not None
             ],
             "stream": True,
         }
-
         if self.temperature is not None:
             completion_params["temperature"] = self.temperature
         if self.max_completion_tokens is not None:
