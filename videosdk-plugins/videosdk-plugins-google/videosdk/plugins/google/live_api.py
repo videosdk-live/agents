@@ -45,9 +45,9 @@ DEFAULT_IMAGE_ENCODE_OPTIONS = EncodeOptions(
 )
 
 GeminiEventTypes = Literal[
-   "tools_updated",
-   "instructions_updated",
+   "user_speech_started",
    "text_response",
+   "error"
 ]
 
 Voice = Literal["Puck", "Charon", "Kore", "Fenrir", "Aoede"]
@@ -83,7 +83,6 @@ class GeminiLiveConfig:
     response_modalities: List[Modality] | None = field(default_factory=lambda: ["TEXT", "AUDIO"])
     input_audio_transcription: AudioTranscriptionConfig | None = field(default_factory=dict)
     output_audio_transcription: AudioTranscriptionConfig | None = field(default_factory=dict)
-
 
 @dataclass
 class GeminiSession:
@@ -334,6 +333,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                     if not self._user_speaking:
                                         await realtime_metrics_collector.set_user_speech_start()
                                         self._user_speaking = True
+                                    self.emit("user_speech_started", {"type": "done"})
                                     accumulated_input_text += input_transcription.text
                                     global_event_emitter.emit("input_transcription", {
                                         "text": accumulated_input_text,
@@ -352,12 +352,10 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                 active_response_id = f"response_{id(response)}"
                                 chunk_number = 0
                                 accumulated_text = "" 
-                            
                             if server_content.interrupted:
                                 if active_response_id:
                                     active_response_id = None
                                     accumulated_text = ""
-
                                 if self.audio_track and "AUDIO" in self.config.response_modalities:
                                     self.audio_track.interrupt()
                                 continue

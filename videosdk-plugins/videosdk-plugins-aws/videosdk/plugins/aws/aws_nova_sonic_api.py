@@ -35,8 +35,8 @@ NOVA_OUTPUT_SAMPLE_RATE = 24000
 
 # Event types
 NovaSonicEventTypes = Literal[
-    "audio_output",
-    "transcription",
+    "user_speech_started",
+    "text_response",
     "error"
 ]
 
@@ -359,6 +359,7 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                             await realtime_metrics_collector.set_user_speech_start()
                                             await realtime_metrics_collector.set_user_transcript(transcript)
                                             await realtime_metrics_collector.set_user_speech_end()
+                                            self._safe_emit("user_speech_started", {"type": "done"})
                                         elif role == 'ASSISTANT':
                                             await realtime_metrics_collector.set_agent_response(transcript)
 
@@ -472,7 +473,7 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
     async def emit(self, event_type: NovaSonicEventTypes, data: Dict[str, Any]) -> None:
         """Emit an event to subscribers"""
         try:
-            await super().emit(event_type, data)
+            super().emit(event_type, data)
         except Exception as e:
             self.emit("error", f"Error in emit for {event_type}: {e}")
 

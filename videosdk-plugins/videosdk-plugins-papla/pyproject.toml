@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "videosdk-plugins-papla"
+dynamic = ["version"]
+description = "VideoSDK Agent Framework plugin for Papla"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+authors = [{ name = "videosdk"}]
+keywords = ["video", "audio", "ai", "videosdk", "papla"]
+classifiers = [
+    "Intended Audience :: Developers",
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Communications :: Conferencing",
+    "Topic :: Multimedia :: Sound/Audio",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "videosdk-agents>=0.0.22",
+    "httpx>=0.27.0",
+    "pydub>=0.25.1"
+]
+
+[tool.hatch.version]
+path = "videosdk/plugins/papla/version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["videosdk"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/videosdk"]

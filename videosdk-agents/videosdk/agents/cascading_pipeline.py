@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Literal
+from typing import Any, Callable, Dict, Literal
 import asyncio
 
 from .pipeline import Pipeline
@@ -11,9 +11,9 @@ from .tts.tts import TTS
 from .vad import VAD
 from .conversation_flow import ConversationFlow
 from .agent import Agent
-from .room.room import VideoSDKHandler, TeeCustomAudioStreamTrack
 from .eou import EOU
 from .job import get_current_job_context
+from .denoise import Denoise
 
 class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
     """
@@ -29,6 +29,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         vad: VAD | None = None,
         turn_detector: EOU | None = None,
         avatar: Any | None = None,
+        denoise: Denoise | None = None,
     ) -> None:
         """
         Initialize the cascading pipeline.
@@ -58,6 +59,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         if self.turn_detector:
             self.turn_detector.on("error", lambda data: self.on_component_error("TURN-D", data))
         
+        self.denoise = denoise
         super().__init__()
         
     def set_agent(self, agent: Agent) -> None:
@@ -80,11 +82,41 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         self.conversation_flow.agent = self.agent
         self.conversation_flow.vad = self.vad
         self.conversation_flow.turn_detector = self.turn_detector
+        self.conversation_flow.denoise = self.denoise
+        self.conversation_flow.user_speech_callback = self.on_user_speech_started
         if self.conversation_flow.stt:
             self.conversation_flow.stt.on_stt_transcript(self.conversation_flow.on_stt_transcript)
         if self.conversation_flow.vad:
             self.conversation_flow.vad.on_vad_event(self.conversation_flow.on_vad_event)
-        
+
+    async def change_component(
+        self,
+        stt: STT | None = None,
+        llm: LLM | None = None,
+        tts: TTS | None = None,
+    ) -> None:
+        """Dynamically change pipeline components.
+        This will close the old components and set the new ones.
+        """
+        if stt and self.stt:
+            async with self.conversation_flow.stt_lock:
+                await self.stt.aclose()
+                self.stt = stt
+                self.conversation_flow.stt = stt
+                if self.conversation_flow.stt:
+                    self.conversation_flow.stt.on_stt_transcript(self.conversation_flow.on_stt_transcript)
+        if llm and self.llm:
+            async with self.conversation_flow.llm_lock:
+                await self.llm.aclose()
+                self.llm = llm
+                self.conversation_flow.llm = llm
+        if tts and self.tts:
+            async with self.conversation_flow.tts_lock:
+                await self.tts.aclose()
+                self.tts = tts
+                self._configure_components()
+                self.conversation_flow.tts = tts
+    
     async def start(self, **kwargs: Any) -> None:
         if self.conversation_flow:
             await self.conversation_flow.start()
@@ -107,6 +139,13 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         Handle incoming audio data from the user
         """
         await self.conversation_flow.send_audio_delta(audio_data)
+    
+    def on_user_speech_started(self) -> None:
+        """
+        Handle user speech started event
+        """
+        print("user speech started")
+        self._notify_speech_started()
 
     async def cleanup(self) -> None:
         """Cleanup all pipeline components"""

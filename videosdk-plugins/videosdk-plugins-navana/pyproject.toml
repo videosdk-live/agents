@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "videosdk-plugins-navana"
+dynamic = ["version"]
+description = "VideoSDK Agent Framework plugin for Navana STT services"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+authors = [{ name = "videosdk"}]
+keywords = ["video", "audio", "ai", "videosdk", "bodhi", "navana", "stt", "speech-to-text", "navana", "indian-languages"]
+classifiers = [
+    "Intended Audience :: Developers",
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Communications :: Conferencing",
+    "Topic :: Multimedia :: Sound/Audio",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "videosdk-agents>=0.0.22",
+    "aiohttp",
+    "numpy",
+    "bodhi-sdk",
+    "scipy>=1.11.0",
+]
+
+[tool.hatch.version]
+path = "videosdk/plugins/navana/version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["videosdk"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/videosdk"] 

@@ -12,8 +12,9 @@ from .room.room import VideoSDKHandler
 from .agent import Agent
 from .job import get_current_job_context
 from .metrics import realtime_metrics_collector
+from .denoise import Denoise
 
-class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtime_end","user_audio_input_data"]]):
+class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtime_end","user_audio_input_data", "user_speech_started"]]):
     """
     RealTime pipeline implementation that processes data in real-time.
     Inherits from Pipeline base class and adds realtime-specific events.
@@ -23,6 +24,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         self,
         model: RealtimeBaseModel,
         avatar: Any | None = None,
+        denoise: Denoise | None = None,
     ) -> None:
         """
         Initialize the realtime pipeline.
@@ -38,6 +40,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         self.agent = None
         self.avatar = avatar
         self.vision = False
+        self.denoise = denoise
         super().__init__()
         self.model.on("error", self.on_model_error)
 
@@ -76,6 +79,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
             **kwargs: Additional arguments for pipeline configuration
         """
         await self.model.connect()
+        self.model.on("user_speech_started", self.on_user_speech_started)
 
     async def send_message(self, message: str) -> None:
         """
@@ -99,6 +103,8 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         """
         Handle incoming audio data from the user
         """
+        if self.denoise:
+            audio_data = await self.denoise.denoise(audio_data)
         await self.model.handle_audio_input(audio_data)
 
     async def on_video_delta(self, video_data: av.VideoFrame):
@@ -108,6 +114,13 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         """
         if self.vision and hasattr(self.model, 'handle_video_input'):
             await self.model.handle_video_input(video_data)
+    
+    def on_user_speech_started(self, data: dict) -> None:
+        """
+        Handle user speech started event
+        """
+        print("User speech started")
+        self._notify_speech_started()
 
     async def leave(self) -> None:
         """

@@ -22,7 +22,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "videosdk-agents>=0.0.21",
+    "videosdk-agents>=0.0.22",
     "fastapi>=0.115.0",
     "httpx>=0.28.0",
     "twilio>=9.6.0",

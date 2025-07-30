@@ -47,9 +47,9 @@ DEFAULT_INPUT_AUDIO_TRANSCRIPTION = InputAudioTranscription(
 DEFAULT_TOOL_CHOICE = "auto"
 
 OpenAIEventTypes = Literal[
-    "instructions_updated",
-    "tools_updated",
-    "text_response"
+    "user_speech_started",
+    "text_response",
+    "error"
 ]
 DEFAULT_VOICE = "alloy"
 DEFAULT_INPUT_AUDIO_FORMAT = "pcm16"
@@ -318,6 +318,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
     async def _handle_speech_started(self, data: dict) -> None:
         """Handle speech detection start"""
         if "audio" in self.config.modalities:
+            self.emit("user_speech_started", {"type": "done"})
             await self.interrupt()
             if self.audio_track:
                 self.audio_track.interrupt()
