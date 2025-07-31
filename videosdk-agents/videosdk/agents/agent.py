@@ -11,7 +11,7 @@ from .a2a.card import AgentCard
 import uuid
 from .llm.chat_context import ChatContext, ChatRole
 from .mcp.mcp_manager import MCPToolManager
-from .mcp.mcp_service_provider import MCPServiceProvider
+from .mcp.mcp_server import MCPServiceProvider
 
 
 AgentEventTypes = Literal[

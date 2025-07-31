@@ -2,7 +2,7 @@ import asyncio
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from videosdk.agents.mcp.mcp_service_provider import MCPServiceProvider, MCPServerStdio, MCPServerHTTP
+from videosdk.agents.mcp.mcp_server    import MCPServiceProvider, MCPServerStdio, MCPServerHTTP
 from videosdk.agents.utils import FunctionTool, ToolError
 
 class MCPToolManager:
