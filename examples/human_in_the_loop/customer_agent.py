@@ -29,9 +29,9 @@ class CustomerAgent(Agent):
             instructions="You are a customer-facing agent for VideoSDK. You have access to various tools to assist with customer inquiries, provide support, and handle tasks. When a user asks for a discount percentage, always use the appropriate tool to retrieve and provide the accurate answer from your superior human agent.",
             mcp_servers=[
                 MCPServerStdio(
-                    command=sys.executable,
-                    args=[str(discord_mcp_server_path)],
-                    client_session_timeout_seconds=30
+                    executable_path=sys.executable,
+                    process_arguments=[str(discord_mcp_server_path)],
+                    session_timeout=30
                 ),
             ]
         )
