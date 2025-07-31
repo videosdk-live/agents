@@ -11,7 +11,7 @@ from .a2a.card import AgentCard
 import uuid
 from .llm.chat_context import ChatContext, ChatRole
 from .mcp.mcp_manager import MCPToolManager
-from .mcp.mcp_server import MCPServer
+from .mcp.mcp_server import MCPServiceProvider
 
 
 AgentEventTypes = Literal[
@@ -24,7 +24,7 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
     Abstract base class for creating custom agents.
     Inherits from EventEmitter to handle agent events and state updates.
     """
-    def __init__(self, instructions: str, tools: List[FunctionTool] = None, agent_id: str = None, mcp_servers: List[MCPServer] = None):
+    def __init__(self, instructions: str, tools: List[FunctionTool] = None, agent_id: str = None, mcp_servers: List[MCPServiceProvider] = None):
         super().__init__()
         self._tools = tools
         self._llm = None

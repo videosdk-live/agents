@@ -6,7 +6,7 @@ from typing import Any, Literal
 import time
 from scipy import signal
 
-from .onnx_runtime import VadModelWrapper, create_onnx_session, SUPPORTED_SAMPLE_RATES
+from .onnx_runtime import VadModelWrapper, SAMPLE_RATES
 from videosdk.agents.vad import VAD as BaseVAD, VADResponse, VADEventType, VADData
 
 class SileroVAD(BaseVAD):
@@ -41,7 +41,7 @@ class SileroVAD(BaseVAD):
         self._prefix_padding_duration = prefix_padding_duration
         
         try:
-            self._session = create_onnx_session(force_cpu)
+            self._session = VadModelWrapper.create_inference_session(force_cpu)
             self._model = VadModelWrapper(session=self._session, rate=model_sample_rate)
         except Exception as e:
             self.emit("error", f"Failed to initialize VAD model: {str(e)}")

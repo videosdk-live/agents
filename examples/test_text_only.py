@@ -58,18 +58,18 @@ class MyVoiceAgent(Agent):
             tools=[get_weather],
             mcp_servers=[
                 MCPServerStdio(
-                    command=sys.executable,
-                    args=[str(mcp_server_path)],
-                    client_session_timeout_seconds=30
+                    executable_path=sys.executable,
+                    process_arguments=[str(mcp_server_path)],
+                    session_timeout=30
                 ),
                 MCPServerStdio(
-                    command=sys.executable,
-                    args=[str(mcp_current_time_path)],
-                    client_session_timeout_seconds=30
+                    executable_path=sys.executable,
+                    process_arguments=[str(mcp_current_time_path)],
+                    session_timeout=30
                 ),
                 MCPServerHTTP(
-                    url="https://mcp.zapier.com/api/mcp/s/ODk5ODA5OTctMDM2Ny00ZDEyLTk2NjctNDQ4NDE3MDI5MjA3OjE3MzQ5NjE3LTg0MjQtNDJhZC1iOWJkLTE2OTBmMmRkYzI0ZQ==/mcp",
-                    client_session_timeout_seconds=30
+                    endpoint_url="YOUR_ZAPIER_MCP_SERVER_URL",
+                    session_timeout=30
                 )
             ]
         )
