@@ -144,7 +144,6 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         """
         Handle user speech started event
         """
-        print("user speech started")
         self._notify_speech_started()
 
     async def cleanup(self) -> None:

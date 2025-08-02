@@ -141,7 +141,7 @@ class TracesFlowManager:
                                        parent_span=self.main_interaction_span)
         if interaction_span:
             with trace.use_span(interaction_span):
-                create_log(f"Interaction STARTed  {interaction_name} started", "INFO", {
+                create_log(f"Interaction Started: {interaction_name}", "INFO", {
                     "interaction_id": interaction_data.interaction_id
                 })
 
@@ -196,6 +196,55 @@ class TracesFlowManager:
 
                     status = StatusCode.ERROR if stt_errors else StatusCode.OK
                     self.end_span(stt_span, status_code=status)
+            
+            eou_errors = [e for e in interaction_data.errors if e['source'] == 'TURN-D']
+            if interaction_data.eou_start_time is not None or interaction_data.eou_end_time is not None or eou_errors:
+
+                eou_span_name = "EOU Processing"
+                if interaction_data.eou_latency:
+                    eou_span_name = f"EOU Processing (took {interaction_data.eou_latency}ms)"
+                    
+                eou_attrs = {}
+                if interaction_data.eou_start_time:
+                    eou_attrs["eou_start_timestamp"] = interaction_data.eou_start_time
+                    eou_attrs["eou_start_time_readable"] = time.strftime("%H:%M:%S", time.localtime(interaction_data.eou_start_time))
+                if interaction_data.eou_end_time:
+                    eou_attrs["eou_end_timestamp"] = interaction_data.eou_end_time
+                    eou_attrs["eou_end_time_readable"] = time.strftime("%H:%M:%S", time.localtime(interaction_data.eou_end_time))
+                if interaction_data.eou_latency:
+                    eou_attrs["duration_ms"] = interaction_data.eou_latency
+                    
+                eou_span = create_span(eou_span_name, eou_attrs, parent_span=interaction_span)
+
+                if eou_span:
+                    if interaction_data.eou_start_time:
+                        eou_start_attrs = {
+                            "exact_timestamp": interaction_data.eou_start_time,
+                            "readable_time": time.strftime("%H:%M:%S", time.localtime(interaction_data.eou_start_time))
+                        }
+                        eou_start_span = create_span("EOU Detection Started", eou_start_attrs, parent_span=eou_span)
+                        self.end_span(eou_start_span)
+
+                    if interaction_data.eou_end_time:
+                        eou_complete_attrs = {
+                            "exact_timestamp": interaction_data.eou_end_time,
+                            "readable_time": time.strftime("%H:%M:%S", time.localtime(interaction_data.eou_end_time))
+                        }
+                        if interaction_data.eou_latency is not None:
+                            eou_complete_attrs["eou_detection_latency"] = interaction_data.eou_latency
+                        eou_complete_span = create_span("EOU Detection Completed", eou_complete_attrs, parent_span=eou_span)
+                        self.end_span(eou_complete_span)
+
+                    for error in eou_errors:
+                        eou_span.add_event("error", attributes={
+                            "message": error["message"],
+                            "timestamp": error["timestamp"]
+                        })
+
+                    eou_status = StatusCode.ERROR if eou_errors else StatusCode.OK
+                    self.end_span(eou_span, status_code=eou_status)
+                else:
+                    eou_span = None
 
             llm_errors = [e for e in interaction_data.errors if e['source'] == 'LLM']
             if interaction_data.llm_start_time is not None or interaction_data.llm_end_time is not None or llm_errors:
@@ -213,7 +262,7 @@ class TracesFlowManager:
                     llm_attrs["llm_end_time_readable"] = time.strftime("%H:%M:%S", time.localtime(interaction_data.llm_end_time))
                 if interaction_data.llm_latency:
                     llm_attrs["duration_ms"] = interaction_data.llm_latency
-                    
+                
                 llm_span = create_span(llm_span_name, llm_attrs, parent_span=interaction_span)
 
                 if llm_span:
@@ -271,7 +320,7 @@ class TracesFlowManager:
                     tts_attrs["duration_ms"] = interaction_data.tts_latency
                 if interaction_data.ttfb:
                     tts_attrs["ttfb_ms"] = interaction_data.ttfb
-                    
+                
                 tts_span = create_span(tts_span_name, tts_attrs, parent_span=interaction_span)
 
                 if tts_span:
@@ -310,11 +359,10 @@ class TracesFlowManager:
                         self.end_span(agent_speech_span)    
 
         if interaction_data.errors:
-            vad_turn_errors = [e for e in interaction_data.errors if e['source'] in ['VAD', 'TURN-D']]
+            vad_turn_errors = [e for e in interaction_data.errors if e['source'] in ['VAD']]
             
             if vad_turn_errors:
-                sources = set(error['source'] for error in vad_turn_errors)
-                span_name = "VAD Processing Error" if sources == {'VAD'} else "Turn Detector Processing Error"
+                span_name = "VAD Processing Error"
 
                 vad_turn_span = create_span(span_name, parent_span=interaction_span)
                 if vad_turn_span:
@@ -327,6 +375,11 @@ class TracesFlowManager:
                     
                     status = StatusCode.ERROR
                     self.end_span(vad_turn_span, status_code=status)
+        
+        # TODO: Add proper interruption span.
+        if interaction_data.interrupted:
+            interrupted_span = create_span("Interrupted", parent_span=interaction_span)
+            self.end_span(interrupted_span, message="Agent was interrupted") 
         
         self.end_span(interaction_span, message="Interaction trace created from data.")
 

@@ -32,6 +32,10 @@ class InteractionMetrics:
     tts_latency: Optional[float] = None 
     ttfb: Optional[float] = None
     
+    eou_start_time: Optional[float] = None
+    eou_end_time: Optional[float] = None
+    eou_latency: Optional[float] = None
+    
     function_tool_timestamps: List[Dict[str, Any]] = field(default_factory=list)
     
     e2e_latency: Optional[float] = None
@@ -67,6 +71,7 @@ class MetricsData:
     stt_start_time: Optional[float] = None
     llm_start_time: Optional[float] = None
     tts_start_time: Optional[float] = None
+    eou_start_time: Optional[float] = None
     user_input_start_time: Optional[float] = None
     is_agent_speaking: bool = False
     is_user_speaking: bool = False

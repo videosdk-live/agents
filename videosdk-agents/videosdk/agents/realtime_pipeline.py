@@ -119,7 +119,6 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         """
         Handle user speech started event
         """
-        print("User speech started")
         self._notify_speech_started()
 
     async def leave(self) -> None:

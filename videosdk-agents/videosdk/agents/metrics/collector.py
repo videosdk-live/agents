@@ -6,8 +6,9 @@ from opentelemetry.trace import Span
 from .models import TimelineEvent, InteractionMetrics, MetricsData
 from .analytics import AnalyticsClient
 from .traces_flow import TracesFlowManager
+import logging
 
-
+logger = logging.getLogger(__name__)
 class MetricsCollector:
     """Collects and tracks performance metrics for AI agent interactions"""
     
@@ -42,6 +43,7 @@ class MetricsCollector:
             'stt_latency': 'sttLatency',
             'llm_latency': 'llmLatency',
             'tts_latency': 'ttsLatency',
+            'eou_latency': 'eouLatency',
             'e2e_latency': 'e2eLatency',
             'function_tools_called': 'functionToolsCalled',
             'system_instructions': 'systemInstructions',
@@ -53,6 +55,8 @@ class MetricsCollector:
             'tts_end_time': 'ttsEndTime',
             'llm_start_time': 'llmStartTime',
             'llm_end_time': 'llmEndTime',
+            'eou_start_time': 'eouStartTime',
+            'eou_end_time': 'eouEndTime',
             'llm_provider_class': 'llmProviderClass',
             'llm_model_name': 'llmModelName',
             'stt_provider_class': 'sttProviderClass',
@@ -118,6 +122,8 @@ class MetricsCollector:
         e2e_components = []
         if interaction.stt_latency:
             e2e_components.append(interaction.stt_latency)
+        if interaction.eou_latency:
+            e2e_components.append(interaction.eou_latency)
         if interaction.llm_latency:
             e2e_components.append(interaction.llm_latency)
         if interaction.tts_latency: 
@@ -126,6 +132,31 @@ class MetricsCollector:
         if e2e_components:
             interaction.e2e_latency = round(sum(e2e_components), 4)
         
+    def _validate_interaction_has_required_latencies(self, interaction: InteractionMetrics) -> bool:
+        """
+        Validate that the interaction has at least one of the required latency metrics.
+        Returns True if at least one latency is present, False if ALL are absent/None.
+        """
+        stt_present = interaction.stt_latency is not None
+        tts_present = interaction.tts_latency is not None  
+        llm_present = interaction.llm_latency is not None
+        eou_present = interaction.eou_latency is not None
+        
+        if not any([stt_present, tts_present, llm_present, eou_present]):
+            return False
+        
+        present_latencies = []
+        if stt_present:
+            present_latencies.append("STT")
+        if tts_present:
+            present_latencies.append("TTS") 
+        if llm_present:
+            present_latencies.append("LLM")
+        if eou_present:
+            present_latencies.append("EOU")
+        
+        return True
+
     def set_session_id(self, session_id: str):
         """Set the session ID for metrics tracking"""
         self.data.session_id = session_id
@@ -186,6 +217,11 @@ class MetricsCollector:
         if self.data.current_interaction:
             self._calculate_e2e_metrics(self.data.current_interaction)
 
+            # Current interaction should atleast have one of the latencies.
+            if not self._validate_interaction_has_required_latencies(self.data.current_interaction):
+                self.data.current_interaction = None
+                return
+
             if self.traces_flow_manager:
                 self.traces_flow_manager.create_interaction_trace(self.data.current_interaction)
 
@@ -200,7 +236,9 @@ class MetricsCollector:
                 'sttStartTime', 'sttEndTime',
                 'ttsStartTime', 'ttsEndTime',
                 'llmStartTime', 'llmEndTime',
-                'is_a2a_enabled'
+                'eouStartTime', 'eouEndTime',
+                'is_a2a_enabled',
+                "interactionId"
             ]
 
             if not self.data.current_interaction.is_a2a_enabled: 
@@ -226,7 +264,7 @@ class MetricsCollector:
                 "data": [transformed_data]               
             }
             
-            self.analytics_client.send_interaction_analytics_safe(interaction_payload)
+            self.analytics_client.send_interaction_analytics_safe(interaction_payload) 
             self.data.current_interaction = None
     
     def on_user_speech_start(self):
@@ -235,13 +273,15 @@ class MetricsCollector:
             self.data.total_interruptions += 1
             if self.data.current_interaction:
                 self.data.current_interaction.interrupted = True
+                logger.info(f"User interrupted the agent. Total interruptions: {self.data.total_interruptions}")
         
         self.data.is_user_speaking = True
         self.data.user_input_start_time = time.perf_counter()
         
         if self.data.current_interaction:
             self.data.current_interaction.user_speech_start_time = self.data.user_input_start_time
-            self._start_timeline_event("user_speech", self.data.user_input_start_time)
+            if not any(event.event_type == "user_speech" and event.end_time is None for event in self.data.current_interaction.timeline):
+                self._start_timeline_event("user_speech", self.data.user_input_start_time)
     
     def on_user_speech_end(self):
         """Called when user stops speaking"""
@@ -258,7 +298,8 @@ class MetricsCollector:
         self.data.agent_speech_start_time = time.perf_counter()
         
         if self.data.current_interaction:
-            self._start_timeline_event("agent_speech", self.data.agent_speech_start_time)
+            if not any(event.event_type == "agent_speech" and event.end_time is None for event in self.data.current_interaction.timeline):
+                self._start_timeline_event("agent_speech", self.data.agent_speech_start_time)
     
     def on_agent_speech_end(self):
         """Called when agent stops speaking"""
@@ -267,12 +308,16 @@ class MetricsCollector:
         
         if self.data.current_interaction:
             self._end_timeline_event("agent_speech", agent_speech_end_time)
-        
-        if self.data.tts_start_time:
-            total_tts_latency = agent_speech_end_time - self.data.tts_start_time
+                
+        if self.data.tts_start_time and self.data.tts_first_byte_time:
+            total_tts_latency = self.data.tts_first_byte_time - self.data.tts_start_time
             if self.data.current_interaction:
                 self.data.current_interaction.tts_end_time = agent_speech_end_time
                 self.data.current_interaction.tts_latency = self._round_latency(total_tts_latency)
+            self.data.tts_start_time = None
+            self.data.tts_first_byte_time = None
+        elif self.data.tts_start_time:
+            # If we have start time but no first byte time, just reset
             self.data.tts_start_time = None
             self.data.tts_first_byte_time = None
     
@@ -284,12 +329,14 @@ class MetricsCollector:
     
     def on_stt_complete(self):
         """Called when STT processing completes"""
+        
         if self.data.stt_start_time:
             stt_end_time = time.perf_counter()
             stt_latency = stt_end_time - self.data.stt_start_time
             if self.data.current_interaction:
                 self.data.current_interaction.stt_end_time = stt_end_time
                 self.data.current_interaction.stt_latency = self._round_latency(stt_latency)
+                logger.info(f"stt latency: {self.data.current_interaction.stt_latency}ms")
             self.data.stt_start_time = None
     
     def on_llm_start(self):
@@ -307,6 +354,7 @@ class MetricsCollector:
             if self.data.current_interaction:
                 self.data.current_interaction.llm_end_time = llm_end_time
                 self.data.current_interaction.llm_latency = self._round_latency(llm_latency)
+                logger.info(f"llm ttfw: {self.data.current_interaction.llm_latency}ms")
             self.data.llm_start_time = None
     
     def on_tts_start(self):
@@ -323,16 +371,51 @@ class MetricsCollector:
             ttfb = now - self.data.tts_start_time
             if self.data.current_interaction:
                 self.data.current_interaction.ttfb = self._round_latency(ttfb)
+                logger.info(f"tts ttfb: {self.data.current_interaction.ttfb}ms")
             self.data.tts_first_byte_time = now
+    
+    def on_eou_start(self):
+        """Called when EOU (End of Utterance) processing starts"""
+        self.data.eou_start_time = time.perf_counter()
+        if self.data.current_interaction:
+            self.data.current_interaction.eou_start_time = self.data.eou_start_time
+            # self._start_timeline_event("eou_processing", self.data.eou_start_time)
+            
+    
+    def on_eou_complete(self):
+        """Called when EOU processing completes"""
+        if self.data.eou_start_time:
+            eou_end_time = time.perf_counter()
+            eou_latency = eou_end_time - self.data.eou_start_time
+            if self.data.current_interaction:
+                self.data.current_interaction.eou_end_time = eou_end_time
+                self.data.current_interaction.eou_latency = self._round_latency(eou_latency)
+                # self._end_timeline_event("eou_processing", eou_end_time)
+                logger.info(f"eou latency: {self.data.current_interaction.eou_latency}ms")
+            self.data.eou_start_time = None
     
     def set_user_transcript(self, transcript: str):
         """Set the user transcript for the current interaction and update timeline"""
         if self.data.current_interaction:
-            self._update_timeline_event_text("user_speech", transcript)
+            user_speech_events = [event for event in self.data.current_interaction.timeline 
+                                if event.event_type == "user_speech"]
+            
+            if user_speech_events:
+                most_recent_event = user_speech_events[-1]
+                most_recent_event.text = transcript
+            else:
+                current_time = time.perf_counter()
+                self._start_timeline_event("user_speech", current_time)
+                if self.data.current_interaction.timeline:
+                    self.data.current_interaction.timeline[-1].text = transcript
     
     def set_agent_response(self, response: str):
         """Set the agent response for the current interaction and update timeline"""
         if self.data.current_interaction:
+            if not any(event.event_type == "agent_speech" for event in self.data.current_interaction.timeline):
+                current_time = time.perf_counter()
+                self._start_timeline_event("agent_speech", current_time)
+            
             self._update_timeline_event_text("agent_speech", response)
     
     def add_function_tool_call(self, tool_name: str):

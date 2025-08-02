@@ -9,6 +9,7 @@ from .event_emitter import EventEmitter
 from .stt.stt import STT, STTResponse
 from .llm.llm import LLM
 from .llm.chat_context import ChatRole
+from .utils import is_function_tool, get_tool_info
 from .tts.tts import TTS
 from .stt.stt import SpeechEventType
 from .agent import Agent
@@ -17,6 +18,9 @@ from .vad import VAD, VADResponse, VADEventType
 from .eou import EOU
 from .metrics import metrics_collector
 from .denoise import Denoise
+import logging
+
+logger = logging.getLogger(__name__)
 
 class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
     """
@@ -34,6 +38,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self.turn_detector = turn_detector
         self.agent = agent   
         self.denoise = denoise
+        self._stt_started = False
         
         self.stt_lock = asyncio.Lock()
         self.llm_lock = asyncio.Lock()
@@ -46,8 +51,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             self.vad.on_vad_event(self.on_vad_event)
         
     async def start(self) -> None:
-        global_event_emitter.on("speech_started", self.on_speech_started)
-        global_event_emitter.on("speech_stopped", self.on_speech_stopped)
+        global_event_emitter.on("speech_started", self.on_speech_started_stt)
+        global_event_emitter.on("speech_stopped", self.on_speech_stopped_stt)
         
         if self.agent and self.agent.instructions:
             metrics_collector.set_system_instructions(self.agent.instructions)
@@ -80,88 +85,68 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         elif vad_response.event_type == VADEventType.END_OF_SPEECH:
             metrics_collector.on_user_speech_end()
             self.on_speech_stopped()
-            
-    async def _run_and_collect_response(self, transcript: str) -> AsyncIterator[str]:
-        """
-        Helper method to run LLM and collect response for metrics while yielding chunks
-        """
-        agent_response = ""
-        async for response_chunk in self.process_with_llm():
-            agent_response += response_chunk
-            yield response_chunk
-        
-        metrics_collector.set_agent_response(agent_response)
-
-    async def _synthesize_with_ttfb_monitoring(self, text_generator: AsyncIterator[str]) -> None:
-        """
-        🔧 Enhanced TTS synthesis with TTFB monitoring
-        """
-        if not self.tts:
-            return
-            
-        metrics_collector.on_tts_start()
-        
-        try:
-            first_audio_detected = False
-            
-            async def ttfb_monitoring_wrapper():
-                nonlocal first_audio_detected
-                async for chunk in text_generator:
-                    yield chunk
-                    if not first_audio_detected:
-                        first_audio_detected = True
-                        metrics_collector.on_tts_first_byte()  
-                        metrics_collector.on_agent_speech_start()
-            
-            await self.tts.synthesize(ttfb_monitoring_wrapper())
-            
-        finally:
-            metrics_collector.on_agent_speech_end()
 
     async def on_stt_transcript(self, stt_response: STTResponse) -> None:
+        """Handle STT transcript events"""
         if stt_response.event_type == SpeechEventType.FINAL:
             user_text = stt_response.data.text
+            await self._process_final_transcript(user_text)
+    
+    async def _process_final_transcript(self, user_text: str) -> None:
+        """Process final transcript with EOU detection and response generation"""
+        
+        # Fallback: If VAD is present but hasn't called on_user_speech_start yet,
+        if self.vad and not metrics_collector.data.is_user_speaking:
+            metrics_collector.on_user_speech_start()
+        
+        # Fallback: If STT hasn't been started yet, start it now
+        if not self._stt_started:
+            metrics_collector.start_new_interaction()
+            metrics_collector.on_stt_start()
+            self._stt_started = True
+    
+        metrics_collector.set_user_transcript(user_text)
+        metrics_collector.on_stt_complete()
+        
+        # Fallback: If VAD is present but hasn't called on_user_speech_end yet,
+        if self.vad and metrics_collector.data.is_user_speaking:
+            metrics_collector.on_user_speech_end()
+        elif not self.vad:
+            metrics_collector.on_user_speech_end()
+        
+        self.agent.chat_context.add_message(
+            role=ChatRole.USER,
+            content=user_text
+        )
+        
+        await self.on_turn_start(user_text)
+        
+        if self.turn_detector:
+            metrics_collector.on_eou_start()
+            eou_detected = self.turn_detector.detect_end_of_utterance(self.agent.chat_context)
+            metrics_collector.on_eou_complete()
             
-            metrics_collector.set_user_transcript(user_text)
-            metrics_collector.on_stt_complete()
-            
-            if not self.vad:
-                metrics_collector.on_user_speech_end()
-            
-            self.agent.chat_context.add_message(
-                role=ChatRole.USER,
-                content=user_text
-            )
-            
-            await self.on_turn_start(user_text)
-            
-            if self.turn_detector and self.turn_detector.detect_end_of_utterance(self.agent.chat_context):
-                if self.tts:
-                    try:
-                        await self._synthesize_with_ttfb_monitoring(self._run_and_collect_response(user_text))
-                    finally:
-                        metrics_collector.complete_current_interaction()
-                else:
-                    agent_response = ""
-                    async for response_chunk in self.run(user_text):
-                        agent_response += response_chunk
-                    metrics_collector.set_agent_response(agent_response)
-                    metrics_collector.complete_current_interaction()
-            
-            if not self.turn_detector:
-                if self.tts:
-                    try:
-                        await self._synthesize_with_ttfb_monitoring(self._run_and_collect_response(user_text))
-                    finally:
-                        metrics_collector.complete_current_interaction()
-                else:
-                    agent_response = ""
-                    async for response_chunk in self.run(user_text):
-                        agent_response += response_chunk
-                    metrics_collector.set_agent_response(agent_response)
-                    metrics_collector.complete_current_interaction()
-
-            await self.on_turn_end()
+            if eou_detected:
+                await self._generate_and_synthesize_response(user_text)
+            else:
+                metrics_collector.complete_current_interaction()
+        else:
+            await self._generate_and_synthesize_response(user_text)
+        
+        await self.on_turn_end()
+    
+    async def _generate_and_synthesize_response(self, user_text: str) -> None:
+        """Generate agent response and synthesize with TTS if available"""
+        try:
+            if self.tts:
+                await self._synthesize_with_tts(self.run(user_text))
+            else:
+                agent_response = ""
+                async for response_chunk in self.run(user_text):
+                    agent_response += response_chunk
+                metrics_collector.set_agent_response(agent_response)
+        finally:
+            metrics_collector.complete_current_interaction()
             
     async def process_with_llm(self) -> AsyncIterator[str]:
         """
@@ -174,40 +159,21 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             full_response = ""
             prev_content_length = 0
             
-        metrics_collector.on_llm_start()
-        
-        full_response = ""
-        prev_content_length = 0
-        
-        async for llm_chunk_resp in self.llm.chat(
-            self.agent.chat_context,
-            tools=self.agent._tools
-        ):
-            if llm_chunk_resp.metadata and "function_call" in llm_chunk_resp.metadata:
-                func_call = llm_chunk_resp.metadata["function_call"]
-                
-                metrics_collector.add_function_tool_call(func_call["name"])
-                
-                self.agent.chat_context.add_function_call(
-                    name=func_call["name"],
-                    arguments=json.dumps(func_call["arguments"]),
-                    call_id=func_call.get("call_id", f"call_{int(time.time())}")
-                )
-                
-                try:
-                    tool = next(
-                        (t for t in self.agent.tools if hasattr(t, '_tool_info') and t._tool_info.name == func_call["name"]),
-                        None
-                    )
-                except Exception as e:
-                    print(f"  Error while selecting tool: {e}")
-                    continue
+            metrics_collector.on_llm_start()
+            first_chunk_received = False
+            
             async for llm_chunk_resp in self.llm.chat(
                 self.agent.chat_context,
                 tools=self.agent._tools
             ):
+                if not first_chunk_received:
+                    first_chunk_received = True
+                    metrics_collector.on_llm_complete()
+                    
                 if llm_chunk_resp.metadata and "function_call" in llm_chunk_resp.metadata:
                     func_call = llm_chunk_resp.metadata["function_call"]
+                    
+                    metrics_collector.add_function_tool_call(func_call["name"])
                     
                     self.agent.chat_context.add_function_call(
                         name=func_call["name"],
@@ -217,26 +183,43 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                     
                     try:
                         tool = next(
-                            (t for t in self.agent.tools if hasattr(t, '_tool_info') and t._tool_info.name == func_call["name"]),
+                            (t for t in self.agent.tools if is_function_tool(t) and get_tool_info(t).name == func_call["name"]),
                             None
                         )
                     except Exception as e:
-                        print(f"  Error executing function {func_call['name']}: {e}")
+                        logger.error(f"Error while selecting tool: {e}")
                         continue
-            else:
-                new_content = llm_chunk_resp.content[prev_content_length:]
-                if new_content: 
-                    yield new_content
-                full_response = llm_chunk_resp.content
-                prev_content_length = len(llm_chunk_resp.content)
-        
-        metrics_collector.on_llm_complete()
-        
-        if full_response:
-            self.agent.chat_context.add_message(
-                role=ChatRole.ASSISTANT,
-                content=full_response
-            )
+                        
+                    if tool:
+                        try:
+                            result = await tool(**func_call["arguments"])
+                            self.agent.chat_context.add_function_output(
+                                name=func_call["name"],
+                                output=json.dumps(result),
+                                call_id=func_call.get("call_id", f"call_{int(time.time())}")
+                            )
+                            
+                            async for new_resp in self.llm.chat(self.agent.chat_context):
+                                new_content = new_resp.content[prev_content_length:]
+                                if new_content:
+                                    yield new_content
+                                full_response = new_resp.content
+                                prev_content_length = len(new_resp.content)
+                        except Exception as e:
+                            logger.error(f"Error executing function {func_call['name']}: {e}")
+                            continue
+                else:
+                    new_content = llm_chunk_resp.content[prev_content_length:]
+                    if new_content: 
+                        yield new_content
+                    full_response = llm_chunk_resp.content
+                    prev_content_length = len(llm_chunk_resp.content)
+            
+            if full_response:
+                self.agent.chat_context.add_message(
+                    role=ChatRole.ASSISTANT,
+                    content=full_response
+                )
                             
     async def say(self, message: str) -> None:
         """
@@ -246,11 +229,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             metrics_collector.start_new_interaction("")
             metrics_collector.set_agent_response(message)
             
-            async def single_message_generator():
-                yield message
-            
             try:
-                await self._synthesize_with_ttfb_monitoring(single_message_generator())
+                await self._synthesize_with_tts(message)
             finally:
                 metrics_collector.complete_current_interaction()
 
@@ -291,12 +271,22 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         """Called at the end of a user turn."""
         pass
 
+    def on_speech_started_stt(self) -> None:
+        if self.user_speech_callback:
+            self.user_speech_callback()
+    
+    def on_speech_stopped_stt(self) -> None:
+        pass
+
     def on_speech_started(self) -> None:
-        if not self.vad:
-            metrics_collector.on_user_speech_start()
+        metrics_collector.on_user_speech_start()
         
         if self.user_speech_callback:
             self.user_speech_callback()
+            
+        if self._stt_started:
+            self._stt_started = False
+            
         if self.tts:
             asyncio.create_task(self._interrupt_tts())
 
@@ -305,52 +295,79 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             await self.tts.interrupt()
     
     def on_speech_stopped(self) -> None:
-        metrics_collector.start_new_interaction()
-        metrics_collector.on_stt_start()
         
-        if not self.vad:
-            metrics_collector.on_user_speech_end()
+        if not self._stt_started:
+            metrics_collector.start_new_interaction()
+            metrics_collector.on_stt_start()
+            self._stt_started = True
         
-        if not self.vad:
-            current_time = time.perf_counter()
+        metrics_collector.on_user_speech_end()
+        current_time = time.perf_counter()
             
-            if (metrics_collector.data.current_interaction and 
-                metrics_collector.data.current_interaction.user_speech_start_time):
-                pass
-            else:
-                estimated_speech_duration = 2.0
-                estimated_start_time = current_time - estimated_speech_duration
+        if (metrics_collector.data.current_interaction and 
+            metrics_collector.data.current_interaction.user_speech_start_time):
+            pass
+        else:
+            estimated_speech_duration = 2.0
+            estimated_start_time = current_time - estimated_speech_duration
+            
+            if not metrics_collector.data.is_user_speaking:
+                metrics_collector.data.user_input_start_time = estimated_start_time
+                metrics_collector.data.is_user_speaking = True
                 
-                if not metrics_collector.data.is_user_speaking:
-                    metrics_collector.data.user_input_start_time = estimated_start_time
-                    metrics_collector.data.is_user_speaking = True
-                    
-                    if metrics_collector.data.current_interaction:
-                        metrics_collector.data.current_interaction.user_speech_start_time = estimated_start_time
-            
-            if metrics_collector.data.current_interaction:
-                metrics_collector.data.current_interaction.user_speech_end_time = current_time
-        pass
+                if metrics_collector.data.current_interaction:
+                    metrics_collector.data.current_interaction.user_speech_start_time = estimated_start_time
+        
+        if metrics_collector.data.current_interaction:
+            metrics_collector.data.current_interaction.user_speech_end_time = current_time
 
-    async def _synthesize_with_tts(self, response_gen: AsyncIterator[str]) -> None:
+    async def _synthesize_with_tts(self, response_gen: AsyncIterator[str] | str) -> None:
         """
         Stream LLM response chunks to TTS with buffering to sentences or pauses.
-        Synthesizes at natural breaks (., !, ?, ;).
+        Synthesizes at natural breaks (., !, ?, ;) with TTFB monitoring.
         """
-        buffer = ""
-        delimiters = {'.', '!', '?', ';'}
+        if not self.tts:
+            return
         
-        async for chunk in response_gen:
-            buffer += chunk
-            while buffer:
-                delimiter_pos = min((buffer.find(d) for d in delimiters if buffer.find(d) != -1), default=-1)
-                if delimiter_pos != -1:
-                    to_speak = buffer[:delimiter_pos + 1]
-                    buffer = buffer[delimiter_pos + 1:].lstrip() 
-                    
-                    await self.tts.synthesize(to_speak)
-                else:
-                    break
+        metrics_collector.on_tts_start()
         
-        if buffer:
-            await self.tts.synthesize(buffer)
+        async def on_first_audio_byte():
+            metrics_collector.on_tts_first_byte()
+            metrics_collector.on_agent_speech_start()
+        
+        self.tts.on_first_audio_byte(on_first_audio_byte)
+        
+        self.tts.reset_first_audio_tracking()
+        
+        try:
+            buffer = ""
+            full_response = ""
+            delimiters = {'.', '!', '?', ';', ',', '\n'}
+            
+            if isinstance(response_gen, str):
+                async def string_to_iterator(text: str):
+                    yield text
+                response_gen = string_to_iterator(response_gen)
+            
+            async for chunk in response_gen:
+                buffer += chunk
+                full_response += chunk
+                while buffer:
+                    delimiter_pos = min((buffer.find(d) for d in delimiters if buffer.find(d) != -1), default=-1)
+                    if delimiter_pos != -1:
+                        to_speak = buffer[:delimiter_pos + 1]
+                        buffer = buffer[delimiter_pos + 1:].lstrip() 
+                        async with self.tts_lock:
+                            await self.tts.synthesize(to_speak)
+                    else:
+                        break
+            
+            if buffer:
+                async with self.tts_lock:
+                    await self.tts.synthesize(buffer)
+            
+            if full_response:
+                metrics_collector.set_agent_response(full_response)
+                
+        finally:
+            metrics_collector.on_agent_speech_end()
