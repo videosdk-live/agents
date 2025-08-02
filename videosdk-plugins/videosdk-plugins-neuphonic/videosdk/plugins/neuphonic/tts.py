@@ -37,6 +37,7 @@ class NeuphonicTTS(TTS):
         self.base_url = base_url
         self.audio_track = None
         self.loop = None
+        self._first_chunk_sent = False
 
         self.api_key = api_key or os.getenv("NEUPHONIC_API_KEY")
         if not self.api_key:
@@ -50,6 +51,10 @@ class NeuphonicTTS(TTS):
 
         if sampling_rate not in [8000, 16000, 22050]:
             raise ValueError(f"Sampling rate must be one of 8000, 16000, 22050, got {sampling_rate}")
+
+    def reset_first_audio_tracking(self) -> None:
+        """Reset the first audio tracking state for next TTS task"""
+        self._first_chunk_sent = False
 
     async def synthesize(
         self,
@@ -136,6 +141,10 @@ class NeuphonicTTS(TTS):
                 chunk += b'\x00' * padding_needed
             
             if len(chunk) == chunk_size:
+                if not self._first_chunk_sent and self._first_audio_callback:
+                    self._first_chunk_sent = True
+                    await self._first_audio_callback()
+                
                 self.loop.create_task(self.audio_track.add_new_bytes(chunk))
                 await asyncio.sleep(0.001)
 

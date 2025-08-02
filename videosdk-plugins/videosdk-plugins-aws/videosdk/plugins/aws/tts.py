@@ -76,6 +76,7 @@ class AWSPollyTTS(TTS):
         self.speed = speed
         self.pitch = pitch
         self.stt_component = None
+        self._first_chunk_sent = False
         if not self.region:
             raise ValueError("AWS region must be specified via parameter or AWS_DEFAULT_REGION env var")
         if not self.aws_access_key_id or not self.aws_secret_access_key:
@@ -89,6 +90,10 @@ class AWSPollyTTS(TTS):
         if self.aws_session_token:
             client_kwargs['aws_session_token'] = self.aws_session_token
         self._client = boto3.client(**client_kwargs)
+    
+    def reset_first_audio_tracking(self) -> None:
+        """Reset the first audio tracking state for next TTS task"""
+        self._first_chunk_sent = False
     
     async def synthesize(self, text_or_generator: Union[str, AsyncIterator[str]], **kwargs) -> None:
         if not self.audio_track or not self.loop:
@@ -157,6 +162,10 @@ class AWSPollyTTS(TTS):
                     chunk += b'\x00' * (chunk_size - len(chunk))
                 
                 if self.audio_track and self.loop:
+                    if not self._first_chunk_sent and self._first_audio_callback:
+                        self._first_chunk_sent = True
+                        await self._first_audio_callback()
+                    
                     self.loop.create_task(self.audio_track.add_new_bytes(chunk))
                     await asyncio.sleep(0.01) 
                     
@@ -170,6 +179,10 @@ class AWSPollyTTS(TTS):
                     chunk += b'\x00' * (chunk_size - len(chunk))
                 
                 if self.audio_track and self.loop:
+                    if not self._first_chunk_sent and self._first_audio_callback:
+                        self._first_chunk_sent = True
+                        await self._first_audio_callback()
+                    
                     self.loop.create_task(self.audio_track.add_new_bytes(chunk))
                     await asyncio.sleep(0.01)  
 
