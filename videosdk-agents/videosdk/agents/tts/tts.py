@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import Any, AsyncIterator, Literal, Optional
+from typing import Any, AsyncIterator, Literal, Optional, Callable, Awaitable
 
 from ..event_emitter import EventEmitter
 
@@ -17,6 +17,7 @@ class TTS(EventEmitter[Literal["error"]]):
         self._label = f"{type(self).__module__}.{type(self).__name__}"
         self._sample_rate = sample_rate
         self._num_channels = num_channels
+        self._first_audio_callback: Optional[Callable[[], Awaitable[None]]] = None
 
     @property
     def label(self) -> str:
@@ -32,6 +33,15 @@ class TTS(EventEmitter[Literal["error"]]):
     def num_channels(self) -> int:
         """Get number of audio channels"""
         return self._num_channels
+
+    def on_first_audio_byte(self, callback: Callable[[], Awaitable[None]]) -> None:
+        """Set callback for when first audio byte is produced"""
+        self._first_audio_callback = callback
+
+    def reset_first_audio_tracking(self) -> None:
+        """Reset the first audio tracking state for next TTS task"""
+        # To be overridden by implementations for TTFB metrics
+        pass 
 
     @abstractmethod
     async def synthesize(
