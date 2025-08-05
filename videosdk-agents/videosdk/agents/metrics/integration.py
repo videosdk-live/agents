@@ -41,7 +41,7 @@ def auto_initialize_telemetry_and_logs(room_id: str, peer_id: str,
         
 
 
-def create_span(span_name: str, attributes: Dict[str, Any] = None, parent_span: Optional[Span] = None):
+def create_span(span_name: str, attributes: Dict[str, Any] = None, parent_span: Optional[Span] = None, start_time: Optional[float] = None):
     """
     Create a trace span (convenience method)
     
@@ -49,17 +49,18 @@ def create_span(span_name: str, attributes: Dict[str, Any] = None, parent_span: 
         span_name: Name of the span
         attributes: Span attributes
         parent_span: Parent span (optional)
+        start_time: Start time in seconds since epoch (optional)
         
     Returns:
         Span object or None
     """
     telemetry = get_telemetry()
     if telemetry:
-        return telemetry.trace(span_name, attributes, parent_span)
+        return telemetry.trace(span_name, attributes, parent_span, start_time)
     return None
 
 
-def complete_span(span: Optional[Span], status_code, message: str = ""):
+def complete_span(span: Optional[Span], status_code, message: str = "", end_time: Optional[float] = None):
     """
     Complete a trace span (convenience method)
     
@@ -67,10 +68,11 @@ def complete_span(span: Optional[Span], status_code, message: str = ""):
         span: Span to complete
         status_code: Status code
         message: Status message
+        end_time: End time in seconds since epoch (optional)
     """
     telemetry = get_telemetry()
     if telemetry and span:
-        telemetry.complete_span(span, status_code, message)
+        telemetry.complete_span(span, status_code, message, end_time)
 
 
 def create_log(message: str, log_level: str = "INFO", attributes: Dict[str, Any] = None):

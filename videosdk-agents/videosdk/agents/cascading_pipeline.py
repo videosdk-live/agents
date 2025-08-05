@@ -184,7 +184,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
             return model_info
 
         configs: Dict[str, Dict[str, Any]] = {}
-        for comp_name, comp in [('stt', self.stt), ('llm', self.llm), ('tts', self.tts)]:
+        for comp_name, comp in [('stt', self.stt), ('llm', self.llm), ('tts', self.tts), ('vad', self.vad), ('eou', self.turn_detector)]:
             if comp:
                 try:
                     configs[comp_name] = {k: v for k, v in comp.__dict__.items() if not k.startswith('_') and not callable(v)}
@@ -196,6 +196,21 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
                         elif 'model' not in configs[comp_name] and 'name' in model_info:
                             configs[comp_name]['model'] = model_info['name']
                         configs[comp_name].update({k: v for k, v in model_info.items() if k != 'model' and k != 'name' and k not in configs[comp_name]})
+                    
+                    if comp_name == 'vad' and 'model' not in configs[comp_name]:
+                        if hasattr(comp, '_model_sample_rate'):
+                            configs[comp_name]['model'] = f"silero_vad_{comp._model_sample_rate}hz"
+                        else:
+                            configs[comp_name]['model'] = "silero_vad"
+                    elif comp_name == 'eou' and 'model' not in configs[comp_name]:
+                        class_name = comp.__class__.__name__
+                        if 'VideoSDK' in class_name:
+                            configs[comp_name]['model'] = "videosdk_turn_detector"
+                        elif 'TurnDetector' in class_name:
+                            configs[comp_name]['model'] = "turnsense_model"
+                        else:
+                            configs[comp_name]['model'] = "turn_detector"
+                            
                 except Exception as e:
                     configs[comp_name] = configs.get(comp_name, {})
 

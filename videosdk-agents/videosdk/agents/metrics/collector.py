@@ -63,6 +63,10 @@ class MetricsCollector:
             'stt_model_name': 'sttModelName',
             'tts_provider_class': 'ttsProviderClass',
             'tts_model_name': 'ttsModelName',
+            'vad_provider_class': 'vadProviderClass',
+            'vad_model_name': 'vadModelName',
+            'eou_provider_class': 'eouProviderClass',
+            'eou_model_name': 'eouModelName',
             'handoff_occurred': 'handOffOccurred'
         }
         
@@ -168,7 +172,9 @@ class MetricsCollector:
     
     def set_provider_info(self, llm_provider: str = "", llm_model: str = "", 
                          stt_provider: str = "", stt_model: str = "",
-                         tts_provider: str = "", tts_model: str = ""):
+                         tts_provider: str = "", tts_model: str = "",
+                         vad_provider: str = "", vad_model: str = "",
+                         eou_provider: str = "", eou_model: str = ""):
         """Set the provider class and model information for this session"""
         self.data.llm_provider_class = llm_provider
         self.data.llm_model_name = llm_model
@@ -176,6 +182,10 @@ class MetricsCollector:
         self.data.stt_model_name = stt_model
         self.data.tts_provider_class = tts_provider
         self.data.tts_model_name = tts_model
+        self.data.vad_provider_class = vad_provider
+        self.data.vad_model_name = vad_model
+        self.data.eou_provider_class = eou_provider
+        self.data.eou_model_name = eou_model
     
     def start_new_interaction(self, user_transcript: str = "") -> None:
         """Start tracking a new user-agent interaction"""
@@ -188,12 +198,17 @@ class MetricsCollector:
         self.data.current_interaction = InteractionMetrics(
             interaction_id=interaction_id,
             system_instructions=self.data.system_instructions if self.data.total_interactions == 1 else "",
-            llm_provider_class=self.data.llm_provider_class if self.data.total_interactions == 1 else "",
-            llm_model_name=self.data.llm_model_name if self.data.total_interactions == 1 else "",
-            stt_provider_class=self.data.stt_provider_class if self.data.total_interactions == 1 else "",
-            stt_model_name=self.data.stt_model_name if self.data.total_interactions == 1 else "",
-            tts_provider_class=self.data.tts_provider_class if self.data.total_interactions == 1 else "",
-            tts_model_name=self.data.tts_model_name if self.data.total_interactions == 1 else ""
+            # Provider and model info should be included in every interaction
+            llm_provider_class=self.data.llm_provider_class,
+            llm_model_name=self.data.llm_model_name,
+            stt_provider_class=self.data.stt_provider_class,
+            stt_model_name=self.data.stt_model_name,
+            tts_provider_class=self.data.tts_provider_class,
+            tts_model_name=self.data.tts_model_name,
+            vad_provider_class=self.data.vad_provider_class,
+            vad_model_name=self.data.vad_model_name,
+            eou_provider_class=self.data.eou_provider_class,
+            eou_model_name=self.data.eou_model_name
         )
         
         if self.data.is_user_speaking and self.data.user_input_start_time:
@@ -223,7 +238,7 @@ class MetricsCollector:
                 return
 
             if self.traces_flow_manager:
-                self.traces_flow_manager.create_interaction_trace(self.data.current_interaction)
+                self.traces_flow_manager.create_cascading_turn_trace(self.data.current_interaction)
 
             self.data.interactions.append(self.data.current_interaction)
             interaction_data = asdict(self.data.current_interaction)
@@ -379,7 +394,6 @@ class MetricsCollector:
         self.data.eou_start_time = time.perf_counter()
         if self.data.current_interaction:
             self.data.current_interaction.eou_start_time = self.data.eou_start_time
-            # self._start_timeline_event("eou_processing", self.data.eou_start_time)
             
     
     def on_eou_complete(self):

@@ -33,12 +33,10 @@ class RealtimeMetricsCollector:
         self.lock = asyncio.Lock()
         self.agent_speech_end_timer: Optional[asyncio.TimerHandle] = None
         self.analytics_client = AnalyticsClient()
-        self.session_id: Optional[str] = None
         self.traces_flow_manager: Optional[TracesFlowManager] = None
 
     def set_session_id(self, session_id: str):
         """Set the session ID for metrics tracking"""
-        self.session_id = session_id
         self.analytics_client.set_session_id(session_id)
 
     def set_traces_flow_manager(self, manager: TracesFlowManager):
@@ -185,10 +183,10 @@ class RealtimeMetricsCollector:
             except Exception:
                 pass
         if self.traces_flow_manager:
-            self.traces_flow_manager.create_realtime_interaction_trace(self.current_interaction)
+            self.traces_flow_manager.create_realtime_turn_trace(self.current_interaction)
         interaction_data = asdict(self.current_interaction)
         
-        fields_to_remove = ["realtime_model_errors","is_a2a_enabled"]
+        fields_to_remove = ["realtime_model_errors","is_a2a_enabled","session_id","interaction_id","agent_speech_duration"]
         
         if len(self.interactions) > 1:
             fields_to_remove.extend([
@@ -200,10 +198,10 @@ class RealtimeMetricsCollector:
         for field in fields_to_remove:
             if field in interaction_data:
                 del interaction_data[field]
-                    
+
         transformed_data = self._transform_to_camel_case(interaction_data)
         self.analytics_client.send_interaction_analytics_safe({
-            "sessionId": self.session_id,
+            "sessionId": self.analytics_client.session_id,
             "data": [transformed_data]
         })
         self.interactions.append(self.current_interaction)

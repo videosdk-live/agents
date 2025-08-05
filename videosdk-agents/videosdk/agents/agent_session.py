@@ -9,6 +9,8 @@ from .conversation_flow import ConversationFlow
 from .pipeline import Pipeline
 from .metrics import metrics_collector, realtime_metrics_collector
 from .realtime_pipeline import RealTimePipeline
+from .utils import get_tool_info
+import time
 
 class AgentSession:
     """
@@ -97,7 +99,7 @@ class AgentSession:
                 config_attributes = {
                     "system_instructions": self.agent.instructions,
                     "function_tools": [
-                        getattr(tool, "name", tool.__name__ if callable(tool) else str(tool))
+                        get_tool_info(tool).name
                         for tool in (
                             [tool for tool in self.agent.tools if tool not in self.agent.mcp_manager.tools]
                             if self.agent.mcp_manager else self.agent.tools
@@ -105,7 +107,7 @@ class AgentSession:
                     ] if self.agent.tools else [],
 
                     "mcp_tools": [
-                        tool._tool_info.name
+                        get_tool_info(tool).name
                         for tool in self.agent.mcp_manager.tools
                     ] if self.agent.mcp_manager else [],
 
@@ -114,13 +116,19 @@ class AgentSession:
                         "stt_provider": self.pipeline.stt.__class__.__name__ if self.pipeline.stt else None,
                         "tts_provider": self.pipeline.tts.__class__.__name__ if self.pipeline.tts else None, 
                         "llm_provider": self.pipeline.llm.__class__.__name__ if self.pipeline.llm else None,
+                        "vad_provider": self.pipeline.vad.__class__.__name__ if hasattr(self.pipeline, 'vad') and self.pipeline.vad else None,
+                        "eou_provider": self.pipeline.turn_detector.__class__.__name__ if hasattr(self.pipeline, 'turn_detector') and self.pipeline.turn_detector else None,
                         "stt_model": self.pipeline.get_component_configs()['stt'].get('model') if hasattr(self.pipeline, 'get_component_configs') and self.pipeline.stt else None,
                         "llm_model": self.pipeline.get_component_configs()['llm'].get('model') if hasattr(self.pipeline, 'get_component_configs') and self.pipeline.llm else None,
-                        "tts_model": self.pipeline.get_component_configs()['tts'].get('model') if hasattr(self.pipeline, 'get_component_configs') and self.pipeline.tts else None
+                        "tts_model": self.pipeline.get_component_configs()['tts'].get('model') if hasattr(self.pipeline, 'get_component_configs') and self.pipeline.tts else None,
+                        "vad_model": self.pipeline.get_component_configs()['vad'].get('model') if hasattr(self.pipeline, 'get_component_configs') and hasattr(self.pipeline, 'vad') and self.pipeline.vad else None,
+                        "eou_model": self.pipeline.get_component_configs()['eou'].get('model') if hasattr(self.pipeline, 'get_component_configs') and hasattr(self.pipeline, 'turn_detector') and self.pipeline.turn_detector else None
                     } if self.pipeline.__class__.__name__ == "CascadingPipeline" else {}),
                 }
+                start_time = time.perf_counter()
+                config_attributes["start_time"] = start_time
                 await traces_flow_manager.start_agent_session_config(config_attributes)
-                await traces_flow_manager.start_agent_session({})
+                await traces_flow_manager.start_agent_session({"start_time": start_time})
 
             if self.pipeline.__class__.__name__ == "CascadingPipeline":
                 configs = self.pipeline.get_component_configs() if hasattr(self.pipeline, 'get_component_configs') else {}
@@ -130,7 +138,11 @@ class AgentSession:
                     stt_provider=self.pipeline.stt.__class__.__name__ if self.pipeline.stt else "",
                     stt_model=configs.get('stt', {}).get('model', "") if self.pipeline.stt else "",
                     tts_provider=self.pipeline.tts.__class__.__name__ if self.pipeline.tts else "",
-                    tts_model=configs.get('tts', {}).get('model', "") if self.pipeline.tts else ""
+                    tts_model=configs.get('tts', {}).get('model', "") if self.pipeline.tts else "",
+                    vad_provider=self.pipeline.vad.__class__.__name__ if hasattr(self.pipeline, 'vad') and self.pipeline.vad else "",
+                    vad_model=configs.get('vad', {}).get('model', "") if hasattr(self.pipeline, 'vad') and self.pipeline.vad else "",
+                    eou_provider=self.pipeline.turn_detector.__class__.__name__ if hasattr(self.pipeline, 'turn_detector') and self.pipeline.turn_detector else "",
+                    eou_model=configs.get('eou', {}).get('model', "") if hasattr(self.pipeline, 'turn_detector') and self.pipeline.turn_detector else ""
                 )
         
         if hasattr(self.pipeline, 'set_agent'):
@@ -160,12 +172,14 @@ class AgentSession:
             realtime_metrics_collector.finalize_session()
             traces_flow_manager = realtime_metrics_collector.traces_flow_manager
             if traces_flow_manager:
-                await traces_flow_manager.start_agent_session_closed({})
+                start_time = time.perf_counter()
+                await traces_flow_manager.start_agent_session_closed({"start_time": start_time})
                 traces_flow_manager.end_agent_session_closed()
         else:
             traces_flow_manager = metrics_collector.traces_flow_manager
             if traces_flow_manager:
-                await traces_flow_manager.start_agent_session_closed({})
+                start_time = time.perf_counter()
+                await traces_flow_manager.start_agent_session_closed({"start_time": start_time})
                 traces_flow_manager.end_agent_session_closed()
 
         self._cancel_wake_up_timer()

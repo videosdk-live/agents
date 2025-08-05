@@ -50,6 +50,10 @@ class InteractionMetrics:
     stt_model_name: str = ""
     tts_provider_class: str = ""
     tts_model_name: str = ""
+    vad_provider_class: str = ""
+    vad_model_name: str = ""
+    eou_provider_class: str = ""
+    eou_model_name: str = ""
     
     timeline: List[TimelineEvent] = field(default_factory=list)
     errors: List[Dict[str, Any]] = field(default_factory=list)
@@ -75,7 +79,19 @@ class MetricsData:
     user_input_start_time: Optional[float] = None
     is_agent_speaking: bool = False
     is_user_speaking: bool = False
-    tts_first_byte_time: Optional[float] = None 
+    tts_first_byte_time: Optional[float] = None
+    
+    llm_provider_class: str = ""
+    llm_model_name: str = ""
+    stt_provider_class: str = ""
+    stt_model_name: str = ""
+    tts_provider_class: str = ""
+    tts_model_name: str = ""
+    vad_provider_class: str = ""
+    vad_model_name: str = ""
+    eou_provider_class: str = ""
+    eou_model_name: str = ""
+    
 
 @dataclass
 class RealtimeInteractionData:
@@ -85,6 +101,7 @@ class RealtimeInteractionData:
     """
 
     interaction_id: str
+    session_id: Optional[str] = None
     provider_class_name: Optional[str] = None 
     provider_model_name: Optional[str] = None 
     system_instructions: Optional[str] = None 

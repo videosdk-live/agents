@@ -3,14 +3,24 @@ import asyncio
 from typing import Dict, Any, Optional
 import aiohttp
 
-
 class AnalyticsClient:
     """Client for sending analytics data to external endpoints"""
-    
+
+    _instance: Optional["AnalyticsClient"] = None
+    _initialized: bool = False
+
+    def __new__(cls, *args, **kwargs) -> "AnalyticsClient":
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
     def __init__(self, session_id: Optional[str] = None):
+        if self._initialized:
+            return
+        
         self.session_id = session_id
         self.base_url = os.getenv("ANALYTICS_API_SERVER_URL")
-        
+        self._initialized = True
         
     def set_session_id(self, session_id: str) -> None:
         """Set the session ID for analytics tracking"""
@@ -18,14 +28,17 @@ class AnalyticsClient:
     
     async def send_interaction_analytics(self, interaction_data: Dict[str, Any]) -> None:
         """Send interaction analytics to the API endpoint"""
-        if not self.session_id:
+        session_id_from_payload = interaction_data.get("sessionId")
+        current_session_id = self.session_id or session_id_from_payload
+        
+        if not current_session_id:
             return
         
         auth_token = os.getenv("VIDEOSDK_AUTH_TOKEN")
         if not auth_token:
             return
         
-        url = f"{self.base_url}/v2/sessions/{self.session_id}/agent-analytics"
+        url = f"{self.base_url}/v2/sessions/{current_session_id}/agent-analytics"
         
         headers = {
             "Authorization": f"{auth_token}",

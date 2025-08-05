@@ -17,6 +17,8 @@ from ..metrics.integration import auto_initialize_telemetry_and_logs
 from typing import Callable, Optional, Any
 from ..metrics.realtime_collector import realtime_metrics_collector
 import requests
+import time
+
 
 START_RECORDING_URL = "https://api.videosdk.live/v2/recordings/participant/start"
 STOP_RECORDING_URL = "https://api.videosdk.live/v2/recordings/participant/stop"
@@ -292,15 +294,15 @@ class VideoSDKHandler:
                 print("Meeting object does not have 'get_attributes' method")
 
             if self._meeting_joined_data and self.traces_flow_manager:
-
+                start_time = time.perf_counter() 
                 agent_joined_attributes = {
                     "roomId": self.meeting_id,
                     "sessionId": self._session_id,
                     "agent_name": self.name,
                     "peerId": self.meeting.local_participant.id,
-                    "sdk_metadata": self.sdk_metadata
+                    "sdk_metadata": self.sdk_metadata,
+                    "start_time": start_time
                 }   
-
                 self.traces_flow_manager.start_agent_joined_meeting(agent_joined_attributes)
         except Exception as e:
             print(f"Error collecting meeting attributes and creating spans: {e}")

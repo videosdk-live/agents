@@ -1,13 +1,19 @@
 import os
 import json
+import threading
+import traceback
 from typing import Dict, Any, Optional
+import uuid
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.trace import Status, StatusCode, Span
+import time
 
+def generate_id():
+    return str(uuid.uuid4())
 
 class VideoSDKTelemetry:
     """OpenTelemetry traces for VideoSDK agents"""
@@ -38,6 +44,7 @@ class VideoSDKTelemetry:
         self.tracer_provider = None
         
         self._initialize_tracer()
+        self.span_details = {}
     
     def _initialize_tracer(self):
         """Initialize OpenTelemetry tracer and create root span"""
@@ -70,7 +77,7 @@ class VideoSDKTelemetry:
         except Exception as e:
             print(f"[TELEMETRY ERROR] Failed to initialize telemetry: {e}")
     
-    def trace(self, span_name: str, attributes: Dict[str, Any] = None, parent_span: Optional[Span] = None) -> Optional[Span]:
+    def trace(self, span_name: str, attributes: Dict[str, Any] = None, parent_span: Optional[Span] = None, start_time: Optional[float] = None) -> Optional[Span]:
         """
         Create a new trace span. If a parent is provided, the new span will be a
         child of it. Otherwise, it will be a child of the currently active span
@@ -83,7 +90,19 @@ class VideoSDKTelemetry:
  
             ctx = trace.set_span_in_context(parent_span) if parent_span else None
             
-            span = self.tracer.start_span(span_name, context=ctx)
+            attiribute_id = generate_id()
+            
+            attributes = {} if attributes is None else attributes
+            attributes["attiribute_id"] = attiribute_id
+            span_kwargs = {"context": ctx}
+            start_time = time.perf_counter() if start_time is None else start_time
+            start_absolute_time = time.time_ns()
+            self.span_details[attiribute_id] = {
+                "start_time": start_time, # perf_counter
+                "start_absolute_time": start_absolute_time # time.time()
+            }
+            span_kwargs["start_time"] = int(start_absolute_time)
+            span = self.tracer.start_span(span_name, **span_kwargs)
                 
             if attributes:
                 for key, value in attributes.items():
@@ -95,7 +114,7 @@ class VideoSDKTelemetry:
             print(f"[TELEMETRY ERROR] Failed to create span '{span_name}': {e}")
             return None
     
-    def complete_span(self, span: Optional[Span], status: StatusCode, message: str = ""):
+    def complete_span(self, span: Optional[Span], status: StatusCode, message: str = "", end_time: Optional[float] = None):
         """
         Complete a span with status and message
         
@@ -103,6 +122,7 @@ class VideoSDKTelemetry:
             span: Span to complete
             status: Status code
             message: Status message
+            end_time: End time in seconds since epoch (optional)
         """
         if not self.traces_enabled or not span:
             return
@@ -111,10 +131,20 @@ class VideoSDKTelemetry:
             if message:
                 span.set_attribute("message", message)
             span.set_status(Status(status, message))
-            span.end()
+            
+            end_time = time.perf_counter() if end_time is None else end_time
+            
+            attribute_id = span._attributes["attiribute_id"]
+            data = self.span_details.get(attribute_id)
+            duration_ns = int((end_time - data["start_time"]) * 1_000_000_000)
+            end_absolute_time = duration_ns + data["start_absolute_time"] # time.time()
+            span.end(int(end_absolute_time))
+            
+            del self.span_details[attribute_id]
                 
         except Exception as e:
             print(f"[TELEMETRY ERROR] Failed to complete span: {e}")
+            traceback.print_exc()
     
     def flush(self):
         """Flush and shutdown the tracer provider"""
