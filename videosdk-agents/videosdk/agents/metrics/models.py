@@ -108,7 +108,7 @@ class RealtimeTurnData:
     user_speech_end_time: Optional[float] = None
     agent_speech_start_time: Optional[float] = None
     agent_speech_end_time: Optional[float] = None
-    ttfw: Optional[float] = None
+    ttfb: Optional[float] = None
     thinking_delay: Optional[float] = None
     e2e_latency: Optional[float] = None
     agent_speech_duration: Optional[float] = None
@@ -121,7 +121,7 @@ class RealtimeTurnData:
 
     def compute_latencies(self):
         if self.user_speech_start_time and self.agent_speech_start_time:
-            self.ttfw = (self.agent_speech_start_time - self.user_speech_start_time) * 1000
+            self.ttfb = (self.agent_speech_start_time - self.user_speech_start_time) * 1000
         if self.user_speech_end_time and self.agent_speech_start_time:
             self.thinking_delay = (self.agent_speech_start_time - self.user_speech_end_time) * 1000
         if self.user_speech_start_time and self.agent_speech_end_time:

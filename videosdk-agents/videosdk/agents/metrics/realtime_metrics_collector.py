@@ -186,7 +186,7 @@ class RealtimeMetricsCollector:
             self.traces_flow_manager.create_realtime_turn_trace(self.current_turn)
         interaction_data = asdict(self.current_turn)
         
-        fields_to_remove = ["realtime_model_errors","is_a2a_enabled","session_id","agent_speech_duration"]
+        fields_to_remove = ["realtime_model_errors","is_a2a_enabled","session_id","agent_speech_duration","agent_speech_start_time","agent_speech_end_time","thinking_time","function_tools","mcp_tools"]
         
         if len(self.turns) > 1:
             fields_to_remove.extend([
@@ -201,7 +201,6 @@ class RealtimeMetricsCollector:
 
         transformed_data = self._transform_to_camel_case(interaction_data)
         self.analytics_client.send_interaction_analytics_safe({
-            "sessionId": self.analytics_client.session_id,
             "data": [transformed_data]
         })
         self.turns.append(self.current_turn)

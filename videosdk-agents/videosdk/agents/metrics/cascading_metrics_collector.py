@@ -251,7 +251,8 @@ class CascadingMetricsCollector:
                 'llmStartTime', 'llmEndTime',
                 'eouStartTime', 'eouEndTime',
                 'is_a2a_enabled',
-                "interactionId"
+                "interactionId",
+                "timestamp"
             ]
 
             if not self.data.current_turn.is_a2a_enabled: 
@@ -273,16 +274,9 @@ class CascadingMetricsCollector:
                         del transformed_data[field]
 
             interaction_payload = {
-                "sessionId": self.data.session_id,           
                 "data": [transformed_data]               
             }
-            print("Deep --> total turns -->", self.data.total_turns)
-            if self.data.total_turns >= 4 and self.traces_flow_manager:
-                print("[TRACE DEBUG] Conditionally ending root spans after turn 3.")
-                self.traces_flow_manager.end_main_turn()
-                self.traces_flow_manager.end_agent_session()
-                self.traces_flow_manager.end_agent_joined_meeting()
-
+            
             self.analytics_client.send_interaction_analytics_safe(interaction_payload) 
             self.data.current_turn = None
     
