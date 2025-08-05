@@ -2,7 +2,7 @@ from typing import Dict, Any, Optional
 from opentelemetry.trace import Span, StatusCode
 from opentelemetry import trace
 from .integration import create_span, complete_span, create_log
-from .models import InteractionMetrics, RealtimeInteractionData, TimelineEvent
+from .models import CascadingTurnData, RealtimeTurnData, TimelineEvent
 import asyncio
 import time
 
@@ -131,7 +131,7 @@ class TracesFlowManager:
             with trace.use_span(self.main_turn_span):
                 create_log("Main Turn span started, ready for user turns.", "INFO")
 
-    def create_cascading_turn_trace(self, interaction_data: InteractionMetrics):
+    def create_cascading_turn_trace(self, cascading_turn_data: CascadingTurnData):
         """
         Creates a full trace for a single turn from its collected metrics data.
         This includes the parent turn span and all its processing child spans.
@@ -144,41 +144,37 @@ class TracesFlowManager:
         turn_name = f"Turn #{self._turn_count}"
 
         if self._turn_count == 1:
-            turn_span_start_time = interaction_data.tts_start_time if interaction_data.tts_start_time else None
+            turn_span_start_time = cascading_turn_data.tts_start_time if cascading_turn_data.tts_start_time else None
         else: 
-            turn_span_start_time = interaction_data.user_speech_start_time if interaction_data.user_speech_start_time else None
+            turn_span_start_time = cascading_turn_data.user_speech_start_time if cascading_turn_data.user_speech_start_time else None
        
-        turn_span = create_span(turn_name, 
-                                   {"interaction_id": interaction_data.interaction_id}, 
-                                   parent_span=self.main_turn_span, start_time=turn_span_start_time)
+        turn_span = create_span(turn_name,parent_span=self.main_turn_span, start_time=turn_span_start_time)
         if turn_span:
             with trace.use_span(turn_span):
-                create_log(f"Turn Started: {turn_name}", "INFO", {
-                    "interaction_id": interaction_data.interaction_id
-                })
+                create_log(f"Turn Started: {turn_name}", "INFO")
 
         if not turn_span:
             return
 
         with trace.use_span(turn_span, end_on_exit=False):
-            stt_errors = [e for e in interaction_data.errors if e['source'] == 'STT']
-            if interaction_data.stt_start_time is not None or interaction_data.stt_end_time is not None or stt_errors:
-                create_log(f"{interaction_data.stt_provider_class}: Speech to Text Processing Started", "INFO")
-                stt_span_name = f"{interaction_data.stt_provider_class}: Speech to Text Processing"
+            stt_errors = [e for e in cascading_turn_data.errors if e['source'] == 'STT']
+            if cascading_turn_data.stt_start_time is not None or cascading_turn_data.stt_end_time is not None or stt_errors:
+                create_log(f"{cascading_turn_data.stt_provider_class}: Speech to Text Processing Started", "INFO")
+                stt_span_name = f"{cascading_turn_data.stt_provider_class}: Speech to Text Processing"
 
                 stt_attrs = {}
-                if interaction_data.stt_provider_class:
-                    stt_attrs["provider_class"] = interaction_data.stt_provider_class
-                if interaction_data.stt_model_name:
-                    stt_attrs["model_name"] = interaction_data.stt_model_name
-                if interaction_data.stt_latency:
-                    stt_attrs["duration_ms"] = interaction_data.stt_latency
-                if interaction_data.stt_start_time:
-                    stt_attrs["start_timestamp"] = interaction_data.stt_start_time
-                if interaction_data.stt_end_time:
-                    stt_attrs["end_timestamp"] = interaction_data.stt_end_time
+                if cascading_turn_data.stt_provider_class:
+                    stt_attrs["provider_class"] = cascading_turn_data.stt_provider_class
+                if cascading_turn_data.stt_model_name:
+                    stt_attrs["model_name"] = cascading_turn_data.stt_model_name
+                if cascading_turn_data.stt_latency:
+                    stt_attrs["duration_ms"] = cascading_turn_data.stt_latency
+                if cascading_turn_data.stt_start_time:
+                    stt_attrs["start_timestamp"] = cascading_turn_data.stt_start_time
+                if cascading_turn_data.stt_end_time:
+                    stt_attrs["end_timestamp"] = cascading_turn_data.stt_end_time
                 
-                stt_span = create_span(stt_span_name, stt_attrs, parent_span=turn_span, start_time=interaction_data.stt_start_time)
+                stt_span = create_span(stt_span_name, stt_attrs, parent_span=turn_span, start_time=cascading_turn_data.stt_start_time)
 
                 if stt_span:
                     for error in stt_errors:
@@ -188,27 +184,27 @@ class TracesFlowManager:
                         })
 
                     status = StatusCode.ERROR if stt_errors else StatusCode.OK
-                    create_log(f"{interaction_data.stt_provider_class}: Speech to Text Processing Ended with status {status}", "INFO")
-                    self.end_span(stt_span, status_code=status, end_time=interaction_data.stt_end_time)
+                    create_log(f"{cascading_turn_data.stt_provider_class}: Speech to Text Processing Ended with status {status}", "INFO")
+                    self.end_span(stt_span, status_code=status, end_time=cascading_turn_data.stt_end_time)
             
-            eou_errors = [e for e in interaction_data.errors if e['source'] == 'TURN-D']
-            if interaction_data.eou_start_time is not None or interaction_data.eou_end_time is not None or eou_errors:
-                create_log(f"{interaction_data.eou_provider_class}: End-Of-Utterence Detection Started", "INFO")
-                eou_span_name = f"{interaction_data.eou_provider_class}: End-Of-Utterence Detection"
+            eou_errors = [e for e in cascading_turn_data.errors if e['source'] == 'TURN-D']
+            if cascading_turn_data.eou_start_time is not None or cascading_turn_data.eou_end_time is not None or eou_errors:
+                create_log(f"{cascading_turn_data.eou_provider_class}: End-Of-Utterence Detection Started", "INFO")
+                eou_span_name = f"{cascading_turn_data.eou_provider_class}: End-Of-Utterence Detection"
       
                 eou_attrs = {}
-                if interaction_data.eou_provider_class:
-                    eou_attrs["provider_class"] = interaction_data.eou_provider_class
-                if interaction_data.eou_model_name:
-                    eou_attrs["model_name"] = interaction_data.eou_model_name
-                if interaction_data.eou_latency:
-                    eou_attrs["duration_ms"] = interaction_data.eou_latency
-                if interaction_data.eou_start_time:
-                    eou_attrs["start_timestamp"] = interaction_data.eou_start_time
-                if interaction_data.eou_end_time:
-                    eou_attrs["end_timestamp"] = interaction_data.eou_end_time
+                if cascading_turn_data.eou_provider_class:
+                    eou_attrs["provider_class"] = cascading_turn_data.eou_provider_class
+                if cascading_turn_data.eou_model_name:
+                    eou_attrs["model_name"] = cascading_turn_data.eou_model_name
+                if cascading_turn_data.eou_latency:
+                    eou_attrs["duration_ms"] = cascading_turn_data.eou_latency
+                if cascading_turn_data.eou_start_time:
+                    eou_attrs["start_timestamp"] = cascading_turn_data.eou_start_time
+                if cascading_turn_data.eou_end_time:
+                    eou_attrs["end_timestamp"] = cascading_turn_data.eou_end_time
                     
-                eou_span = create_span(eou_span_name, eou_attrs, parent_span=turn_span, start_time=interaction_data.eou_start_time)
+                eou_span = create_span(eou_span_name, eou_attrs, parent_span=turn_span, start_time=cascading_turn_data.eou_start_time)
 
                 if eou_span:
                     for error in eou_errors:
@@ -218,34 +214,34 @@ class TracesFlowManager:
                         })
 
                     eou_status = StatusCode.ERROR if eou_errors else StatusCode.OK
-                    create_log(f"{interaction_data.eou_provider_class}: End-Of-Utterence Detection Ended with status {eou_status}", "INFO")
-                    self.end_span(eou_span, status_code=eou_status, end_time=interaction_data.eou_end_time)
+                    create_log(f"{cascading_turn_data.eou_provider_class}: End-Of-Utterence Detection Ended with status {eou_status}", "INFO")
+                    self.end_span(eou_span, status_code=eou_status, end_time=cascading_turn_data.eou_end_time)
                 else:
                     eou_span = None
 
-            llm_errors = [e for e in interaction_data.errors if e['source'] == 'LLM']
-            if interaction_data.llm_start_time is not None or interaction_data.llm_end_time is not None or llm_errors:
-                create_log(f"{interaction_data.llm_provider_class}: LLM Processing Started", "INFO")
-                llm_span_name = f"{interaction_data.llm_provider_class}: LLM Processing"
+            llm_errors = [e for e in cascading_turn_data.errors if e['source'] == 'LLM']
+            if cascading_turn_data.llm_start_time is not None or cascading_turn_data.llm_end_time is not None or llm_errors:
+                create_log(f"{cascading_turn_data.llm_provider_class}: LLM Processing Started", "INFO")
+                llm_span_name = f"{cascading_turn_data.llm_provider_class}: LLM Processing"
 
                 llm_attrs = {}
-                if interaction_data.llm_provider_class:
-                    llm_attrs["provider_class"] = interaction_data.llm_provider_class
-                if interaction_data.llm_model_name:
-                    llm_attrs["model_name"] = interaction_data.llm_model_name
-                if interaction_data.llm_latency:
-                    llm_attrs["duration_ms"] = interaction_data.llm_latency
-                if interaction_data.llm_start_time:
-                    llm_attrs["start_timestamp"] = interaction_data.llm_start_time
-                if interaction_data.llm_end_time:
-                    llm_attrs["end_timestamp"] = interaction_data.llm_end_time
+                if cascading_turn_data.llm_provider_class:
+                    llm_attrs["provider_class"] = cascading_turn_data.llm_provider_class
+                if cascading_turn_data.llm_model_name:
+                    llm_attrs["model_name"] = cascading_turn_data.llm_model_name
+                if cascading_turn_data.llm_latency:
+                    llm_attrs["duration_ms"] = cascading_turn_data.llm_latency
+                if cascading_turn_data.llm_start_time:
+                    llm_attrs["start_timestamp"] = cascading_turn_data.llm_start_time
+                if cascading_turn_data.llm_end_time:
+                    llm_attrs["end_timestamp"] = cascading_turn_data.llm_end_time
                 
-                llm_span = create_span(llm_span_name, llm_attrs, parent_span=turn_span, start_time=interaction_data.llm_start_time)
+                llm_span = create_span(llm_span_name, llm_attrs, parent_span=turn_span, start_time=cascading_turn_data.llm_start_time)
 
                 if llm_span:
 
-                    if interaction_data.function_tool_timestamps:
-                        for tool_data in interaction_data.function_tool_timestamps:
+                    if cascading_turn_data.function_tool_timestamps:
+                        for tool_data in cascading_turn_data.function_tool_timestamps:
                             tool_timestamp = tool_data["timestamp"]
                             tool_span = create_span(f"Invoked Tool: {tool_data['tool_name']}", parent_span=llm_span, start_time=tool_timestamp)
                             self.end_span(tool_span, end_time=tool_timestamp)
@@ -257,21 +253,21 @@ class TracesFlowManager:
                         })
 
                     llm_status = StatusCode.ERROR if llm_errors else StatusCode.OK
-                    create_log(f"{interaction_data.llm_provider_class}: LLM Processing Ended with status {llm_status}", "INFO")
-                    self.end_span(llm_span, status_code=llm_status, end_time=interaction_data.llm_end_time)
+                    create_log(f"{cascading_turn_data.llm_provider_class}: LLM Processing Ended with status {llm_status}", "INFO")
+                    self.end_span(llm_span, status_code=llm_status, end_time=cascading_turn_data.llm_end_time)
 
-            tts_errors = [e for e in interaction_data.errors if e['source'] == 'TTS']
-            if interaction_data.tts_start_time is not None or interaction_data.tts_end_time is not None or tts_errors:
-                create_log(f"{interaction_data.tts_provider_class}: Text to Speech Processing Started", "INFO")
-                tts_span_name = f"{interaction_data.tts_provider_class}: Text to Speech Processing"
+            tts_errors = [e for e in cascading_turn_data.errors if e['source'] == 'TTS']
+            if cascading_turn_data.tts_start_time is not None or cascading_turn_data.tts_end_time is not None or tts_errors:
+                create_log(f"{cascading_turn_data.tts_provider_class}: Text to Speech Processing Started", "INFO")
+                tts_span_name = f"{cascading_turn_data.tts_provider_class}: Text to Speech Processing"
 
                 tts_attrs = {}
-                if interaction_data.tts_provider_class:
-                    tts_attrs["provider_class"] = interaction_data.tts_provider_class
-                if interaction_data.tts_model_name:
-                    tts_attrs["model_name"] = interaction_data.tts_model_name
+                if cascading_turn_data.tts_provider_class:
+                    tts_attrs["provider_class"] = cascading_turn_data.tts_provider_class
+                if cascading_turn_data.tts_model_name:
+                    tts_attrs["model_name"] = cascading_turn_data.tts_model_name
                     
-                tts_span = create_span(tts_span_name, tts_attrs, parent_span=turn_span, start_time=interaction_data.tts_start_time)
+                tts_span = create_span(tts_span_name, tts_attrs, parent_span=turn_span, start_time=cascading_turn_data.tts_start_time)
 
                 if tts_span:
                     for error in tts_errors:
@@ -281,11 +277,11 @@ class TracesFlowManager:
                         })
 
                     tts_status = StatusCode.ERROR if tts_errors else StatusCode.OK
-                    create_log(f"{interaction_data.tts_provider_class}: Text to Speech Processing Ended with status {tts_status}", "INFO")
-                    self.end_span(tts_span, status_code=tts_status, end_time=interaction_data.tts_end_time)
+                    create_log(f"{cascading_turn_data.tts_provider_class}: Text to Speech Processing Ended with status {tts_status}", "INFO")
+                    self.end_span(tts_span, status_code=tts_status, end_time=cascading_turn_data.tts_end_time)
 
-            if interaction_data.timeline:
-                for event in interaction_data.timeline:
+            if cascading_turn_data.timeline:
+                for event in cascading_turn_data.timeline:
                     if event.event_type == "user_speech":
                         create_log(f"User Input Speech Detected", "INFO")
                         user_speech_span = create_span("User Input Speech", {"Transcript": event.text}, parent_span=turn_span, start_time=event.start_time)
@@ -295,17 +291,17 @@ class TracesFlowManager:
                         agent_speech_span = create_span("Agent Output Speech", {"Transcript": event.text}, parent_span=turn_span, start_time=event.start_time)
                         self.end_span(agent_speech_span, end_time=event.end_time)    
 
-        if interaction_data.errors:
-            vad_turn_errors = [e for e in interaction_data.errors if e['source'] in ['VAD']]
+        if cascading_turn_data.errors:
+            vad_turn_errors = [e for e in cascading_turn_data.errors if e['source'] in ['VAD']]
             
             if vad_turn_errors:
-                span_name = f"{interaction_data.vad_provider_class}: VAD Processing Error"
+                span_name = f"{cascading_turn_data.vad_provider_class}: VAD Processing Error"
                 
                 vad_attrs = {}
-                if interaction_data.vad_provider_class:
-                    vad_attrs["provider_class"] = interaction_data.vad_provider_class
-                if interaction_data.vad_model_name:
-                    vad_attrs["model_name"] = interaction_data.vad_model_name
+                if cascading_turn_data.vad_provider_class:
+                    vad_attrs["provider_class"] = cascading_turn_data.vad_provider_class
+                if cascading_turn_data.vad_model_name:
+                    vad_attrs["model_name"] = cascading_turn_data.vad_model_name
 
                 vad_turn_span = create_span(span_name, vad_attrs, parent_span=turn_span)
                 if vad_turn_span:
@@ -319,15 +315,15 @@ class TracesFlowManager:
                     status = StatusCode.ERROR
                     self.end_span(vad_turn_span, status_code=status)
         
-        if interaction_data.interrupted:
+        if cascading_turn_data.interrupted:
             interrupted_span = create_span("Turn Interrupted", parent_span=turn_span)
             self.end_span(interrupted_span, message="Agent was interrupted") 
 
         turn_end_time = None
-        if interaction_data.tts_end_time:
-            turn_end_time = interaction_data.tts_end_time
-        elif interaction_data.llm_end_time:
-            turn_end_time = interaction_data.llm_end_time 
+        if cascading_turn_data.tts_end_time:
+            turn_end_time = cascading_turn_data.tts_end_time
+        elif cascading_turn_data.llm_end_time:
+            turn_end_time = cascading_turn_data.llm_end_time 
         
         self.end_span(turn_span, message="End of Cascading turn trace.", end_time=turn_end_time)
 
@@ -380,7 +376,7 @@ class TracesFlowManager:
             span_name, 
             {
                 **attributes,
-                "a2a_interaction_number": self._a2a_turn_count,
+                "a2a_turn_number": self._a2a_turn_count,
                 "parent_span": "Agent-to-Agent Communications"
             }, 
             parent_span=self.a2a_span,
@@ -435,7 +431,7 @@ class TracesFlowManager:
                 end_time = time.perf_counter()
             complete_span(span, status_code, message, end_time) 
 
-    def create_realtime_turn_trace(self, interaction_data: RealtimeInteractionData):
+    def create_realtime_turn_trace(self, realtime_turn_data: RealtimeTurnData):
         """
         Creates a full trace for a single realtime turn from its collected metrics data.
         This includes the parent turn span and child spans for speech events, tools, and latencies.
@@ -447,22 +443,18 @@ class TracesFlowManager:
         self._turn_count += 1
         turn_name = f"Turn#{self._turn_count}"
         
-        turn_span = create_span(turn_name, 
-                                       {"interaction_id": interaction_data.interaction_id}, 
-                                       parent_span=self.main_turn_span)
+        turn_span = create_span(turn_name,parent_span=self.main_turn_span,start_time=time.perf_counter())
         if turn_span:
             with trace.use_span(turn_span):
-                create_log(f"Realtime Turn {turn_name} started", "INFO", {
-                    "interaction_id": interaction_data.interaction_id
-                })
+                create_log(f"Realtime Turn {turn_name} started", "INFO")
 
         if not turn_span:
             return
 
         with trace.use_span(turn_span, end_on_exit=False):
 
-            if interaction_data.timeline:
-                for event in interaction_data.timeline:
+            if realtime_turn_data.timeline:
+                for event in realtime_turn_data.timeline:
                     if event.event_type == "user_speech":
                         span_name = f"User Input Speech"
                         user_speech_span = create_span(span_name, {
@@ -478,21 +470,21 @@ class TracesFlowManager:
                         }, parent_span=turn_span,start_time=event.start_time)
                         self.end_span(agent_speech_span,end_time=event.end_time)
 
-            if interaction_data.function_tools_called:
-                for i, tool in enumerate(interaction_data.function_tools_called, 1):
+            if realtime_turn_data.function_tools_called:
+                for i, tool in enumerate(realtime_turn_data.function_tools_called, 1):
                     tool_span = create_span(f"Invoked Tool: {tool}", parent_span=turn_span,start_time=time.perf_counter())
                     self.end_span(tool_span,end_time=time.perf_counter())
 
-            if interaction_data.ttfw is not None:
-                ttfw_span = create_span("Time to First Word", {"duration_ms": interaction_data.ttfw}, parent_span=turn_span,start_time=interaction_data.ttfw)
+            if realtime_turn_data.ttfw is not None:
+                ttfw_span = create_span("Time to First Word", {"duration_ms": realtime_turn_data.ttfw}, parent_span=turn_span,start_time=time.perf_counter())
                 self.end_span(ttfw_span,end_time=time.perf_counter())
 
-            if interaction_data.interrupted is not None:
+            if realtime_turn_data.interrupted is not None:
                 interrupted_span = create_span("Turn Interrupted", parent_span=turn_span,start_time=time.perf_counter())
                 self.end_span(interrupted_span, message="Agent was interrupted", end_time=time.perf_counter())
 
-            if interaction_data.realtime_model_errors:
-                for error in interaction_data.realtime_model_errors:
+            if realtime_turn_data.realtime_model_errors:
+                for error in realtime_turn_data.realtime_model_errors:
                     turn_span.add_event(
                         name="Errors",
                         attributes={

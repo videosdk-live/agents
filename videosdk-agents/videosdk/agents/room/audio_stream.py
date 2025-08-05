@@ -5,7 +5,6 @@ import traceback
 from av import AudioFrame
 import numpy as np
 from videosdk import CustomAudioTrack
-from videosdk.agents.metrics.realtime_collector import realtime_metrics_collector
 
 
 AUDIO_PTIME = 0.02

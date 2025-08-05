@@ -7,7 +7,7 @@ from .agent import Agent
 from .llm.chat_context import ChatRole
 from .conversation_flow import ConversationFlow
 from .pipeline import Pipeline
-from .metrics import metrics_collector, realtime_metrics_collector
+from .metrics import cascading_metrics_collector, realtime_metrics_collector
 from .realtime_pipeline import RealTimePipeline
 from .utils import get_tool_info
 import time
@@ -94,7 +94,7 @@ class AgentSession:
         if isinstance(self.pipeline, RealTimePipeline):
             await realtime_metrics_collector.start_session(self.agent, self.pipeline)
         else:
-            traces_flow_manager = metrics_collector.traces_flow_manager
+            traces_flow_manager = cascading_metrics_collector.traces_flow_manager
             if traces_flow_manager:
                 config_attributes = {
                     "system_instructions": self.agent.instructions,
@@ -132,7 +132,7 @@ class AgentSession:
 
             if self.pipeline.__class__.__name__ == "CascadingPipeline":
                 configs = self.pipeline.get_component_configs() if hasattr(self.pipeline, 'get_component_configs') else {}
-                metrics_collector.set_provider_info(
+                cascading_metrics_collector.set_provider_info(
                     llm_provider=self.pipeline.llm.__class__.__name__ if self.pipeline.llm else "",
                     llm_model=configs.get('llm', {}).get('model', "") if self.pipeline.llm else "",
                     stt_provider=self.pipeline.stt.__class__.__name__ if self.pipeline.stt else "",
@@ -158,7 +158,7 @@ class AgentSession:
         Send an initial message to the agent.
         """
         if not isinstance(self.pipeline, RealTimePipeline):
-            traces_flow_manager = metrics_collector.traces_flow_manager
+            traces_flow_manager = cascading_metrics_collector.traces_flow_manager
             if traces_flow_manager:
                 traces_flow_manager.agent_say_called(message)
         self.agent.chat_context.add_message(role=ChatRole.ASSISTANT, content=message)
@@ -176,7 +176,7 @@ class AgentSession:
                 await traces_flow_manager.start_agent_session_closed({"start_time": start_time})
                 traces_flow_manager.end_agent_session_closed()
         else:
-            traces_flow_manager = metrics_collector.traces_flow_manager
+            traces_flow_manager = cascading_metrics_collector.traces_flow_manager
             if traces_flow_manager:
                 start_time = time.perf_counter()
                 await traces_flow_manager.start_agent_session_closed({"start_time": start_time})

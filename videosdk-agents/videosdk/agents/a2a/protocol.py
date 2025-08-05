@@ -5,7 +5,7 @@ import uuid
 from .card import AgentCard 
 import asyncio
 from ..event_bus import global_event_emitter
-from ..metrics import metrics_collector, realtime_metrics_collector
+from ..metrics import cascading_metrics_collector, realtime_metrics_collector
 
 @dataclass
 class A2AMessage:
@@ -42,7 +42,7 @@ class AgentRegistry:
         if agent_instance:
             self.agent_instances[card.id] = agent_instance
 
-            traces_flow_manager = metrics_collector.traces_flow_manager if metrics_collector else None
+            traces_flow_manager = cascading_metrics_collector.traces_flow_manager if cascading_metrics_collector else None
             
             if traces_flow_manager:
                 total_agents = len(self.agents)
@@ -118,7 +118,7 @@ class A2AProtocol:
 
     async def unregister(self) -> None:
         """Unregister the agent and clean up event handlers"""
-        traces_flow_manager = metrics_collector.traces_flow_manager if metrics_collector else None
+        traces_flow_manager = cascading_metrics_collector.traces_flow_manager if cascading_metrics_collector else None
         
         if traces_flow_manager:
             try:
@@ -208,7 +208,7 @@ class A2AProtocol:
             metadata=metadata
         )
 
-        traces_flow_manager = metrics_collector.traces_flow_manager if metrics_collector else None
+        traces_flow_manager = cascading_metrics_collector.traces_flow_manager if cascading_metrics_collector else None
 
         sender_span = None
         if traces_flow_manager:
@@ -245,12 +245,12 @@ class A2AProtocol:
                 if sender_is_realtime:
                     await realtime_metrics_collector.set_a2a_handoff()
                 else:
-                    metrics_collector.set_a2a_handoff()
+                    cascading_metrics_collector.set_a2a_handoff()
             else:
                 if sender_is_realtime:
                     await realtime_metrics_collector.set_a2a_handoff()
                 else:
-                    metrics_collector.set_a2a_handoff()
+                    cascading_metrics_collector.set_a2a_handoff()
 
         receiver_span = None
         if traces_flow_manager:

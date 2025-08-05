@@ -13,9 +13,8 @@ class TimelineEvent:
     text: str = "" 
 
 @dataclass
-class InteractionMetrics:
-    """Data structure for a single user-agent interaction"""
-    interaction_id: str  
+class CascadingTurnData:
+    """Data structure for a single user-agent turn"""
     user_speech_start_time: Optional[float] = None
     user_speech_end_time: Optional[float] = None
     
@@ -61,15 +60,15 @@ class InteractionMetrics:
     handoff_occurred: bool = False  
 
 @dataclass
-class MetricsData:
+class CascadingMetricsData:
     """Data structure to hold all metrics for a session"""
     session_id: Optional[str] = None
     session_start_time: float = field(default_factory=time.time)
     system_instructions: str = ""
     total_interruptions: int = 0
-    total_interactions: int = 0
-    interactions: List[InteractionMetrics] = field(default_factory=list)
-    current_interaction: Optional[InteractionMetrics] = None
+    total_turns: int = 0
+    turns: List[CascadingTurnData] = field(default_factory=list)
+    current_turn: Optional[CascadingTurnData] = None
     user_speech_end_time: Optional[float] = None
     agent_speech_start_time: Optional[float] = None
     stt_start_time: Optional[float] = None
@@ -94,13 +93,11 @@ class MetricsData:
     
 
 @dataclass
-class RealtimeInteractionData:
+class RealtimeTurnData:
     """
-    Captures a single interaction between user and agent.
-    Interaction = one user utterance + one agent response.
+    Captures a single turn between user and agent.
+    Turns = one user utterance + one agent response.
     """
-
-    interaction_id: str
     session_id: Optional[str] = None
     provider_class_name: Optional[str] = None 
     provider_model_name: Optional[str] = None 

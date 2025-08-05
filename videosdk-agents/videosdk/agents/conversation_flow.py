@@ -16,7 +16,7 @@ from .agent import Agent
 from .event_bus import global_event_emitter
 from .vad import VAD, VADResponse, VADEventType
 from .eou import EOU
-from .metrics import metrics_collector
+from .metrics import cascading_metrics_collector
 from .denoise import Denoise
 import logging
 
@@ -55,7 +55,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         global_event_emitter.on("speech_stopped", self.on_speech_stopped_stt)
         
         if self.agent and self.agent.instructions:
-            metrics_collector.set_system_instructions(self.agent.instructions)
+            cascading_metrics_collector.set_system_instructions(self.agent.instructions)
 
     def on_transcription(self, callback: Callable[[str], None]) -> None:
         """
@@ -80,10 +80,10 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                         
     async def on_vad_event(self, vad_response: VADResponse) -> None:
         if vad_response.event_type == VADEventType.START_OF_SPEECH:
-            metrics_collector.on_user_speech_start()
+            cascading_metrics_collector.on_user_speech_start()
             self.on_speech_started()
         elif vad_response.event_type == VADEventType.END_OF_SPEECH:
-            metrics_collector.on_user_speech_end()
+            cascading_metrics_collector.on_user_speech_end()
             self.on_speech_stopped()
 
     async def on_stt_transcript(self, stt_response: STTResponse) -> None:
@@ -96,23 +96,23 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         """Process final transcript with EOU detection and response generation"""
         
         # Fallback: If VAD is present but hasn't called on_user_speech_start yet,
-        if self.vad and not metrics_collector.data.is_user_speaking:
-            metrics_collector.on_user_speech_start()
+        if self.vad and not cascading_metrics_collector.data.is_user_speaking:
+            cascading_metrics_collector.on_user_speech_start()
         
         # Fallback: If STT hasn't been started yet, start it now
         if not self._stt_started:
-            metrics_collector.start_new_interaction()
-            metrics_collector.on_stt_start()
+            cascading_metrics_collector.start_new_interaction()
+            cascading_metrics_collector.on_stt_start()
             self._stt_started = True
     
-        metrics_collector.set_user_transcript(user_text)
-        metrics_collector.on_stt_complete()
+        cascading_metrics_collector.set_user_transcript(user_text)
+        cascading_metrics_collector.on_stt_complete()
         
         # Fallback: If VAD is present but hasn't called on_user_speech_end yet,
-        if self.vad and metrics_collector.data.is_user_speaking:
-            metrics_collector.on_user_speech_end()
+        if self.vad and cascading_metrics_collector.data.is_user_speaking:
+            cascading_metrics_collector.on_user_speech_end()
         elif not self.vad:
-            metrics_collector.on_user_speech_end()
+            cascading_metrics_collector.on_user_speech_end()
         
         self.agent.chat_context.add_message(
             role=ChatRole.USER,
@@ -122,14 +122,14 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         await self.on_turn_start(user_text)
         
         if self.turn_detector:
-            metrics_collector.on_eou_start()
+            cascading_metrics_collector.on_eou_start()
             eou_detected = self.turn_detector.detect_end_of_utterance(self.agent.chat_context)
-            metrics_collector.on_eou_complete()
+            cascading_metrics_collector.on_eou_complete()
             
             if eou_detected:
                 await self._generate_and_synthesize_response(user_text)
             else:
-                metrics_collector.complete_current_interaction()
+                cascading_metrics_collector.complete_current_turn()
         else:
             await self._generate_and_synthesize_response(user_text)
         
@@ -144,9 +144,9 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 agent_response = ""
                 async for response_chunk in self.run(user_text):
                     agent_response += response_chunk
-                metrics_collector.set_agent_response(agent_response)
+                cascading_metrics_collector.set_agent_response(agent_response)
         finally:
-            metrics_collector.complete_current_interaction()
+            cascading_metrics_collector.complete_current_turn()
             
     async def process_with_llm(self) -> AsyncIterator[str]:
         """
@@ -159,7 +159,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             full_response = ""
             prev_content_length = 0
             
-            metrics_collector.on_llm_start()
+            cascading_metrics_collector.on_llm_start()
             first_chunk_received = False
             
             async for llm_chunk_resp in self.llm.chat(
@@ -168,12 +168,12 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             ):
                 if not first_chunk_received:
                     first_chunk_received = True
-                    metrics_collector.on_llm_complete()
+                    cascading_metrics_collector.on_llm_complete()
                     
                 if llm_chunk_resp.metadata and "function_call" in llm_chunk_resp.metadata:
                     func_call = llm_chunk_resp.metadata["function_call"]
                     
-                    metrics_collector.add_function_tool_call(func_call["name"])
+                    cascading_metrics_collector.add_function_tool_call(func_call["name"])
                     
                     self.agent.chat_context.add_function_call(
                         name=func_call["name"],
@@ -226,20 +226,20 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         Direct TTS synthesis (used for initial messages)
         """
         if self.tts:
-            metrics_collector.start_new_interaction("")
-            metrics_collector.set_agent_response(message)
+            cascading_metrics_collector.start_new_interaction("")
+            cascading_metrics_collector.set_agent_response(message)
             
             try:
                 await self._synthesize_with_tts(message)
             finally:
-                metrics_collector.complete_current_interaction()
+                cascading_metrics_collector.complete_current_turn()
 
     async def process_text_input(self, text: str) -> None:
         """
         Process text input directly (for A2A communication).
         This bypasses STT and directly processes the text through the LLM.
         """
-        metrics_collector.start_new_interaction(text)
+        cascading_metrics_collector.start_new_interaction(text)
         
         self.agent.chat_context.add_message(
             role=ChatRole.USER,
@@ -251,8 +251,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             full_response += response_chunk
         
         if full_response:
-            metrics_collector.set_agent_response(full_response)
-            metrics_collector.complete_current_interaction()
+            cascading_metrics_collector.set_agent_response(full_response)
+            cascading_metrics_collector.complete_current_turn()
             global_event_emitter.emit("text_response", {"text": full_response})
 
     async def run(self, transcript: str) -> AsyncIterator[str]:
@@ -279,7 +279,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         pass
 
     def on_speech_started(self) -> None:
-        metrics_collector.on_user_speech_start()
+        cascading_metrics_collector.on_user_speech_start()
         
         if self.user_speech_callback:
             self.user_speech_callback()
@@ -297,29 +297,29 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
     def on_speech_stopped(self) -> None:
         
         if not self._stt_started:
-            metrics_collector.start_new_interaction()
-            metrics_collector.on_stt_start()
+            cascading_metrics_collector.start_new_interaction()
+            cascading_metrics_collector.on_stt_start()
             self._stt_started = True
         
-        metrics_collector.on_user_speech_end()
+        cascading_metrics_collector.on_user_speech_end()
         current_time = time.perf_counter()
             
-        if (metrics_collector.data.current_interaction and 
-            metrics_collector.data.current_interaction.user_speech_start_time):
+        if (cascading_metrics_collector.data.current_turn and 
+            cascading_metrics_collector.data.current_turn.user_speech_start_time):
             pass
         else:
             estimated_speech_duration = 2.0
             estimated_start_time = current_time - estimated_speech_duration
             
-            if not metrics_collector.data.is_user_speaking:
-                metrics_collector.data.user_input_start_time = estimated_start_time
-                metrics_collector.data.is_user_speaking = True
+            if not cascading_metrics_collector.data.is_user_speaking:
+                cascading_metrics_collector.data.user_input_start_time = estimated_start_time
+                cascading_metrics_collector.data.is_user_speaking = True
                 
-                if metrics_collector.data.current_interaction:
-                    metrics_collector.data.current_interaction.user_speech_start_time = estimated_start_time
+                if cascading_metrics_collector.data.current_turn:
+                    cascading_metrics_collector.data.current_turn.user_speech_start_time = estimated_start_time
         
-        if metrics_collector.data.current_interaction:
-            metrics_collector.data.current_interaction.user_speech_end_time = current_time
+        if cascading_metrics_collector.data.current_turn:
+            cascading_metrics_collector.data.current_turn.user_speech_end_time = current_time
 
     async def _synthesize_with_tts(self, response_gen: AsyncIterator[str] | str) -> None:
         """
@@ -329,11 +329,11 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         if not self.tts:
             return
         
-        metrics_collector.on_tts_start()
+        cascading_metrics_collector.on_tts_start()
         
         async def on_first_audio_byte():
-            metrics_collector.on_tts_first_byte()
-            metrics_collector.on_agent_speech_start()
+            cascading_metrics_collector.on_tts_first_byte()
+            cascading_metrics_collector.on_agent_speech_start()
         
         self.tts.on_first_audio_byte(on_first_audio_byte)
         
@@ -367,7 +367,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                     await self.tts.synthesize(buffer)
             
             if full_response:
-                metrics_collector.set_agent_response(full_response)
+                cascading_metrics_collector.set_agent_response(full_response)
                 
         finally:
-            metrics_collector.on_agent_speech_end()
+            cascading_metrics_collector.on_agent_speech_end()

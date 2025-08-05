@@ -27,7 +27,7 @@ class AnalyticsClient:
         self.session_id = session_id
     
     async def send_interaction_analytics(self, interaction_data: Dict[str, Any]) -> None:
-        """Send interaction analytics to the API endpoint"""
+        """Send turn analytics to the API endpoint"""
         session_id_from_payload = interaction_data.get("sessionId")
         current_session_id = self.session_id or session_id_from_payload
         
@@ -60,7 +60,7 @@ class AnalyticsClient:
     
     def send_interaction_analytics_safe(self, interaction_data: Dict[str, Any]) -> None:
         """
-        Safely send interaction analytics without blocking.
+        Safely send turn analytics without blocking.
         Creates a task if event loop is running, otherwise ignores.
         """
         try:

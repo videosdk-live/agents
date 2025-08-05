@@ -224,6 +224,6 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
     def on_component_error(self, source: str, error_data: Any) -> None:
         """Handle error events from components (STT, LLM, TTS, VAD, TURN-D)"""
         self.emit("error", {"source": source, "details": error_data})
-        from .metrics import metrics_collector
-        metrics_collector.add_error(source, str(error_data))
+        from .metrics import cascading_metrics_collector
+        cascading_metrics_collector.add_error(source, str(error_data))
         
