@@ -19,7 +19,7 @@ class VideoSDKTelemetry:
     """OpenTelemetry traces for VideoSDK agents"""
     
     def __init__(self, room_id: str, peer_id: str, sdk_name: str, observability_jwt: str, 
-                 traces_config: Dict[str, Any], metadata: Dict[str, Any]):
+                 traces_config: Dict[str, Any], metadata: Dict[str, Any], sdk_metadata: Dict[str, Any] = None):
         """
         Initialize telemetry with OpenTelemetry configuration
         
@@ -38,6 +38,7 @@ class VideoSDKTelemetry:
         self.traces_enabled = traces_config.get('enabled', False)
         self.pb_endpoint = traces_config.get('pbEndPoint')
         self.metadata = metadata
+        self.sdk_metadata = sdk_metadata
         
         self.tracer = None
         self.root_span = None
@@ -52,9 +53,16 @@ class VideoSDKTelemetry:
             if not self.traces_enabled:
                 return
             
+            service_name = "videosdk-otel-telemetry-agents"
+
+            if self.sdk_metadata and 'sdk' in self.sdk_metadata and 'sdk_version' in self.sdk_metadata:
+                sdk_name = self.sdk_metadata['sdk'].upper()
+                sdk_version = self.sdk_metadata['sdk_version']
+
             resource = Resource(attributes={
-                "service.name": "videosdk-otel-telemetry-agents",
-                "sdk.version": "0.0.19"
+                "sdk.name": sdk_name,
+                "sdk.version": sdk_version,
+                "service.name": service_name,
             })
             
             headers = {}
@@ -169,7 +177,7 @@ def get_telemetry() -> Optional[VideoSDKTelemetry]:
 
 def initialize_telemetry(room_id: str, peer_id: str, sdk_name: str = "agents", 
                         observability_jwt: str = None, traces_config: Dict[str, Any] = None, 
-                        metadata: Dict[str, Any] = None):
+                        metadata: Dict[str, Any] = None, sdk_metadata: Dict[str, Any] = None):
     """
     Initialize global telemetry instance
     
@@ -198,5 +206,6 @@ def initialize_telemetry(room_id: str, peer_id: str, sdk_name: str = "agents",
         sdk_name=sdk_name,
         observability_jwt=observability_jwt,
         traces_config=traces_config,
-        metadata=metadata
+        metadata=metadata,
+        sdk_metadata=sdk_metadata
     )

@@ -286,7 +286,8 @@ class VideoSDKHandler:
                         room_id=self.meeting_id,
                         peer_id=peer_id,
                         room_attributes=attributes,
-                        session_id=self._session_id
+                        session_id=self._session_id,
+                        sdk_metadata=self.sdk_metadata
                     )
                 else:
                     print("No meeting attributes found")

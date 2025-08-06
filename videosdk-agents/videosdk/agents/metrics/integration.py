@@ -5,7 +5,7 @@ from .logs import initialize_logs, get_logs, shutdown_logs
 
 
 def auto_initialize_telemetry_and_logs(room_id: str, peer_id: str, 
-                                      room_attributes: Dict[str, Any] = None, session_id: str = None):
+                                      room_attributes: Dict[str, Any] = None, session_id: str = None, sdk_metadata: Dict[str, Any] = None):
     """
     Auto-initialize telemetry and logs from room attributes
     """
@@ -25,7 +25,8 @@ def auto_initialize_telemetry_and_logs(room_id: str, peer_id: str,
             sdk_name="agents",
             observability_jwt=observability_jwt,
             traces_config=traces_config,
-            metadata=metadata
+            metadata=metadata,
+            sdk_metadata=sdk_metadata
         )
         
     
@@ -36,11 +37,10 @@ def auto_initialize_telemetry_and_logs(room_id: str, peer_id: str,
             peer_id=peer_id,
             jwt_key=observability_jwt, 
             log_config=logs_config,
-            session_id=session_id
+            session_id=session_id,
+            sdk_metadata=sdk_metadata,
         )
         
-
-
 def create_span(span_name: str, attributes: Dict[str, Any] = None, parent_span: Optional[Span] = None, start_time: Optional[float] = None):
     """
     Create a trace span (convenience method)

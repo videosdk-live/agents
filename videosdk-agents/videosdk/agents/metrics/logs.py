@@ -10,7 +10,7 @@ from opentelemetry.trace import get_current_span
 class VideoSDKLogs:
     """VideoSDK logs for agents using direct API calls"""
     
-    def __init__(self, meeting_id: str, peer_id: str, jwt_key: str, log_config: Dict[str, Any], session_id: str = None):
+    def __init__(self, meeting_id: str, peer_id: str, jwt_key: str, log_config: Dict[str, Any], session_id: str = None, sdk_metadata: Dict[str, Any] = None):
         """
         Initialize logs with direct API configuration
         
@@ -30,9 +30,16 @@ class VideoSDKLogs:
         
         self.session_id = session_id or f"session_{peer_id}_{int(datetime.now().timestamp())}"
         
+        if sdk_metadata and 'sdk' in sdk_metadata and 'sdk_version' in sdk_metadata:
+            sdk_name = sdk_metadata['sdk'].upper()
+            sdk_version = sdk_metadata['sdk_version']
+
+        service_name = "videosdk-otel-telemetry-agents"
+
         self.sdk_info = {
-            "SDK": "AI_AGENTS",
-            "SDK_VERSION": "0.0.19",
+            "sdk.name": sdk_name,
+            "sdk.version": sdk_version,
+            "service.name": service_name,
         }
         
         self._initialize_logs()
@@ -150,7 +157,7 @@ def get_logs() -> Optional[VideoSDKLogs]:
 
 
 def initialize_logs(meeting_id: str, peer_id: str, jwt_key: str = None, 
-                   log_config: Dict[str, Any] = None, session_id: str = None):
+                   log_config: Dict[str, Any] = None, session_id: str = None, sdk_metadata: Dict[str, Any] = None):
     """
     Initialize global logs instance
     
@@ -174,7 +181,8 @@ def initialize_logs(meeting_id: str, peer_id: str, jwt_key: str = None,
         peer_id=peer_id,
         jwt_key=jwt_key,
         log_config=log_config,
-        session_id=session_id
+        session_id=session_id,
+        sdk_metadata=sdk_metadata
     )
 
 
