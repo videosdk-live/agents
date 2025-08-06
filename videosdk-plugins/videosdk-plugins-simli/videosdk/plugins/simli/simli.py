@@ -21,6 +21,8 @@ from vsaiortc.mediastreams import MediaStreamError
 
 from videosdk import CustomVideoTrack, CustomAudioTrack
 from videosdk.agents.realtime_base_model import RealtimeBaseModel
+import logging
+logger = logging.getLogger(__name__)
 
 # --- Constants ---
 AUDIO_SAMPLE_RATE = 48000
@@ -89,7 +91,7 @@ class SimliAudioTrack(CustomAudioTrack):
 
     def buildAudioFrames(self, chunk: bytes) -> AudioFrame:
         if len(chunk) != self.chunk_size:
-            print(f"Warning: Incorrect Simli chunk size received {len(chunk)}, expected {self.chunk_size}")
+            logger.warning(f"Incorrect Simli chunk size received {len(chunk)}, expected {self.chunk_size}")
 
         if len(chunk) % 2 != 0:
             chunk = chunk + b'\x00'
@@ -97,7 +99,7 @@ class SimliAudioTrack(CustomAudioTrack):
         data = np.frombuffer(chunk, dtype=np.int16)
         expected_samples = self.samples * self.channels
         if len(data) != expected_samples:
-            print(f"Warning: Incorrect number of samples in Simli chunk {len(data)}, expected {expected_samples}")
+            logger.warning(f"Incorrect number of samples in Simli chunk {len(data)}, expected {expected_samples}")
 
         data = data.reshape(-1, self.channels)
         layout = "mono" if self.channels == 1 else "stereo"
@@ -192,10 +194,10 @@ class SimliAudioTrack(CustomAudioTrack):
             except asyncio.QueueEmpty:
                 pass
             except asyncio.QueueFull:
-                print("Simli: Audio frame queue is full. Frame dropped.")
+                logger.warning("Simli: Audio frame queue is full. Frame dropped.")
                 
-        except Exception as e:
-            print(f"Error adding Simli audio frame: {e}")
+        except Exception as e:  
+            logger.error(f"Error adding Simli audio frame: {e}")
             try:
                 array = frame.to_ndarray()
             except:
@@ -340,7 +342,7 @@ class SimliAvatar:
             session_token = await self._http_start_session()
             await self._negotiate_webrtc_via_ws(session_token)
         except Exception as e:
-            print(f"Error starting Simli session: {e}")
+            logger.error(f"Error starting Simli session: {e}")
             raise
 
     async def _http_start_session(self) -> str:
@@ -447,7 +449,7 @@ class SimliAvatar:
                 else:
                     break
             except Exception as e:
-                print(f"Simli: Video processing error: {e}")
+                logger.error(f"Simli: Video processing error: {e}")
                 if not self.run or self._stopping:
                     break
                 await asyncio.sleep(0.1)
@@ -463,8 +465,8 @@ class SimliAvatar:
                     continue
                     
                 frame = await asyncio.wait_for(self.audio_receiver_track.recv(), timeout=2.0)
-                if frame is None:
-                    print("Simli: Received None audio frame, continuing...")
+                if frame is None:   
+                    logger.warning("Simli: Received None audio frame, continuing...")
                     continue
                     
                 frame_count += 1
@@ -475,8 +477,8 @@ class SimliAvatar:
                         
                     self.audio_track.add_frame(frame)
                     
-                except Exception as frame_error:
-                    print(f"Simli: Error processing audio frame #{frame_count}: {frame_error}")
+                except Exception as frame_error:    
+                    logger.error(f"Simli: Error processing audio frame #{frame_count}: {frame_error}")
                     continue
                 
             except asyncio.TimeoutError:
@@ -485,7 +487,7 @@ class SimliAvatar:
                 else:
                     break
             except Exception as e:
-                print(f"Simli: Audio processing error: {e}")
+                logger.error(f"Simli: Audio processing error: {e}")
                 if not self.run or self._stopping:
                     break
                 await asyncio.sleep(0.1)
@@ -498,7 +500,7 @@ class SimliAvatar:
         try:
             await self._send_audio_data(silence_data)
         except Exception as e:
-            print(f"Error sending bootstrap silence: {e}")
+            logger.error(f"Error sending bootstrap silence: {e}")
 
     async def _handle_ws_messages(self):
         """Handle WebSocket messages """
@@ -527,7 +529,7 @@ class SimliAvatar:
                     pass
                     
         except Exception as e:
-            print(f"Error in Simli websocket message handler: {e}")
+            logger.error(f"Error in Simli websocket message handler: {e}")
             if not self._stopping:
                 self.run = False
                 await self.aclose()
@@ -541,7 +543,7 @@ class SimliAvatar:
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            print(f"Error in speech timeout handler: {e}")
+            logger.error(f"Error in speech timeout handler: {e}")
 
     async def handle_audio_input(self, audio_data: bytes):
         if not self.run or self._stopping:
@@ -567,9 +569,9 @@ class SimliAvatar:
                     self._last_audio_time = time.time()
 
             except Exception as e:
-                print(f"Error processing/sending audio data: {e}")
+                logger.error(f"Error processing/sending audio data: {e}")
         else:
-            print(f"Simli: Cannot send audio - ws available: {self.ws is not None}, ready: {self.ready.is_set()}")
+            logger.error(f"Simli: Cannot send audio - ws available: {self.ws is not None}, ready: {self.ready.is_set()}")
 
     async def _send_audio_data(self, data: bytes):
         """Send audio data via WebSocket to simli """
@@ -578,7 +580,7 @@ class SimliAvatar:
                 chunk = data[i:i + 6000]
                 await self.ws.send(chunk)
         except Exception as e:
-            print(f"Error sending audio data via WebSocket: {e}")
+            logger.error(f"Error sending audio data via WebSocket: {e}")
     
     async def send_message(self, message: str):
         pass

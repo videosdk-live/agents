@@ -89,10 +89,3 @@ class VAD(EventEmitter[Literal["error"]]):
     def on_vad_event(self, callback: Callable[[VADResponse], Awaitable[None]]) -> None:
         """Set callback for receiving VAD events"""
         self._vad_callback = callback
-
-    async def _emit_vad_event(self, event_type: VADEventType, data: VADData, metadata: Optional[dict[str, Any]] = None) -> None:
-        """Helper method to emit VAD events"""
-        response = VADResponse(event_type=event_type, data=data, metadata=metadata)
-        
-        if self._vad_callback:
-            await self._vad_callback(response)

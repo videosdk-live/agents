@@ -2,6 +2,9 @@ import os
 import asyncio
 from typing import Dict, Any, Optional
 import aiohttp
+import logging
+
+logger = logging.getLogger(__name__)
 
 class AnalyticsClient:
     """Client for sending analytics data to external endpoints"""
@@ -49,14 +52,14 @@ class AnalyticsClient:
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, json=interaction_data, headers=headers) as response:
                      if response.status == 200:
-                        print(f"Analytics sent successfully")
+                        logger.info(f"Analytics sent successfully")
                      else:
                         response_text = await response.text()
-                        print(f"  Failed to send analytics: HTTP {response.status}")
-                        print(f"  Response content: {response_text}")
+                        logger.error(f"  Failed to send analytics: HTTP {response.status}")
+                        logger.error(f"  Response content: {response_text}")
 
         except Exception as e:
-            print(f"  Error sending analytics to API: {e}")
+            logger.error(f"  Error sending analytics to API: {e}")
     
     def send_interaction_analytics_safe(self, interaction_data: Dict[str, Any]) -> None:
         """

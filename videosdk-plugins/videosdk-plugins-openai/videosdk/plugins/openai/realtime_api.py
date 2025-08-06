@@ -562,7 +562,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
                 tool_schema = build_openai_schema(tool)
                 oai_tools.append(tool_schema)
             except Exception as e:
-                print(f"Failed to format tool {tool}: {e}")
+                self.emit("error", f"Failed to format tool {tool}: {e}")
                 continue
                 
         return oai_tools

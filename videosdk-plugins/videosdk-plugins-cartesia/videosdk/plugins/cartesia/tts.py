@@ -4,8 +4,10 @@ from typing import Any, AsyncIterator, Optional
 import os
 import asyncio
 from cartesia import Cartesia
-
 from videosdk.agents import TTS
+import logging
+
+logger = logging.getLogger(__name__)
 
 CARTESIA_SAMPLE_RATE = 24000
 CARTESIA_CHANNELS = 1

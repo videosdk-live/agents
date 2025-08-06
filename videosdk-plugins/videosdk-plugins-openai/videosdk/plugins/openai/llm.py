@@ -133,7 +133,7 @@ class OpenAILLM(LLM):
                     tool_schema = build_openai_schema(tool)
                     formatted_tools.append(tool_schema)
                 except Exception as e:
-                    print(f"Failed to format tool {tool}: {e}")
+                    self.emit("error", f"Failed to format tool {tool}: {e}")
                     continue
             
             if formatted_tools:
@@ -167,7 +167,7 @@ class OpenAILLM(LLM):
                         args = json.loads(current_function_call["arguments"])
                         current_function_call["arguments"] = args
                     except json.JSONDecodeError:
-                        print(f"Failed to parse function arguments: {current_function_call['arguments']}")
+                        self.emit("error", f"Failed to parse function arguments: {current_function_call['arguments']}")
                         current_function_call["arguments"] = {}
                     
                     yield LLMResponse(

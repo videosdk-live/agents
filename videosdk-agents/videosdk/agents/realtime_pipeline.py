@@ -13,6 +13,9 @@ from .agent import Agent
 from .job import get_current_job_context
 from .metrics import realtime_metrics_collector
 from .denoise import Denoise
+import logging
+
+logger = logging.getLogger(__name__)
 
 class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtime_end","user_audio_input_data", "user_speech_started"]]):
     """
@@ -134,6 +137,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         """
         error_data = {"message": str(error), "timestamp": time.time()}
         realtime_metrics_collector.set_realtime_model_error(error_data)
+        logger.error(f"Realtime model error: {error_data}")
 
     async def cleanup(self):
         """Cleanup resources"""

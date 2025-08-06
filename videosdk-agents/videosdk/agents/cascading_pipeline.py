@@ -14,6 +14,9 @@ from .agent import Agent
 from .eou import EOU
 from .job import get_current_job_context
 from .denoise import Denoise
+import logging
+
+logger = logging.getLogger(__name__)
 
 class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
     """
@@ -223,7 +226,6 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
 
     def on_component_error(self, source: str, error_data: Any) -> None:
         """Handle error events from components (STT, LLM, TTS, VAD, TURN-D)"""
-        self.emit("error", {"source": source, "details": error_data})
         from .metrics import cascading_metrics_collector
         cascading_metrics_collector.add_error(source, str(error_data))
-        
+        logger.error(f"[{source}] Component error: {error_data}")
