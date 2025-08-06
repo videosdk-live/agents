@@ -476,8 +476,8 @@ class TracesFlowManager:
                     self.end_span(tool_span,end_time=time.perf_counter())
 
             if realtime_turn_data.ttfb is not None:
-                ttfw_span = create_span("Time to First Word", {"duration_ms": realtime_turn_data.ttfb}, parent_span=turn_span,start_time=time.perf_counter())
-                self.end_span(ttfw_span,end_time=time.perf_counter())
+                ttfb_span = create_span("Time to First Word", {"duration_ms": realtime_turn_data.ttfb}, parent_span=turn_span,start_time=time.perf_counter())
+                self.end_span(ttfb_span,end_time=time.perf_counter())
 
             if realtime_turn_data.interrupted is not None:
                 interrupted_span = create_span("Turn Interrupted", parent_span=turn_span,start_time=time.perf_counter())
