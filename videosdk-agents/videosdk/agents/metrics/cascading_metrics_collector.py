@@ -211,17 +211,7 @@ class CascadingMetricsCollector:
         
         if self.data.is_user_speaking and self.data.user_input_start_time:
             self.data.current_turn.user_speech_start_time = self.data.user_input_start_time
-        elif user_transcript and not self.data.is_user_speaking:
-            current_time = time.perf_counter()
-            estimated_speech_duration = max(len(user_transcript) / 10, 1.0)
-            estimated_start_time = current_time - estimated_speech_duration
             
-            self.data.current_turn.user_speech_start_time = estimated_start_time
-            self.data.current_turn.user_speech_end_time = current_time
-            
-            self._start_timeline_event("user_speech", estimated_start_time)
-            self._end_timeline_event("user_speech", current_time)
-        
         if user_transcript:
             self.set_user_transcript(user_transcript)
     
