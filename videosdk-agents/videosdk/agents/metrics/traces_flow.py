@@ -270,6 +270,11 @@ class TracesFlowManager:
                 tts_span = create_span(tts_span_name, tts_attrs, parent_span=turn_span, start_time=cascading_turn_data.tts_start_time)
 
                 if tts_span:
+                    
+                    if cascading_turn_data.ttfb is not None:
+                        ttfb_span = create_span("Time to First Byte", parent_span=tts_span, start_time=cascading_turn_data.tts_start_time)
+                        self.end_span(ttfb_span, end_time=cascading_turn_data.ttfb)
+
                     for error in tts_errors:
                         tts_span.add_event("error", attributes={
                             "message": error["message"],

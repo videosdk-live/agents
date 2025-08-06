@@ -381,9 +381,9 @@ class CascadingMetricsCollector:
         """Called when TTS produces first audio byte - this is our TTS latency"""
         if self.data.tts_start_time:
             now = time.perf_counter()
-            ttfb = now - self.data.tts_start_time
+            # ttfb = now - self.data.tts_start_time // no need to take the difference as we are using the start time of the tts span
             if self.data.current_turn:
-                self.data.current_turn.ttfb = self._round_latency(ttfb)
+                self.data.current_turn.ttfb = now
                 logger.info(f"tts ttfb: {self.data.current_turn.ttfb}ms")
             self.data.tts_first_byte_time = now
     
