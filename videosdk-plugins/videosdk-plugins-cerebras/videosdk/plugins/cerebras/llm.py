@@ -133,7 +133,7 @@ class CerebrasLLM(LLM):
                     }
                     formatted_tools.append(cerebras_tool)
                 except Exception as e:
-                    print(f"Failed to format tool {tool}: {e}")
+                    self.emit("error", f"Failed to format tool {tool}: {e}")
                     continue
             
             if formatted_tools:
@@ -175,7 +175,7 @@ class CerebrasLLM(LLM):
                             args = json.loads(tool_call["function"]["arguments"])
                             tool_call["function"]["arguments"] = args
                         except json.JSONDecodeError:
-                            print(f"Failed to parse function arguments: {tool_call['function']['arguments']}")
+                            self.emit("error", f"Failed to parse function arguments: {tool_call['function']['arguments']}")
                             tool_call["function"]["arguments"] = {}
                         
                         yield LLMResponse(

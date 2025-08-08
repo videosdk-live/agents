@@ -77,7 +77,7 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
                 await self.add_server(server)
             self._mcp_initialized = True
     
-    async def add_server(self, mcp_server: MCPServer) -> None:
+    async def add_server(self, mcp_server: MCPServiceProvider) -> None:
         """Initialize the MCP server and register the tools"""
         await self.mcp_manager.add_mcp_server(mcp_server)
         self._tools.extend(self.mcp_manager.tools)

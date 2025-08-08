@@ -18,21 +18,6 @@ class FunctionToolInfo:
     description: str | None = None
     parameters_schema: Optional[dict] = None
 
-class ToolRegistry:
-    _registry: dict[int, FunctionToolInfo] = {}
-    
-    @classmethod
-    def register(cls, obj: Any, info: FunctionToolInfo) -> None:
-        cls._registry[id(obj)] = info
-    
-    @classmethod
-    def get_info(cls, obj: Any) -> FunctionToolInfo | None:
-        return cls._registry.get(id(obj))
-    
-    @classmethod
-    def is_registered(cls, obj: Any) -> bool:
-        return id(obj) in cls._registry
-
 @runtime_checkable
 class FunctionTool(Protocol):
     @property
@@ -42,14 +27,18 @@ class FunctionTool(Protocol):
 
 def is_function_tool(obj: Any) -> bool:
     """Check if an object is a function tool"""
-    return ToolRegistry.is_registered(obj)
+    if inspect.ismethod(obj):
+        obj = obj.__func__
+    return hasattr(obj, "_tool_info")
 
 def get_tool_info(tool: FunctionTool) -> FunctionToolInfo:
     """Get the tool info from a function tool"""
-    info = ToolRegistry.get_info(tool)
-    if info is None:
+    if not is_function_tool(tool):
         raise ValueError("Object is not a function tool")
-    return info
+    
+    if inspect.ismethod(tool):
+        tool = tool.__func__
+    return getattr(tool, "_tool_info")
 
 def function_tool(func: Optional[Callable] = None, *, name: Optional[str] = None):
     """Decorator to mark a function as a tool. Can be used with or without parentheses."""
@@ -65,14 +54,14 @@ def function_tool(func: Optional[Callable] = None, *, name: Optional[str] = None
             async def async_wrapper(*args, **kwargs):
                 return await fn(*args, **kwargs)
             
-            ToolRegistry.register(async_wrapper, tool_info)
+            setattr(async_wrapper, "_tool_info", tool_info)
             return async_wrapper
         else:
             @wraps(fn)
             def sync_wrapper(*args, **kwargs):
                 return fn(*args, **kwargs)
             
-            ToolRegistry.register(sync_wrapper, tool_info)
+            setattr(sync_wrapper, "_tool_info", tool_info)
             return sync_wrapper
     
     if func is None:

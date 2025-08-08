@@ -54,6 +54,7 @@ class VideoSDKTurnDetector(EOU):
         except Exception as e:
             print(f"Error loading model: {e}")
             logger.error(f"Failed to initialize TurnDetection model: {e}")
+            self.emit("error", f"Failed to initialize TurnDetection model: {str(e)}")
             raise
     
     def _get_last_user_message(self, chat_context: ChatContext) -> str:
@@ -123,9 +124,12 @@ class VideoSDKTurnDetector(EOU):
                 pred = "False"
             else:
                 pred = "True"
+            if pred == "False":
+                self.emit("error", f"Turn detection failed: result was {pred}")
             return pred
         except Exception as e:
             print(e)
+            self.emit("error", f"Error detecting turn: {str(e)}")
             return "False"
 
     def get_eou_probability(self, chat_context: ChatContext) -> float:
@@ -145,6 +149,7 @@ class VideoSDKTurnDetector(EOU):
             return 1.0 if result == "True" else 0.0
         except Exception as e:
             logger.error(f"Error getting EOU probability: {e}")
+            self.emit("error", f"Error getting EOU probability: {str(e)}")
             return 0.0
 
     def detect_end_of_utterance(self, chat_context: ChatContext, threshold: Optional[float] = None) -> bool:
@@ -165,4 +170,5 @@ class VideoSDKTurnDetector(EOU):
             return result == "True"
         except Exception as e:
             logger.error(f"Error in EOU detection: {e}")
+            self.emit("error", f"Error in EOU detection: {str(e)}")
             return False

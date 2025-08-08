@@ -41,6 +41,8 @@ class SarvamAITTS(TTS):
         self.audio_track = None
         self.loop = None
 
+        self._first_chunk_sent = False
+
         self.api_key = api_key or os.getenv("SARVAMAI_API_KEY")
         
         if not self.api_key:
@@ -54,6 +56,10 @@ class SarvamAITTS(TTS):
             timeout=httpx.Timeout(connect=15.0, read=30.0, write=5.0, pool=5.0),
             follow_redirects=True,
         )
+
+    def reset_first_audio_tracking(self) -> None:
+        """Reset the first audio tracking state for next TTS task"""
+        self._first_chunk_sent = False
 
     async def synthesize(
         self,
@@ -139,8 +145,12 @@ class SarvamAITTS(TTS):
                 chunk += b'\x00' * padding_needed
             
             if len(chunk) == chunk_size:
+                if not self._first_chunk_sent and self._first_audio_callback:
+                    self._first_chunk_sent = True
+                    self.loop.create_task(self._first_audio_callback())
+                
                 self.loop.create_task(self.audio_track.add_new_bytes(chunk))
-                await asyncio.sleep(0.01)
+                await asyncio.sleep(0.001)
 
     def _remove_wav_header(self, audio_bytes: bytes) -> bytes:
         if audio_bytes.startswith(b'RIFF'):
