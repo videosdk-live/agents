@@ -189,7 +189,7 @@ class CerebrasLLM(LLM):
                     current_tool_calls = {}
                 
                 if delta.content is not None:
-                    current_content += delta.content
+                    current_content = delta.content
                     yield LLMResponse(
                         content=current_content,
                         role=ChatRole.ASSISTANT

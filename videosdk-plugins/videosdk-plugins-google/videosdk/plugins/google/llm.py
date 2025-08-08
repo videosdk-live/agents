@@ -171,7 +171,7 @@ class GoogleLLM(LLM):
                             metadata={"function_call": function_call}
                         )
                     elif part.text:
-                        current_content += part.text
+                        current_content = part.text
                         yield LLMResponse(
                             content=current_content,
                             role=ChatRole.ASSISTANT
