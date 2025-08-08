@@ -17,6 +17,7 @@ class CascadingMetricsCollector:
         self.analytics_client = AnalyticsClient()
         self.traces_flow_manager: Optional[TracesFlowManager] = None
         self.active_spans: Dict[str, Span] = {}
+        self.pending_user_start_time: Optional[float] = None
         
     def set_traces_flow_manager(self, manager: TracesFlowManager):
         """Set the TracesFlowManager instance"""
@@ -209,9 +210,16 @@ class CascadingMetricsCollector:
             eou_model_name=self.data.eou_model_name
         )
         
+        if self.pending_user_start_time is not None:
+            self.data.current_turn.user_speech_start_time = self.pending_user_start_time
+            self._start_timeline_event("user_speech", self.pending_user_start_time)
+
         if self.data.is_user_speaking and self.data.user_input_start_time:
-            self.data.current_turn.user_speech_start_time = self.data.user_input_start_time
-            
+            if self.data.current_turn.user_speech_start_time is None:
+                self.data.current_turn.user_speech_start_time = self.data.user_input_start_time
+                if not any(ev.event_type == "user_speech" for ev in self.data.current_turn.timeline):
+                    self._start_timeline_event("user_speech", self.data.user_input_start_time)
+
         if user_transcript:
             self.set_user_transcript(user_transcript)
     
@@ -220,8 +228,12 @@ class CascadingMetricsCollector:
         if self.data.current_turn:
             self._calculate_e2e_metrics(self.data.current_turn)
 
-            # Current turn should atleast have one of the latencies.
             if not self._validate_interaction_has_required_latencies(self.data.current_turn):
+                if self.data.current_turn.user_speech_start_time is not None:
+                    if (self.pending_user_start_time is None or
+                        self.data.current_turn.user_speech_start_time < self.pending_user_start_time):
+                        self.pending_user_start_time = self.data.current_turn.user_speech_start_time
+                        logger.info(f"[metrics] Caching earliest user start: {self.pending_user_start_time}")
                 self.data.current_turn = None
                 return
 
@@ -269,21 +281,32 @@ class CascadingMetricsCollector:
             
             self.analytics_client.send_interaction_analytics_safe(interaction_payload) 
             self.data.current_turn = None
+            self.pending_user_start_time = None
     
-    def on_user_speech_start(self):
-        """Called when user starts speaking"""
+    def on_interrupted(self):
+        """Called when the user interrupts the agent"""
         if self.data.is_agent_speaking:
             self.data.total_interruptions += 1
             if self.data.current_turn:
                 self.data.current_turn.interrupted = True
                 logger.info(f"User interrupted the agent. Total interruptions: {self.data.total_interruptions}")
-        
+    
+    def on_user_speech_start(self):
+        """Called when user starts speaking"""
+        if self.data.is_user_speaking:
+            return
+
+        if not self.data.current_turn:
+            self.start_new_interaction()
+
         self.data.is_user_speaking = True
         self.data.user_input_start_time = time.perf_counter()
-        
+
         if self.data.current_turn:
-            self.data.current_turn.user_speech_start_time = self.data.user_input_start_time
-            if not any(event.event_type == "user_speech" and event.end_time is None for event in self.data.current_turn.timeline):
+            if self.data.current_turn.user_speech_start_time is None:
+                self.data.current_turn.user_speech_start_time = self.data.user_input_start_time
+
+            if not any(event.event_type == "user_speech" for event in self.data.current_turn.timeline):
                 self._start_timeline_event("user_speech", self.data.user_input_start_time)
     
     def on_user_speech_end(self):
@@ -299,6 +322,7 @@ class CascadingMetricsCollector:
         """Called when agent starts speaking (actual audio output)"""
         self.data.is_agent_speaking = True
         self.data.agent_speech_start_time = time.perf_counter()
+        print("on_agent_speech_start at", self.data.agent_speech_start_time)
         
         if self.data.current_turn:
             if not any(event.event_type == "agent_speech" and event.end_time is None for event in self.data.current_turn.timeline):

@@ -80,10 +80,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                         
     async def on_vad_event(self, vad_response: VADResponse) -> None:
         if vad_response.event_type == VADEventType.START_OF_SPEECH:
-            cascading_metrics_collector.on_user_speech_start()
             self.on_speech_started()
         elif vad_response.event_type == VADEventType.END_OF_SPEECH:
-            cascading_metrics_collector.on_user_speech_end()
             self.on_speech_stopped()
 
     async def on_stt_transcript(self, stt_response: STTResponse) -> None:
@@ -95,16 +93,10 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
     async def _process_final_transcript(self, user_text: str) -> None:
         """Process final transcript with EOU detection and response generation"""
         
-        # Fallback: If VAD is present but hasn't called on_user_speech_start yet,
-        if self.vad and not cascading_metrics_collector.data.is_user_speaking:
+        # Fallback: If VAD is missing, this can start the turn. Otherwise, the collector handles it.
+        if not cascading_metrics_collector.data.current_turn:
             cascading_metrics_collector.on_user_speech_start()
         
-        # Fallback: If STT hasn't been started yet, start it now
-        if not self._stt_started:
-            cascading_metrics_collector.start_new_interaction()
-            cascading_metrics_collector.on_stt_start()
-            self._stt_started = True
-    
         cascading_metrics_collector.set_user_transcript(user_text)
         cascading_metrics_collector.on_stt_complete()
         
@@ -297,29 +289,10 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
     def on_speech_stopped(self) -> None:
         
         if not self._stt_started:
-            cascading_metrics_collector.start_new_interaction()
             cascading_metrics_collector.on_stt_start()
             self._stt_started = True
         
         cascading_metrics_collector.on_user_speech_end()
-        current_time = time.perf_counter()
-            
-        if (cascading_metrics_collector.data.current_turn and 
-            cascading_metrics_collector.data.current_turn.user_speech_start_time):
-            pass
-        else:
-            estimated_speech_duration = 2.0
-            estimated_start_time = current_time - estimated_speech_duration
-            
-            if not cascading_metrics_collector.data.is_user_speaking:
-                cascading_metrics_collector.data.user_input_start_time = estimated_start_time
-                cascading_metrics_collector.data.is_user_speaking = True
-                
-                if cascading_metrics_collector.data.current_turn:
-                    cascading_metrics_collector.data.current_turn.user_speech_start_time = estimated_start_time
-        
-        if cascading_metrics_collector.data.current_turn:
-            cascading_metrics_collector.data.current_turn.user_speech_end_time = current_time
 
     async def _synthesize_with_tts(self, response_gen: AsyncIterator[str] | str) -> None:
         """
