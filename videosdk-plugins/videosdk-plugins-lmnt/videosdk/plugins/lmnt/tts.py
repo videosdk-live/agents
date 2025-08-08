@@ -53,6 +53,7 @@ class LMNTTTS(TTS):
         self.base_url = base_url
         self.audio_track = None
         self.loop = None
+        self._first_chunk_sent = False
         
         self.api_key = api_key or os.getenv("LMNT_API_KEY")
         if not self.api_key:
@@ -70,6 +71,10 @@ class LMNTTTS(TTS):
                 keepalive_expiry=120,
             ),
         )
+    
+    def reset_first_audio_tracking(self) -> None:
+        """Reset the first audio tracking state for next TTS task"""
+        self._first_chunk_sent = False
     
     async def synthesize(
         self,
@@ -164,6 +169,10 @@ class LMNTTTS(TTS):
                                 audio_chunk = accumulated_data[:chunk_size]
                                 accumulated_data = accumulated_data[chunk_size:]
                                 
+                                if not self._first_chunk_sent and self._first_audio_callback:
+                                    self._first_chunk_sent = True
+                                    await self._first_audio_callback()
+                                
                                 self.loop.create_task(self.audio_track.add_new_bytes(audio_chunk))
                                 await asyncio.sleep(0.01)  
                 
@@ -171,6 +180,11 @@ class LMNTTTS(TTS):
                     chunk_size = int(self.output_sample_rate * LMNT_CHANNELS * 2 * 20 / 1000)
                     if len(accumulated_data) < chunk_size:
                         accumulated_data += b'\x00' * (chunk_size - len(accumulated_data))
+                    
+                    if not self._first_chunk_sent and self._first_audio_callback:
+                        self._first_chunk_sent = True
+                        await self._first_audio_callback()
+                    
                     self.loop.create_task(self.audio_track.add_new_bytes(accumulated_data))
 
         except httpx.HTTPError as e:

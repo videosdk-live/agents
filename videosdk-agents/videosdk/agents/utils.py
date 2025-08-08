@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable, Callable, Optional, get_type_hints, Annotated, get_origin, get_args, Literal
+from typing import Any, Protocol, runtime_checkable, Callable, Optional, get_type_hints, Annotated, get_origin, get_args, Literal, AsyncIterator
 from functools import wraps
 import inspect
 from docstring_parser import parse_from_object
@@ -12,26 +12,12 @@ from pydantic.fields import FieldInfo
 from abc import abstractmethod
 import json
 import asyncio
+
 @dataclass
 class FunctionToolInfo:
     name: str
     description: str | None = None
     parameters_schema: Optional[dict] = None
-
-class ToolRegistry:
-    _registry: dict[int, FunctionToolInfo] = {}
-    
-    @classmethod
-    def register(cls, obj: Any, info: FunctionToolInfo) -> None:
-        cls._registry[id(obj)] = info
-    
-    @classmethod
-    def get_info(cls, obj: Any) -> FunctionToolInfo | None:
-        return cls._registry.get(id(obj))
-    
-    @classmethod
-    def is_registered(cls, obj: Any) -> bool:
-        return id(obj) in cls._registry
 
 @runtime_checkable
 class FunctionTool(Protocol):
@@ -42,14 +28,18 @@ class FunctionTool(Protocol):
 
 def is_function_tool(obj: Any) -> bool:
     """Check if an object is a function tool"""
-    return ToolRegistry.is_registered(obj)
+    if inspect.ismethod(obj):
+        obj = obj.__func__
+    return hasattr(obj, "_tool_info")
 
 def get_tool_info(tool: FunctionTool) -> FunctionToolInfo:
     """Get the tool info from a function tool"""
-    info = ToolRegistry.get_info(tool)
-    if info is None:
+    if not is_function_tool(tool):
         raise ValueError("Object is not a function tool")
-    return info
+    
+    if inspect.ismethod(tool):
+        tool = tool.__func__
+    return getattr(tool, "_tool_info")
 
 def function_tool(func: Optional[Callable] = None, *, name: Optional[str] = None):
     """Decorator to mark a function as a tool. Can be used with or without parentheses."""
@@ -65,14 +55,14 @@ def function_tool(func: Optional[Callable] = None, *, name: Optional[str] = None
             async def async_wrapper(*args, **kwargs):
                 return await fn(*args, **kwargs)
             
-            ToolRegistry.register(async_wrapper, tool_info)
+            setattr(async_wrapper, "_tool_info", tool_info)
             return async_wrapper
         else:
             @wraps(fn)
             def sync_wrapper(*args, **kwargs):
                 return fn(*args, **kwargs)
             
-            ToolRegistry.register(sync_wrapper, tool_info)
+            setattr(sync_wrapper, "_tool_info", tool_info)
             return sync_wrapper
     
     if func is None:
@@ -380,3 +370,52 @@ def build_nova_sonic_schema(function_tool: FunctionTool) -> dict[str, Any]:
             }
         }
     }
+
+async def segment_text(
+    chunks: AsyncIterator[str],
+    delimiters: str = ".?!,;:\n",
+    keep_delimiter: bool = True,
+    min_chars: int = 32,
+    min_words: int = 6,
+    max_buffer: int = 600,
+) -> AsyncIterator[str]:
+    """
+    Segment an async stream of text on delimiters or soft boundaries to reduce TTS latency.
+    Yields segments while keeping the delimiter if requested.
+    """
+    buffer = ""
+
+    def words_count(s: str) -> int:
+        return len(s.split())
+
+    def find_first_delim_index(s: str) -> int:
+        indices = [i for d in delimiters if (i := s.find(d)) != -1]
+        return min(indices) if indices else -1
+
+    async for chunk in chunks:
+        if not chunk:
+            continue
+        buffer += chunk
+
+        while True:
+            di = find_first_delim_index(buffer)
+            if di != -1:
+                seg = buffer[: di + (1 if keep_delimiter else 0)]
+                yield seg
+                buffer = buffer[di + 1 :].lstrip()
+                continue
+            else:
+                if len(buffer) >= max_buffer or words_count(buffer) >= (min_words * 2):
+                    target = max(min_chars, min(len(buffer), max_buffer))
+                    cut_idx = buffer.rfind(" ", 0, target)
+                    if cut_idx == -1:
+                        cut_idx = target
+                    seg = buffer[:cut_idx].rstrip()
+                    if seg:
+                        yield seg
+                    buffer = buffer[cut_idx:].lstrip()
+                    continue
+                break
+
+    if buffer:
+        yield buffer

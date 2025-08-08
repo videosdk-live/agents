@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import Optional
+from typing import Optional, Literal
 
 from .llm.chat_context import ChatContext
+from .event_emitter import EventEmitter
 
 
-class EOU:
+class EOU(EventEmitter[Literal["error"]]):
     """Base class for End of Utterance Detection implementations"""
     
     def __init__(self, threshold: float = 0.7) -> None:
+        super().__init__()
         self._label = f"{type(self).__module__}.{type(self).__name__}"
         self._threshold = threshold
 

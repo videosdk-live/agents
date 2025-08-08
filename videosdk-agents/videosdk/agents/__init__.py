@@ -3,6 +3,7 @@ from .agent_session import AgentSession
 from .conversation_flow import ConversationFlow
 from .realtime_base_model import RealtimeBaseModel
 from .realtime_pipeline import RealTimePipeline
+from .metrics import realtime_metrics_collector
 from .utils import (
     function_tool,
     is_function_tool,
@@ -13,6 +14,7 @@ from .utils import (
     build_gemini_schema,
     ToolChoice,
     build_nova_sonic_schema,
+    segment_text,
 )
 from .room.audio_stream import CustomAudioStreamTrack, TeeCustomAudioStreamTrack
 from .event_emitter import EventEmitter
@@ -87,5 +89,7 @@ __all__ = [
     "encode",
     "JobContext",
     "RoomOptions",
+    "realtime_metrics_collector",
     "ImageContent",
+    "segment_text",
 ]

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Literal
 import asyncio
 import av
+import time
 
 from .pipeline import Pipeline
 from .event_emitter import EventEmitter
@@ -10,7 +11,11 @@ from .realtime_base_model import RealtimeBaseModel
 from .room.room import VideoSDKHandler
 from .agent import Agent
 from .job import get_current_job_context
+from .metrics import realtime_metrics_collector
 from .denoise import Denoise
+import logging
+
+logger = logging.getLogger(__name__)
 
 class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtime_end","user_audio_input_data", "user_speech_started"]]):
     """
@@ -40,6 +45,8 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         self.vision = False
         self.denoise = denoise
         super().__init__()
+        self.model.on("error", self.on_model_error)
+
     
     def set_agent(self, agent: Agent) -> None:
         self.agent = agent
@@ -115,7 +122,6 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         """
         Handle user speech started event
         """
-        print("User speech started")
         self._notify_speech_started()
 
     async def leave(self) -> None:
@@ -124,6 +130,14 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         """
         if self.room is not None:
             await self.room.leave()
+
+    def on_model_error(self, error: Exception):
+        """
+        Handle errors emitted from the model and send to realtime metrics cascading_metrics_collector.
+        """
+        error_data = {"message": str(error), "timestamp": time.time()}
+        realtime_metrics_collector.set_realtime_model_error(error_data)
+        logger.error(f"Realtime model error: {error_data}")
 
     async def cleanup(self):
         """Cleanup resources"""
