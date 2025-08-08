@@ -420,7 +420,7 @@ class CascadingMetricsCollector:
             # ttfb = now - self.data.tts_start_time // no need to take the difference as we are using the start time of the tts span
             if self.data.current_turn:
                 self.data.current_turn.ttfb = now
-                logger.info(f"tts ttfb: {self.data.current_turn.ttfb}ms")
+                logger.info(f"tts ttfb: {self.data.current_turn.ttfb - self.data.tts_start_time}ms")
             self.data.tts_first_byte_time = now
     
     def on_eou_start(self):
