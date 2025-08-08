@@ -147,10 +147,10 @@ class SarvamAITTS(TTS):
             if len(chunk) == chunk_size:
                 if not self._first_chunk_sent and self._first_audio_callback:
                     self._first_chunk_sent = True
-                    await self._first_audio_callback()
+                    self.loop.create_task(self._first_audio_callback())
                 
                 self.loop.create_task(self.audio_track.add_new_bytes(chunk))
-                await asyncio.sleep(0.01)
+                await asyncio.sleep(0.001)
 
     def _remove_wav_header(self, audio_bytes: bytes) -> bytes:
         if audio_bytes.startswith(b'RIFF'):

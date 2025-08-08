@@ -95,6 +95,26 @@ class CascadingMetricsCollector:
                 transformed_data[camel_key] = value
         
         return transformed_data
+
+    def _remove_negatives(self, obj: Any) -> Any:
+        """Recursively clamp any numeric value < 0 to 0 in dicts/lists."""
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                if isinstance(v, (int, float)):
+                    if v < 0:
+                        obj[k] = 0
+                elif isinstance(v, (dict, list)):
+                    obj[k] = self._remove_negatives(v)
+            return obj
+        if isinstance(obj, list):
+            for i, v in enumerate(obj):
+                if isinstance(v, (int, float)):
+                    if v < 0:
+                        obj[i] = 0
+                elif isinstance(v, (dict, list)):
+                    obj[i] = self._remove_negatives(v)
+            return obj
+        return obj
     
     def _start_timeline_event(self, event_type: str, start_time: float) -> None:
         """Start a timeline event"""
@@ -244,6 +264,7 @@ class CascadingMetricsCollector:
             interaction_data = asdict(self.data.current_turn)
             interaction_data['timeline'] = [asdict(event) for event in self.data.current_turn.timeline]
             transformed_data = self._transform_to_camel_case(interaction_data)
+            # transformed_data = self._intify_latencies_and_timestamps(transformed_data)
 
             always_remove_fields = [
                 'errors',
@@ -274,6 +295,8 @@ class CascadingMetricsCollector:
                 for field in provider_fields:
                     if field in transformed_data:
                         del transformed_data[field]
+
+            transformed_data = self._remove_negatives(transformed_data)
 
             interaction_payload = {
                 "data": [transformed_data]               

@@ -434,7 +434,8 @@ class TracesFlowManager:
         if span:
             if end_time is None:
                 end_time = time.perf_counter()
-            complete_span(span, status_code, message, end_time) 
+            desc = message if status_code == StatusCode.ERROR else ""
+            complete_span(span, status_code, desc, end_time)
 
     def create_realtime_turn_trace(self, realtime_turn_data: RealtimeTurnData):
         """
