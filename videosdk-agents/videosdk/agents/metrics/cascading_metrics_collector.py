@@ -322,7 +322,6 @@ class CascadingMetricsCollector:
         """Called when agent starts speaking (actual audio output)"""
         self.data.is_agent_speaking = True
         self.data.agent_speech_start_time = time.perf_counter()
-        print("on_agent_speech_start at", self.data.agent_speech_start_time)
         
         if self.data.current_turn:
             if not any(event.event_type == "agent_speech" and event.end_time is None for event in self.data.current_turn.timeline):
