@@ -37,6 +37,7 @@ class HumeAITTS(TTS):
         self.instant_mode = instant_mode
         self.audio_track = None
         self.loop = None
+        self._first_chunk_sent = False
         
         if self.instant_mode and not self.voice:
             raise ValueError("Voice required for instant mode")
@@ -46,6 +47,10 @@ class HumeAITTS(TTS):
             raise ValueError("HUMEAI_API_KEY required")
         
         self._session = httpx.AsyncClient(timeout=30.0)
+    
+    def reset_first_audio_tracking(self) -> None:
+        """Reset the first audio tracking state for next TTS task"""
+        self._first_chunk_sent = False
     
     async def synthesize(
         self,
@@ -147,6 +152,10 @@ class HumeAITTS(TTS):
                 if len(chunk) < chunk_size and len(chunk) > 0:
                     chunk += b'\x00' * (chunk_size - len(chunk))
                 if chunk:
+                    if not self._first_chunk_sent and self._first_audio_callback:
+                        self._first_chunk_sent = True
+                        await self._first_audio_callback()
+                    
                     self.loop.create_task(self.audio_track.add_new_bytes(chunk))
                     await asyncio.sleep(0.001)
         except Exception as e:

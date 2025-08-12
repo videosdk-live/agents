@@ -22,7 +22,7 @@ classifiers = [
 ]
 dependencies = [
     "uvicorn",
-    "videosdk>=0.1.0",
+    "videosdk>=0.2.0",
     "numpy",
     "httpx",
     "aiohttp",
@@ -42,6 +42,10 @@ dependencies = [
     "mcp",
     "PyYAML",
     "urllib3",
+    "opentelemetry-sdk>=1.34.1",
+    "opentelemetry-exporter-otlp-proto-http>=1.34.1",
+    "requests",
+    "protobuf>=5.29,<6.0",
 ]
 
 

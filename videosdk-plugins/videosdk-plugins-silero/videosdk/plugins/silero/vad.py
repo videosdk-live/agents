@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-import asyncio
 import numpy as np
 from typing import Any, Literal
 import time
 from scipy import signal
-
+import logging
 from .onnx_runtime import VadModelWrapper, SAMPLE_RATES
 from videosdk.agents.vad import VAD as BaseVAD, VADResponse, VADEventType, VADData
 
+logger = logging.getLogger(__name__)
 class SileroVAD(BaseVAD):
     """Silero Voice Activity Detection implementation using ONNX runtime"""
     
@@ -112,7 +112,6 @@ class SileroVAD(BaseVAD):
                     if raw_prob < self._threshold:
                         self._consecutive_low_confidence_count += 1
                         if self._consecutive_low_confidence_count >= self._error_emission_threshold:
-                            self.emit("error", f"VAD failed to detect speech: low confidence {raw_prob} below threshold {self._threshold}")
                             self._consecutive_low_confidence_count = 0
                     else:
                         self._consecutive_low_confidence_count = 0
@@ -141,8 +140,7 @@ class SileroVAD(BaseVAD):
                         self._speech_buffer_index += to_copy_buffer
                     elif not self._speech_buffer_max_reached:
                         self._speech_buffer_max_reached = True
-                        print(f"Warning: max_buffered_speech reached")
-                        self.emit("error", f" Warning: max_buffered_speech reached")
+                        logger.warning(f"Warning: max_buffered_speech reached")
                     
                     self._input_accumulator = self._input_accumulator[input_samples_for_window:]
                 
@@ -203,8 +201,7 @@ class SileroVAD(BaseVAD):
                 
                 inference_duration = time.perf_counter() - start_time
                 if inference_duration > 0.1:
-                    print(f"Warning: Slow inference detected ({inference_duration:.3f}s)")
-                    self.emit("error", f"Slow inference detected in VAD processing: {inference_duration:.3f}s")
+                    logger.warning(f"Warning: Slow inference detected ({inference_duration:.3f}s)")
                 
                 self._inference_accumulator = self._inference_accumulator[self._model.frame_size:]
         except Exception as e:

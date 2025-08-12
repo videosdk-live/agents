@@ -9,6 +9,9 @@ import aiohttp
 import numpy as np
 from scipy import signal
 from videosdk.agents import STT as BaseSTT, STTResponse, SpeechEventType, SpeechData, global_event_emitter
+import logging
+
+logger = logging.getLogger(__name__)
 
 class CartesiaSTT(BaseSTT):
     def __init__(
@@ -62,7 +65,6 @@ class CartesiaSTT(BaseSTT):
             await self._ws.send_bytes(audio_bytes)
             
         except Exception as e:
-            print(f"Error in process_audio: {str(e)}")
             self.emit("error", str(e))
             if self._ws:
                 await self._ws.close()
@@ -84,16 +86,13 @@ class CartesiaSTT(BaseSTT):
                             await self._transcript_callback(response)
                 elif msg.type == aiohttp.WSMsgType.ERROR:
                     error = f"WebSocket error: {self._ws.exception()}"
-                    print(error)
                     self.emit("error", error)
                     break
                 elif msg.type == aiohttp.WSMsgType.CLOSED:
-                    print("WebSocket connection closed")
+                    logger.info("WebSocket connection closed")
                     break
         except Exception as e:
-            error = f"Error in WebSocket listener: {str(e)}"
-            print(error)
-            self.emit("error", error)
+            self.emit("error", f"Error listening for responses: {str(e)}")
         finally:
             if self._ws:
                 await self._ws.close()
@@ -124,7 +123,7 @@ class CartesiaSTT(BaseSTT):
             self._ws = await self._session.ws_connect(ws_url, headers=headers)
             
         except Exception as e:
-            print(f"Error connecting to WebSocket: {str(e)}")
+            logger.error(f"Error connecting to WebSocket: {str(e)}")
             if self._ws:
                 await self._ws.close()
                 self._ws = None
@@ -181,19 +180,18 @@ class CartesiaSTT(BaseSTT):
                             self._last_interim_at = current_time
                             
             elif msg_type == "flush_done":
-                print("Cartesia STT: Flush completed")
+                logger.info("Cartesia STT: Flush completed")
                 
             elif msg_type == "done":
-                print("Cartesia STT: Session ended")
+                logger.info("Cartesia STT: Session ended")
                 
             elif msg_type == "error":
                 error_msg = msg.get("message", "Unknown error")
                 error_code = msg.get("code", "unknown")
-                print(f"Cartesia STT error [{error_code}]: {error_msg}")
                 self.emit("error", f"{error_code}: {error_msg}")
                 
         except Exception as e:
-            print(f"Error handling WebSocket message: {str(e)}")
+            logger.error(f"Error handling WebSocket message: {str(e)}")
         
         return responses
 
@@ -204,7 +202,7 @@ class CartesiaSTT(BaseSTT):
                 await self._ws.send_str("done")
                 await asyncio.sleep(0.1)
             except Exception as e:
-                print(f"Error sending done command: {str(e)}")
+                logger.error(f"Error sending done command: {str(e)}")
         
         if self._ws_task:
             self._ws_task.cancel()

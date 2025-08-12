@@ -15,6 +15,7 @@ class RoomOptions:
     name: Optional[str] = "Agent"
     playground: bool = True
     vision: bool = False
+    recording: bool = False
     avatar: Optional[Any] = None
     join_meeting: Optional[bool] = True
     on_room_error: Optional[Callable[[Any], None]] = None
@@ -83,6 +84,7 @@ class JobContext:
                     pipeline=self._pipeline,
                     loop=self._loop,
                     vision=self.room_options.vision,
+                    recording=self.room_options.recording,
                     custom_camera_video_track=custom_camera_video_track,
                     custom_microphone_audio_track=custom_microphone_audio_track,
                     audio_sinks=sinks,
@@ -138,4 +140,3 @@ def _set_current_job_context(ctx: 'JobContext') -> Any:
 def _reset_current_job_context(token: Any) -> None:
     """Reset the current job context (used by Worker)"""
     _current_job_context.reset(token)
-

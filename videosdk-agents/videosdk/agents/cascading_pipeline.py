@@ -14,6 +14,9 @@ from .agent import Agent
 from .eou import EOU
 from .job import get_current_job_context
 from .denoise import Denoise
+import logging
+
+logger = logging.getLogger(__name__)
 
 class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
     """
@@ -47,6 +50,18 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         self.agent = None
         self.conversation_flow = None
         self.avatar = avatar
+
+        if self.stt:
+            self.stt.on("error", lambda data: self.on_component_error("STT", data))
+        if self.llm:
+            self.llm.on("error", lambda data: self.on_component_error("LLM", data))
+        if self.tts:
+            self.tts.on("error", lambda data: self.on_component_error("TTS", data))
+        if self.vad:
+            self.vad.on("error", lambda data: self.on_component_error("VAD", data))
+        if self.turn_detector:
+            self.turn_detector.on("error", lambda data: self.on_component_error("TURN-D", data))
+        
         self.denoise = denoise
         super().__init__()
         
@@ -132,7 +147,6 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         """
         Handle user speech started event
         """
-        print("user speech started")
         self._notify_speech_started()
 
     async def cleanup(self) -> None:
@@ -143,3 +157,75 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
             await self.llm.aclose()
         if self.tts:
             await self.tts.aclose()
+
+    def get_component_configs(self) -> dict[str, dict[str, Any]]:
+        """Return a dictionary of component configurations (STT, LLM, TTS) with their instance attributes.
+
+        Returns:
+            A nested dictionary with keys 'stt', 'llm', 'tts', each containing a dictionary of
+            public instance attributes and extracted model information.
+        """
+
+        def extract_model_info(config_dict: Dict[str, Any]) -> Dict[str, Any]:
+            """Helper to extract model-related info from a dictionary with limited nesting."""
+            model_info = {}
+            model_keys = ['model', 'model_id', 'model_name', 'voice', 'voice_id', 'name']
+            try:
+                for k, v in config_dict.items():
+                    if k in model_keys and v is not None:
+                        model_info[k] = v
+                    elif k in ['config', '_config', 'voice_config'] and isinstance(v, dict):
+                        for nk, nv in v.items():
+                            if nk in model_keys and nv is not None:
+                                model_info[nk] = nv
+                    elif k in ['voice_config', 'config'] and hasattr(v, '__dict__'):
+                        for nk, nv in v.__dict__.items():
+                            if nk in model_keys and nv is not None and not nk.startswith('_'):
+                                model_info[nk] = nv
+            except Exception as e:
+                pass
+            return model_info
+
+        configs: Dict[str, Dict[str, Any]] = {}
+        for comp_name, comp in [('stt', self.stt), ('llm', self.llm), ('tts', self.tts), ('vad', self.vad), ('eou', self.turn_detector)]:
+            if comp:
+                try:
+                    configs[comp_name] = {k: v for k, v in comp.__dict__.items() if not k.startswith('_') and not callable(v)}
+
+                    model_info = extract_model_info(comp.__dict__)
+                    if model_info:
+                        if 'model' not in configs[comp_name] and 'model' in model_info:
+                            configs[comp_name]['model'] = model_info['model']
+                        elif 'model' not in configs[comp_name] and 'name' in model_info:
+                            configs[comp_name]['model'] = model_info['name']
+                        configs[comp_name].update({k: v for k, v in model_info.items() if k != 'model' and k != 'name' and k not in configs[comp_name]})
+                    
+                    if comp_name == 'vad' and 'model' not in configs[comp_name]:
+                        if hasattr(comp, '_model_sample_rate'):
+                            configs[comp_name]['model'] = f"silero_vad_{comp._model_sample_rate}hz"
+                        else:
+                            configs[comp_name]['model'] = "silero_vad"
+                    elif comp_name == 'eou' and 'model' not in configs[comp_name]:
+                        class_name = comp.__class__.__name__
+                        if 'VideoSDK' in class_name:
+                            configs[comp_name]['model'] = "videosdk_turn_detector"
+                        elif 'TurnDetector' in class_name:
+                            configs[comp_name]['model'] = "turnsense_model"
+                        else:
+                            configs[comp_name]['model'] = "turn_detector"
+                            
+                except Exception as e:
+                    configs[comp_name] = configs.get(comp_name, {})
+
+        sensitive_keys = ['api_key', 'token', 'secret', 'key', 'password', 'credential']
+        for comp in configs.values():
+            for key in sensitive_keys:
+                comp.pop(key, None)
+        return configs
+
+
+    def on_component_error(self, source: str, error_data: Any) -> None:
+        """Handle error events from components (STT, LLM, TTS, VAD, TURN-D)"""
+        from .metrics import cascading_metrics_collector
+        cascading_metrics_collector.add_error(source, str(error_data))
+        logger.error(f"[{source}] Component error: {error_data}")

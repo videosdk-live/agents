@@ -6,6 +6,7 @@ from av import AudioFrame
 import numpy as np
 from videosdk import CustomAudioTrack
 
+
 AUDIO_PTIME = 0.02
 
 class MediaStreamError(Exception):
@@ -30,7 +31,7 @@ class CustomAudioStreamTrack(CustomAudioTrack):
     def interrupt(self):
         self.frame_buffer.clear()
         self.audio_data_buffer.clear()
-
+            
     async def add_new_bytes(self, audio_data: bytes):
         self.audio_data_buffer += audio_data
 

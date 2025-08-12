@@ -4,8 +4,10 @@ from typing import Any, AsyncIterator, Optional
 import os
 import asyncio
 from cartesia import Cartesia
-
 from videosdk.agents import TTS
+import logging
+
+logger = logging.getLogger(__name__)
 
 CARTESIA_SAMPLE_RATE = 24000
 CARTESIA_CHANNELS = 1
@@ -28,6 +30,7 @@ class CartesiaTTS(TTS):
         self.language = language
         self.audio_track = None
         self.loop = None
+        self._first_chunk_sent = False
 
         api_key = api_key or os.getenv("CARTESIA_API_KEY")
         if not api_key:
@@ -35,6 +38,10 @@ class CartesiaTTS(TTS):
 
         self.cartesia_client = Cartesia(api_key=api_key)
         self._voice_embedding = None
+
+    def reset_first_audio_tracking(self) -> None:
+        """Reset the first audio tracking state for next TTS task"""
+        self._first_chunk_sent = False
 
     async def _get_voice_embedding(self):
         """Get voice embedding for the specified voice ID"""
@@ -165,6 +172,10 @@ class CartesiaTTS(TTS):
                 if len(chunk_buffer) >= BATCH_SIZE or i + CHUNK_SIZE >= len(all_audio_data):
                     for batch_chunk in chunk_buffer:
                         if self.audio_track and self.loop:
+                            if not self._first_chunk_sent and self._first_audio_callback:
+                                self._first_chunk_sent = True
+                                await self._first_audio_callback()
+                            
                             try:
                                 await self.audio_track.add_new_bytes(batch_chunk)
                                 total_sent += 1

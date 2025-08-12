@@ -2,14 +2,48 @@ import logging
 import numpy as np
 from typing import Optional
 from .model import HG_MODEL, ONNX_FILENAME
+from tqdm import tqdm
+from huggingface_hub import hf_hub_url
+import requests
+import os
 from videosdk.agents import EOU, ChatContext, ChatMessage, ChatRole
 
 logger = logging.getLogger(__name__)
 
-def _download_from_hf_hub(repo_id, filename, **kwargs):
-    from huggingface_hub import hf_hub_download
-    local_path = hf_hub_download(repo_id=repo_id, filename=filename, **kwargs)
-    return local_path
+def _download_from_hf_hub(repo_id, filename, cache_dir=None, **kwargs):
+    """
+    Manually download a file from Hugging Face with a terminal progress bar.
+    """
+    if cache_dir is None:
+        cache_dir = os.path.expanduser("~/.cache/huggingface/hub")
+    os.makedirs(cache_dir, exist_ok=True)
+
+    local_path = os.path.join(cache_dir, filename)
+
+    if os.path.exists(local_path):
+        print(f"[✓] {filename} already downloaded.")
+        return local_path
+
+    url = hf_hub_url(repo_id=repo_id, filename=filename, **kwargs)
+    response = requests.get(url, stream=True)
+    response.raise_for_status()
+
+    total_size = int(response.headers.get('content-length', 0))
+    chunk_size = 8192
+
+    with open(local_path, 'wb') as f, tqdm(
+        desc=f"Downloading {filename}",
+        total=total_size,
+        unit='B',
+        unit_scale=True,
+        unit_divisor=1024,
+    ) as bar:
+        for chunk in response.iter_content(chunk_size=chunk_size):
+            if chunk:
+                f.write(chunk)
+                bar.update(len(chunk))
+
+    return local_path 
 
 def pre_download_model():
     from transformers import AutoTokenizer
@@ -51,6 +85,7 @@ class TurnDetector(EOU):
             
         except Exception as e:
             logger.error(f"Failed to initialize TurnSense model: {e}")
+            self.emit("error", f"Failed to initialize TurnSense model: {str(e)}")
             raise
     
     def _get_last_user_message(self, chat_context: ChatContext) -> str:
@@ -113,6 +148,7 @@ class TurnDetector(EOU):
             float: Probability score (0.0 to 1.0)
         """
         if not self.session or not self.tokenizer:
+            self.emit("error", "TurnSense model not initialized")
             raise RuntimeError("Model not initialized")
         
         try:
@@ -141,6 +177,7 @@ class TurnDetector(EOU):
             
         except Exception as e:
             logger.error(f"Error getting EOU probability: {e}")
+            self.emit("error", f"Error getting EOU probability: {str(e)}")
             return 0.0
 
     def detect_end_of_utterance(self, chat_context: ChatContext, threshold: Optional[float] = None) -> bool:
@@ -161,9 +198,13 @@ class TurnDetector(EOU):
             probability = self.get_eou_probability(chat_context)
             is_eou = probability >= threshold
             
+            if not is_eou:
+                self.emit("error", f"Turn detection failed: probability {probability} below threshold {threshold}")
+            
             return is_eou
             
         except Exception as e:
             logger.error(f"Error during EOU detection: {e}")
+            self.emit("error", f"Error during EOU detection: {str(e)}")
             return False
 

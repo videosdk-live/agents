@@ -36,6 +36,7 @@ class InworldAITTS(TTS):
         self.audio_encoding = audio_encoding
         self.audio_track = None
         self.loop = None
+        self._first_chunk_sent = False
         
         self.api_key = api_key or os.getenv("INWORLD_API_KEY")
         if not self.api_key:
@@ -56,6 +57,10 @@ class InworldAITTS(TTS):
                 keepalive_expiry=120,
             ),
         )
+    
+    def reset_first_audio_tracking(self) -> None:
+        """Reset the first audio tracking state for next TTS task"""
+        self._first_chunk_sent = False
     
     async def synthesize(
         self,
@@ -162,6 +167,10 @@ class InworldAITTS(TTS):
         audio_data = self._remove_wav_header(audio_bytes)
         
         if audio_data:
+            if not self._first_chunk_sent and self._first_audio_callback:
+                self._first_chunk_sent = True
+                await self._first_audio_callback()
+            
             self.loop.create_task(self.audio_track.add_new_bytes(audio_data))
             await asyncio.sleep(0.001)
 
