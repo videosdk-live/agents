@@ -11,6 +11,7 @@ from .metrics import cascading_metrics_collector, realtime_metrics_collector
 from .realtime_pipeline import RealTimePipeline
 from .utils import get_tool_info
 import time
+from .job import get_current_job_context
 
 class AgentSession:
     """
@@ -41,6 +42,7 @@ class AgentSession:
         self.on_wake_up: Optional[Callable[[], None] | Callable[[], Any]] = None
         self._wake_up_task: Optional[asyncio.Task] = None
         self._wake_up_timer_active = False
+        self._closed: bool = False
         
         if hasattr(self.pipeline, 'set_agent'):
             self.pipeline.set_agent(self.agent)
@@ -48,6 +50,13 @@ class AgentSession:
             self.pipeline.set_conversation_flow(self.conversation_flow)
         if hasattr(self.pipeline, 'set_wake_up_callback'):
             self.pipeline.set_wake_up_callback(self._reset_wake_up_timer)
+
+        try:
+            job_ctx = get_current_job_context()
+            if job_ctx:
+                job_ctx.add_shutdown_callback(self.close)
+        except Exception:
+            pass
 
     def _start_wake_up_timer(self) -> None:
         if self.wake_up is not None and self.on_wake_up is not None:
@@ -168,6 +177,9 @@ class AgentSession:
         """
         Close the agent session.
         """
+        if self._closed:
+            return
+        self._closed = True
         if isinstance(self.pipeline, RealTimePipeline):
             realtime_metrics_collector.finalize_session()
             traces_flow_manager = realtime_metrics_collector.traces_flow_manager

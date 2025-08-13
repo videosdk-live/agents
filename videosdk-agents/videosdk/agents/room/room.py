@@ -79,6 +79,7 @@ class VideoSDKHandler:
         self.on_room_error = on_room_error
         self._participant_joined_events: dict[str, asyncio.Event] = {}
         self._first_participant_event = asyncio.Event()
+        self._left: bool = False
         
     def init_meeting(self):
         self.sdk_metadata = {
@@ -101,6 +102,9 @@ class VideoSDKHandler:
         await self.meeting.async_join()
 
     def leave(self):
+        if self._left:
+            return
+        self._left = True
         for audio_task in self.audio_listener_tasks.values():
             audio_task.cancel()
         for video_task in self.video_listener_tasks.values():
@@ -111,6 +115,38 @@ class VideoSDKHandler:
             self.loop.create_task(self.stop_and_merge_recordings())
 
         self.meeting.leave()
+
+    async def async_leave(self):
+        if self._left:
+            return
+        self._left = True
+        for audio_task in list(self.audio_listener_tasks.values()):
+            try:
+                audio_task.cancel()
+            except Exception:
+                pass
+        for video_task in list(self.video_listener_tasks.values()):
+            try:
+                video_task.cancel()
+            except Exception:
+                pass
+        if self.traces_flow_manager:
+            try:
+                self.traces_flow_manager.end_agent_joined_meeting()
+            except Exception:
+                pass
+        if self.recording:
+            try:
+                await self.stop_and_merge_recordings()
+            except Exception as e:
+                print(f"Error stopping/merging recordings: {e}")
+        try:
+            if hasattr(self.meeting, 'async_leave') and callable(getattr(self.meeting, 'async_leave')):
+                await self.meeting.async_leave()
+            else:
+                self.meeting.leave()
+        except Exception as e:
+            print(f"Error leaving meeting: {e}")
 
     def on_error(self, data):
         if self.on_room_error:

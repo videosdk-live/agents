@@ -1,5 +1,7 @@
 import multiprocessing
 import functools
+import signal
+import asyncio
 
 def _job_runner(entrypoint, job_ctx_factory):
     """
@@ -12,7 +14,41 @@ def _job_runner(entrypoint, job_ctx_factory):
         token = _set_current_job_context(job_ctx)
         
         try:
-            job_ctx._loop.run_until_complete(entrypoint(job_ctx))
+            loop = job_ctx._loop
+
+            async def driver():
+                try:
+                    await entrypoint(job_ctx)
+                except asyncio.CancelledError:
+                    pass
+                finally:
+                    try:
+                        await job_ctx.shutdown()
+                    except Exception as e:
+                        print(f"Error during job shutdown: {e}")
+
+            task = loop.create_task(driver())
+
+            shutting_down = False
+
+            def _handle_signal(signum, frame):
+                nonlocal shutting_down
+                if shutting_down:
+                    return
+                shutting_down = True
+                print(f"Received signal {signum}. Shutting down...")
+                try:
+                    task.cancel()
+                except Exception:
+                    pass
+
+            try:
+                signal.signal(signal.SIGINT, _handle_signal)
+                signal.signal(signal.SIGTERM, _handle_signal)
+            except Exception:
+                pass
+
+            loop.run_until_complete(task)
         finally:
             _reset_current_job_context(token)
             
