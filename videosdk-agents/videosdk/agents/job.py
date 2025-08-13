@@ -5,6 +5,8 @@ import os
 import asyncio
 from contextvars import ContextVar
 from dataclasses import dataclass
+import logging
+logger = logging.getLogger(__name__)
 
 _current_job_context: ContextVar[Optional['JobContext']] = ContextVar('current_job_context', default=None)
 
@@ -110,27 +112,25 @@ class JobContext:
     async def shutdown(self) -> None:
         """Called by Worker during graceful shutdown"""
         if self._is_shutting_down:
+            logger.info("JobContext already shutting down")
             return
         self._is_shutting_down = True
         for callback in self._shutdown_callbacks:
             try:
                 await callback()
             except Exception as e:
-                print(f"Error in shutdown callback: {e}")
+                logger.error(f"Error in shutdown callback: {e}")
         
         if self.room:
             try:
-                if hasattr(self.room, "async_leave"):
-                    await self.room.async_leave()
-                else:
-                    self.room.leave()
+                await self.room.leave()
             except Exception as e:
-                print(f"Error during room leave: {e}")
+                logger.error(f"Error during room leave: {e}")
             try:
                 if hasattr(self.room, "cleanup"):
                     await self.room.cleanup()
             except Exception as e:
-                print(f"Error during room cleanup: {e}")
+                logger.error(f"Error during room cleanup: {e}")
             self.room = None
 
     def add_shutdown_callback(self, callback: Callable[[], Coroutine[None, None, None]]) -> None:

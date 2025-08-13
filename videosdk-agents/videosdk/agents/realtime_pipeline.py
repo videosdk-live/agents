@@ -154,10 +154,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         """Cleanup resources"""
         if hasattr(self, 'room') and self.room is not None:
             try:
-                if hasattr(self.room, 'async_leave'):
-                    await self.room.async_leave()
-                else:
-                    self.room.leave()
+                await self.room.leave()
             except Exception as e:
                 logger.error(f"Error while leaving room during cleanup: {e}")
             try:

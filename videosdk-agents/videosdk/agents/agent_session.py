@@ -12,6 +12,8 @@ from .realtime_pipeline import RealTimePipeline
 from .utils import get_tool_info
 import time
 from .job import get_current_job_context
+import logging
+logger = logging.getLogger(__name__)
 
 class AgentSession:
     """
@@ -178,6 +180,7 @@ class AgentSession:
         Close the agent session.
         """
         if self._closed:
+            logger.info("Agent session already closed")
             return
         self._closed = True
         if isinstance(self.pipeline, RealTimePipeline):

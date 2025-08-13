@@ -18,6 +18,9 @@ from typing import Callable, Optional, Any
 from ..metrics.realtime_metrics_collector import realtime_metrics_collector
 import requests
 import time
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 START_RECORDING_URL = "https://api.videosdk.live/v2/recordings/participant/start"
@@ -101,23 +104,9 @@ class VideoSDKHandler:
     async def join(self):
         await self.meeting.async_join()
 
-    def leave(self):
+    async def leave(self):
         if self._left:
-            return
-        self._left = True
-        for audio_task in self.audio_listener_tasks.values():
-            audio_task.cancel()
-        for video_task in self.video_listener_tasks.values():
-            video_task.cancel()
-        if self.traces_flow_manager:
-            self.traces_flow_manager.end_agent_joined_meeting()
-        if self.recording:
-            self.loop.create_task(self.stop_and_merge_recordings())
-
-        self.meeting.leave()
-
-    async def async_leave(self):
-        if self._left:
+            logger.info("Meeting already left")
             return
         self._left = True
         for audio_task in list(self.audio_listener_tasks.values()):
@@ -132,18 +121,18 @@ class VideoSDKHandler:
                 pass
         if self.traces_flow_manager:
             try:
-                self.traces_flow_manager.end_agent_joined_meeting()
-            except Exception:
-                pass
+                self.traces_flow_manager.agent_meeting_end()
+            except Exception as e:
+                logger.error(f"Error while ending agent_meeting_end span: {e}")
         if self.recording:
             try:
                 await self.stop_and_merge_recordings()
             except Exception as e:
-                print(f"Error stopping/merging recordings: {e}")
+                logger.error(f"Error stopping/merging recordings: {e}")
         try:
             self.meeting.leave()
         except Exception as e:
-            print(f"Error leaving meeting: {e}")
+            logger.error(f"Error leaving meeting: {e}")
 
     def on_error(self, data):
         if self.on_room_error:
@@ -157,14 +146,14 @@ class VideoSDKHandler:
             self.loop.create_task(self.start_participants_recording())
 
     def on_meeting_left(self, data):
-        print(f"Meeting Left", data)
+        logger.info(f"Meeting Left", data)
         
     def on_participant_joined(self, participant: Participant):
         peer_name = participant.display_name
         self.participants_data[participant.id] = {
             "name": peer_name,
         }
-        print("Participant joined:", peer_name)
+        logger.info("Participant joined:", peer_name)
         
         if participant.id in self._participant_joined_events:
             self._participant_joined_events[participant.id].set()
@@ -224,7 +213,7 @@ class VideoSDKHandler:
                     await self.pipeline.on_audio_delta(pcm_frame)
 
             except Exception as e:
-                print("Audio processing error:", e)
+                logger.error("Audio processing error:", e)
                 break    
 
     async def add_video_listener(self, stream: Stream):          
@@ -237,7 +226,7 @@ class VideoSDKHandler:
                     await self.pipeline.on_video_delta(frame)
                
             except Exception as e:
-                print("Audio processing error:", e)
+                logger.error("Video processing error:", e)
                 break
 
     async def wait_for_participant(self, participant_id: str | None = None) -> str:
@@ -298,7 +287,7 @@ class VideoSDKHandler:
                     if self.traces_flow_manager:
                         self.traces_flow_manager.set_session_id(session_id)
             except Exception as e:
-                print(f"Error collecting session ID: {e}")
+                logger.error(f"Error collecting session ID: {e}")
 
     async def _collect_meeting_attributes(self) -> None:
         """
@@ -306,7 +295,7 @@ class VideoSDKHandler:
         Also creates parent-child spans and logs after meeting is joined.
         """
         if not self.meeting:
-            print("Meeting not initialized")
+            logger.error("Meeting not initialized")
             return
 
         try:
@@ -323,9 +312,9 @@ class VideoSDKHandler:
                         sdk_metadata=self.sdk_metadata
                     )
                 else:
-                    print("No meeting attributes found")
+                    logger.error("No meeting attributes found")
             else:
-                print("Meeting object does not have 'get_attributes' method")
+                logger.error("Meeting object does not have 'get_attributes' method")
 
             if self._meeting_joined_data and self.traces_flow_manager:
                 start_time = time.perf_counter() 
@@ -339,7 +328,7 @@ class VideoSDKHandler:
                 }   
                 self.traces_flow_manager.start_agent_joined_meeting(agent_joined_attributes)
         except Exception as e:
-            print(f"Error collecting meeting attributes and creating spans: {e}")
+            logger.error(f"Error collecting meeting attributes and creating spans: {e}")
 
     async def start_participants_recording(self) :
         await self.start_participant_recording(self.meeting.local_participant.id)
@@ -349,7 +338,7 @@ class VideoSDKHandler:
     async def stop_participants_recording(self):
         await self.stop_participant_recording(self.meeting.local_participant.id)
         for participant_id in self.participants_data.keys():
-            print("stopping participant", participant_id)
+            logger.info("stopping participant recording for id", participant_id)
             await self.stop_participant_recording(participant_id)
              
     async def start_participant_recording(self, id: str):
@@ -358,7 +347,7 @@ class VideoSDKHandler:
 		"roomId" : self.meeting_id,
 		"participantId" : id
 	    },headers = headers)
-        print("response for id", id, response.text)
+        logger.info("response for id", id, response.text)
     
     async def stop_participant_recording(self, id: str):
         headers = {'Authorization' : self.auth_token,'Content-Type' : 'application/json'}
@@ -366,7 +355,7 @@ class VideoSDKHandler:
 		"roomId" : self.meeting_id,
 		"participantId" : id
 	    },headers = headers)
-        print("response for id", id, response.text)
+        logger.info("response for id", id, response.text)
         
     async def merge_participant_recordings(self):
         headers = {'Authorization' : self.auth_token,'Content-Type' : 'application/json'}
@@ -375,10 +364,10 @@ class VideoSDKHandler:
 		"channel1" : [{"participantId":self.meeting.local_participant.id}],
 		"channel2" : [{"participantId":participant_id} for participant_id in self.participants_data.keys()],
 	},headers = headers)
-        print(response.text)      
+        logger.info(response.text)      
 
     async def stop_and_merge_recordings(self):
         await self.stop_participants_recording()
         await self.merge_participant_recordings() 
-        print("stopped and merged recordings")
+        logger.info("stopped and merged recordings")
                  
