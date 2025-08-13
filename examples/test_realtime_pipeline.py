@@ -139,14 +139,6 @@ async def entrypoint(ctx: JobContext):
         )
     )
 
-    # model = GeminiRealtime(
-    #     model="gemini-2.0-flash-live-001",
-    #     config=GeminiLiveConfig(
-    #         voice="Leda", # Puck, Charon, Kore, Fenrir, Aoede, Leda, Orus, and Zephyr.
-    #         response_modalities=["AUDIO"]
-    #     )
-    # )
-
     # model = NovaSonicRealtime(
     #     model="amazon.nova-sonic-v1:0",
     #     config=NovaSonicConfig(
@@ -158,6 +150,13 @@ async def entrypoint(ctx: JobContext):
     # )
 
     pipeline = RealTimePipeline(model=model)
+
+    def on_transcription(data: dict):
+        role = data.get("role")
+        text = data.get("text")
+        print(f"[TRANSCRIPT][{role}: {text}")
+    pipeline.on("realtime_model_transcription", on_transcription)
+
     agent = MyVoiceAgent(ctx)
 
     
