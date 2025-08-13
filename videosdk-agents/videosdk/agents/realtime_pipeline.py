@@ -17,7 +17,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtime_end","user_audio_input_data", "user_speech_started"]]):
+class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtime_end","user_audio_input_data", "user_speech_started", "realtime_model_transcription"]]):
     """
     RealTime pipeline implementation that processes data in real-time.
     Inherits from Pipeline base class and adds realtime-specific events.
@@ -46,6 +46,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         self.denoise = denoise
         super().__init__()
         self.model.on("error", self.on_model_error)
+        self.model.on("realtime_model_transcription", self.on_realtime_model_transcription)
 
     
     def set_agent(self, agent: Agent) -> None:
@@ -138,6 +139,16 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         error_data = {"message": str(error), "timestamp": time.time()}
         realtime_metrics_collector.set_realtime_model_error(error_data)
         logger.error(f"Realtime model error: {error_data}")
+
+    def on_realtime_model_transcription(self, data: dict) -> None:
+        """
+        Handle realtime model transcription event
+        """
+        try:
+            self.emit("realtime_model_transcription", data)
+        except Exception:
+            print(f"Realtime model transcription: {data}")
+    
 
     async def cleanup(self):
         """Cleanup resources"""
