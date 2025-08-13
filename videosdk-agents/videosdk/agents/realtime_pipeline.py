@@ -147,7 +147,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         try:
             self.emit("realtime_model_transcription", data)
         except Exception:
-            print(f"Realtime model transcription: {data}")
+            logger.error(f"Realtime model transcription: {data}")
     
 
     async def cleanup(self):

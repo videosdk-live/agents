@@ -2,6 +2,8 @@ import multiprocessing
 import functools
 import signal
 import asyncio
+import logging
+logger = logging.getLogger(__name__)
 
 def _job_runner(entrypoint, job_ctx_factory):
     """
@@ -25,7 +27,7 @@ def _job_runner(entrypoint, job_ctx_factory):
                     try:
                         await job_ctx.shutdown()
                     except Exception as e:
-                        print(f"Error during job shutdown: {e}")
+                        logger.error(f"Error during job shutdown: {e}")
 
             task = loop.create_task(driver())
 
@@ -36,7 +38,7 @@ def _job_runner(entrypoint, job_ctx_factory):
                 if shutting_down:
                     return
                 shutting_down = True
-                print(f"Received signal {signum}. Shutting down...")
+                logger.info(f"Received signal {signum}. Shutting down...")
                 try:
                     task.cancel()
                 except Exception:
@@ -53,7 +55,7 @@ def _job_runner(entrypoint, job_ctx_factory):
             _reset_current_job_context(token)
             
     except Exception as e:
-        print(f"Error in job runner: {e}")
+        logger.error(f"Error in job runner: {e}")
         import traceback
         traceback.print_exc()
 
@@ -71,23 +73,23 @@ class Worker:
         )
         p.start()
         self.processes.append((p.pid, p))
-        print(f"Started job in PID {p.pid}")
+        logger.info(f"Started job in PID {p.pid}")
 
     def _terminate_all_processes(self):
         self._cleanup_processes()
         if not self.processes:
-            print("No active processes to terminate.")
+            logger.info("No active processes to terminate.")
             return
 
-        print("Terminating all running processes...")
+        logger.info("Terminating all running processes...")
         for pid, proc in self.processes:
             if proc.is_alive():
                 try:
                     proc.terminate()
                     proc.join()
-                    print(f"Terminated PID {pid}")
+                    logger.info(f"Terminated PID {pid}")
                 except Exception as e:
-                    print(f"Failed to terminate PID {pid}: {e}")
+                    logger.error(f"Failed to terminate PID {pid}: {e}")
         self._cleanup_processes()
 
     def _cleanup_processes(self):
