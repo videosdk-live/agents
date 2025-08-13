@@ -360,8 +360,32 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                             await realtime_metrics_collector.set_user_transcript(transcript)
                                             await realtime_metrics_collector.set_user_speech_end()
                                             self._safe_emit("user_speech_started", {"type": "done"})
+                                            try:
+                                                await self.emit("realtime_model_transcription", {
+                                                    "role": "user",
+                                                    "text": transcript,
+                                                    "is_final": True
+                                                })
+                                            except Exception:
+                                                pass
                                         elif role == 'ASSISTANT':
-                                            await realtime_metrics_collector.set_agent_response(transcript)
+                                            skip_emit = False
+                                            try:
+                                                parsed = json.loads(transcript)
+                                                if isinstance(parsed, dict) and parsed.get("interrupted") is True:
+                                                    skip_emit = True
+                                            except Exception:
+                                                pass
+                                            if not skip_emit:
+                                                await realtime_metrics_collector.set_agent_response(transcript)
+                                                try:
+                                                    await self.emit("realtime_model_transcription", {
+                                                        "role": "agent",
+                                                        "text": transcript,
+                                                        "is_final": True
+                                                    })
+                                                except Exception:
+                                                    pass
 
                                 elif 'audioOutput' in json_data['event']:                                    
                                     audio_output = json_data['event']['audioOutput']
