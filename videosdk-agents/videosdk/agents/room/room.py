@@ -141,10 +141,7 @@ class VideoSDKHandler:
             except Exception as e:
                 print(f"Error stopping/merging recordings: {e}")
         try:
-            if hasattr(self.meeting, 'async_leave') and callable(getattr(self.meeting, 'async_leave')):
-                await self.meeting.async_leave()
-            else:
-                self.meeting.leave()
+            self.meeting.leave()
         except Exception as e:
             print(f"Error leaving meeting: {e}")
 
