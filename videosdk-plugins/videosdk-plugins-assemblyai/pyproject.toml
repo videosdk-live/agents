@@ -21,7 +21,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "videosdk-agents>=0.0.23"
+    "videosdk-agents>=0.0.24"
 ]
 
 [tool.hatch.version]
