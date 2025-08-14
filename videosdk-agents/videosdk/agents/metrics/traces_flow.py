@@ -418,7 +418,7 @@ class TracesFlowManager:
         self.end_span(self.agent_session_span, "Agent session ended", end_time=time.perf_counter())
         self.agent_session_span = None
 
-    def end_agent_joined_meeting(self):
+    def agent_meeting_end(self):
         """Completes the root span."""
         if self.agent_session_span:
             self.end_agent_session()

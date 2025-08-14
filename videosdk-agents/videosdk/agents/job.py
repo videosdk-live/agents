@@ -5,6 +5,8 @@ import os
 import asyncio
 from contextvars import ContextVar
 from dataclasses import dataclass
+import logging
+logger = logging.getLogger(__name__)
 
 _current_job_context: ContextVar[Optional['JobContext']] = ContextVar('current_job_context', default=None)
 
@@ -50,6 +52,7 @@ class JobContext:
         self.videosdk_auth = self.room_options.auth_token or os.getenv("VIDEOSDK_AUTH_TOKEN")
         self.room: Optional[VideoSDKHandler] = None
         self._shutdown_callbacks: list[Callable[[], Coroutine[None, None, None]]] = []
+        self._is_shutting_down: bool = False
     
     def _set_pipeline_internal(self, pipeline: Any) -> None:
         """Internal method called by pipeline constructors"""
@@ -108,15 +111,26 @@ class JobContext:
 
     async def shutdown(self) -> None:
         """Called by Worker during graceful shutdown"""
+        if self._is_shutting_down:
+            logger.info("JobContext already shutting down")
+            return
+        self._is_shutting_down = True
         for callback in self._shutdown_callbacks:
             try:
                 await callback()
             except Exception as e:
-                print(f"Error in shutdown callback: {e}")
+                logger.error(f"Error in shutdown callback: {e}")
         
         if self.room:
-            self.room.leave()
-            self.room.cleanup()
+            try:
+                await self.room.leave()
+            except Exception as e:
+                logger.error(f"Error during room leave: {e}")
+            try:
+                if hasattr(self.room, "cleanup"):
+                    await self.room.cleanup()
+            except Exception as e:
+                logger.error(f"Error during room cleanup: {e}")
             self.room = None
 
     def add_shutdown_callback(self, callback: Callable[[], Coroutine[None, None, None]]) -> None:
