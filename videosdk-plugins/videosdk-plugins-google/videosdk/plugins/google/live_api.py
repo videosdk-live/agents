@@ -366,6 +366,14 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                     self._user_speaking = False
                                 if accumulated_input_text:
                                     await realtime_metrics_collector.set_user_transcript(accumulated_input_text)
+                                    try:
+                                        self.emit("realtime_model_transcription", {
+                                            "role": "user",
+                                            "text": accumulated_input_text,
+                                            "is_final": True
+                                        })
+                                    except Exception:
+                                        pass
                                     accumulated_input_text = ""
                                 for part in model_turn.parts:
                                     if hasattr(part, 'inline_data') and part.inline_data:
@@ -397,6 +405,14 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                     accumulated_input_text = ""
                                 if final_transcription:
                                     await realtime_metrics_collector.set_agent_response(final_transcription)
+                                    try:
+                                        self.emit("realtime_model_transcription", {
+                                            "role": "agent",
+                                            "text": final_transcription,
+                                            "is_final": True
+                                        })
+                                    except Exception:
+                                        pass
                                 if "TEXT" in self.config.response_modalities and accumulated_text:
                                     global_event_emitter.emit("text_response", {
                                         "type": "done",

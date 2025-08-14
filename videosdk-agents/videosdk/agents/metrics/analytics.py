@@ -22,7 +22,7 @@ class AnalyticsClient:
             return
         
         self.session_id = session_id
-        self.base_url = os.getenv("ANALYTICS_API_SERVER_URL")
+        self.base_url = "https://api.videosdk.live"
         self._initialized = True
         
     def set_session_id(self, session_id: str) -> None:

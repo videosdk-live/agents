@@ -427,12 +427,28 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         transcript = data.get("transcript", "")
         if transcript:
             await realtime_metrics_collector.set_user_transcript(transcript)
+            try:
+                self.emit("realtime_model_transcription", {
+                    "role": "user",
+                    "text": transcript,
+                    "is_final": True
+                })
+            except Exception:
+                pass
 
     async def _handle_response_done(self, data: dict) -> None:
         """Handle response completion for agent transcript"""
         if hasattr(self, '_current_audio_transcript') and self._current_audio_transcript:
             await realtime_metrics_collector.set_agent_response(self._current_audio_transcript)
             global_event_emitter.emit("text_response", {"text": self._current_audio_transcript, "type": "done"})
+            try:
+                self.emit("realtime_model_transcription", {
+                    "role": "agent",
+                    "text": self._current_audio_transcript,
+                    "is_final": True
+                })
+            except Exception:
+                pass
             self._current_audio_transcript = ""
         await realtime_metrics_collector.set_agent_speech_end(timeout=1.0)
         self._agent_speaking = False
