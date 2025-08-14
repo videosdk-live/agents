@@ -128,15 +128,46 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         await self.on_turn_end()
     
     async def _generate_and_synthesize_response(self, user_text: str) -> None:
-        """Generate agent response and synthesize with TTS if available"""
+        """Generate agent response"""
+        full_response = ""
         try:
-            if self.tts:
-                await self._synthesize_with_tts(self.run(user_text))
-            else:
-                agent_response = ""
-                async for response_chunk in self.run(user_text):
-                    agent_response += response_chunk
-                cascading_metrics_collector.set_agent_response(agent_response)
+            llm_stream = self.run(user_text)
+
+            q = asyncio.Queue()
+
+            async def collector():
+                response_parts = []
+                async for chunk in llm_stream:
+                    await q.put(chunk)
+                    response_parts.append(chunk)
+                await q.put(None)
+                return "".join(response_parts)
+
+            async def tts_consumer():
+                async def tts_stream_gen():
+                    while True:
+                        chunk = await q.get()
+                        if chunk is None:
+                            break
+                        yield chunk
+                
+                if self.tts:
+                    await self._synthesize_with_tts(tts_stream_gen())
+            
+            collector_task = asyncio.create_task(collector())
+            tts_task = asyncio.create_task(tts_consumer())
+
+            await asyncio.gather(collector_task, tts_task)
+            
+            full_response = collector_task.result()
+
+            if full_response:
+                cascading_metrics_collector.set_agent_response(full_response)
+                self.agent.chat_context.add_message(
+                    role=ChatRole.ASSISTANT,
+                    content=full_response
+                )
+
         finally:
             cascading_metrics_collector.complete_current_turn()
             
@@ -148,8 +179,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         async with self.llm_lock:
             if not self.llm:
                 return
-            full_response = ""
-            prev_content_length = 0
             
             cascading_metrics_collector.on_llm_start()
             first_chunk_received = False
@@ -192,26 +221,14 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                             )
                             
                             async for new_resp in self.llm.chat(self.agent.chat_context):
-                                new_content = new_resp.content[prev_content_length:]
-                                if new_content:
-                                    yield new_content
-                                full_response = new_resp.content
-                                prev_content_length = len(new_resp.content)
+                                if new_resp.content:
+                                    yield new_resp.content
                         except Exception as e:
                             logger.error(f"Error executing function {func_call['name']}: {e}")
                             continue
                 else:
-                    new_content = llm_chunk_resp.content[prev_content_length:]
-                    if new_content: 
-                        yield new_content
-                    full_response = llm_chunk_resp.content
-                    prev_content_length = len(llm_chunk_resp.content)
-            
-            if full_response:
-                self.agent.chat_context.add_message(
-                    role=ChatRole.ASSISTANT,
-                    content=full_response
-                )
+                    if llm_chunk_resp.content: 
+                        yield llm_chunk_resp.content
                             
     async def say(self, message: str) -> None:
         """
@@ -285,6 +302,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
     async def _interrupt_tts(self) -> None:
         async with self.tts_lock:
             await self.tts.interrupt()
+        cascading_metrics_collector.on_interrupted()
     
     def on_speech_stopped(self) -> None:
         
@@ -296,51 +314,30 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
     async def _synthesize_with_tts(self, response_gen: AsyncIterator[str] | str) -> None:
         """
-        Stream LLM response chunks to TTS with buffering to sentences or pauses.
-        Synthesizes at natural breaks (., !, ?, ;) with TTFB monitoring.
+        Stream LLM response directly to TTS.
         """
         if not self.tts:
             return
-        
-        cascading_metrics_collector.on_tts_start()
         
         async def on_first_audio_byte():
             cascading_metrics_collector.on_tts_first_byte()
             cascading_metrics_collector.on_agent_speech_start()
         
         self.tts.on_first_audio_byte(on_first_audio_byte)
-        
         self.tts.reset_first_audio_tracking()
         
+        cascading_metrics_collector.on_tts_start()
         try:
-            buffer = ""
-            full_response = ""
-            delimiters = {'.', '!', '?', ';', ',', '\n'}
-            
+            response_iterator: AsyncIterator[str]
             if isinstance(response_gen, str):
                 async def string_to_iterator(text: str):
                     yield text
-                response_gen = string_to_iterator(response_gen)
-            
-            async for chunk in response_gen:
-                buffer += chunk
-                full_response += chunk
-                while buffer:
-                    delimiter_pos = min((buffer.find(d) for d in delimiters if buffer.find(d) != -1), default=-1)
-                    if delimiter_pos != -1:
-                        to_speak = buffer[:delimiter_pos + 1]
-                        buffer = buffer[delimiter_pos + 1:].lstrip() 
-                        async with self.tts_lock:
-                            await self.tts.synthesize(to_speak)
-                    else:
-                        break
-            
-            if buffer:
-                async with self.tts_lock:
-                    await self.tts.synthesize(buffer)
-            
-            if full_response:
-                cascading_metrics_collector.set_agent_response(full_response)
+                response_iterator = string_to_iterator(response_gen)
+            else:
+                response_iterator = response_gen
+
+            async with self.tts_lock:
+                await self.tts.synthesize(response_iterator)
                 
         finally:
             cascading_metrics_collector.on_agent_speech_end()

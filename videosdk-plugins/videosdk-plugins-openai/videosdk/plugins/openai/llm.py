@@ -178,7 +178,7 @@ class OpenAILLM(LLM):
                     current_function_call = None
                 
                 elif delta.content is not None:
-                    current_content += delta.content
+                    current_content = delta.content
                     yield LLMResponse(
                         content=current_content,
                         role=ChatRole.ASSISTANT

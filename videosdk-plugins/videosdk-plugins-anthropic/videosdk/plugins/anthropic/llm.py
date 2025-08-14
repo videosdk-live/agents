@@ -139,7 +139,7 @@ class AnthropicLLM(LLM):
                 elif event.type == "content_block_delta":
                     delta = event.delta
                     if delta.type == "text_delta":
-                        current_content += delta.text
+                        current_content = delta.text
                         yield LLMResponse(
                             content=current_content,
                             role=ChatRole.ASSISTANT
