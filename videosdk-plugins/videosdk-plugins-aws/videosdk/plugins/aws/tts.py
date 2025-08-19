@@ -7,7 +7,7 @@ import logging
 import numpy as np
 from dataclasses import dataclass
 
-from videosdk.agents import TTS
+from videosdk.agents import TTS, segment_text
 
 try:
     import boto3
@@ -75,7 +75,6 @@ class AWSPollyTTS(TTS):
         self.aws_session_token = aws_session_token or os.getenv("AWS_SESSION_TOKEN")
         self.speed = speed
         self.pitch = pitch
-        self.stt_component = None
         self._first_chunk_sent = False
         if not self.region:
             raise ValueError("AWS region must be specified via parameter or AWS_DEFAULT_REGION env var")
@@ -100,42 +99,39 @@ class AWSPollyTTS(TTS):
             logger.error("Audio track or event loop not initialized.")
             return
 
-        if self.stt_component:
-            self.stt_component.set_agent_speaking(True)
-
         try:
             if isinstance(text_or_generator, str):
-                full_text = text_or_generator
+                await self._process_text_segment(text_or_generator)
             else:
-                full_text = "".join([chunk async for chunk in text_or_generator])
-
-            if not full_text.strip():
-                return
-            
-            ssml_text = self._build_ssml(full_text)
-            
-            response = await asyncio.to_thread(
-                self._client.synthesize_speech,
-                Text=ssml_text,
-                TextType="ssml",
-                OutputFormat="pcm",
-                VoiceId=self.voice,
-                SampleRate="16000",
-                Engine=self.engine
-            )
-
-            audio_stream = response.get("AudioStream")
-            if audio_stream:
-                audio_data = await asyncio.to_thread(audio_stream.read)
-                await self._stream_audio(audio_data)
+                async for segment in segment_text(text_or_generator):
+                    await self._process_text_segment(segment)
 
         except (BotoCoreError, ClientError) as e:
             logger.error(f"AWS Polly API error: {e}")
         except Exception as e:
             logger.error(f"Error in AWSPollyTTS synthesis: {e}")
-        finally:
-            if self.stt_component:
-                self.stt_component.set_agent_speaking(False)
+
+    async def _process_text_segment(self, text_segment: str) -> None:
+        """Process individual text segments for streaming TTS"""
+        if not text_segment.strip():
+            return
+        
+        ssml_text = self._build_ssml(text_segment)
+        
+        response = await asyncio.to_thread(
+            self._client.synthesize_speech,
+            Text=ssml_text,
+            TextType="ssml",
+            OutputFormat="pcm",
+            VoiceId=self.voice,
+            SampleRate="16000",
+            Engine=self.engine
+        )
+
+        audio_stream = response.get("AudioStream")
+        if audio_stream:
+            audio_data = await asyncio.to_thread(audio_stream.read)
+            await self._stream_audio(audio_data)
 
     async def _stream_audio(self, audio_data: bytes):
         if not audio_data:
@@ -154,37 +150,31 @@ class AWSPollyTTS(TTS):
             else:
                 logger.warning("scipy not available, using original audio without resampling")
 
-            chunk_size = int(self.sample_rate * self.num_channels * 2 * 20 / 1000)
-            
-            for i in range(0, len(audio_data), chunk_size):
-                chunk = audio_data[i:i+chunk_size]
-                if len(chunk) < chunk_size:
-                    chunk += b'\x00' * (chunk_size - len(chunk))
-                
-                if self.audio_track and self.loop:
-                    if not self._first_chunk_sent and self._first_audio_callback:
-                        self._first_chunk_sent = True
-                        await self._first_audio_callback()
-                    
-                    self.loop.create_task(self.audio_track.add_new_bytes(chunk))
-                    await asyncio.sleep(0.01) 
+            await self._chunk_audio_async(audio_data)
                     
         except Exception as e:
             logger.error(f"Error in audio streaming: {e}")
-            chunk_size = int(self.sample_rate * self.num_channels * 2 * 20 / 1000)  
+
+    async def _chunk_audio_async(self, audio_data: bytes) -> None:
+        """Async chunking that yields control to event loop for non-blocking operation"""
+        chunk_size = int(self.sample_rate * self.num_channels * 2 * 1000 / 1000)  # 1 second chunks
+        
+        if not self._first_chunk_sent and self._first_audio_callback:
+            self._first_chunk_sent = True
+            await self._first_audio_callback()
+
+        for i in range(0, len(audio_data), chunk_size):
+            chunk = audio_data[i:i+chunk_size]
             
-            for i in range(0, len(audio_data), chunk_size):
-                chunk = audio_data[i:i+chunk_size]
-                if len(chunk) < chunk_size:
-                    chunk += b'\x00' * (chunk_size - len(chunk))
-                
-                if self.audio_track and self.loop:
-                    if not self._first_chunk_sent and self._first_audio_callback:
-                        self._first_chunk_sent = True
-                        await self._first_audio_callback()
-                    
-                    self.loop.create_task(self.audio_track.add_new_bytes(chunk))
-                    await asyncio.sleep(0.01)  
+            if len(chunk) < chunk_size and len(chunk) > 0:
+                padding_needed = chunk_size - len(chunk)
+                chunk += b'\x00' * padding_needed
+            
+            if self.audio_track and self.loop:
+                self.loop.create_task(self.audio_track.add_new_bytes(chunk))
+            
+            if i % (chunk_size * 3) == 0:
+                await asyncio.sleep(0)
 
     def _build_ssml(self, text: str) -> str:
         """Build SSML for AWS Polly with speed and pitch controls"""
@@ -221,11 +211,12 @@ class AWSPollyTTS(TTS):
         ssml_parts.append("</speak>")
         
         return "".join(ssml_parts)
-    
-    def set_stt_component(self, stt_component):
-        """Set reference to STT component for conversation flow control"""
-        self.stt_component = stt_component
         
     async def aclose(self):
         """Close the TTS connection"""
         pass
+    
+    async def interrupt(self) -> None:
+        """Interrupt the TTS audio stream"""
+        if self.audio_track:
+            self.audio_track.interrupt() 
