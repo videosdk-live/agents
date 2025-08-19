@@ -6,8 +6,7 @@ import asyncio
 import base64
 import httpx
 
-from videosdk.agents import TTS
-from videosdk.agents.utils import segment_text
+from videosdk.agents import TTS, segment_text
 
 SARVAMAI_SAMPLE_RATE = 22050
 SARVAMAI_CHANNELS = 1

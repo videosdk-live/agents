@@ -5,7 +5,7 @@ import os
 import asyncio
 import httpx
 
-from videosdk.agents import TTS
+from videosdk.agents import TTS, segment_text
 
 RIME_SAMPLE_RATE = 24000
 RIME_CHANNELS = 1
@@ -29,7 +29,7 @@ class RimeTTS(TTS):
         lang: str = DEFAULT_LANGUAGE,
         sampling_rate: int = RIME_SAMPLE_RATE,
         speed_alpha: float = 1.0,
-        reduce_latency: bool = False,
+        reduce_latency: bool = True,
         pause_between_brackets: bool = False,
         phonemize_between_brackets: bool = False,
         inline_speed_alpha: str | None = None,
@@ -80,18 +80,15 @@ class RimeTTS(TTS):
         **kwargs: Any,
     ) -> None:
         try:
-            if isinstance(text, AsyncIterator):
-                full_text = ""
-                async for chunk in text:
-                    full_text += chunk
-            else:
-                full_text = text
-
             if not self.audio_track or not self.loop:
                 self.emit("error", "Audio track or loop not initialized")
                 return
 
-            await self._synthesize_audio(full_text)
+            if isinstance(text, AsyncIterator):
+                async for segment in segment_text(text):
+                    await self._synthesize_audio(segment)
+            else:
+                await self._synthesize_audio(text)
 
         except Exception as e:
             self.emit("error", f"Rime TTS synthesis failed: {str(e)}")
@@ -132,16 +129,9 @@ class RimeTTS(TTS):
             ) as response:
                 response.raise_for_status()
                 
-                audio_data = b""
                 async for chunk in response.aiter_bytes():
                     if chunk:
-                        audio_data += chunk
-                
-                if not audio_data:
-                    self.emit("error", "No audio data received from Rime TTS")
-                    return
-                
-                await self._stream_audio_chunks(audio_data)
+                        await self._process_audio_chunk(chunk)
             
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 401:
@@ -161,26 +151,22 @@ class RimeTTS(TTS):
             self.emit("error", f"Rime TTS request failed: {str(e)}")
             raise
 
-    async def _stream_audio_chunks(self, audio_bytes: bytes) -> None:
-        """Stream audio data in chunks to avoid beeps and ensure smooth playback"""
-        chunk_size = int(self.sampling_rate * RIME_CHANNELS * 2 * 20 / 1000)
+    async def _process_audio_chunk(self, audio_chunk: bytes) -> None:
+        """Process individual audio chunks in real-time for minimal latency"""
+        if not audio_chunk:
+            return
+
+        processed_chunk = self._remove_wav_header(audio_chunk)
         
-        audio_data = self._remove_wav_header(audio_bytes)
-        
-        for i in range(0, len(audio_data), chunk_size):
-            chunk = audio_data[i:i + chunk_size]
-            
-            if len(chunk) < chunk_size and len(chunk) > 0:
-                padding_needed = chunk_size - len(chunk)
-                chunk += b'\x00' * padding_needed
-            
-            if len(chunk) == chunk_size:
-                if not self._first_chunk_sent and self._first_audio_callback:
-                    self._first_chunk_sent = True
-                    await self._first_audio_callback()
-                
-                self.loop.create_task(self.audio_track.add_new_bytes(chunk))
-                await asyncio.sleep(0.001)
+        if not processed_chunk:
+            return
+
+        if not self._first_chunk_sent and self._first_audio_callback:
+            self._first_chunk_sent = True
+            await self._first_audio_callback()
+
+        if self.audio_track and self.loop:
+            self.loop.create_task(self.audio_track.add_new_bytes(processed_chunk))
 
     def _remove_wav_header(self, audio_bytes: bytes) -> bytes:
         """Remove WAV header if present to get raw PCM data"""
