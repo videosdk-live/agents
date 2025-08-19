@@ -7,6 +7,7 @@ import base64
 import httpx
 
 from videosdk.agents import TTS
+from videosdk.agents.utils import segment_text
 
 SARVAMAI_SAMPLE_RATE = 22050
 SARVAMAI_CHANNELS = 1
@@ -67,18 +68,15 @@ class SarvamAITTS(TTS):
         **kwargs: Any,
     ) -> None:
         try:
-            if isinstance(text, AsyncIterator):
-                full_text = ""
-                async for chunk in text:
-                    full_text += chunk
-            else:
-                full_text = text
-
             if not self.audio_track or not self.loop:
                 self.emit("error", "Audio track or loop not initialized")
                 return
 
-            await self._synthesize_audio(full_text)
+            if isinstance(text, AsyncIterator):
+                async for segment in segment_text(text):
+                    await self._synthesize_audio(segment)
+            else:
+                await self._synthesize_audio(text)
 
         except Exception as e:
             self.emit("error", f"Sarvam AI TTS synthesis failed: {str(e)}")

@@ -1,203 +1,227 @@
 from __future__ import annotations
-
-from typing import Any, AsyncIterator, Optional
-import os
 import asyncio
-from cartesia import Cartesia
-from videosdk.agents import TTS
-import logging
+import base64
+import json
+import os
+from typing import Any, AsyncIterator, List, Optional, Union
 
-logger = logging.getLogger(__name__)
+import aiohttp
+
+from videosdk.agents import TTS
 
 CARTESIA_SAMPLE_RATE = 24000
 CARTESIA_CHANNELS = 1
 DEFAULT_MODEL = "sonic-2"
 DEFAULT_VOICE_ID = "794f9389-aac1-45b6-b726-9d9369183238"
+PLAYBACK_CHUNK_SIZE = 960
+API_VERSION = "2024-06-10"
+
+# Streaming text pacing thresholds
+MIN_CHARS_FLUSH = 100
+MIN_WORDS_FLUSH = 12
+INACTIVITY_TIMEOUT_SEC = 0.18
+
 
 class CartesiaTTS(TTS):
     def __init__(
         self,
         *,
         model: str = DEFAULT_MODEL,
-        voice_id: str = DEFAULT_VOICE_ID,
+        voice_id: Union[str, List[float]] = DEFAULT_VOICE_ID,
         api_key: str | None = None,
         language: str = "en",
+        base_url: str = "https://api.cartesia.ai",
     ) -> None:
         super().__init__(sample_rate=CARTESIA_SAMPLE_RATE, num_channels=CARTESIA_CHANNELS)
 
         self.model = model
-        self.voice_id = voice_id
         self.language = language
-        self.audio_track = None
-        self.loop = None
+        self.base_url = base_url
+        self._voice = voice_id
         self._first_chunk_sent = False
+        self._audio_buffer = bytearray()
 
         api_key = api_key or os.getenv("CARTESIA_API_KEY")
         if not api_key:
-            raise ValueError("Cartesia API key must be provided either through api_key parameter or CARTESIA_API_KEY environment variable")
-
-        self.cartesia_client = Cartesia(api_key=api_key)
-        self._voice_embedding = None
+            raise ValueError("Cartesia API key must be provided")
+        self._api_key = api_key
+        
+        self._ws_session: aiohttp.ClientSession | None = None
+        self._ws_connection: aiohttp.ClientWebSocketResponse | None = None
+        self._connection_lock = asyncio.Lock()
 
     def reset_first_audio_tracking(self) -> None:
-        """Reset the first audio tracking state for next TTS task"""
         self._first_chunk_sent = False
+        self._audio_buffer.clear()
 
-    async def _get_voice_embedding(self):
-        """Get voice embedding for the specified voice ID"""
-        if self._voice_embedding is None:
+    async def _ensure_ws_connection(self) -> aiohttp.ClientWebSocketResponse:
+        async with self._connection_lock:
+            if self._ws_connection and not self._ws_connection.closed:
+                return self._ws_connection
+
+            if self._ws_session is None or self._ws_session.closed:
+                self._ws_session = aiohttp.ClientSession()
+
+            ws_url = self.base_url.replace('http', 'ws', 1)
+            full_ws_url = f"{ws_url}/tts/websocket?api_key={self._api_key}&cartesia_version={API_VERSION}"
+            
             try:
-                voice = self.cartesia_client.voices.get(self.voice_id)
-                if hasattr(voice, 'embedding'):
-                    self._voice_embedding = voice.embedding
-                else:
-                    raise ValueError(f"Voice {self.voice_id} does not have an embedding")
-                    
+                self._ws_connection = await asyncio.wait_for(
+                    self._ws_session.ws_connect(full_ws_url, heartbeat=30.0), timeout=5.0
+                )
+                return self._ws_connection
             except Exception as e:
-                self.emit("error", f"Failed to get voice embedding: {str(e)}")
-                return None
-        return self._voice_embedding
+                self.emit("error", f"Failed to establish WebSocket connection: {e}")
+                raise
 
-    async def _generate_audio_chunks(self, text: str) -> list[bytes]:
-        """Generate audio chunks using Cartesia TTS"""
-        try:
+    async def _send_task(self, ws: aiohttp.ClientWebSocketResponse, text_iterator: AsyncIterator[str]):
+        context_id = os.urandom(8).hex()
+        
+        voice_payload: dict[str, Any] = {}
+        if isinstance(self._voice, str):
+            voice_payload["mode"] = "id"
+            voice_payload["id"] = self._voice
+        else:
+            voice_payload["mode"] = "embedding"
+            voice_payload["embedding"] = self._voice
 
-            voice_embedding = await self._get_voice_embedding()
-            if voice_embedding is None:
-                return []
+        base_payload = {
+            "model_id": self.model, "language": self.language,
+            "voice": voice_payload,
+            "output_format": {"container": "raw", "encoding": "pcm_s16le", "sample_rate": self.sample_rate},
+            "add_timestamps": True, "context_id": context_id,
+        }
 
-            ws = self.cartesia_client.tts.websocket()
-            audio_chunks = []
-            total_bytes = 0
+        delimiters = {'.', '!', '?', '\n'}
+        buffer = ""
 
-            for output in ws.send(
-                model_id=self.model,
-                transcript=text,
-                voice={
-                    "mode": "embedding",
-                    "embedding": voice_embedding,
-                },
-                stream=True,
-                output_format={
-                    "container": "raw",
-                    "encoding": "pcm_s16le",
-                    "sample_rate": self.sample_rate,
-                },
-            ):
-                if hasattr(output, 'audio') and output.audio:
-                    audio_chunks.append(output.audio)
-                    total_bytes += len(output.audio)
-            
-            return audio_chunks
-            
-        except Exception as e:
-            self.emit("error", f"Audio generation failed: {str(e)}")
-            return []
+        async def send_sentence(sentence: str) -> None:
+            if not sentence:
+                return
+            payload = {**base_payload, "transcript": sentence + " ", "continue": True}
+            await ws.send_str(json.dumps(payload))
+
+        def first_delim_pos(buf: str) -> int:
+            return min((p for p in (buf.find(d) for d in delimiters) if p != -1), default=-1)
+
+        def over_thresholds(buf: str) -> bool:
+            if len(buf) >= MIN_CHARS_FLUSH:
+                return True
+            if len(buf.split()) >= MIN_WORDS_FLUSH:
+                return True
+            return False
+
+        aiter = text_iterator.__aiter__()
+        while True:
+            try:
+                next_task = asyncio.create_task(aiter.__anext__())
+                try:
+                    text_chunk = await asyncio.wait_for(next_task, timeout=INACTIVITY_TIMEOUT_SEC)
+                except asyncio.TimeoutError:
+                    # Inactivity flush
+                    next_task.cancel()
+                    if buffer.strip():
+                        await send_sentence(buffer.strip())
+                        buffer = ""
+                    continue
+
+                buffer += text_chunk
+
+                # Greedy punctuation split first
+                while True:
+                    pos = first_delim_pos(buffer)
+                    if pos == -1:
+                        break
+                    sentence = buffer[:pos + 1].strip()
+                    buffer = buffer[pos + 1:]
+                    if sentence:
+                        await send_sentence(sentence)
+
+                # Threshold-based flush
+                if over_thresholds(buffer):
+                    await send_sentence(buffer.strip())
+                    buffer = ""
+
+            except StopAsyncIteration:
+                break
+
+        if buffer.strip():
+            await send_sentence(buffer.strip())
+        final_payload = {**base_payload, "transcript": " ", "continue": False}
+        await ws.send_str(json.dumps(final_payload))
+
+    async def _receive_task(self, ws: aiohttp.ClientWebSocketResponse):
+        while True:
+            msg = await ws.receive()
+            if msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSING):
+                break
+            if msg.type != aiohttp.WSMsgType.TEXT:
+                continue
+            data = json.loads(msg.data)
+            if data.get("type") == "error":
+                error_details = json.dumps(data, indent=2)
+                self.emit("error", f"Cartesia error: {error_details}")
+                break
+            if "data" in data and data["data"]:
+                audio_chunk = base64.b64decode(data["data"])
+                await self._stream_audio(audio_chunk)
+            if data.get("done"):
+                break
+        await self._flush_audio_buffer()
 
     async def synthesize(
-        self,
-        text: AsyncIterator[str] | str,
-        voice_id: Optional[str] = None,
-        **kwargs: Any,
+        self, text: AsyncIterator[str] | str, voice_id: Optional[Union[str, List[float]]] = None, **kwargs: Any,
     ) -> None:
-        try:            
-            if isinstance(text, AsyncIterator):
-                full_text = ""
-                async for chunk in text:
-                    if full_text and not full_text.endswith(' ') and not chunk.startswith(' ') and chunk not in '.,!?;:':
-                        full_text += ' '
-                    full_text += chunk
-            else:
-                full_text = text
+        if voice_id:
+            self._voice = voice_id
 
-            if not full_text.strip():
-                return
+        if not self.audio_track or not self.loop:
+            self.emit("error", "Audio track or event loop not set"); return
+        
+        if isinstance(text, str):
+            async def _string_iterator(): 
+                yield text
+            text_iterator = _string_iterator()
+        else:
+            text_iterator = text
 
-            MAX_TEXT_LENGTH = 200  
-            if len(full_text) > MAX_TEXT_LENGTH:
-                truncated = full_text[:MAX_TEXT_LENGTH]
-                last_sentence_end = max(
-                    truncated.rfind('.'),
-                    truncated.rfind('!'),
-                    truncated.rfind('?')
-                )
-                if last_sentence_end > MAX_TEXT_LENGTH - 50: 
-                    full_text = truncated[:last_sentence_end + 1]
-                else:
-                    last_space = truncated.rfind(' ')
-                    if last_space > MAX_TEXT_LENGTH - 30:
-                        full_text = truncated[:last_space] + "."
-                    else:
-                        full_text = truncated + "."
-
-            if not self.audio_track or not self.loop:
-                self.emit("error", "Audio track or event loop not set")
-                return
-
-            if voice_id and voice_id != self.voice_id:
-                self.voice_id = voice_id
-                self._voice_embedding = None
-
-            audio_chunks = await self._generate_audio_chunks(full_text)
-            if not audio_chunks:
-                return
-
-            await self._stream_to_audio_track(audio_chunks)
-
+        try:
+            ws = await self._ensure_ws_connection()
+            send_task = asyncio.create_task(self._send_task(ws, text_iterator))
+            receive_task = asyncio.create_task(self._receive_task(ws))
+            await asyncio.gather(send_task, receive_task)
         except Exception as e:
             self.emit("error", f"TTS synthesis failed: {str(e)}")
+            if self._ws_connection and not self._ws_connection.closed: await self._ws_connection.close()
+            self._ws_connection = None
 
-    async def _stream_to_audio_track(self, audio_chunks: list[bytes]) -> None:
-        """Stream audio chunks to the audio track with optimized buffer management"""
-        try:
-            CHUNK_SIZE = 960   
-            BATCH_SIZE = 20      
-            BATCH_DELAY = 0.05   
-            total_sent = 0
+    async def _stream_audio(self, audio_chunk: bytes):
+        if not self._first_chunk_sent and self._first_audio_callback:
+            self._first_chunk_sent = True
+            await self._first_audio_callback()
 
-            all_audio_data = b''.join(audio_chunks)
-            total_chunks = len(all_audio_data) // CHUNK_SIZE
-            if len(all_audio_data) % CHUNK_SIZE > 0:
-                total_chunks += 1
-                            
-            chunk_buffer = []
-            for i in range(0, len(all_audio_data), CHUNK_SIZE):
-                chunk = all_audio_data[i:i + CHUNK_SIZE]
-                
-                if len(chunk) < CHUNK_SIZE:
-                    chunk += b'\x00' * (CHUNK_SIZE - len(chunk))
-                
-                chunk_buffer.append(chunk)
-                
-                if len(chunk_buffer) >= BATCH_SIZE or i + CHUNK_SIZE >= len(all_audio_data):
-                    for batch_chunk in chunk_buffer:
-                        if self.audio_track and self.loop:
-                            if not self._first_chunk_sent and self._first_audio_callback:
-                                self._first_chunk_sent = True
-                                await self._first_audio_callback()
-                            
-                            try:
-                                await self.audio_track.add_new_bytes(batch_chunk)
-                                total_sent += 1
-                            except Exception as e:
-                                return
-                    
-                    chunk_buffer = []
-                    
-                    if total_sent % 50 == 0 or total_sent == total_chunks:
-                        progress = (total_sent / total_chunks) * 100
-                    
-                    if total_sent < total_chunks:
-                        await asyncio.sleep(BATCH_DELAY)
-                        
-        except Exception as e:
-            self.emit("error", f"Audio streaming failed: {str(e)}")
+        self._audio_buffer.extend(audio_chunk)
+        while len(self._audio_buffer) >= PLAYBACK_CHUNK_SIZE:
+            playback_chunk = self._audio_buffer[:PLAYBACK_CHUNK_SIZE]
+            self._audio_buffer = self._audio_buffer[PLAYBACK_CHUNK_SIZE:]
+            if self.audio_track:
+                await self.audio_track.add_new_bytes(playback_chunk)
+
+    async def _flush_audio_buffer(self):
+        if self._audio_buffer:
+            chunk = self._audio_buffer
+            self._audio_buffer = bytearray()
+            if len(chunk) < PLAYBACK_CHUNK_SIZE:
+                chunk.extend(b'\x00' * (PLAYBACK_CHUNK_SIZE - len(chunk)))
+            if not self._first_chunk_sent and self._first_audio_callback:
+                self._first_chunk_sent = True
+                await self._first_audio_callback()
+            if self.audio_track: await self.audio_track.add_new_bytes(chunk)
 
     async def aclose(self) -> None:
-        """Cleanup resources"""
         await super().aclose()
+        if self._ws_connection and not self._ws_connection.closed: await self._ws_connection.close()
+        if self._ws_session and not self._ws_session.closed: await self._ws_session.close()
 
     async def interrupt(self) -> None:
-        """Interrupt the TTS process"""
-        if self.audio_track:
-            self.audio_track.interrupt()
+        if self.audio_track: self.audio_track.interrupt()

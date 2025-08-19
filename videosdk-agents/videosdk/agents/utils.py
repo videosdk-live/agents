@@ -375,8 +375,8 @@ async def segment_text(
     chunks: AsyncIterator[str],
     delimiters: str = ".?!,;:\n",
     keep_delimiter: bool = True,
-    min_chars: int = 32,
-    min_words: int = 6,
+    min_chars: int = 50,
+    min_words: int = 12,
     max_buffer: int = 600,
 ) -> AsyncIterator[str]:
     """
