@@ -150,31 +150,37 @@ class AWSPollyTTS(TTS):
             else:
                 logger.warning("scipy not available, using original audio without resampling")
 
-            await self._chunk_audio_async(audio_data)
+            chunk_size = int(self.sample_rate * self.num_channels * 2 * 20 / 1000)
+            
+            for i in range(0, len(audio_data), chunk_size):
+                chunk = audio_data[i:i+chunk_size]
+                if len(chunk) < chunk_size:
+                    chunk += b'\x00' * (chunk_size - len(chunk))
+                
+                if self.audio_track and self.loop:
+                    if not self._first_chunk_sent and self._first_audio_callback:
+                        self._first_chunk_sent = True
+                        await self._first_audio_callback()
+                    
+                    self.loop.create_task(self.audio_track.add_new_bytes(chunk))
+                    await asyncio.sleep(0.01) 
                     
         except Exception as e:
             logger.error(f"Error in audio streaming: {e}")
-
-    async def _chunk_audio_async(self, audio_data: bytes) -> None:
-        """Async chunking that yields control to event loop for non-blocking operation"""
-        chunk_size = int(self.sample_rate * self.num_channels * 2 * 1000 / 1000)  # 1 second chunks
-        
-        if not self._first_chunk_sent and self._first_audio_callback:
-            self._first_chunk_sent = True
-            await self._first_audio_callback()
-
-        for i in range(0, len(audio_data), chunk_size):
-            chunk = audio_data[i:i+chunk_size]
+            chunk_size = int(self.sample_rate * self.num_channels * 2 * 20 / 1000)  
             
-            if len(chunk) < chunk_size and len(chunk) > 0:
-                padding_needed = chunk_size - len(chunk)
-                chunk += b'\x00' * padding_needed
-            
-            if self.audio_track and self.loop:
-                self.loop.create_task(self.audio_track.add_new_bytes(chunk))
-            
-            if i % (chunk_size * 3) == 0:
-                await asyncio.sleep(0)
+            for i in range(0, len(audio_data), chunk_size):
+                chunk = audio_data[i:i+chunk_size]
+                if len(chunk) < chunk_size:
+                    chunk += b'\x00' * (chunk_size - len(chunk))
+                
+                if self.audio_track and self.loop:
+                    if not self._first_chunk_sent and self._first_audio_callback:
+                        self._first_chunk_sent = True
+                        await self._first_audio_callback()
+                    
+                    self.loop.create_task(self.audio_track.add_new_bytes(chunk))
+                    await asyncio.sleep(0.001)  
 
     def _build_ssml(self, text: str) -> str:
         """Build SSML for AWS Polly with speed and pitch controls"""

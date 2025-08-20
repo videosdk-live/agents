@@ -7,7 +7,7 @@ import base64
 import httpx
 from dataclasses import dataclass
 
-from videosdk.agents import TTS
+from videosdk.agents import TTS, segment_text
 
 GOOGLE_SAMPLE_RATE = 24000
 GOOGLE_CHANNELS = 1
@@ -37,7 +37,6 @@ class GoogleTTS(TTS):
         self.audio_track = None
         self.loop = None
         self._first_chunk_sent = False
-
         self.voice_config = voice_config or GoogleVoiceConfig()
         self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
         
@@ -64,17 +63,14 @@ class GoogleTTS(TTS):
     ) -> None:
         try:
             if isinstance(text, AsyncIterator):
-                full_text = ""
-                async for chunk in text:
-                    full_text += chunk
+                async for segment in segment_text(text):
+                    await self._synthesize_audio(segment)
             else:
-                full_text = text
+                await self._synthesize_audio(text)
 
             if not self.audio_track or not self.loop:
                 self.emit("error", "Audio track or loop not initialized")
                 return
-
-            await self._synthesize_audio(full_text)
 
         except Exception as e:
             self.emit("error", f"Google TTS synthesis failed: {str(e)}")
@@ -139,7 +135,6 @@ class GoogleTTS(TTS):
     async def _stream_audio_chunks(self, audio_bytes: bytes) -> None:
         """Stream audio data in chunks to avoid beeps and ensure smooth playback"""
         chunk_size = 960  
-        
         audio_data = self._remove_wav_header(audio_bytes)
         
         for i in range(0, len(audio_data), chunk_size):

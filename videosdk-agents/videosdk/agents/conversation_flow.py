@@ -300,8 +300,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             asyncio.create_task(self._interrupt_tts())
 
     async def _interrupt_tts(self) -> None:
-        async with self.tts_lock:
-            await self.tts.interrupt()
+        await self.tts.interrupt()
         cascading_metrics_collector.on_interrupted()
     
     def on_speech_stopped(self) -> None:
