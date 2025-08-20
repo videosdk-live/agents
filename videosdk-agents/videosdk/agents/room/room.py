@@ -143,7 +143,7 @@ class VideoSDKHandler:
         self.loop.create_task(self._collect_session_id())
         self.loop.create_task(self._collect_meeting_attributes())
         if self.recording:
-            self.loop.create_task(self.start_participants_recording())
+            self.loop.create_task(self.start_participant_recording(self.meeting.local_participant.id))
 
     def on_meeting_left(self, data):
         logger.info(f"Meeting Left", data)
@@ -154,6 +154,9 @@ class VideoSDKHandler:
             "name": peer_name,
         }
         logger.info("Participant joined:", peer_name)
+
+        if self.recording and len(self.participants_data) == 1:
+            self.loop.create_task(self.start_participant_recording(participant.id))
         
         if participant.id in self._participant_joined_events:
             self._participant_joined_events[participant.id].set()
@@ -330,10 +333,6 @@ class VideoSDKHandler:
         except Exception as e:
             logger.error(f"Error collecting meeting attributes and creating spans: {e}")
 
-    async def start_participants_recording(self) :
-        await self.start_participant_recording(self.meeting.local_participant.id)
-        for participant in self.meeting.participants.values():
-            await self.start_participant_recording(participant.id)
 
     async def stop_participants_recording(self):
         await self.stop_participant_recording(self.meeting.local_participant.id)
