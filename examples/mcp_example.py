@@ -11,7 +11,7 @@ from openai.types.beta.realtime.session import  TurnDetection
 logging.getLogger().setLevel(logging.CRITICAL)
 
 class MCPAgent(Agent):
-    def __init__(self, ctx: Optional[JobContext] = None):
+    def __init__(self):
         current_dir = pathlib.Path(__file__).parent
         mcp_server_path = current_dir / "mcp_server_examples" / "mcp_server_example.py"
         mcp_current_time_path = current_dir / "mcp_server_examples" / "mcp_current_time_example.py"
