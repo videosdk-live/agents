@@ -87,10 +87,10 @@ class VideoSDKHandler:
     def init_meeting(self):
         self.sdk_metadata = {
             "sdk" : "agents",
-            "sdk_version" : "0.0.24" 
+            "sdk_version" : "0.0.25" 
         }
         
-        self.meeting = VideoSDK.init_meeting(**self.meeting_config, sdk_metadata=self.sdk_metadata)
+        self.meeting = VideoSDK.init_meeting(**self.meeting_config, sdk_metadata=self.sdk_metadata,signaling_base_url="dev-api.videosdk.live")
         self.meeting.add_event_listener(
             MeetingHandler(
                 on_meeting_joined=self.on_meeting_joined,
