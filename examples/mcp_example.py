@@ -43,7 +43,7 @@ class MCPAgent(Agent):
                 )
             ]
         )
-        self.ctx = ctx
+        
 
     async def on_enter(self) -> None:
         await self.session.say("Hello, how can I help you today?")
