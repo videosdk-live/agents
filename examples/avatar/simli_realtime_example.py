@@ -93,8 +93,7 @@ async def start_session(context: JobContext):
 
 def make_context() -> JobContext:
     room_options = RoomOptions(
-        room_id="YOUR_MEETING_ID",  # Replace it with your actual meetingID
-        # auth_token = "<VIDEOSDK_AUTH_TOKEN>",  # When VIDEOSDK_AUTH_TOKEN is set in .env - DON'T include videosdk_auth
+        room_id="<room_id>",
         name="Simli Avatar Realtime Agent",
         playground=False 
     )
