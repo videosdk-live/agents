@@ -7,12 +7,13 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 import logging
 logger = logging.getLogger(__name__)
+import requests
 
 _current_job_context: ContextVar[Optional['JobContext']] = ContextVar('current_job_context', default=None)
 
 @dataclass
 class RoomOptions:
-    room_id: str
+    room_id: Optional[str] = None
     auth_token: Optional[str] = None
     name: Optional[str] = "Agent"
     playground: bool = True
@@ -65,6 +66,8 @@ class JobContext:
     async def connect(self) -> None:
         """Connect to the room"""
         if self.room_options:
+            if not self.room_options.room_id:
+                self.room_options.room_id = get_room_id()
             custom_camera_video_track = None
             custom_microphone_audio_track = None
             sinks = []
@@ -142,6 +145,15 @@ class JobContext:
             return await self.room.wait_for_participant(participant_id)
         else:
             raise ValueError("Room not initialized")
+
+def get_room_id() -> str:
+    url = "https://api.videosdk.live/v2/rooms"
+    headers = {
+        "Authorization": os.getenv("VIDEOSDK_AUTH_TOKEN")
+    }
+    response = requests.post(url, headers=headers)
+    response.raise_for_status()
+    return response.json()["roomId"]
 
 def get_current_job_context() -> Optional['JobContext']:
     """Get the current job context (used by pipeline constructors)"""
