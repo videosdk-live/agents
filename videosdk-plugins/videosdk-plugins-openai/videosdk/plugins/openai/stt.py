@@ -16,7 +16,7 @@ class OpenAISTT(BaseSTT):
     def __init__(
         self,
         *,
-        api_key: str,
+        api_key: str | None = None,
         model: str = "whisper-1",
         base_url: str | None = None,
         prompt: str | None = None,
@@ -41,7 +41,7 @@ class OpenAISTT(BaseSTT):
         
         self.client = openai.AsyncClient(
             max_retries=0,
-            api_key=api_key,
+            api_key=self.api_key,
             base_url=base_url or None,
             http_client=httpx.AsyncClient(
                 timeout=httpx.Timeout(connect=15.0, read=5.0, write=5.0, pool=5.0),
