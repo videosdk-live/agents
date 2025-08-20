@@ -70,13 +70,7 @@ async def entrypoint(ctx: JobContext):
     )
 
     pipeline = RealTimePipeline(model=model)
-
-    def on_transcription(data: dict):
-        role = data.get("role")
-        text = data.get("text")
-        print(f"[TRANSCRIPT][{role}: {text}")
-    pipeline.on("realtime_model_transcription", on_transcription)
-
+    
     agent = MCPAgent(ctx)
 
     session = AgentSession(
