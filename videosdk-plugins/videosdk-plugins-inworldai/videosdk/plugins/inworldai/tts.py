@@ -7,7 +7,7 @@ import json
 import httpx
 import asyncio
 
-from videosdk.agents import TTS
+from videosdk.agents import TTS, segment_text
 
 INWORLD_SAMPLE_RATE = 24000
 INWORLD_CHANNELS = 1
@@ -77,18 +77,15 @@ class InworldAITTS(TTS):
             **kwargs: Additional provider-specific arguments
         """
         try:
-            if isinstance(text, AsyncIterator):
-                full_text = ""
-                async for chunk in text:
-                    full_text += chunk
-            else:
-                full_text = text
-
             if not self.audio_track or not self.loop:
                 self.emit("error", "Audio track or event loop not set")
                 return
 
-            await self._synthesize_streaming(full_text, voice_id)
+            if isinstance(text, AsyncIterator):
+                async for segment in segment_text(text):
+                    await self._synthesize_streaming(segment, voice_id)
+            else:
+                await self._synthesize_streaming(text, voice_id)
 
         except Exception as e:
             self.emit("error", f"InworldAI TTS synthesis failed: {str(e)}")
