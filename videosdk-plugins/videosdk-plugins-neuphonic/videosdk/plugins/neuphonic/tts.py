@@ -8,7 +8,7 @@ import asyncio
 import base64
 from urllib.parse import urlencode
 
-from videosdk.agents import TTS
+from videosdk.agents import TTS, segment_text
 
 NEUPHONIC_DEFAULT_SAMPLE_RATE = 22050
 NEUPHONIC_CHANNELS = 1
@@ -62,21 +62,76 @@ class NeuphonicTTS(TTS):
         **kwargs: Any,
     ) -> None:
         try:
-            if isinstance(text, AsyncIterator):
-                full_text = ""
-                async for chunk in text:
-                    full_text += chunk
-            else:
-                full_text = text
-
             if not self.audio_track or not self.loop:
                 self.emit("error", "Audio track or event loop not set")
                 return
 
-            await self._websocket_synthesis(full_text)
+            if isinstance(text, AsyncIterator):
+                await self._streaming_websocket_synthesis(text)
+            else:
+                await self._websocket_synthesis(text)
 
         except Exception as e:
             self.emit("error", f"TTS synthesis failed: {str(e)}")
+
+    async def _streaming_websocket_synthesis(self, text: AsyncIterator[str]) -> None:
+        """Streaming synthesis with single WebSocket connection for multiple text segments"""
+        params = {
+            "api_key": self.api_key,
+            "speed": self.speed,
+            "sampling_rate": self._sample_rate,
+            "encoding": self.encoding
+        }
+        
+        if self.voice_id:
+            params["voice_id"] = self.voice_id
+
+        query_string = urlencode(params)
+        ws_url = f"{self.base_url}/speak/{self.lang_code}?{query_string}"
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.ws_connect(ws_url) as ws:
+                    listener_task = asyncio.create_task(self._listen_to_ws_messages(ws))
+                    
+                    async for segment in segment_text(text):
+                        if segment.strip():
+                            await ws.send_str(f"{segment} <STOP>")
+                            await asyncio.sleep(0.01)
+                    
+                    await listener_task
+                            
+        except aiohttp.ClientError as e:
+            self.emit("error", f"WebSocket connection failed: {str(e)}")
+        except Exception as e:
+            self.emit("error", f"Streaming synthesis failed: {str(e)}")
+
+    async def _listen_to_ws_messages(self, ws) -> None:
+        """Listen to WebSocket messages concurrently while sending text"""
+        try:
+            async for msg in ws:
+                if msg.type == aiohttp.WSMsgType.TEXT:
+                    try:
+                        data = json.loads(msg.data)
+                        if "data" in data and "audio" in data["data"]:
+                            audio_data = base64.b64decode(data["data"]["audio"])
+                            
+                            if self.encoding == "pcm_linear":
+                                await self._stream_audio_chunks(audio_data)
+                            elif self.encoding == "pcm_mulaw":
+                                await self._stream_audio_chunks(audio_data)
+                                
+                    except json.JSONDecodeError:
+                        self.emit("error", f"Invalid JSON response: {msg.data}")
+                        
+                elif msg.type == aiohttp.WSMsgType.ERROR:
+                    self.emit("error", f"WebSocket connection error: {ws.exception()}")
+                    break
+                elif msg.type == aiohttp.WSMsgType.CLOSED:
+                    break
+                    
+        except Exception as e:
+            self.emit("error", f"WebSocket message listening failed: {str(e)}")
 
     async def _websocket_synthesis(self, text: str) -> None:
         """WebSocket-based streaming synthesis"""
