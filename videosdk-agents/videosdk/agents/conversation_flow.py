@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from typing import Awaitable, Callable, Literal, AsyncIterator
+from abc import ABC
+from typing import Awaitable, Callable, Literal, AsyncIterator, Any
 import time
 import json
 import asyncio
@@ -50,6 +50,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         if self.vad:
             self.vad.on_vad_event(self.on_vad_event)
         
+        self._current_tts_task: asyncio.Task | None = None
+        
     async def start(self) -> None:
         global_event_emitter.on("speech_started", self.on_speech_started_stt)
         global_event_emitter.on("speech_stopped", self.on_speech_stopped_stt)
@@ -80,7 +82,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                         
     async def on_vad_event(self, vad_response: VADResponse) -> None:
         if vad_response.event_type == VADEventType.START_OF_SPEECH:
-            self.on_speech_started()
+            await self.on_speech_started()
         elif vad_response.event_type == VADEventType.END_OF_SPEECH:
             self.on_speech_stopped()
 
@@ -119,22 +121,23 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             cascading_metrics_collector.on_eou_complete()
             
             if eou_detected:
-                await self._generate_and_synthesize_response(user_text)
+                asyncio.create_task(self._generate_and_synthesize_response(user_text))
             else:
                 cascading_metrics_collector.complete_current_turn()
         else:
-            await self._generate_and_synthesize_response(user_text)
+            asyncio.create_task(self._generate_and_synthesize_response(user_text))
         
         await self.on_turn_end()
     
     async def _generate_and_synthesize_response(self, user_text: str) -> None:
         """Generate agent response"""
         full_response = ""
+        
         try:
             llm_stream = self.run(user_text)
-
-            q = asyncio.Queue()
-
+            
+            q = asyncio.Queue(maxsize=50)
+            
             async def collector():
                 response_parts = []
                 async for chunk in llm_stream:
@@ -152,15 +155,19 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                         yield chunk
                 
                 if self.tts:
-                    await self._synthesize_with_tts(tts_stream_gen())
+                    try:
+                        await self._synthesize_with_tts(tts_stream_gen())
+                    except asyncio.CancelledError:
+                        pass
             
             collector_task = asyncio.create_task(collector())
             tts_task = asyncio.create_task(tts_consumer())
-
-            await asyncio.gather(collector_task, tts_task)
             
+            self._current_tts_task = tts_task
+            
+            await asyncio.gather(collector_task, tts_task)
             full_response = collector_task.result()
-
+            
             if full_response:
                 cascading_metrics_collector.set_agent_response(full_response)
                 self.agent.chat_context.add_message(
@@ -169,6 +176,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 )
 
         finally:
+            self._current_tts_task = None
             cascading_metrics_collector.complete_current_turn()
             
     async def process_with_llm(self) -> AsyncIterator[str]:
@@ -280,14 +288,14 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         """Called at the end of a user turn."""
         pass
 
-    def on_speech_started_stt(self) -> None:
+    def on_speech_started_stt(self, event_data: Any) -> None:
         if self.user_speech_callback:
             self.user_speech_callback()
     
-    def on_speech_stopped_stt(self) -> None:
+    def on_speech_stopped_stt(self, event_data: Any) -> None:
         pass
 
-    def on_speech_started(self) -> None:
+    async def on_speech_started(self) -> None:
         cascading_metrics_collector.on_user_speech_start()
         
         if self.user_speech_callback:
@@ -297,10 +305,19 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             self._stt_started = False
             
         if self.tts:
-            asyncio.create_task(self._interrupt_tts())
+            await self._interrupt_tts()
 
     async def _interrupt_tts(self) -> None:
-        await self.tts.interrupt()
+        if hasattr(self, '_current_tts_task') and self._current_tts_task:
+            self._current_tts_task.cancel()
+        
+        if self.tts:
+            try:
+                async with asyncio.timeout(0.1):
+                    await self.tts.interrupt()
+            except asyncio.TimeoutError:
+                logger.error("TTS interrupt timeout - forcing cancellation")
+        
         cascading_metrics_collector.on_interrupted()
     
     def on_speech_stopped(self) -> None:
@@ -317,7 +334,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         """
         if not self.tts:
             return
-        
         async def on_first_audio_byte():
             cascading_metrics_collector.on_tts_first_byte()
             cascading_metrics_collector.on_agent_speech_start()
@@ -335,8 +351,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             else:
                 response_iterator = response_gen
 
-            async with self.tts_lock:
-                await self.tts.synthesize(response_iterator)
+            await self.tts.synthesize(response_iterator)
                 
         finally:
             cascading_metrics_collector.on_agent_speech_end()

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from typing import Any, AsyncIterator, Literal, Optional, Union
+from typing import Any, AsyncIterator, Literal, Optional
 import httpx
 import os
 import asyncio
 
-from videosdk.agents import TTS
+from videosdk.agents import TTS, segment_text
 
 GROQ_TTS_SAMPLE_RATE = 24000  
 GROQ_TTS_CHANNELS = 1
@@ -91,17 +91,14 @@ class GroqTTS(TTS):
         """
         try:
             if isinstance(text, AsyncIterator):
-                full_text = ""
-                async for chunk in text:
-                    full_text += chunk
+                async for segment in segment_text(text):
+                    await self._synthesize_audio(segment, voice_id)
             else:
-                full_text = text
+                await self._synthesize_audio(text, voice_id)
 
             if not self.audio_track or not self.loop:
                 self.emit("error", "Audio track or event loop not set")
                 return
-
-            await self._synthesize_audio(full_text, voice_id)
 
         except Exception as e:
             self.emit("error", f"TTS synthesis failed: {str(e)}")
