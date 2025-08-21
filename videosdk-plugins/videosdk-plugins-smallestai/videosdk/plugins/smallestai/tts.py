@@ -5,7 +5,7 @@ import os
 import asyncio
 import aiofiles
 import tempfile
-from videosdk.agents import TTS
+from videosdk.agents import TTS, segment_text
 
 SMALLESTAI_SAMPLE_RATE = 24000
 SMALLESTAI_CHANNELS = 1
@@ -23,7 +23,6 @@ class SmallestAITTS(TTS):
         consistency: float = 0.5,
         similarity: float = 0.0,
         enhancement: bool = False,
-        add_wav_header: bool = False,
         api_key: str | None = None,
     ) -> None:
         super().__init__(sample_rate=SMALLESTAI_SAMPLE_RATE, num_channels=SMALLESTAI_CHANNELS)
@@ -34,7 +33,6 @@ class SmallestAITTS(TTS):
         self.consistency = consistency
         self.similarity = similarity
         self.enhancement = enhancement
-        self.add_wav_header = add_wav_header
 
         self.audio_track = None
         self.loop = None
@@ -64,8 +62,7 @@ class SmallestAITTS(TTS):
             speed=self.speed,
             consistency=self.consistency,
             similarity=self.similarity,
-            enhancement=self.enhancement,
-            add_wav_header=self.add_wav_header,
+            enhancement=self.enhancement
         )
 
     def reset_first_audio_tracking(self) -> None:
@@ -79,22 +76,15 @@ class SmallestAITTS(TTS):
         **kwargs: Any,
     ) -> None:
         try:
-            
             if isinstance(text, AsyncIterator):
-                full_text = ""
-                async for chunk in text:
-                    full_text += chunk
+                async for segment in segment_text(text):
+                    await self._synthesize_audio(segment, voice_id or self.voice_id, **kwargs)
             else:
-                full_text = text
+                await self._synthesize_audio(text, voice_id or self.voice_id, **kwargs)
 
             if not self.audio_track or not self.loop:
                 self.emit("error", "Audio track or event loop not set")
                 return
-
-           
-            target_voice = voice_id or self.voice_id
-
-            await self._synthesize_audio(full_text, target_voice, **kwargs)
 
         except Exception as e:
             self.emit("error", f"SmallestAI TTS synthesis failed: {str(e)}")
@@ -102,7 +92,6 @@ class SmallestAITTS(TTS):
     async def _synthesize_audio(self, text: str, voice_id: str, **kwargs: Any) -> None:
         """Synthesize text to speech using SmallestAI API"""
         try:
-            
             synthesis_kwargs = {
                 "voice_id": voice_id,
                 "speed": kwargs.get("speed", self.speed),
@@ -110,7 +99,6 @@ class SmallestAITTS(TTS):
                 "similarity": kwargs.get("similarity", self.similarity),
                 "enhancement": kwargs.get("enhancement", self.enhancement),
                 "sample_rate": kwargs.get("sample_rate", SMALLESTAI_SAMPLE_RATE),
-                "add_wav_header": kwargs.get("add_wav_header", self.add_wav_header),
             }
             
             async with self._client as tts:
@@ -120,7 +108,7 @@ class SmallestAITTS(TTS):
                     self.emit("error", "No audio data received from SmallestAI")
                     return
 
-                await self._stream_audio_chunks(audio_bytes)
+                asyncio.create_task(self._stream_audio_chunks(audio_bytes))
 
         except Exception as e:
             self.emit("error", f"SmallestAI synthesis failed: {str(e)}")
@@ -129,10 +117,9 @@ class SmallestAITTS(TTS):
     async def _stream_audio_chunks(self, audio_bytes: bytes) -> None:
         """Stream audio data in chunks to ensure smooth playback"""
         chunk_size = int(SMALLESTAI_SAMPLE_RATE * SMALLESTAI_CHANNELS * 2 * 20 / 1000)
-        audio_data = self._remove_wav_header(audio_bytes)
         
-        for i in range(0, len(audio_data), chunk_size):
-            chunk = audio_data[i:i + chunk_size]
+        for i in range(0, len(audio_bytes), chunk_size):
+            chunk = audio_bytes[i:i + chunk_size]
             
             
             if len(chunk) < chunk_size and len(chunk) > 0:
@@ -142,7 +129,7 @@ class SmallestAITTS(TTS):
             if len(chunk) == chunk_size:
                 if not self._first_chunk_sent and self._first_audio_callback:
                     self._first_chunk_sent = True
-                    await self._first_audio_callback()
+                    self.loop.create_task(self._first_audio_callback())
                 
                 self.loop.create_task(self.audio_track.add_new_bytes(chunk))
                 await asyncio.sleep(0.001)  
