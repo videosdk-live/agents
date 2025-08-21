@@ -8,7 +8,7 @@ import asyncio
 
 from pydub import AudioSegment
 
-from videosdk.agents import TTS
+from videosdk.agents import TTS, segment_text
 
 SPEECHIFY_SAMPLE_RATE = 24000  
 SPEECHIFY_CHANNELS = 1
@@ -34,6 +34,8 @@ class SpeechifyTTS(TTS):
         self.audio_track = None
         self.loop = None
         self._first_chunk_sent = False
+        self._current_synthesis_task: asyncio.Task | None = None
+        self._interrupted = False
 
         self.api_key = api_key or os.getenv("SPEECHIFY_API_KEY")
         
@@ -59,24 +61,29 @@ class SpeechifyTTS(TTS):
         **kwargs: Any,
     ) -> None:
         try:
-            if isinstance(text, AsyncIterator):
-                full_text = ""
-                async for chunk in text:
-                    full_text += chunk
-            else:
-                full_text = text
-
             if not self.audio_track or not self.loop:
                 self.emit("error", "Audio track or loop not initialized")
                 return
 
-            await self._stream_synthesis(full_text)
+            self._interrupted = False
+            
+            if isinstance(text, AsyncIterator):
+                async for segment in segment_text(text):
+                    if self._interrupted:
+                        break
+                    await self._stream_synthesis(segment)
+            else:
+                if not self._interrupted:
+                    await self._stream_synthesis(text)
 
         except Exception as e:
             self.emit("error", f"Speechify TTS synthesis failed: {str(e)}")
 
     async def _stream_synthesis(self, text: str) -> None:
         """Synthesize text to speech using Speechify stream endpoint"""
+        if not text.strip() or self._interrupted:
+            return
+            
         try:
             headers = {
                 "Accept": f"audio/{self.audio_format}",
@@ -103,25 +110,33 @@ class SpeechifyTTS(TTS):
                 
                 audio_data = b""
                 async for chunk in response.aiter_bytes():
+                    if self._interrupted:
+                        break
                     if chunk:
                         audio_data += chunk
                 
-                await self._decode_and_stream(audio_data)
+                if audio_data and not self._interrupted:
+                    await self._decode_and_stream(audio_data)
                         
         except httpx.HTTPStatusError as e:
-            error_msg = f"HTTP error {e.response.status_code}"
-            try:
-                error_data = e.response.json()
-                if isinstance(error_data, dict) and "error" in error_data:
-                    error_msg = f"{error_msg}: {error_data['error']}"
-            except:
-                pass
-            self.emit("error", f"Speechify stream synthesis failed: {error_msg}")
+            if not self._interrupted:
+                error_msg = f"HTTP error {e.response.status_code}"
+                try:
+                    error_data = e.response.json()
+                    if isinstance(error_data, dict) and "error" in error_data:
+                        error_msg = f"{error_msg}: {error_data['error']}"
+                except:
+                    pass
+                self.emit("error", f"Speechify stream synthesis failed: {error_msg}")
         except Exception as e:
-            self.emit("error", f"Stream synthesis failed: {str(e)}")
+            if not self._interrupted:
+                self.emit("error", f"Stream synthesis failed: {str(e)}")
 
     async def _decode_and_stream(self, audio_bytes: bytes) -> None:
         """Decode compressed audio to PCM and stream it"""
+        if self._interrupted:
+            return
+            
         try:
             audio = AudioSegment.from_file(
                 io.BytesIO(audio_bytes), 
@@ -137,6 +152,9 @@ class SpeechifyTTS(TTS):
             chunk_size = int(SPEECHIFY_SAMPLE_RATE * SPEECHIFY_CHANNELS * 2 * 20 / 1000)  # 20ms chunks
             
             for i in range(0, len(pcm_data), chunk_size):
+                if self._interrupted:
+                    break
+                    
                 chunk = pcm_data[i:i + chunk_size]
                 
                 if len(chunk) < chunk_size and len(chunk) > 0:
@@ -152,7 +170,8 @@ class SpeechifyTTS(TTS):
                     await asyncio.sleep(0.001)
                     
         except Exception as e:
-            self.emit("error", f"Audio decoding failed: {str(e)}")
+            if not self._interrupted:
+                self.emit("error", f"Audio decoding failed: {str(e)}")
 
     async def aclose(self) -> None:
         if self._http_client:
@@ -160,5 +179,9 @@ class SpeechifyTTS(TTS):
         await super().aclose()
 
     async def interrupt(self) -> None:
+        """Interrupt TTS synthesis"""
+        self._interrupted = True
+        if self._current_synthesis_task:
+            self._current_synthesis_task.cancel()
         if self.audio_track:
             self.audio_track.interrupt() 
