@@ -6,7 +6,7 @@ import os
 import openai
 import asyncio
 
-from videosdk.agents import TTS
+from videosdk.agents import TTS, segment_text
 
 OPENAI_TTS_SAMPLE_RATE = 24000
 OPENAI_TTS_CHANNELS = 1
@@ -37,6 +37,8 @@ class OpenAITTS(TTS):
         self.loop = None
         self.response_format = response_format
         self._first_chunk_sent = False
+        self._current_synthesis_task: asyncio.Task | None = None
+        self._interrupted = False
         
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         if not self.api_key:
@@ -76,37 +78,51 @@ class OpenAITTS(TTS):
             **kwargs: Additional provider-specific arguments
         """
         try:
-            if isinstance(text, AsyncIterator):
-                full_text = ""
-                async for chunk in text:
-                    full_text += chunk
-            else:
-                full_text = text
-
             if not self.audio_track or not self.loop:
                 self.emit("error", "Audio track or event loop not set")
                 return
 
+            self._interrupted = False
+            
+            if isinstance(text, AsyncIterator):
+                async for segment in segment_text(text):
+                    if self._interrupted:
+                        break
+                    await self._synthesize_segment(segment, voice_id, **kwargs)
+            else:
+                if not self._interrupted:
+                    await self._synthesize_segment(text, voice_id, **kwargs)
+
+        except Exception as e:
+            self.emit("error", f"TTS synthesis failed: {str(e)}")
+
+    async def _synthesize_segment(self, text: str, voice_id: Optional[str] = None, **kwargs: Any) -> None:
+        """Synthesize a single text segment"""
+        if not text.strip() or self._interrupted:
+            return
+
+        try:
             audio_data = b""
             async with self._client.audio.speech.with_streaming_response.create(
                 model=self.model,
                 voice=voice_id or self.voice,
-                input=full_text,
+                input=text,
                 speed=self.speed,
                 response_format=self.response_format,
                 **({"instructions": self.instructions} if self.instructions else {})
             ) as response:
                 async for chunk in response.iter_bytes():
+                    if self._interrupted:
+                        break
                     if chunk:
                         audio_data += chunk
 
-            if audio_data:
+            if audio_data and not self._interrupted:
                 await self._stream_audio_chunks(audio_data)
 
-        except openai.APIError as e:
-            self.emit("error", str(e))
         except Exception as e:
-            self.emit("error", f"TTS synthesis failed: {str(e)}")
+            if not self._interrupted:
+                self.emit("error", f"Segment synthesis failed: {str(e)}")
 
     async def _stream_audio_chunks(self, audio_bytes: bytes) -> None:
         """Stream audio data in chunks for smooth playback"""
@@ -133,6 +149,9 @@ class OpenAITTS(TTS):
         await super().aclose()
 
     async def interrupt(self) -> None:
-        """Interrupt the TTS process"""
+        """Interrupt TTS synthesis"""
+        self._interrupted = True
+        if self._current_synthesis_task:
+            self._current_synthesis_task.cancel()
         if self.audio_track:
             self.audio_track.interrupt()
