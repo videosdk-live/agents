@@ -5,7 +5,7 @@ import httpx
 import os
 import asyncio
 
-from videosdk.agents import TTS
+from videosdk.agents import TTS, segment_text
 
 LMNT_API_BASE_URL = "https://api.lmnt.com"
 LMNT_SAMPLE_RATE = 24000
@@ -91,106 +91,108 @@ class LMNTTTS(TTS):
             **kwargs: Additional provider-specific arguments
         """
         try:
-            if isinstance(text, AsyncIterator):
-                full_text = ""
-                async for chunk in text:
-                    full_text += chunk
-            else:
-                full_text = text
-
             if not self.audio_track or not self.loop:
                 self.emit("error", "Audio track or event loop not set")
                 return
 
-            target_voice = voice_id or self.voice
+            if isinstance(text, AsyncIterator):
+                async for segment in segment_text(text):
+                    await self._synthesize_segment(segment, voice_id, **kwargs)
+            else:
+                await self._synthesize_segment(text, voice_id, **kwargs)
 
-            payload = {
-                "voice": target_voice,
-                "text": full_text,
-                "model": kwargs.get("model", self.model),
-                "language": kwargs.get("language", self.language),
-                "format": kwargs.get("format", self.format),
-                "sample_rate": kwargs.get("sample_rate", self.output_sample_rate),
-                "temperature": kwargs.get("temperature", self.temperature),
-                "top_p": kwargs.get("top_p", self.top_p),
-            }
-            
-            seed = kwargs.get("seed", self.seed)
-            if seed is not None:
-                payload["seed"] = seed
-
-            headers = {
-                "X-API-Key": self.api_key,
-                "Content-Type": "application/json",
-            }
-            
-            url = f"{self.base_url}/v1/ai/speech/bytes"
-            
-            async with self._client.stream(
-                "POST",
-                url,
-                headers=headers,
-                json=payload
-            ) as response:
-                if response.status_code == 400:
-                    error_data = await response.aread()
-                    try:
-                        import json
-                        error_json = json.loads(error_data.decode())
-                        error_msg = error_json.get("error", "Bad request")
-                    except:
-                        error_msg = "Bad request"
-                    self.emit("error", f"LMNT API error: {error_msg}")
-                    return
-                elif response.status_code == 401:
-                    self.emit("error", "LMNT API authentication failed. Please check your API key.")
-                    return
-                elif response.status_code != 200:
-                    self.emit("error", f"LMNT API error: HTTP {response.status_code}")
-                    return
-                
-                header_processed = False
-                accumulated_data = b""
-                
-                async for chunk in response.aiter_bytes():
-                    if chunk:
-                        accumulated_data += chunk
-                        
-                        if not header_processed and len(accumulated_data) >= 44:
-                            if accumulated_data.startswith(b'RIFF'):
-                                data_pos = accumulated_data.find(b'data')
-                                if data_pos != -1:
-                                    accumulated_data = accumulated_data[data_pos + 8:]
-                            header_processed = True
-                        
-                        if header_processed:
-                            chunk_size = int(self.output_sample_rate * LMNT_CHANNELS * 2 * 20 / 1000)  # 20ms chunks
-                            while len(accumulated_data) >= chunk_size:
-                                audio_chunk = accumulated_data[:chunk_size]
-                                accumulated_data = accumulated_data[chunk_size:]
-                                
-                                if not self._first_chunk_sent and self._first_audio_callback:
-                                    self._first_chunk_sent = True
-                                    await self._first_audio_callback()
-                                
-                                self.loop.create_task(self.audio_track.add_new_bytes(audio_chunk))
-                                await asyncio.sleep(0.01)  
-                
-                if accumulated_data and header_processed:
-                    chunk_size = int(self.output_sample_rate * LMNT_CHANNELS * 2 * 20 / 1000)
-                    if len(accumulated_data) < chunk_size:
-                        accumulated_data += b'\x00' * (chunk_size - len(accumulated_data))
-                    
-                    if not self._first_chunk_sent and self._first_audio_callback:
-                        self._first_chunk_sent = True
-                        await self._first_audio_callback()
-                    
-                    self.loop.create_task(self.audio_track.add_new_bytes(accumulated_data))
-
-        except httpx.HTTPError as e:
-            self.emit("error", f"HTTP error occurred: {str(e)}")
         except Exception as e:
             self.emit("error", f"TTS synthesis failed: {str(e)}")
+
+    async def _synthesize_segment(self, text: str, voice_id: Optional[str] = None, **kwargs: Any) -> None:
+        """Synthesize a single text segment"""
+        if not text.strip():
+            return
+
+        target_voice = voice_id or self.voice
+
+        payload = {
+            "voice": target_voice,
+            "text": text,
+            "model": kwargs.get("model", self.model),
+            "language": kwargs.get("language", self.language),
+            "format": kwargs.get("format", self.format),
+            "sample_rate": kwargs.get("sample_rate", self.output_sample_rate),
+            "temperature": kwargs.get("temperature", self.temperature),
+            "top_p": kwargs.get("top_p", self.top_p),
+        }
+        
+        seed = kwargs.get("seed", self.seed)
+        if seed is not None:
+            payload["seed"] = seed
+
+        headers = {
+            "X-API-Key": self.api_key,
+            "Content-Type": "application/json",
+        }
+        
+        url = f"{self.base_url}/v1/ai/speech/bytes"
+        
+        async with self._client.stream(
+            "POST",
+            url,
+            headers=headers,
+            json=payload
+        ) as response:
+            if response.status_code == 400:
+                error_data = await response.aread()
+                try:
+                    import json
+                    error_json = json.loads(error_data.decode())
+                    error_msg = error_json.get("error", "Bad request")
+                except:
+                    error_msg = "Bad request"
+                self.emit("error", f"LMNT API error: {error_msg}")
+                return
+            elif response.status_code == 401:
+                self.emit("error", "LMNT API authentication failed. Please check your API key.")
+                return
+            elif response.status_code != 200:
+                self.emit("error", f"LMNT API error: HTTP {response.status_code}")
+                return
+            
+            header_processed = False
+            accumulated_data = b""
+            
+            async for chunk in response.aiter_bytes():
+                if chunk:
+                    accumulated_data += chunk
+                    
+                    if not header_processed and len(accumulated_data) >= 44:
+                        if accumulated_data.startswith(b'RIFF'):
+                            data_pos = accumulated_data.find(b'data')
+                            if data_pos != -1:
+                                accumulated_data = accumulated_data[data_pos + 8:]
+                        header_processed = True
+                    
+                    if header_processed:
+                        chunk_size = int(self.output_sample_rate * LMNT_CHANNELS * 2 * 20 / 1000)  # 20ms chunks
+                        while len(accumulated_data) >= chunk_size:
+                            audio_chunk = accumulated_data[:chunk_size]
+                            accumulated_data = accumulated_data[chunk_size:]
+                            
+                            if not self._first_chunk_sent and self._first_audio_callback:
+                                self._first_chunk_sent = True
+                                await self._first_audio_callback()
+                            
+                            self.loop.create_task(self.audio_track.add_new_bytes(audio_chunk))
+                            await asyncio.sleep(0.01)  
+            
+            if accumulated_data and header_processed:
+                chunk_size = int(self.output_sample_rate * LMNT_CHANNELS * 2 * 20 / 1000)
+                if len(accumulated_data) < chunk_size:
+                    accumulated_data += b'\x00' * (chunk_size - len(accumulated_data))
+                
+                if not self._first_chunk_sent and self._first_audio_callback:
+                    self._first_chunk_sent = True
+                    await self._first_audio_callback()
+                
+                self.loop.create_task(self.audio_track.add_new_bytes(accumulated_data))
 
 
 
