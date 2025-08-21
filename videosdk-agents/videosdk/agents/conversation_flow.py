@@ -70,15 +70,22 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
     async def send_audio_delta(self, audio_data: bytes) -> None:
         """
-        Send audio delta to the STT
+        Send audio delta to the STT - Non-blocking via background task
         """
-        if self.denoise:
-            audio_data = await self.denoise.denoise(audio_data)
-        if self.stt:
-            async with self.stt_lock:
-                await self.stt.process_audio(audio_data)
-        if self.vad:
-            await self.vad.process_audio(audio_data)
+        asyncio.create_task(self._process_audio_delta(audio_data))
+
+    async def _process_audio_delta(self, audio_data: bytes) -> None:
+        """Background processing of audio delta"""
+        try:
+            if self.denoise:
+                audio_data = await self.denoise.denoise(audio_data)
+            if self.stt:
+                async with self.stt_lock:
+                    await self.stt.process_audio(audio_data)
+            if self.vad:
+                await self.vad.process_audio(audio_data)
+        except Exception as e:
+            self.emit("error", f"Audio processing failed: {str(e)}")
                         
     async def on_vad_event(self, vad_response: VADResponse) -> None:
         if vad_response.event_type == VADEventType.START_OF_SPEECH:
@@ -308,6 +315,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             await self._interrupt_tts()
 
     async def _interrupt_tts(self) -> None:
+        print("Interrupting TTS")
         if hasattr(self, '_current_tts_task') and self._current_tts_task:
             self._current_tts_task.cancel()
         
