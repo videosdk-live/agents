@@ -12,6 +12,7 @@ from .realtime_pipeline import RealTimePipeline
 from .utils import get_tool_info
 import time
 from .job import get_current_job_context
+from .event_bus import global_event_emitter
 import logging
 logger = logging.getLogger(__name__)
 
@@ -161,6 +162,7 @@ class AgentSession:
         
         await self.pipeline.start()
         await self.agent.on_enter()
+        global_event_emitter.emit("AGENT_STARTED", {"session": self})
         if self.on_wake_up is not None:
             self._start_wake_up_timer()
         

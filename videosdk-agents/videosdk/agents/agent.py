@@ -13,13 +13,7 @@ from .llm.chat_context import ChatContext, ChatRole
 from .mcp.mcp_manager import MCPToolManager
 from .mcp.mcp_server import MCPServiceProvider
 
-
-AgentEventTypes = Literal[
-    "instructions_updated",
-    "tools_updated",
-]
-
-class Agent(EventEmitter[AgentEventTypes], ABC):
+class Agent(EventEmitter[Literal["agent_started"]], ABC):
     """
     Abstract base class for creating custom agents.
     Inherits from EventEmitter to handle agent events and state updates.

@@ -19,7 +19,7 @@ from ..metrics.realtime_metrics_collector import realtime_metrics_collector
 import requests
 import time
 import logging
-
+from ..event_bus import global_event_emitter
 logger = logging.getLogger(__name__)
 
 
@@ -166,6 +166,7 @@ class VideoSDKHandler:
                 self.audio_listener_tasks[stream.id] = self.loop.create_task(
                     self.add_audio_listener(stream)
                 )
+                global_event_emitter.emit("AUDIO_STREAM_ENABLED", {"stream": stream, "participant": participant})
             if stream.kind == "video" and self.vision:
                 self.video_listener_tasks[stream.id] = self.loop.create_task(
                     self.add_video_listener(stream)
@@ -201,6 +202,7 @@ class VideoSDKHandler:
             del self.video_listener_tasks[participant.id]
         if participant.id in self.participants_data:
             del self.participants_data[participant.id]
+        global_event_emitter.emit("PARTICIPANT_LEFT", {"participant": participant})
 
     async def add_audio_listener(self, stream: Stream):    
         while True:

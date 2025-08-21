@@ -2,8 +2,9 @@ from typing import Dict, Set, Callable, TypeVar, Generic, Literal
 from .event_emitter import EventEmitter
 
 EventTypes = Literal[
-    "instructions_updated",
-    "tools_updated",
+    "AUDIO_STREAM_ENABLED",
+    "PARTICIPANT_LEFT",
+    "AGENT_STARTED",
 ]
 
 T = TypeVar('T')
