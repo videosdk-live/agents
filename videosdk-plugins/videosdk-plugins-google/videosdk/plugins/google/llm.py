@@ -58,6 +58,8 @@ class GoogleLLM(LLM):
         self.top_k = top_k
         self.presence_penalty = presence_penalty
         self.frequency_penalty = frequency_penalty
+        self._cancelled = False
+        
         self._client = Client(api_key=self.api_key)
 
     async def chat(
@@ -77,6 +79,8 @@ class GoogleLLM(LLM):
         Yields:
             LLMResponse objects containing the model's responses
         """
+        self._cancelled = False
+        
         try:
             (
                 contents,
@@ -145,6 +149,9 @@ class GoogleLLM(LLM):
             current_function_calls = []
 
             async for response in response_stream:
+                if self._cancelled:
+                    break
+                    
                 if response.prompt_feedback:
                     error_msg = f"Prompt feedback error: {response.prompt_feedback}"
                     self.emit("error", Exception(error_msg))
@@ -178,12 +185,17 @@ class GoogleLLM(LLM):
                         )
 
         except (ClientError, ServerError, APIError) as e:
-            error_msg = f"Google API error: {e}"
-            self.emit("error", Exception(error_msg))
+            if not self._cancelled:
+                error_msg = f"Google API error: {e}"
+                self.emit("error", Exception(error_msg))
             raise Exception(error_msg) from e
         except Exception as e:
-            self.emit("error", e)
+            if not self._cancelled:
+                self.emit("error", e)
             raise
+
+    async def cancel_current_generation(self) -> None:
+        self._cancelled = True
 
     async def _convert_messages_to_contents_async(
         self, messages: ChatContext
@@ -281,3 +293,6 @@ class GoogleLLM(LLM):
                 )
 
         return contents, system_instruction
+
+    async def aclose(self) -> None:
+        await self.cancel_current_generation()

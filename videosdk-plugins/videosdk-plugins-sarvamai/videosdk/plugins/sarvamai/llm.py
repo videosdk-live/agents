@@ -34,6 +34,7 @@ class SarvamAILLM(LLM):
         self.temperature = temperature
         self.tool_choice = tool_choice
         self.max_completion_tokens = max_completion_tokens
+        self._cancelled = False
         
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(connect=15.0, read=30.0, write=5.0, pool=5.0),
@@ -46,6 +47,8 @@ class SarvamAILLM(LLM):
         tools: list[FunctionTool] | None = None,
         **kwargs: Any
     ) -> AsyncIterator[LLMResponse]:
+        self._cancelled = False
+        
         def _extract_text_content(content: Union[str, List[ChatContent]]) -> str:
             if isinstance(content, str):
                 return content
@@ -114,6 +117,9 @@ class SarvamAILLM(LLM):
                 
                 current_content = ""
                 async for line in response.aiter_lines():
+                    if self._cancelled:
+                        break
+                        
                     if not line.startswith("data:"):
                         continue
                     data_str = line[len("data:"):].strip()
@@ -130,20 +136,26 @@ class SarvamAILLM(LLM):
                         yield LLMResponse(content=current_content, role=ChatRole.ASSISTANT)
 
         except httpx.HTTPStatusError as e:
-            error_message = f"Sarvam AI API error: {e.response.status_code}"
-            try:
-                error_body = await e.response.aread()
-                error_text = error_body.decode()
-                error_message += f" - {error_text}"
-            except Exception:
-                pass
-            self.emit("error", Exception(error_message))
+            if not self._cancelled:
+                error_message = f"Sarvam AI API error: {e.response.status_code}"
+                try:
+                    error_body = await e.response.aread()
+                    error_text = error_body.decode()
+                    error_message += f" - {error_text}"
+                except Exception:
+                    pass
+                self.emit("error", Exception(error_message))
             raise
         except Exception as e:
-            traceback.print_exc()
-            self.emit("error", e)
+            if not self._cancelled:
+                traceback.print_exc()
+                self.emit("error", e)
             raise
 
+    async def cancel_current_generation(self) -> None:
+        self._cancelled = True
+
     async def aclose(self) -> None:
+        await self.cancel_current_generation()
         if self._client:
             await self._client.aclose()

@@ -42,6 +42,7 @@ class OpenAILLM(LLM):
         self.temperature = temperature
         self.tool_choice = tool_choice
         self.max_completion_tokens = max_completion_tokens
+        self._cancelled = False
         
         self._client = openai.AsyncOpenAI(
             api_key=self.api_key,
@@ -75,6 +76,8 @@ class OpenAILLM(LLM):
         Yields:
             LLMResponse objects containing the model's responses
         """
+        self._cancelled = False
+        
         def _format_content(content: Union[str, List[ChatContent]]):
             if isinstance(content, str):
                 return content
@@ -139,14 +142,18 @@ class OpenAILLM(LLM):
             if formatted_tools:
                 completion_params["functions"] = formatted_tools
                 completion_params["function_call"] = self.tool_choice
-
+        print(completion_params["messages"])
         completion_params.update(kwargs)
         try:
             response_stream = await self._client.chat.completions.create(**completion_params)
+            
             current_content = ""
             current_function_call = None
 
             async for chunk in response_stream:
+                if self._cancelled:
+                    break
+                
                 if not chunk.choices:
                     continue
                     
@@ -185,10 +192,15 @@ class OpenAILLM(LLM):
                     )
 
         except Exception as e:
-            self.emit("error", e)
+            if not self._cancelled:
+                self.emit("error", e)
             raise
+
+    async def cancel_current_generation(self) -> None:
+        self._cancelled = True
 
     async def aclose(self) -> None:
         """Cleanup resources by closing the HTTP client"""
+        await self.cancel_current_generation()
         if self._client:
-            await self._client.close() 
+            await self._client.close()       

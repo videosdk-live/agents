@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from typing import Any, AsyncIterator, Literal, Optional
-
 from pydantic import BaseModel
 from ..event_emitter import EventEmitter
 from .chat_context import ChatContext, ChatRole
@@ -47,8 +46,15 @@ class LLM(EventEmitter[Literal["error"]]):
         """
         raise NotImplementedError
     
+    @abstractmethod
+    async def cancel_current_generation(self) -> None:
+        """Cancel the current LLM generation if active"""
+        # override in subclasses
+        pass
+    
     async def aclose(self) -> None:
         """Cleanup resources"""
+        await self.cancel_current_generation()
         pass
     
     async def __aenter__(self) -> LLM:

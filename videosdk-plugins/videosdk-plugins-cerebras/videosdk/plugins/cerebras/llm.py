@@ -44,7 +44,8 @@ class CerebrasLLM(LLM):
         self.top_p = top_p
         self.seed = seed
         self.stop = stop
-        self.user = user
+        self.user = user     
+        self._cancelled = False
         
         self._client = Cerebras(
             api_key=self.api_key,
@@ -67,6 +68,7 @@ class CerebrasLLM(LLM):
         Yields:
             LLMResponse objects containing the model's responses
         """
+        self._cancelled = False
 
         def _extract_text_content(content: Union[str, List[ChatContent]]) -> str:
             if isinstance(content, str):
@@ -147,6 +149,9 @@ class CerebrasLLM(LLM):
             current_tool_calls = {}
 
             for chunk in response_stream:
+                if self._cancelled:
+                    break
+                    
                 if not chunk.choices:
                     continue
                     
@@ -196,10 +201,14 @@ class CerebrasLLM(LLM):
                     )
 
         except Exception as e:
-            error_msg = f"Cerebras API error: {str(e)}"
-            self.emit("error", Exception(error_msg))
+            if not self._cancelled:
+                error_msg = f"Cerebras API error: {str(e)}"
+                self.emit("error", Exception(error_msg))
             raise Exception(error_msg) from e
+
+    async def cancel_current_generation(self) -> None:
+        self._cancelled = True
 
     async def aclose(self) -> None:
         """Cleanup resources"""
-        pass
+        await self.cancel_current_generation()
