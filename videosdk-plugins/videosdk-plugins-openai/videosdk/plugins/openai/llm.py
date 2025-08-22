@@ -142,7 +142,6 @@ class OpenAILLM(LLM):
             if formatted_tools:
                 completion_params["functions"] = formatted_tools
                 completion_params["function_call"] = self.tool_choice
-        print(completion_params["messages"])
         completion_params.update(kwargs)
         try:
             response_stream = await self._client.chat.completions.create(**completion_params)

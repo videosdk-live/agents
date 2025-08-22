@@ -30,7 +30,7 @@ class VADResponse(BaseModel):
     metadata: Optional[dict[str, Any]] = None
 
 
-class VAD(EventEmitter[Literal["error"]]):
+class VAD(EventEmitter[Literal["error", "info"]]):
     """Base class for Voice Activity Detection implementations"""
     
     def __init__(
