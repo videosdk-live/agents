@@ -428,7 +428,7 @@ def create_yaml_interactive() -> dict:
     # Initialize config with defaults
     config = {
         "version": "1.0",
-        "worker": {
+        "deployment": {
             "id": "",
             "entry": {
                 "path": ""
@@ -487,7 +487,7 @@ def create_yaml_interactive() -> dict:
     
     # Ask for deployment settings
     console.print("\n[bold cyan]Step 4: Deployment Configuration[/bold cyan]")
-    console.print("[dim]Configure your deployment's deployment settings.[/dim]")
+    console.print("[dim]Configure your deployment settings.[/dim]")
     console.print("[dim]Choose whether to enable cloud deployment.[/dim]")
     
     deploy = config["deploy"]
@@ -606,7 +606,7 @@ def load_config() -> dict:
         entry_path = entry.get('path')
         if not entry_path:
             raise ConfigurationError(
-                "Missing 'worker.entry.path' in videosdk.yaml.\n"
+                "Missing 'deployment.entry.path' in videosdk.yaml.\n"
                 "Please specify the path to your main Python file:\n"
                 "deployment:\n"
                 "  entry:\n"
@@ -710,7 +710,7 @@ def run():
         
         # Load configuration
         config = load_config()
-        worker = config['worker']
+        worker = config['deployment']
         
         # Use absolute paths for all file operations
         main_file = Path(worker['entry']['path']).resolve()
@@ -749,7 +749,7 @@ def run():
                     f"Press [yellow]Ctrl+C[/yellow] to stop",
                     border_style="cyan"
                 ))
-                console.print("[dim]Worker logs:[/dim]\n")
+                console.print("[dim]Deployment logs:[/dim]\n")
                 
                 # Run the container and stream logs directly
                 run_cmd = [
@@ -882,7 +882,7 @@ def deploy():
             console=console
         ) as progress:
             # Step 0: Validate files
-            task = progress.add_task(f"Checking de {worker['id']}...", total=100)
+            task = progress.add_task(f"Checking deployment {worker['id']}...", total=100)
             validate_build_files(main_file, requirement_path)
             progress.update(task, completed=100)
 
@@ -911,7 +911,7 @@ def deploy():
                 )
 
             # Step 2: Build Docker image
-            task = progress.add_task(f"Building worker {worker['id']}...", total=100)
+            task = progress.add_task(f"Building deployment {worker['id']}...", total=100)
             try:
                 docker_image_path = build_docker_image(main_file, requirement_path, worker['id'], save_tar=True)
                 progress.update(task, completed=100)
@@ -1029,7 +1029,7 @@ def deploy():
             f"[bold green]Success![/bold green]\n\n"
             f"Your deployment has been deployed successfully!\n"
             f"Deployment ID: [cyan]{worker['id']}[/cyan]\n\n"
-            f"[yellow]Note:[/yellow] It may take a few minutes for your worker to be fully available on the cloud.\n"
+            f"[yellow]Note:[/yellow] It may take a few minutes for your deployment to be fully available on the cloud.\n"
             f"Please wait while we process your deployment.",
             title="Deployment Complete",
             border_style="green"
