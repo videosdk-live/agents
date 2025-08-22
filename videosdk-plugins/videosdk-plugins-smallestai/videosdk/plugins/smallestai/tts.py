@@ -26,7 +26,9 @@ class SmallestAITTS(TTS):
         add_wav_header: bool = False,
         api_key: str | None = None,
     ) -> None:
-        super().__init__(sample_rate=SMALLESTAI_SAMPLE_RATE, num_channels=SMALLESTAI_CHANNELS)
+        super().__init__(
+            sample_rate=SMALLESTAI_SAMPLE_RATE, num_channels=SMALLESTAI_CHANNELS
+        )
 
         self.model = model
         self.voice_id = voice_id
@@ -48,7 +50,6 @@ class SmallestAITTS(TTS):
                 "2. SMALLEST_API_KEY environment variable"
             )
 
-        
         try:
             from smallestai.waves import AsyncWavesClient
         except ImportError:
@@ -79,7 +80,7 @@ class SmallestAITTS(TTS):
         **kwargs: Any,
     ) -> None:
         try:
-            
+
             if isinstance(text, AsyncIterator):
                 full_text = ""
                 async for chunk in text:
@@ -91,7 +92,6 @@ class SmallestAITTS(TTS):
                 self.emit("error", "Audio track or event loop not set")
                 return
 
-           
             target_voice = voice_id or self.voice_id
 
             await self._synthesize_audio(full_text, target_voice, **kwargs)
@@ -102,7 +102,7 @@ class SmallestAITTS(TTS):
     async def _synthesize_audio(self, text: str, voice_id: str, **kwargs: Any) -> None:
         """Synthesize text to speech using SmallestAI API"""
         try:
-            
+
             synthesis_kwargs = {
                 "voice_id": voice_id,
                 "speed": kwargs.get("speed", self.speed),
@@ -112,10 +112,10 @@ class SmallestAITTS(TTS):
                 "sample_rate": kwargs.get("sample_rate", SMALLESTAI_SAMPLE_RATE),
                 "add_wav_header": kwargs.get("add_wav_header", self.add_wav_header),
             }
-            
+
             async with self._client as tts:
                 audio_bytes = await tts.synthesize(text, **synthesis_kwargs)
-                
+
                 if not audio_bytes:
                     self.emit("error", "No audio data received from SmallestAI")
                     return
@@ -130,43 +130,42 @@ class SmallestAITTS(TTS):
         """Stream audio data in chunks to ensure smooth playback"""
         chunk_size = int(SMALLESTAI_SAMPLE_RATE * SMALLESTAI_CHANNELS * 2 * 20 / 1000)
         audio_data = self._remove_wav_header(audio_bytes)
-        
+
         for i in range(0, len(audio_data), chunk_size):
-            chunk = audio_data[i:i + chunk_size]
-            
-            
+            chunk = audio_data[i : i + chunk_size]
+
             if len(chunk) < chunk_size and len(chunk) > 0:
                 padding_needed = chunk_size - len(chunk)
-                chunk += b'\x00' * padding_needed
-            
+                chunk += b"\x00" * padding_needed
+
             if len(chunk) == chunk_size:
                 if not self._first_chunk_sent and self._first_audio_callback:
                     self._first_chunk_sent = True
                     await self._first_audio_callback()
-                
-                self.loop.create_task(self.audio_track.add_new_bytes(chunk))
-                await asyncio.sleep(0.001)  
+
+                asyncio.create_task(self.audio_track.add_new_bytes(chunk))
+                await asyncio.sleep(0.001)
 
     def _remove_wav_header(self, audio_bytes: bytes) -> bytes:
         """Remove WAV header if present to get raw PCM data"""
-        if audio_bytes.startswith(b'RIFF'):
-            
-            data_pos = audio_bytes.find(b'data')
+        if audio_bytes.startswith(b"RIFF"):
+
+            data_pos = audio_bytes.find(b"data")
             if data_pos != -1:
-                
-                return audio_bytes[data_pos + 8:]
-        
+
+                return audio_bytes[data_pos + 8 :]
+
         return audio_bytes
 
     async def aclose(self) -> None:
         """Cleanup resources"""
-        if hasattr(self, '_client'):
+        if hasattr(self, "_client"):
             try:
-                
-                if hasattr(self._client, 'aclose'):
+
+                if hasattr(self._client, "aclose"):
                     await self._client.aclose()
             except Exception:
-                pass  
+                pass
         await super().aclose()
 
     async def interrupt(self) -> None:

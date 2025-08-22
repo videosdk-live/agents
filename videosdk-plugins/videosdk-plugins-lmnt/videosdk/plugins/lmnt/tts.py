@@ -14,12 +14,32 @@ LMNT_CHANNELS = 1
 DEFAULT_MODEL = "blizzard"
 DEFAULT_VOICE = "ava"
 DEFAULT_LANGUAGE = "auto"
-DEFAULT_FORMAT = "wav"  
+DEFAULT_FORMAT = "wav"
 
 _LanguageCode = Union[
-    Literal["auto", "de", "en", "es", "fr", "hi", "id", "it", "ja", 
-            "ko", "nl", "pl", "pt", "ru", "sv", "th", "tr", "uk", "vi", "zh"], 
-    str
+    Literal[
+        "auto",
+        "de",
+        "en",
+        "es",
+        "fr",
+        "hi",
+        "id",
+        "it",
+        "ja",
+        "ko",
+        "nl",
+        "pl",
+        "pt",
+        "ru",
+        "sv",
+        "th",
+        "tr",
+        "uk",
+        "vi",
+        "zh",
+    ],
+    str,
 ]
 _FormatType = Union[Literal["aac", "mp3", "mulaw", "raw", "wav"], str]
 _SampleRate = Union[Literal[8000, 16000, 24000], int]
@@ -41,7 +61,7 @@ class LMNTTTS(TTS):
         base_url: str = LMNT_API_BASE_URL,
     ) -> None:
         super().__init__(sample_rate=sample_rate, num_channels=LMNT_CHANNELS)
-        
+
         self.voice = voice
         self.model = model
         self.language = language
@@ -54,14 +74,14 @@ class LMNTTTS(TTS):
         self.audio_track = None
         self.loop = None
         self._first_chunk_sent = False
-        
+
         self.api_key = api_key or os.getenv("LMNT_API_KEY")
         if not self.api_key:
             raise ValueError(
                 "LMNT API key must be provided either through api_key parameter "
                 "or LMNT_API_KEY environment variable"
             )
-        
+
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(connect=15.0, read=30.0, write=5.0, pool=5.0),
             follow_redirects=True,
@@ -71,20 +91,20 @@ class LMNTTTS(TTS):
                 keepalive_expiry=120,
             ),
         )
-    
+
     def reset_first_audio_tracking(self) -> None:
         """Reset the first audio tracking state for next TTS task"""
         self._first_chunk_sent = False
-    
+
     async def synthesize(
         self,
         text: AsyncIterator[str] | str,
         voice_id: Optional[str] = None,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> None:
         """
         Convert text to speech using LMNT's TTS API and stream to audio track
-        
+
         Args:
             text: Text to convert to speech
             voice_id: Optional voice override (uses voice from __init__ if not provided)
@@ -114,7 +134,7 @@ class LMNTTTS(TTS):
                 "temperature": kwargs.get("temperature", self.temperature),
                 "top_p": kwargs.get("top_p", self.top_p),
             }
-            
+
             seed = kwargs.get("seed", self.seed)
             if seed is not None:
                 payload["seed"] = seed
@@ -123,19 +143,17 @@ class LMNTTTS(TTS):
                 "X-API-Key": self.api_key,
                 "Content-Type": "application/json",
             }
-            
+
             url = f"{self.base_url}/v1/ai/speech/bytes"
-            
+
             async with self._client.stream(
-                "POST",
-                url,
-                headers=headers,
-                json=payload
+                "POST", url, headers=headers, json=payload
             ) as response:
                 if response.status_code == 400:
                     error_data = await response.aread()
                     try:
                         import json
+
                         error_json = json.loads(error_data.decode())
                         error_msg = error_json.get("error", "Bad request")
                     except:
@@ -143,56 +161,70 @@ class LMNTTTS(TTS):
                     self.emit("error", f"LMNT API error: {error_msg}")
                     return
                 elif response.status_code == 401:
-                    self.emit("error", "LMNT API authentication failed. Please check your API key.")
+                    self.emit(
+                        "error",
+                        "LMNT API authentication failed. Please check your API key.",
+                    )
                     return
                 elif response.status_code != 200:
                     self.emit("error", f"LMNT API error: HTTP {response.status_code}")
                     return
-                
+
                 header_processed = False
                 accumulated_data = b""
-                
+
                 async for chunk in response.aiter_bytes():
                     if chunk:
                         accumulated_data += chunk
-                        
+
                         if not header_processed and len(accumulated_data) >= 44:
-                            if accumulated_data.startswith(b'RIFF'):
-                                data_pos = accumulated_data.find(b'data')
+                            if accumulated_data.startswith(b"RIFF"):
+                                data_pos = accumulated_data.find(b"data")
                                 if data_pos != -1:
-                                    accumulated_data = accumulated_data[data_pos + 8:]
+                                    accumulated_data = accumulated_data[data_pos + 8 :]
                             header_processed = True
-                        
+
                         if header_processed:
-                            chunk_size = int(self.output_sample_rate * LMNT_CHANNELS * 2 * 20 / 1000)  # 20ms chunks
+                            chunk_size = int(
+                                self.output_sample_rate * LMNT_CHANNELS * 2 * 20 / 1000
+                            )  # 20ms chunks
                             while len(accumulated_data) >= chunk_size:
                                 audio_chunk = accumulated_data[:chunk_size]
                                 accumulated_data = accumulated_data[chunk_size:]
-                                
-                                if not self._first_chunk_sent and self._first_audio_callback:
+
+                                if (
+                                    not self._first_chunk_sent
+                                    and self._first_audio_callback
+                                ):
                                     self._first_chunk_sent = True
                                     await self._first_audio_callback()
-                                
-                                self.loop.create_task(self.audio_track.add_new_bytes(audio_chunk))
-                                await asyncio.sleep(0.01)  
-                
+
+                                asyncio.create_task(
+                                    self.audio_track.add_new_bytes(audio_chunk)
+                                )
+                                await asyncio.sleep(0.01)
+
                 if accumulated_data and header_processed:
-                    chunk_size = int(self.output_sample_rate * LMNT_CHANNELS * 2 * 20 / 1000)
+                    chunk_size = int(
+                        self.output_sample_rate * LMNT_CHANNELS * 2 * 20 / 1000
+                    )
                     if len(accumulated_data) < chunk_size:
-                        accumulated_data += b'\x00' * (chunk_size - len(accumulated_data))
-                    
+                        accumulated_data += b"\x00" * (
+                            chunk_size - len(accumulated_data)
+                        )
+
                     if not self._first_chunk_sent and self._first_audio_callback:
                         self._first_chunk_sent = True
                         await self._first_audio_callback()
-                    
-                    self.loop.create_task(self.audio_track.add_new_bytes(accumulated_data))
+
+                    asyncio.create_task(
+                        self.audio_track.add_new_bytes(accumulated_data)
+                    )
 
         except httpx.HTTPError as e:
             self.emit("error", f"HTTP error occurred: {str(e)}")
         except Exception as e:
             self.emit("error", f"TTS synthesis failed: {str(e)}")
-
-
 
     async def aclose(self) -> None:
         """Cleanup resources"""
@@ -202,4 +234,4 @@ class LMNTTTS(TTS):
     async def interrupt(self) -> None:
         """Interrupt the TTS process"""
         if self.audio_track:
-            self.audio_track.interrupt() 
+            self.audio_track.interrupt()

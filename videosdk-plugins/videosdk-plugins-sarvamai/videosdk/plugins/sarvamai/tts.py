@@ -16,6 +16,7 @@ DEFAULT_MODEL = "bulbul:v2"
 DEFAULT_SPEAKER = "anushka"
 DEFAULT_TARGET_LANGUAGE = "en-IN"
 
+
 class SarvamAITTS(TTS):
     def __init__(
         self,
@@ -29,7 +30,9 @@ class SarvamAITTS(TTS):
         enable_preprocessing: bool = True,
         api_key: str | None = None,
     ) -> None:
-        super().__init__(sample_rate=SARVAMAI_SAMPLE_RATE, num_channels=SARVAMAI_CHANNELS)
+        super().__init__(
+            sample_rate=SARVAMAI_SAMPLE_RATE, num_channels=SARVAMAI_CHANNELS
+        )
 
         self.model = model
         self.speaker = speaker
@@ -44,7 +47,7 @@ class SarvamAITTS(TTS):
         self._first_chunk_sent = False
 
         self.api_key = api_key or os.getenv("SARVAMAI_API_KEY")
-        
+
         if not self.api_key:
             raise ValueError(
                 "Sarvam AI API key required. Provide either:\n"
@@ -104,60 +107,61 @@ class SarvamAITTS(TTS):
             }
 
             response = await self._http_client.post(
-                SARVAMAI_TTS_ENDPOINT,
-                headers=headers,
-                json=payload
+                SARVAMAI_TTS_ENDPOINT, headers=headers, json=payload
             )
             response.raise_for_status()
-            
+
             response_data = response.json()
             if "audios" not in response_data or not response_data["audios"]:
                 self.emit("error", "No audio data found in response from Sarvam AI")
                 return
-            
+
             audio_content = response_data["audios"][0]
             if not audio_content:
                 self.emit("error", "No audio content received from Sarvam AI")
                 return
 
             audio_bytes = base64.b64decode(audio_content)
-            
+
             if not audio_bytes:
                 self.emit("error", "Decoded audio bytes are empty")
                 return
 
             await self._stream_audio_chunks(audio_bytes)
-            
+
         except httpx.HTTPStatusError as e:
-            self.emit("error", f"Sarvam AI TTS HTTP error: {e.response.status_code} - {e.response.text}")
+            self.emit(
+                "error",
+                f"Sarvam AI TTS HTTP error: {e.response.status_code} - {e.response.text}",
+            )
             raise
 
     async def _stream_audio_chunks(self, audio_bytes: bytes) -> None:
-        chunk_size = int(SARVAMAI_SAMPLE_RATE * SARVAMAI_CHANNELS * 2 * 20 / 1000) 
-        
+        chunk_size = int(SARVAMAI_SAMPLE_RATE * SARVAMAI_CHANNELS * 2 * 20 / 1000)
+
         audio_data = self._remove_wav_header(audio_bytes)
-        
+
         for i in range(0, len(audio_data), chunk_size):
-            chunk = audio_data[i:i + chunk_size]
-            
+            chunk = audio_data[i : i + chunk_size]
+
             if len(chunk) < chunk_size and len(chunk) > 0:
                 padding_needed = chunk_size - len(chunk)
-                chunk += b'\x00' * padding_needed
-            
+                chunk += b"\x00" * padding_needed
+
             if len(chunk) == chunk_size:
                 if not self._first_chunk_sent and self._first_audio_callback:
                     self._first_chunk_sent = True
-                    self.loop.create_task(self._first_audio_callback())
-                
-                self.loop.create_task(self.audio_track.add_new_bytes(chunk))
+                    asyncio.create_task(self._first_audio_callback())
+
+                asyncio.create_task(self.audio_track.add_new_bytes(chunk))
                 await asyncio.sleep(0.001)
 
     def _remove_wav_header(self, audio_bytes: bytes) -> bytes:
-        if audio_bytes.startswith(b'RIFF'):
-            data_pos = audio_bytes.find(b'data')
+        if audio_bytes.startswith(b"RIFF"):
+            data_pos = audio_bytes.find(b"data")
             if data_pos != -1:
-                return audio_bytes[data_pos + 8:]
-        
+                return audio_bytes[data_pos + 8 :]
+
         return audio_bytes
 
     async def aclose(self) -> None:

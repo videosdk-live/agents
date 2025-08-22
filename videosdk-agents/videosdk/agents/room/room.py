@@ -207,7 +207,7 @@ class VideoSDKHandler:
         asyncio.create_task(self._collect_session_id())
         asyncio.create_task(self._collect_meeting_attributes())
         if self.recording:
-            self.loop.create_task(
+            asyncio.create_task(
                 self.start_participant_recording(self.meeting.local_participant.id)
             )
 
@@ -301,7 +301,7 @@ class VideoSDKHandler:
         logger.info(f"Participant joined: {peer_name}")
 
         if self.recording and len(self.participants_data) == 1:
-            self.loop.create_task(self.start_participant_recording(participant.id))
+            asyncio.create_task(self.start_participant_recording(participant.id))
 
         if participant.id in self._participant_joined_events:
             self._participant_joined_events[participant.id].set()
@@ -323,7 +323,7 @@ class VideoSDKHandler:
                 except Exception as e:
                     logger.error(f"Error creating audio listener task: {e}")
             if stream.kind == "video" and self.vision:
-                self.video_listener_tasks[stream.id] = self.loop.create_task(
+                self.video_listener_tasks[stream.id] = asyncio.create_task(
                     self.add_video_listener(stream)
                 )
 

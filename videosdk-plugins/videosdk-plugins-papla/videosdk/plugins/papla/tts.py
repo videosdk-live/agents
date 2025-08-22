@@ -17,6 +17,7 @@ API_BASE_URL = "https://api.papla.media/v1"
 DEFAULT_MODEL = "papla_p1"
 DEFAULT_VOICE_ID = "6ce54263-cff6-457d-a72d-1387d0f28f6c"
 
+
 class PaplaTTS(TTS):
     def __init__(
         self,
@@ -68,7 +69,9 @@ class PaplaTTS(TTS):
                 full_text = text
 
             if not self.audio_track or not self.loop:
-                self.emit("error", "Audio track or event loop not set by the framework.")
+                self.emit(
+                    "error", "Audio track or event loop not set by the framework."
+                )
                 return
 
             target_voice = voice_id or DEFAULT_VOICE_ID
@@ -84,20 +87,24 @@ class PaplaTTS(TTS):
                 "model_id": self.model_id,
             }
 
-            async with self._client.stream("POST", url, headers=headers, json=payload) as response:
+            async with self._client.stream(
+                "POST", url, headers=headers, json=payload
+            ) as response:
                 response.raise_for_status()
-                
+
                 mp3_data = b""
                 async for chunk in response.aiter_bytes():
                     if chunk:
                         mp3_data += chunk
-                
+
                 if mp3_data:
                     await self._decode_and_stream_pcm(mp3_data)
 
         except httpx.HTTPStatusError as e:
             error_details = e.response.text
-            self.emit("error", f"Papla API Error: {e.response.status_code} - {error_details}")
+            self.emit(
+                "error", f"Papla API Error: {e.response.status_code} - {error_details}"
+            )
         except Exception as e:
             self.emit("error", f"Papla TTS synthesis failed: {str(e)}")
 
@@ -105,28 +112,28 @@ class PaplaTTS(TTS):
         """Decodes compressed audio (MP3) into raw PCM and streams it to the audio track."""
         try:
             audio = AudioSegment.from_file(io.BytesIO(audio_bytes), format=AUDIO_FORMAT)
-            
+
             audio = audio.set_frame_rate(PAPLA_SAMPLE_RATE)
             audio = audio.set_channels(PAPLA_CHANNELS)
             audio = audio.set_sample_width(2)
-            
+
             pcm_data = audio.raw_data
-            
+
             chunk_size = int(PAPLA_SAMPLE_RATE * PAPLA_CHANNELS * 2 * 20 / 1000)
-            
+
             for i in range(0, len(pcm_data), chunk_size):
-                chunk = pcm_data[i:i + chunk_size]
-                
+                chunk = pcm_data[i : i + chunk_size]
+
                 if 0 < len(chunk) < chunk_size:
-                    padding = b'\x00' * (chunk_size - len(chunk))
+                    padding = b"\x00" * (chunk_size - len(chunk))
                     chunk += padding
 
                 if len(chunk) == chunk_size and self.audio_track:
                     if not self._first_chunk_sent and self._first_audio_callback:
                         self._first_chunk_sent = True
                         await self._first_audio_callback()
-                    
-                    self.loop.create_task(self.audio_track.add_new_bytes(chunk))
+
+                    asyncio.create_task(self.audio_track.add_new_bytes(chunk))
                     await asyncio.sleep(0.01)
 
         except Exception as e:
