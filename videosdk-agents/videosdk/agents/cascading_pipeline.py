@@ -170,13 +170,8 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
                 self.conversation_flow.tts = tts
 
     async def start(self, **kwargs: Any) -> None:
-        print("DEBUG: CascadingPipeline.start called")
         if self.conversation_flow:
-            print("DEBUG: CascadingPipeline starting conversation flow")
             await self.conversation_flow.start()
-            print("DEBUG: CascadingPipeline conversation flow started")
-        else:
-            print("DEBUG: CascadingPipeline - No conversation flow found")
 
     async def send_message(self, message: str) -> None:
         if self.conversation_flow:
