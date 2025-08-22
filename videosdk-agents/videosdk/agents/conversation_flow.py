@@ -9,7 +9,7 @@ from .event_emitter import EventEmitter
 from .stt.stt import STT, STTResponse
 from .llm.llm import LLM
 from .llm.chat_context import ChatRole
-from .utils import is_function_tool, get_tool_info
+from .utils import is_function_tool, get_tool_info, graceful_cancel
 from .tts.tts import TTS
 from .stt.stt import SpeechEventType
 from .agent import Agent
@@ -51,6 +51,9 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             self.vad.on_vad_event(self.on_vad_event)
         
         self._current_tts_task: asyncio.Task | None = None
+        self._current_llm_task: asyncio.Task | None = None
+        self._partial_response = ""
+        self._is_interrupted = False
         
     async def start(self) -> None:
         global_event_emitter.on("speech_started", self.on_speech_started_stt)
@@ -138,7 +141,10 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
     
     async def _generate_and_synthesize_response(self, user_text: str) -> None:
         """Generate agent response"""
+        self._is_interrupted = False
+        
         full_response = ""
+        self._partial_response = ""
         
         try:
             llm_stream = self.run(user_text)
@@ -147,15 +153,30 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             
             async def collector():
                 response_parts = []
-                async for chunk in llm_stream:
-                    await q.put(chunk)
-                    response_parts.append(chunk)
-                await q.put(None)
-                return "".join(response_parts)
+                try:
+                    async for chunk in llm_stream:
+                        if self._is_interrupted:
+                            logger.info("LLM collection interrupted")
+                            await q.put(None)
+                            return "".join(response_parts)
+                        
+                        self._partial_response = "".join(response_parts)
+                        await q.put(chunk)
+                        response_parts.append(chunk)
+                    
+                    await q.put(None)
+                    return "".join(response_parts)
+                except asyncio.CancelledError:
+                    logger.info("LLM collection cancelled")
+                    await q.put(None)
+                    return "".join(response_parts)
 
             async def tts_consumer():
                 async def tts_stream_gen():
                     while True:
+                        if self._is_interrupted:
+                            break
+                        
                         chunk = await q.get()
                         if chunk is None:
                             break
@@ -170,12 +191,17 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             collector_task = asyncio.create_task(collector())
             tts_task = asyncio.create_task(tts_consumer())
             
+            self._current_llm_task = collector_task
             self._current_tts_task = tts_task
             
-            await asyncio.gather(collector_task, tts_task)
-            full_response = collector_task.result()
+            await asyncio.gather(collector_task, tts_task, return_exceptions=True)
             
-            if full_response:
+            if not collector_task.cancelled() and not self._is_interrupted:
+                full_response = collector_task.result()
+            else:
+                full_response = self._partial_response
+            
+            if full_response and not self._is_interrupted:
                 cascading_metrics_collector.set_agent_response(full_response)
                 self.agent.chat_context.add_message(
                     role=ChatRole.ASSISTANT,
@@ -184,6 +210,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
         finally:
             self._current_tts_task = None
+            self._current_llm_task = None
             cascading_metrics_collector.complete_current_turn()
             
     async def process_with_llm(self) -> AsyncIterator[str]:
@@ -202,6 +229,10 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 self.agent.chat_context,
                 tools=self.agent._tools
             ):
+                if self._is_interrupted:
+                    logger.info("LLM processing interrupted")
+                    break
+                    
                 if not first_chunk_received:
                     first_chunk_received = True
                     cascading_metrics_collector.on_llm_complete()
@@ -236,6 +267,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                             )
                             
                             async for new_resp in self.llm.chat(self.agent.chat_context):
+                                if self._is_interrupted:
+                                    break
                                 if new_resp.content:
                                     yield new_resp.content
                         except Exception as e:
@@ -315,18 +348,33 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             await self._interrupt_tts()
 
     async def _interrupt_tts(self) -> None:
-        print("Interrupting TTS")
-        if hasattr(self, '_current_tts_task') and self._current_tts_task:
-            self._current_tts_task.cancel()
+        logger.info("Interrupting TTS and LLM generation")
+        
+        self._is_interrupted = True
         
         if self.tts:
-            try:
-                async with asyncio.timeout(0.1):
-                    await self.tts.interrupt()
-            except asyncio.TimeoutError:
-                logger.error("TTS interrupt timeout - forcing cancellation")
+            await self.tts.interrupt()
+        
+        if self.llm:
+            await self._cancel_llm()
+        
+        tasks_to_cancel = []
+        if self._current_tts_task and not self._current_tts_task.done():
+            tasks_to_cancel.append(self._current_tts_task)
+        if self._current_llm_task and not self._current_llm_task.done():
+            tasks_to_cancel.append(self._current_llm_task)
+        
+        if tasks_to_cancel:
+            await graceful_cancel(*tasks_to_cancel)
         
         cascading_metrics_collector.on_interrupted()
+    
+    async def _cancel_llm(self) -> None:
+        """Cancel LLM generation"""
+        try:
+            await self.llm.cancel_current_generation()
+        except Exception as e:
+            logger.error(f"LLM cancellation failed: {e}")
     
     def on_speech_stopped(self) -> None:
         

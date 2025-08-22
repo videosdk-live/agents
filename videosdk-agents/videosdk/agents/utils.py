@@ -419,3 +419,20 @@ async def segment_text(
 
     if buffer:
         yield buffer
+
+async def graceful_cancel(*tasks: asyncio.Task) -> None:
+    """Simple utility to cancel tasks and wait for them to complete"""
+    if not tasks:
+        return
+
+    for task in tasks:
+        if not task.done():
+            task.cancel()
+    
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(*tasks, return_exceptions=True),
+            timeout=0.5
+        )
+    except asyncio.TimeoutError:
+        pass
