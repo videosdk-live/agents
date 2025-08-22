@@ -67,7 +67,7 @@ class JobContext:
         """Connect to the room"""
         if self.room_options:
             if not self.room_options.room_id:
-                self.room_options.room_id = get_room_id()
+                self.room_options.room_id = self.get_room_id()
             custom_camera_video_track = None
             custom_microphone_audio_track = None
             sinks = []
@@ -145,15 +145,39 @@ class JobContext:
             return await self.room.wait_for_participant(participant_id)
         else:
             raise ValueError("Room not initialized")
+        
 
-def get_room_id() -> str:
-    url = "https://api.videosdk.live/v2/rooms"
-    headers = {
-        "Authorization": os.getenv("VIDEOSDK_AUTH_TOKEN")
-    }
-    response = requests.post(url, headers=headers)
-    response.raise_for_status()
-    return response.json()["roomId"]
+    def get_room_id(self) -> str:
+        """
+        Creates a new room using the VideoSDK API and returns the room ID.
+
+        Raises:
+            ValueError: If the VIDEOSDK_AUTH_TOKEN is missing.
+            RuntimeError: If the API request fails or the response is invalid.
+        """
+
+        if self.videosdk_auth:
+            url = "https://api.videosdk.live/v2/rooms"
+            headers = {"Authorization": self.videosdk_auth}
+
+            try:
+                response = requests.post(url, headers=headers)
+                response.raise_for_status()
+            except requests.RequestException as e:
+                raise RuntimeError(f"Failed to create room: {e}") from e
+
+            data = response.json()
+            room_id = data.get("roomId")
+            if not room_id:
+                raise RuntimeError(f"Unexpected API response, missing roomId: {data}")
+
+            return room_id
+        else:
+            raise ValueError(
+            "VIDEOSDK_AUTH_TOKEN not found. "
+            "Set it as an environment variable or provide it in room options via auth_token."
+            )
+
 
 def get_current_job_context() -> Optional['JobContext']:
     """Get the current job context (used by pipeline constructors)"""
