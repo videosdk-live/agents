@@ -450,8 +450,8 @@ def create_yaml_interactive() -> dict:
     console.print("[dim]This section defines your deployment's basic settings.[/dim]")
     console.print("[dim]Deployment ID must be 3-64 characters long and can only contain letters, numbers, hyphens, and underscores.[/dim]")
     
-    config["worker"]["id"] = click.prompt("Deployment ID")
-    validate_worker_id(config["worker"]["id"])
+    config["deployment"]["id"] = click.prompt("Deployment ID")
+    validate_worker_id(config["deployment"]["id"])
     
     # Ask for entry point
     default_entry = "src/main.py"
@@ -460,7 +460,7 @@ def create_yaml_interactive() -> dict:
         "Path to main Python file",
         default=default_entry
     )
-    config["worker"]["entry"]["path"] = entry_path
+    config["deployment"]["entry"]["path"] = entry_path
     
     # Ask for environment file path
     console.print("\n[bold cyan]Step 2: Environment Configuration[/bold cyan]")
@@ -738,7 +738,7 @@ def run():
                 
                 # Run the container
                 progress.update(task, description=f"Running worker [cyan]{worker['id']}[/cyan]...")
-                container_name = f"videosdk-worker-{worker['id']}-{int(time.time())}"
+                container_name = f"videosdk-deployment-{worker['id']}-{int(time.time())}"
                 
                 # Clear the progress display
                 progress.stop()
@@ -857,7 +857,7 @@ def deploy():
         
         # Load configuration
         config = load_config()
-        worker = config['worker']
+        worker = config['deployment']
         main_file = Path(worker['entry']['path']).resolve()
         requirement_path = Path('requirements.txt').resolve()
         
