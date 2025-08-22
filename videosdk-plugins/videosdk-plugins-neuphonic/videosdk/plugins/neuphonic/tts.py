@@ -38,6 +38,8 @@ class NeuphonicTTS(TTS):
         self.audio_track = None
         self.loop = None
         self._first_chunk_sent = False
+        self._interrupted = False
+        self._current_tasks: list[asyncio.Task] = []
 
         self.api_key = api_key or os.getenv("NEUPHONIC_API_KEY")
         if not self.api_key:
@@ -55,6 +57,7 @@ class NeuphonicTTS(TTS):
     def reset_first_audio_tracking(self) -> None:
         """Reset the first audio tracking state for next TTS task"""
         self._first_chunk_sent = False
+        self._interrupted = False
 
     async def synthesize(
         self,
@@ -65,6 +68,9 @@ class NeuphonicTTS(TTS):
             if not self.audio_track or not self.loop:
                 self.emit("error", "Audio track or event loop not set")
                 return
+
+            self._interrupted = False
+            self._current_tasks.clear()
 
             if isinstance(text, AsyncIterator):
                 await self._streaming_websocket_synthesis(text)
@@ -93,13 +99,17 @@ class NeuphonicTTS(TTS):
             async with aiohttp.ClientSession() as session:
                 async with session.ws_connect(ws_url) as ws:
                     listener_task = asyncio.create_task(self._listen_to_ws_messages(ws))
+                    self._current_tasks.append(listener_task)
                     
                     async for segment in segment_text(text):
+                        if self._interrupted:
+                            break
                         if segment.strip():
                             await ws.send_str(f"{segment} <STOP>")
                             await asyncio.sleep(0.01)
                     
-                    await listener_task
+                    if not self._interrupted:
+                        await listener_task
                             
         except aiohttp.ClientError as e:
             self.emit("error", f"WebSocket connection failed: {str(e)}")
@@ -110,6 +120,8 @@ class NeuphonicTTS(TTS):
         """Listen to WebSocket messages concurrently while sending text"""
         try:
             async for msg in ws:
+                if self._interrupted:
+                    break
                 if msg.type == aiohttp.WSMsgType.TEXT:
                     try:
                         data = json.loads(msg.data)
@@ -154,6 +166,8 @@ class NeuphonicTTS(TTS):
                     await ws.send_str(f"{text} <STOP>")
                     
                     async for msg in ws:
+                        if self._interrupted:
+                            break
                         if msg.type == aiohttp.WSMsgType.TEXT:
                             try:
                                 data = json.loads(msg.data)
@@ -181,6 +195,9 @@ class NeuphonicTTS(TTS):
 
     async def _stream_audio_chunks(self, audio_bytes: bytes) -> None:
         """Stream audio data in chunks for smooth playback"""
+        if self._interrupted:
+            return
+            
         chunk_duration_ms = 20
         bytes_per_sample = 2 
         chunk_size = int(self._sample_rate * NEUPHONIC_CHANNELS * bytes_per_sample * chunk_duration_ms / 1000)
@@ -189,6 +206,8 @@ class NeuphonicTTS(TTS):
             chunk_size += 1
         
         for i in range(0, len(audio_bytes), chunk_size):
+            if self._interrupted:
+                break
             chunk = audio_bytes[i:i + chunk_size]
             
             if len(chunk) < chunk_size and len(chunk) > 0:
@@ -254,5 +273,11 @@ class NeuphonicTTS(TTS):
 
     async def interrupt(self) -> None:
         """Interrupt the TTS process"""
+        self._interrupted = True
+        
+        for task in self._current_tasks:
+            if not task.done():
+                task.cancel()
+        
         if self.audio_track:
             self.audio_track.interrupt() 

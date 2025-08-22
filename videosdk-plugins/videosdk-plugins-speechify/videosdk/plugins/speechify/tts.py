@@ -181,7 +181,7 @@ class SpeechifyTTS(TTS):
     async def interrupt(self) -> None:
         """Interrupt TTS synthesis"""
         self._interrupted = True
-        if self._current_synthesis_task:
+        if self._current_synthesis_task and not self._current_synthesis_task.done():
             self._current_synthesis_task.cancel()
         if self.audio_track:
             self.audio_track.interrupt() 

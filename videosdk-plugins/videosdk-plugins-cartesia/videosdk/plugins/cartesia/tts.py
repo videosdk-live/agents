@@ -40,6 +40,8 @@ class CartesiaTTS(TTS):
         self._voice = voice_id
         self._first_chunk_sent = False
         self._audio_buffer = bytearray()
+        self._interrupted = False
+        self._current_tasks: list[asyncio.Task] = []
 
         api_key = api_key or os.getenv("CARTESIA_API_KEY")
         if not api_key:
@@ -53,6 +55,7 @@ class CartesiaTTS(TTS):
     def reset_first_audio_tracking(self) -> None:
         self._first_chunk_sent = False
         self._audio_buffer.clear()
+        self._interrupted = False
 
     async def _ensure_ws_connection(self) -> aiohttp.ClientWebSocketResponse:
         async with self._connection_lock:
@@ -112,7 +115,7 @@ class CartesiaTTS(TTS):
             return False
 
         aiter = text_iterator.__aiter__()
-        while True:
+        while not self._interrupted:
             try:
                 next_task = asyncio.create_task(aiter.__anext__())
                 try:
@@ -120,12 +123,13 @@ class CartesiaTTS(TTS):
                 except asyncio.TimeoutError:
                     # Inactivity flush
                     next_task.cancel()
-                    if buffer.strip():
+                    if buffer.strip() and not self._interrupted:
                         await send_sentence(buffer.strip())
                         buffer = ""
                     continue
 
-                buffer += text_chunk
+                if not self._interrupted:
+                    buffer += text_chunk
 
                 # Greedy punctuation split first
                 while True:
@@ -151,7 +155,7 @@ class CartesiaTTS(TTS):
         await ws.send_str(json.dumps(final_payload))
 
     async def _receive_task(self, ws: aiohttp.ClientWebSocketResponse):
-        while True:
+        while not self._interrupted:
             msg = await ws.receive()
             if msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSING):
                 break
@@ -178,6 +182,9 @@ class CartesiaTTS(TTS):
         if not self.audio_track or not self.loop:
             self.emit("error", "Audio track or event loop not set"); return
         
+        self._interrupted = False
+        self._current_tasks.clear()
+        
         if isinstance(text, str):
             async def _string_iterator(): 
                 yield text
@@ -189,6 +196,7 @@ class CartesiaTTS(TTS):
             ws = await self._ensure_ws_connection()
             send_task = asyncio.create_task(self._send_task(ws, text_iterator))
             receive_task = asyncio.create_task(self._receive_task(ws))
+            self._current_tasks.extend([send_task, receive_task])
             await asyncio.gather(send_task, receive_task)
         except Exception as e:
             self.emit("error", f"TTS synthesis failed: {str(e)}")
@@ -196,12 +204,15 @@ class CartesiaTTS(TTS):
             self._ws_connection = None
 
     async def _stream_audio(self, audio_chunk: bytes):
+        if self._interrupted:
+            return
+            
         if not self._first_chunk_sent and self._first_audio_callback:
             self._first_chunk_sent = True
             await self._first_audio_callback()
 
         self._audio_buffer.extend(audio_chunk)
-        while len(self._audio_buffer) >= PLAYBACK_CHUNK_SIZE:
+        while len(self._audio_buffer) >= PLAYBACK_CHUNK_SIZE and not self._interrupted:
             playback_chunk = self._audio_buffer[:PLAYBACK_CHUNK_SIZE]
             self._audio_buffer = self._audio_buffer[PLAYBACK_CHUNK_SIZE:]
             if self.audio_track:
@@ -224,4 +235,16 @@ class CartesiaTTS(TTS):
         if self._ws_session and not self._ws_session.closed: await self._ws_session.close()
 
     async def interrupt(self) -> None:
-        if self.audio_track: self.audio_track.interrupt()
+        """Interrupt TTS synthesis"""
+        self._interrupted = True
+        
+        for task in self._current_tasks:
+            if not task.done():
+                task.cancel()
+        
+        if self._ws_connection and not self._ws_connection.closed:
+            await self._ws_connection.close()
+            self._ws_connection = None
+        
+        if self.audio_track: 
+            self.audio_track.interrupt()

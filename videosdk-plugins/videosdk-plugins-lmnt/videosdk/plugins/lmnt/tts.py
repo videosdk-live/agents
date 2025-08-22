@@ -54,6 +54,7 @@ class LMNTTTS(TTS):
         self.audio_track = None
         self.loop = None
         self._first_chunk_sent = False
+        self._interrupted = False
         
         self.api_key = api_key or os.getenv("LMNT_API_KEY")
         if not self.api_key:
@@ -95,18 +96,23 @@ class LMNTTTS(TTS):
                 self.emit("error", "Audio track or event loop not set")
                 return
 
+            self._interrupted = False
+            
             if isinstance(text, AsyncIterator):
                 async for segment in segment_text(text):
+                    if self._interrupted:
+                        break
                     await self._synthesize_segment(segment, voice_id, **kwargs)
             else:
-                await self._synthesize_segment(text, voice_id, **kwargs)
+                if not self._interrupted:
+                    await self._synthesize_segment(text, voice_id, **kwargs)
 
         except Exception as e:
             self.emit("error", f"TTS synthesis failed: {str(e)}")
 
     async def _synthesize_segment(self, text: str, voice_id: Optional[str] = None, **kwargs: Any) -> None:
         """Synthesize a single text segment"""
-        if not text.strip():
+        if not text.strip() or self._interrupted:
             return
 
         target_voice = voice_id or self.voice
@@ -160,6 +166,8 @@ class LMNTTTS(TTS):
             accumulated_data = b""
             
             async for chunk in response.aiter_bytes():
+                if self._interrupted:
+                    break
                 if chunk:
                     accumulated_data += chunk
                     
@@ -203,5 +211,6 @@ class LMNTTTS(TTS):
 
     async def interrupt(self) -> None:
         """Interrupt the TTS process"""
+        self._interrupted = True
         if self.audio_track:
             self.audio_track.interrupt() 

@@ -64,44 +64,14 @@ class ElevenLabsTTS(TTS):
             follow_redirects=True,
         )
         
-        self._streams = weakref.WeakSet()
+        self._streams = weakref.WeakSet()  
+        self._send_task: asyncio.Task | None = None
+        self._recv_task: asyncio.Task | None = None
+        self._should_stop = False
 
     def reset_first_audio_tracking(self) -> None:
         """Reset the first audio tracking state for next TTS task"""
         self._first_chunk_sent = False
-
-    async def _ensure_ws_connection(self, voice_id: str) -> aiohttp.ClientWebSocketResponse:
-        """Ensure WebSocket connection is established and return it"""
-        if self._ws_connection is None or self._ws_connection.closed:
-            
-            ws_url = f"wss://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream-input"
-            
-            params = {
-                "model_id": self.model,
-                "output_format": self.response_format,
-                "inactivity_timeout": self.inactivity_timeout,
-            }
-            
-            param_string = "&".join([f"{k}={v}" for k, v in params.items()])
-            full_ws_url = f"{ws_url}?{param_string}"
-            
-            headers = {"xi-api-key": self.api_key}
-            
-            self._ws_session = aiohttp.ClientSession()
-            self._ws_connection = await self._ws_session.ws_connect(full_ws_url, headers=headers)
-            
-            init_message = {
-                "text": " ",
-                "voice_settings": {
-                    "stability": self.voice_settings.stability,
-                    "similarity_boost": self.voice_settings.similarity_boost,
-                    "style": self.voice_settings.style,
-                    "use_speaker_boost": self.voice_settings.use_speaker_boost,
-                },
-            }
-            await self._ws_connection.send_str(json.dumps(init_message))
-        
-        return self._ws_connection
 
     async def synthesize(
         self,
@@ -115,12 +85,15 @@ class ElevenLabsTTS(TTS):
                 return
 
             target_voice = voice_id or self.voice
+            self._should_stop = False
 
             if self.enable_streaming:
                 await self._stream_synthesis(text, target_voice)
             else:
                 if isinstance(text, AsyncIterator):
                     async for segment in segment_text(text):
+                        if self._should_stop:
+                            break
                         await self._chunked_synthesis(segment, target_voice)
                 else:
                     await self._chunked_synthesis(text, target_voice)
@@ -163,6 +136,8 @@ class ElevenLabsTTS(TTS):
                 response.raise_for_status()
                 
                 async for chunk in response.aiter_bytes():
+                    if self._should_stop:
+                        break
                     if chunk:
                         await self._stream_audio_chunks(chunk)
                         
@@ -172,7 +147,7 @@ class ElevenLabsTTS(TTS):
             self.emit("error", f"Chunked synthesis failed: {str(e)}")
     
     async def _stream_synthesis(self, text: Union[AsyncIterator[str], str], voice_id: str) -> None:
-        """Improved WebSocket-based streaming synthesis with concurrent processing"""
+        """WebSocket-based streaming synthesis"""
         
         ws_session = None
         ws_connection = None
@@ -206,10 +181,10 @@ class ElevenLabsTTS(TTS):
             }
             await ws_connection.send_str(json.dumps(init_message))
             
-            send_task = asyncio.create_task(self._send_text_task(ws_connection, text))
-            recv_task = asyncio.create_task(self._receive_audio_task(ws_connection))
+            self._send_task = asyncio.create_task(self._send_text_task(ws_connection, text))
+            self._recv_task = asyncio.create_task(self._receive_audio_task(ws_connection))
             
-            await asyncio.gather(send_task, recv_task)
+            await asyncio.gather(self._send_task, self._recv_task)
             
         except Exception as e:
             self.emit("error", f"Streaming synthesis failed: {str(e)}")
@@ -223,6 +198,24 @@ class ElevenLabsTTS(TTS):
                 await self._chunked_synthesis(full_text, voice_id)
                 
         finally:
+            for task in [self._send_task, self._recv_task]:
+                if task and not task.done():
+                    task.cancel()
+            
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(
+                        *(t for t in [self._send_task, self._recv_task] if t),
+                        return_exceptions=True
+                    ),
+                    timeout=0.3
+                )
+            except asyncio.TimeoutError:
+                pass
+            
+            self._send_task = None
+            self._recv_task = None
+            
             if ws_connection and not ws_connection.closed:
                 await ws_connection.close()
             if ws_session and not ws_session.closed:
@@ -232,28 +225,30 @@ class ElevenLabsTTS(TTS):
         """Task for sending text to WebSocket"""
         try:
             if isinstance(text, str):
-                text_message = {"text": f"{text} "}
-                await ws_connection.send_str(json.dumps(text_message))
+                if not self._should_stop:
+                    text_message = {"text": f"{text} "}
+                    await ws_connection.send_str(json.dumps(text_message))
             else:
                 async for chunk in text:
-                    if ws_connection.closed:
+                    if ws_connection.closed or self._should_stop:
                         break
                     
                     chunk_message = {"text": f"{chunk} "}
                     await ws_connection.send_str(json.dumps(chunk_message))
             
-            if not ws_connection.closed:
+            if not ws_connection.closed and not self._should_stop:
                 eos_message = {"text": ""}
                 await ws_connection.send_str(json.dumps(eos_message))
                 
         except Exception as e:
-            self.emit("error", f"Send task error: {str(e)}")
+            if not self._should_stop:
+                self.emit("error", f"Send task error: {str(e)}")
             raise
 
     async def _receive_audio_task(self, ws_connection: aiohttp.ClientWebSocketResponse) -> None:
         """Task for receiving audio from WebSocket"""
         try:
-            while not ws_connection.closed:
+            while not ws_connection.closed and not self._should_stop:
                 try:
                     msg = await ws_connection.receive()
                     
@@ -263,7 +258,8 @@ class ElevenLabsTTS(TTS):
                         if data.get("audio"):
                             import base64
                             audio_chunk = base64.b64decode(data["audio"])
-                            await self._stream_audio_chunks(audio_chunk)
+                            if not self._should_stop:
+                                await self._stream_audio_chunks(audio_chunk)
                             
                         elif data.get("isFinal"):
                             break
@@ -279,15 +275,17 @@ class ElevenLabsTTS(TTS):
                         break
                         
                 except asyncio.TimeoutError:
-                    self.emit("error", "WebSocket receive timeout")
+                    if not self._should_stop:
+                        self.emit("error", "WebSocket receive timeout")
                     break
                     
         except Exception as e:
-            self.emit("error", f"Receive task error: {str(e)}")
+            if not self._should_stop:
+                self.emit("error", f"Receive task error: {str(e)}")
             raise
 
     async def _stream_audio_chunks(self, audio_bytes: bytes) -> None:
-        if not audio_bytes:
+        if not audio_bytes or self._should_stop:
             return
 
         if not self._first_chunk_sent and hasattr(self, '_first_audio_callback') and self._first_audio_callback:
@@ -297,8 +295,29 @@ class ElevenLabsTTS(TTS):
         if self.audio_track and self.loop:
             await self.audio_track.add_new_bytes(audio_bytes)
 
+    async def interrupt(self) -> None:
+        """Simple but effective interruption"""        
+        self._should_stop = True
+        
+        if self.audio_track:
+            self.audio_track.interrupt()
+        
+        for task in [self._send_task, self._recv_task]:
+            if task and not task.done():
+                task.cancel()
+        
+        if self._ws_connection and not self._ws_connection.closed:
+            await self._ws_connection.close()
+        
+
     async def aclose(self) -> None:
         """Cleanup resources"""
+        self._should_stop = True
+        
+        for task in [self._send_task, self._recv_task]:
+            if task and not task.done():
+                task.cancel()
+        
         for stream in list(self._streams):
             try:
                 await stream.aclose()
@@ -314,10 +333,4 @@ class ElevenLabsTTS(TTS):
         if self._session:
             await self._session.aclose()
         await super().aclose()
-
-    async def interrupt(self) -> None:
-        """Interrupt the TTS process"""
-        if self.audio_track:
-            self.audio_track.interrupt()
-        if self._ws_connection and not self._ws_connection.closed:
-            await self._ws_connection.close()
+        
