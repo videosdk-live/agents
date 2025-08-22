@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 START_RECORDING_URL = "https://api.videosdk.live/v2/recordings/participant/start"
 STOP_RECORDING_URL = "https://api.videosdk.live/v2/recordings/participant/stop"
 MERGE_RECORDINGS_URL = "https://api.videosdk.live/v2/recordings/participant/merge"
- 
+
 load_dotenv()
 
 
@@ -95,7 +95,7 @@ class VideoSDKHandler:
         self._session_id: Optional[str] = None
         self._session_id_collected = False
         self.recording = recording
-        
+
         self.traces_flow_manager = TracesFlowManager(room_id=self.meeting_id)
         cascading_metrics_collector.set_traces_flow_manager(self.traces_flow_manager)
 
@@ -126,7 +126,7 @@ class VideoSDKHandler:
             "webcam_enabled": custom_camera_video_track is not None,
             "custom_microphone_audio_track": self.audio_track,
             "custom_camera_video_track": custom_camera_video_track,
-            "signaling_base_url": self.signaling_base_url
+            "signaling_base_url": self.signaling_base_url,
         }
         self.pipeline = pipeline
         self.audio_listener_tasks = {}
@@ -147,16 +147,13 @@ class VideoSDKHandler:
         self._non_agent_participant_count = 0
 
     def init_meeting(self):
-        self.sdk_metadata = {
-            "sdk" : "agents",
-            "sdk_version" : "0.0.26" 
-        }
-        
+        self.sdk_metadata = {"sdk": "agents", "sdk_version": "0.0.26"}
+
         self.meeting = VideoSDK.init_meeting(
-            **self.meeting_config, sdk_metadata=sdk_metadata
+            **self.meeting_config, sdk_metadata=self.sdk_metadata
         )
         self._left: bool = False
-        
+
         self.meeting.add_event_listener(
             MeetingHandler(
                 on_meeting_joined=self.on_meeting_joined,
@@ -207,12 +204,14 @@ class VideoSDKHandler:
     def on_meeting_joined(self, data):
         logger.info(f"Agent joined the meeting")
         self._meeting_joined_data = data
-        self.loop.create_task(self._collect_session_id())
-        self.loop.create_task(self._collect_meeting_attributes())
+        asyncio.create_task(self._collect_session_id())
+        asyncio.create_task(self._collect_meeting_attributes())
         if self.recording:
-            self.loop.create_task(self.start_participant_recording(self.meeting.local_participant.id))
+            self.loop.create_task(
+                self.start_participant_recording(self.meeting.local_participant.id)
+            )
 
-    def on_meeting_left(self, data=None):
+    def on_meeting_left(self, data):
         logger.info(f"Meeting Left: {data}")
         self._cancel_session_end_task()
 
@@ -271,7 +270,7 @@ class VideoSDKHandler:
                 logger.error(f"Error in session end callback: {e}")
 
         # Leave the meeting FIRST, then mark session as ended
-        self.leave()
+        await self.leave()
 
         # Mark session as ended AFTER leaving
         self._session_ended = True
@@ -298,14 +297,12 @@ class VideoSDKHandler:
 
     def on_participant_joined(self, participant: Participant):
         peer_name = participant.display_name
-        self.participants_data[participant.id] = {
-            "name": peer_name,
-        }
-        logger.info("Participant joined:", peer_name)
+        self.participants_data[participant.id] = {"name": peer_name}
+        logger.info(f"Participant joined: {peer_name}")
 
         if self.recording and len(self.participants_data) == 1:
             self.loop.create_task(self.start_participant_recording(participant.id))
-        
+
         if participant.id in self._participant_joined_events:
             self._participant_joined_events[participant.id].set()
 
@@ -450,7 +447,7 @@ class VideoSDKHandler:
         """Collect session ID from room and set it in metrics cascading_metrics_collector/realtime_metrics_collector"""
         if self.meeting and not self._session_id_collected:
             try:
-                session_id = getattr(self.meeting, 'session_id', None)
+                session_id = getattr(self.meeting, "session_id", None)
                 if session_id:
                     self._session_id = session_id
                     cascading_metrics_collector.set_session_id(session_id)
@@ -471,17 +468,17 @@ class VideoSDKHandler:
             return
 
         try:
-            if hasattr(self.meeting, 'get_attributes'):
+            if hasattr(self.meeting, "get_attributes"):
                 attributes = self.meeting.get_attributes()
 
                 if attributes:
-                    peer_id = getattr(self.meeting, 'participant_id', 'agent')
+                    peer_id = getattr(self.meeting, "participant_id", "agent")
                     auto_initialize_telemetry_and_logs(
                         room_id=self.meeting_id,
                         peer_id=peer_id,
                         room_attributes=attributes,
                         session_id=self._session_id,
-                        sdk_metadata=self.sdk_metadata
+                        sdk_metadata=self.sdk_metadata,
                     )
                 else:
                     logger.error("No meeting attributes found")
@@ -489,53 +486,65 @@ class VideoSDKHandler:
                 logger.error("Meeting object does not have 'get_attributes' method")
 
             if self._meeting_joined_data and self.traces_flow_manager:
-                start_time = time.perf_counter() 
+                start_time = time.perf_counter()
                 agent_joined_attributes = {
                     "roomId": self.meeting_id,
                     "sessionId": self._session_id,
                     "agent_name": self.name,
                     "peerId": self.meeting.local_participant.id,
                     "sdk_metadata": self.sdk_metadata,
-                    "start_time": start_time
-                }   
-                self.traces_flow_manager.start_agent_joined_meeting(agent_joined_attributes)
+                    "start_time": start_time,
+                }
+                self.traces_flow_manager.start_agent_joined_meeting(
+                    agent_joined_attributes
+                )
         except Exception as e:
             logger.error(f"Error collecting meeting attributes and creating spans: {e}")
-
 
     async def stop_participants_recording(self):
         await self.stop_participant_recording(self.meeting.local_participant.id)
         for participant_id in self.participants_data.keys():
             logger.info("stopping participant recording for id", participant_id)
             await self.stop_participant_recording(participant_id)
-             
+
     async def start_participant_recording(self, id: str):
-        headers = {'Authorization' : self.auth_token,'Content-Type' : 'application/json'}
-        response = requests.request("POST", START_RECORDING_URL,json = {
-		"roomId" : self.meeting_id,
-		"participantId" : id
-	    },headers = headers)
+        headers = {"Authorization": self.auth_token, "Content-Type": "application/json"}
+        response = requests.request(
+            "POST",
+            START_RECORDING_URL,
+            json={"roomId": self.meeting_id, "participantId": id},
+            headers=headers,
+        )
         logger.info("response for id", id, response.text)
-    
+
     async def stop_participant_recording(self, id: str):
-        headers = {'Authorization' : self.auth_token,'Content-Type' : 'application/json'}
-        response = requests.request("POST", STOP_RECORDING_URL,json = {
-		"roomId" : self.meeting_id,
-		"participantId" : id
-	    },headers = headers)
+        headers = {"Authorization": self.auth_token, "Content-Type": "application/json"}
+        response = requests.request(
+            "POST",
+            STOP_RECORDING_URL,
+            json={"roomId": self.meeting_id, "participantId": id},
+            headers=headers,
+        )
         logger.info("response for id", id, response.text)
-        
+
     async def merge_participant_recordings(self):
-        headers = {'Authorization' : self.auth_token,'Content-Type' : 'application/json'}
-        response = requests.request("POST", MERGE_RECORDINGS_URL,json = {
-		"sessionId" : self.meeting.session_id,
-		"channel1" : [{"participantId":self.meeting.local_participant.id}],
-		"channel2" : [{"participantId":participant_id} for participant_id in self.participants_data.keys()],
-	},headers = headers)
-        logger.info(response.text)      
+        headers = {"Authorization": self.auth_token, "Content-Type": "application/json"}
+        response = requests.request(
+            "POST",
+            MERGE_RECORDINGS_URL,
+            json={
+                "sessionId": self.meeting.session_id,
+                "channel1": [{"participantId": self.meeting.local_participant.id}],
+                "channel2": [
+                    {"participantId": participant_id}
+                    for participant_id in self.participants_data.keys()
+                ],
+            },
+            headers=headers,
+        )
+        logger.info(response.text)
 
     async def stop_and_merge_recordings(self):
         await self.stop_participants_recording()
-        await self.merge_participant_recordings() 
+        await self.merge_participant_recordings()
         logger.info("stopped and merged recordings")
-                

@@ -153,6 +153,7 @@ class DirectRoomOptions:
     room_name: Optional[str] = None
     auth_token: Optional[str] = None
 
+
 class Worker:
     """
     VideoSDK worker that manages job execution and backend registration.
@@ -738,11 +739,18 @@ class Worker:
             logger.info(f"Executing job {assignment.job_id} with entrypoint function")
 
             try:
-                # Execute the entrypoint function
-                await self.options.entrypoint_fnc(job_context)
-                logger.info(
-                    f"Entrypoint function completed for job {assignment.job_id}"
-                )
+                # Set the current job context so pipeline auto-registration works
+                from .job import _set_current_job_context, _reset_current_job_context
+
+                token = _set_current_job_context(job_context)
+                try:
+                    # Execute the entrypoint function
+                    await self.options.entrypoint_fnc(job_context)
+                    logger.info(
+                        f"Entrypoint function completed for job {assignment.job_id}"
+                    )
+                finally:
+                    pass
             except Exception as entrypoint_error:
                 logger.error(
                     f"Entrypoint function failed for job {assignment.job_id}: {entrypoint_error}"
