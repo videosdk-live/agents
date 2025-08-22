@@ -7,6 +7,9 @@ import os
 from urllib.parse import urlencode
 import aiohttp
 from videosdk.agents import STT as BaseSTT, STTResponse, SpeechEventType, SpeechData, global_event_emitter
+import logging
+
+logger = logging.getLogger(__name__)
 
 class DeepgramSTT(BaseSTT):
     def __init__(
@@ -59,7 +62,7 @@ class DeepgramSTT(BaseSTT):
         try:
             await self._ws.send_bytes(audio_frames)
         except Exception as e:
-            print(f"Error in process_audio: {str(e)}")
+            logger.error(f"Error in process_audio: {str(e)}")
             self.emit("error", str(e))
             if self._ws:
                 await self._ws.close()
@@ -82,9 +85,11 @@ class DeepgramSTT(BaseSTT):
                         if self._transcript_callback:
                             await self._transcript_callback(response)
                 elif msg.type == aiohttp.WSMsgType.ERROR:
+                    logger.error(f"WebSocket error: {self._ws.exception()}")
                     self.emit("error", f"WebSocket error: {self._ws.exception()}")
                     break
         except Exception as e:
+            logger.error(f"Error in WebSocket listener: {str(e)}")
             self.emit("error", f"Error in WebSocket listener: {str(e)}")
         finally:
             if self._ws:
@@ -120,7 +125,7 @@ class DeepgramSTT(BaseSTT):
         try:
             self._ws = await self._session.ws_connect(ws_url, headers=headers)
         except Exception as e:
-            print(f"Error connecting to WebSocket: {str(e)}")
+            logger.error(f"Error connecting to WebSocket: {str(e)}")
             raise
         
     def _handle_ws_message(self, msg: dict) -> list[STTResponse]:
@@ -164,7 +169,7 @@ class DeepgramSTT(BaseSTT):
                     responses.append(response)
                     
         except Exception as e:
-            print(f"Error handling WebSocket message: {str(e)}")
+            logger.error(f"Error handling WebSocket message: {str(e)}")
         
         return responses
 

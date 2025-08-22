@@ -11,7 +11,7 @@ from .a2a.card import AgentCard
 import uuid
 from .llm.chat_context import ChatContext, ChatRole
 from .mcp.mcp_manager import MCPToolManager
-from .mcp.mcp_server import MCPServer
+from .mcp.mcp_server import MCPServiceProvider
 
 
 AgentEventTypes = Literal[
@@ -24,7 +24,7 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
     Abstract base class for creating custom agents.
     Inherits from EventEmitter to handle agent events and state updates.
     """
-    def __init__(self, instructions: str, tools: List[FunctionTool] = [],agent_id: str = None, mcp_servers: List[MCPServer] = None):
+    def __init__(self, instructions: str, tools: List[FunctionTool] = None, agent_id: str = None, mcp_servers: List[MCPServiceProvider] = None):
         super().__init__()
         self._tools = tools
         self._llm = None
@@ -32,7 +32,7 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
         self._tts = None
         self.chat_context = ChatContext.empty()
         self.instructions = instructions
-        self._tools = list(tools)
+        self._tools = tools if tools else []
         self._mcp_servers = mcp_servers if mcp_servers else []
         self._mcp_initialized = False
         self._register_class_tools()
@@ -77,7 +77,7 @@ class Agent(EventEmitter[AgentEventTypes], ABC):
                 await self.add_server(server)
             self._mcp_initialized = True
     
-    async def add_server(self, mcp_server: MCPServer) -> None:
+    async def add_server(self, mcp_server: MCPServiceProvider) -> None:
         """Initialize the MCP server and register the tools"""
         await self.mcp_manager.add_mcp_server(mcp_server)
         self._tools.extend(self.mcp_manager.tools)

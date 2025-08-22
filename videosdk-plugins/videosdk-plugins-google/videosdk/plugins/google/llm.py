@@ -8,6 +8,9 @@ from typing import Any, AsyncIterator, List, Union
 import httpx
 from google.genai import Client, types
 from google.genai.errors import APIError, ClientError, ServerError
+import logging
+
+logger = logging.getLogger(__name__)
 
 from videosdk.agents import (
     LLM,
@@ -105,7 +108,7 @@ class GoogleLLM(LLM):
                             gemini_tool = build_gemini_schema(tool)
                             function_declarations.append(gemini_tool)
                         except Exception as e:
-                            print(f"Failed to format tool {tool}: {e}")
+                            logger.error(f"Failed to format tool {tool}: {e}")
                             continue
                 
                 if function_declarations:
@@ -231,7 +234,7 @@ class GoogleLLM(LLM):
                                     )
                                 )
                             except httpx.HTTPStatusError as e:
-                                print(f"Failed to fetch image from URL {data_url}: {e}")
+                                logger.error(f"Failed to fetch image from URL {data_url}: {e}")
                                 continue 
 
             return formatted_parts

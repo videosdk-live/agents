@@ -8,6 +8,8 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum, unique
 from typing import TYPE_CHECKING
+import logging
+import requests
 
 if TYPE_CHECKING:
     from .worker import ExecutorType, WorkerPermissions, _default_executor_type
@@ -31,6 +33,7 @@ class RoomOptions:
     name: Optional[str] = "Agent"
     playground: bool = True
     vision: bool = False
+    recording: bool = False
     avatar: Optional[Any] = None
     join_meeting: Optional[bool] = True
     on_room_error: Optional[Callable[[Any], None]] = None
@@ -194,7 +197,7 @@ class JobContext:
         )
         self.room: Optional[VideoSDKHandler] = None
         self._shutdown_callbacks: list[Callable[[], Coroutine[None, None, None]]] = []
-
+        self._is_shutting_down: bool = False
     def _set_pipeline_internal(self, pipeline: Any) -> None:
         """Internal method called by pipeline constructors"""
         self._pipeline = pipeline
@@ -214,6 +217,8 @@ class JobContext:
     async def connect(self) -> None:
         """Connect to the room"""
         if self.room_options:
+            if not self.room_options.room_id:
+                self.room_options.room_id = get_room_id()
             custom_camera_video_track = None
             custom_microphone_audio_track = None
             sinks = []
@@ -236,6 +241,7 @@ class JobContext:
                     pipeline=self._pipeline,
                     loop=self._loop,
                     vision=self.room_options.vision,
+                    recording=self.room_options.recording,
                     custom_camera_video_track=custom_camera_video_track,
                     custom_microphone_audio_track=custom_microphone_audio_track,
                     audio_sinks=sinks,
@@ -263,15 +269,25 @@ class JobContext:
 
     async def shutdown(self) -> None:
         """Called by Worker during graceful shutdown"""
+        if self._is_shutting_down:
+            logger.info("JobContext already shutting down")
+            return
+        self._is_shutting_down = True
         for callback in self._shutdown_callbacks:
             try:
                 await callback()
             except Exception as e:
-                logger.error(f"Error in shutdown callback: {e}")
-
+                logger.error(f"Error in shutdown callback: {e}")        
         if self.room:
-            self.room.leave()
-            await self.room.cleanup()
+            try:
+                await self.room.leave()
+            except Exception as e:
+                logger.error(f"Error during room leave: {e}")
+            try:
+                if hasattr(self.room, "cleanup"):
+                    await self.room.cleanup()
+            except Exception as e:
+                logger.error(f"Error during room cleanup: {e}")
             self.room = None
 
     def add_shutdown_callback(
@@ -285,9 +301,16 @@ class JobContext:
             return await self.room.wait_for_participant(participant_id)
         else:
             raise ValueError("Room not initialized")
+def get_room_id() -> str:
+    url = "https://api.videosdk.live/v2/rooms"
+    headers = {
+        "Authorization": os.getenv("VIDEOSDK_AUTH_TOKEN")
+    }
+    response = requests.post(url, headers=headers)
+    response.raise_for_status()
+    return response.json()["roomId"]
 
-
-def get_current_job_context() -> Optional["JobContext"]:
+def get_current_job_context() -> Optional['JobContext']:
     """Get the current job context (used by pipeline constructors)"""
     return _current_job_context.get()
 

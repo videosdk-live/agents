@@ -1,7 +1,7 @@
 <!--BEGIN_BANNER_IMAGE-->
 <p align="center">
-  <a href="https://www.producthunt.com/products/video-sdk/launches/voice-agent-sdk?embed=true&utm_source=badge-featured&utm_medium=badge&utm_source=badge-voice&#0045;agent&#0045;sdk" target="_blank"><img src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=991216&theme=light&t=1752567949948" alt="Voice&#0032;Agent&#0032;SDK - The&#0032;Open&#0045;Source&#0032;Framework&#0032;For&#0032;Real&#0045;Time&#0032;AI&#0032;Voice | Product Hunt" style="width: 250px; height: 54px;" width="250" height="54" /></a>
   <img src="https://raw.githubusercontent.com/videosdk-community/ai-agent-examples/main/.github/banner.png" alt="VideoSDK AI Agents Banner" style="width:100%;">
+  <a href="https://www.producthunt.com/products/video-sdk/launches/voice-agent-sdk?embed=true&utm_source=badge-featured&utm_medium=badge&utm_source=badge-voice&#0045;agent&#0045;sdk" target="_blank"><img src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=991216&theme=light&t=1752567949948" alt="Voice&#0032;Agent&#0032;SDK - The&#0032;Open&#0045;Source&#0032;Framework&#0032;For&#0032;Real&#0045;Time&#0032;AI&#0032;Voice | Product Hunt" style="width: 250px; height: 54px;" width="250" height="54" /></a>
 </p>
 <!--END_BANNER_IMAGE-->
 
@@ -14,6 +14,7 @@ Open-source framework for developing real-time multimodal conversational AI agen
 [![YouTube](https://img.shields.io/badge/YouTube-VideoSDK-red)](https://www.youtube.com/c/VideoSDK)
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-VideoSDK-blue)](https://www.linkedin.com/company/video-sdk/)
 [![Discord](https://img.shields.io/badge/Discord-Join%20Us-7289DA)](https://discord.com/invite/f2WsNDN9S5)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/videosdk-live/agents)
 
 ## Overview
 
@@ -126,6 +127,10 @@ class VoiceAgent(Agent):
     async def on_enter(self) -> None:
         """Called when the agent first joins the meeting"""
         await self.session.say("Hi there! How can I help you today?")
+    
+    async def on_exit(self) -> None:
+      """Called when the agent exits the meeting"""
+        await self.session.say("Goodbye!")
 ```
 
 This code defines a basic voice agent with:
@@ -244,7 +249,7 @@ def make_context() -> JobContext:
         auth_token = "<VIDEOSDK_AUTH_TOKEN>", # When VIDEOSDK_AUTH_TOKEN is set in .env - DON'T include videosdk_auth
         name="Test Agent", 
         playground=True,
-        vision: True # Only available when using the Google Gemini Live API
+        # vision= True # Only available when using the Google Gemini Live API
     )
     
     return JobContext(room_options=room_options)
@@ -285,13 +290,14 @@ The framework supports integration with various AI models and tools, including:
 | Category                 | Services |
 |--------------------------|----------|
 | **Real-time Models**     | [OpenAI](https://docs.videosdk.live/ai_agents/plugins/realtime/openai) &#124; [Gemini](https://docs.videosdk.live/ai_agents/plugins/realtime/google-live-api) &#124; [AWSNovaSonic](https://docs.videosdk.live/ai_agents/plugins/realtime/aws-nova-sonic) |
-| **Speech-to-Text (STT)** | [OpenAI](https://docs.videosdk.live/ai_agents/plugins/stt/openai) &#124; [Google](https://docs.videosdk.live/ai_agents/plugins/stt/google) &#124; [Sarvam AI](https://docs.videosdk.live/ai_agents/plugins/stt/sarvam-ai) &#124; [Deepgram](https://docs.videosdk.live/ai_agents/plugins/stt/deepgram) &#124; [Cartesia](https://docs.videosdk.live/ai_agents/plugins/stt/cartesia-stt)|
+| **Speech-to-Text (STT)** | [OpenAI](https://docs.videosdk.live/ai_agents/plugins/stt/openai) &#124; [Google](https://docs.videosdk.live/ai_agents/plugins/stt/google) &#124; [Sarvam AI](https://docs.videosdk.live/ai_agents/plugins/stt/sarvam-ai) &#124; [Deepgram](https://docs.videosdk.live/ai_agents/plugins/stt/deepgram) &#124; [Cartesia](https://docs.videosdk.live/ai_agents/plugins/stt/cartesia-stt) &#124; [AssemblyAI](https://docs.videosdk.live/ai_agents/plugins/stt/assemblyai) &#124; [Navana](https://docs.videosdk.live/ai_agents/plugins/stt/navana)| 
 | **Language Models (LLM)**| [OpenAI](https://docs.videosdk.live/ai_agents/plugins/llm/openai) &#124; [Google](https://docs.videosdk.live/ai_agents/plugins/llm/google-llm) &#124; [Sarvam AI](https://docs.videosdk.live/ai_agents/plugins/llm/sarvam-ai-llm) &#124; [Anthropic](https://docs.videosdk.live/ai_agents/plugins/llm/anthropic-llm) &#124; [Cerebras](https://docs.videosdk.live/ai_agents/plugins/llm/Cerebras-llm) |
-| **Text-to-Speech (TTS)** | [OpenAI](https://docs.videosdk.live/ai_agents/plugins/tts/openai) &#124; [Google](https://docs.videosdk.live/ai_agents/plugins/tts/google-tts) &#124; [AWS Polly](https://docs.videosdk.live/ai_agents/plugins/tts/aws-polly-tts) &#124; [Sarvam AI](https://docs.videosdk.live/ai_agents/plugins/tts/sarvam-ai-tts) &#124; [ElevenLabs](https://docs.videosdk.live/ai_agents/plugins/tts/eleven-labs) &#124; [Cartesia](https://docs.videosdk.live/ai_agents/plugins/tts/cartesia-tts)  &#124; [Resemble AI](https://docs.videosdk.live/ai_agents/plugins/tts/resemble-ai-tts) &#124;[Smallest AI](https://docs.videosdk.live/ai_agents/plugins/tts/smallestai-tts) &#124; [Speechify](https://docs.videosdk.live/ai_agents/plugins/tts/speechify-tts) &#124; [InWorld](https://docs.videosdk.live/ai_agents/plugins/tts/inworld-ai-tts) &#124; [Neuphonic](https://docs.videosdk.live/ai_agents/plugins/tts/neuphonic-tts) &#124; [Rime AI](https://docs.videosdk.live/ai_agents/plugins/tts/rime-ai-tts) &#124; [Hume AI](https://docs.videosdk.live/ai_agents/plugins/tts/hume-ai-tts) &#124; [Groq](https://docs.videosdk.live/ai_agents/plugins/tts/groq-ai-tts) &#124; [LMNT AI](https://docs.videosdk.live/ai_agents/plugins/tts/lmnt-ai-tts) |
+| **Text-to-Speech (TTS)** | [OpenAI](https://docs.videosdk.live/ai_agents/plugins/tts/openai) &#124; [Google](https://docs.videosdk.live/ai_agents/plugins/tts/google-tts) &#124; [AWS Polly](https://docs.videosdk.live/ai_agents/plugins/tts/aws-polly-tts) &#124; [Sarvam AI](https://docs.videosdk.live/ai_agents/plugins/tts/sarvam-ai-tts) &#124; [ElevenLabs](https://docs.videosdk.live/ai_agents/plugins/tts/eleven-labs) &#124; [Cartesia](https://docs.videosdk.live/ai_agents/plugins/tts/cartesia-tts)  &#124; [Resemble AI](https://docs.videosdk.live/ai_agents/plugins/tts/resemble-ai-tts) &#124; [Smallest AI](https://docs.videosdk.live/ai_agents/plugins/tts/smallestai-tts) &#124; [Speechify](https://docs.videosdk.live/ai_agents/plugins/tts/speechify-tts) &#124; [InWorld](https://docs.videosdk.live/ai_agents/plugins/tts/inworld-ai-tts) &#124; [Neuphonic](https://docs.videosdk.live/ai_agents/plugins/tts/neuphonic-tts) &#124; [Rime AI](https://docs.videosdk.live/ai_agents/plugins/tts/rime-ai-tts) &#124; [Hume AI](https://docs.videosdk.live/ai_agents/plugins/tts/hume-ai-tts) &#124; [Groq](https://docs.videosdk.live/ai_agents/plugins/tts/groq-ai-tts) &#124; [LMNT AI](https://docs.videosdk.live/ai_agents/plugins/tts/lmnt-ai-tts) &#124; [Papla Media](https://docs.videosdk.live/ai_agents/plugins/tts/papla-media) |
 | **Voice Activity Detection (VAD)** | [SileroVAD](https://docs.videosdk.live/ai_agents/plugins/silero-vad) |
 | **Turn Detection Model** | [Turn Detector](https://docs.videosdk.live/ai_agents/plugins/turn-detector) |
 | **Virtual Avatar** | [Simli](https://docs.videosdk.live/ai_agents/plugins/avatar/simli) |
 | **SIP Trunking** | [Twilio](https://docs.videosdk.live/ai_agents/sip) |
+| **Denoise** | [RNNoise](https://docs.videosdk.live/ai_agents/plugins/denoise) |
 
 ## Examples
 

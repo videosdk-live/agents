@@ -153,7 +153,6 @@ class DirectRoomOptions:
     room_name: Optional[str] = None
     auth_token: Optional[str] = None
 
-
 class Worker:
     """
     VideoSDK worker that manages job execution and backend registration.
@@ -189,7 +188,6 @@ class Worker:
         self._status_update_debounce_seconds = (
             2.0  # Minimum 2 seconds between status updates
         )
-
         # Initialize tracing
         self._tracing = Tracing.with_handle("worker")
         self._worker_load_graph = Tracing.add_graph(

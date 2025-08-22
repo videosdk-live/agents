@@ -77,14 +77,19 @@ async def _agent_entrypoint(ctx: JobContext, agent_class: Type[Agent], pipeline:
             await session.close()
         await ctx.shutdown()
 
-def _make_context(room_id: str, room_name: str) -> JobContext:
-    return JobContext(room_options=RoomOptions(room_id=room_id, name=room_name, playground=True))
+def _make_context(room_id: str, room_name: str, call_id: Optional[str] = None) -> JobContext:
+    ctx = JobContext(room_options=RoomOptions(room_id=room_id, name=room_name, playground=True))
+    if call_id:
+        ctx.call_id = call_id
+    return ctx
+
 
 def launch_agent_job(
     room_id: str,
     agent_class: Type[Agent],
     pipeline: Callable,
     agent_config: Optional[Dict[str, Any]] = None,
+    call_id: Optional[str] = None,
 ) -> WorkerJob:
     """Creates and starts a WorkerJob using a pipeline factory."""
     if agent_config is None:
@@ -99,7 +104,8 @@ def launch_agent_job(
     context_factory_partial = functools.partial(
         _make_context,
         room_id=room_id,
-        room_name=agent_config.get("room_name", "AI Call")
+        room_name=agent_config.get("room_name", "AI Call"),
+        call_id=call_id
     )
     job = WorkerJob(entrypoint=entrypoint_partial, jobctx=context_factory_partial)
     job.start()
@@ -165,15 +171,18 @@ class SIPManager:
         try:
             room_id = await self.meeting_service.create_room()
             webhook_url = f"{self.base_url}/sip/answer/{room_id}"
+            # Make the outgoing call and get the call_id (sid)
+            result = await self.provider.make_outgoing_call(to_number=to_number, webhook_url=webhook_url)
+            call_id = result.get("sid")
             agent_job = launch_agent_job(
                 room_id=room_id,
                 agent_class=agent_class,
                 pipeline=pipeline,
-                agent_config=agent_config
+                agent_config=agent_config,
+                call_id=call_id
             )
             self.active_sessions[room_id] = agent_job
             await asyncio.sleep(1)
-            result = await self.provider.make_outgoing_call(to_number=to_number, webhook_url=webhook_url)
             result["room_id"] = room_id
             return result
         except Exception as e:
@@ -188,11 +197,20 @@ class SIPManager:
     ) -> tuple:
         try:
             room_id = await self.meeting_service.create_room()
+            call_id = webhook_data.get("CallSid")
+            caller_number = webhook_data.get("From")
+            called_number = webhook_data.get("To")
+            if agent_config is None:
+                agent_config = {}
+            agent_config['caller_number'] = caller_number
+            agent_config['called_number'] = called_number
+            agent_config['call_id'] = call_id
             agent_job = launch_agent_job(
                 room_id=room_id,
                 agent_class=agent_class,
                 pipeline=pipeline,
-                agent_config=agent_config
+                agent_config=agent_config,
+                call_id=call_id
             )
             self.active_sessions[room_id] = agent_job
             sip_endpoint = self.meeting_service.get_sip_endpoint(room_id)

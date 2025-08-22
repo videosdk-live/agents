@@ -40,6 +40,7 @@ from .agent_session import AgentSession
 from .conversation_flow import ConversationFlow
 from .realtime_base_model import RealtimeBaseModel
 from .realtime_pipeline import RealTimePipeline
+from .metrics import realtime_metrics_collector
 from .utils import (
     function_tool,
     is_function_tool,
@@ -146,6 +147,7 @@ __all__ = [
     "JobContext",
     "RoomOptions",
     "Options",
+    "realtime_metrics_collector",
     "ImageContent",
     "Worker",
     "WorkerOptions",

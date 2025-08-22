@@ -22,7 +22,7 @@ classifiers = [
 ]
 dependencies = [
     "uvicorn",
-    "videosdk>=0.1.0",
+    "videosdk>=0.2.0",
     "numpy",
     "httpx",
     "aiohttp",
@@ -42,6 +42,10 @@ dependencies = [
     "mcp",
     "PyYAML",
     "urllib3",
+    "opentelemetry-sdk>=1.34.1",
+    "opentelemetry-exporter-otlp-proto-http>=1.34.1",
+    "requests",
+    "protobuf>=5.29,<6.0",
 ]
 
 
@@ -49,30 +53,32 @@ dependencies = [
 videosdk = "videosdk.agents.cli:main"
 
 [project.optional-dependencies]
-openai = ["videosdk-plugins-openai>=0.0.21"]
-google = ["videosdk-plugins-google>=0.0.21"]  
-aws = ["videosdk-plugins-aws>=0.0.21"] 
-deepgram = ["videosdk-plugins-deepgram>=0.0.21"] 
-elevenlabs = ["videosdk-plugins-elevenlabs>=0.0.21"] 
-silero = ["videosdk-plugins-silero>=0.0.21"]
-turn-detector = ["videosdk-plugins-turn-detector>=0.0.21"]
-sarvamai = ["videosdk-plugins-sarvamai>=0.0.21"] 
-cartesia = ["videosdk-plugins-cartesia>=0.0.21"] 
-resemble = ["videosdk-plugins-resemble>=0.0.21"] 
-smallestai = ["videosdk-plugins-smallestai>=0.0.21"]
-simli = ["videosdk-plugins-simli>=0.0.21"]
-anthropic = ["videosdk-plugins-anthropic>=0.0.21"] 
-cerebras = ["videosdk-plugins-cerebras>=0.0.21"] 
-groq = ["videosdk-plugins-groq>=0.0.21"] 
-humeai = ["videosdk-plugins-humeai>=0.0.21"] 
-inworldai = ["videosdk-plugins-inworldai>=0.0.21"]  
-lmnt = ["videosdk-plugins-lmnt>=0.0.21"]
-neuphonic = ["videosdk-plugins-neuphonic>=0.0.21"] 
-rime = ["videosdk-plugins-rime>=0.0.21"]
-speechify = ["videosdk-plugins-speechify>=0.0.21"]
-sip = ["videosdk-plugins-sip>=0.0.21"]
-
-
+anthropic = ["videosdk-plugins-anthropic>=0.0.26"] 
+assemblyai = ["videosdk-plugins-assemblyai>=0.0.26"]
+aws = ["videosdk-plugins-aws>=0.0.26"] 
+cartesia = ["videosdk-plugins-cartesia>=0.0.26"] 
+cerebras = ["videosdk-plugins-cerebras>=0.0.26"] 
+deepgram = ["videosdk-plugins-deepgram>=0.0.26"] 
+elevenlabs = ["videosdk-plugins-elevenlabs>=0.0.26"] 
+google = ["videosdk-plugins-google>=0.0.26"]  
+groq = ["videosdk-plugins-groq>=0.0.26"] 
+humeai = ["videosdk-plugins-humeai>=0.0.26"] 
+inworldai = ["videosdk-plugins-inworldai>=0.0.26"]  
+lmnt = ["videosdk-plugins-lmnt>=0.0.26"]
+navana = ["videosdk-plugins-navana>=0.0.26"]
+neuphonic = ["videosdk-plugins-neuphonic>=0.0.26"] 
+openai = ["videosdk-plugins-openai>=0.0.26"]
+papla = ["videosdk-plugins-papla>=0.0.26"] 
+resemble = ["videosdk-plugins-resemble>=0.0.26"] 
+rime = ["videosdk-plugins-rime>=0.0.26"]
+rnnoise = ["videosdk-plugins-rnnoise>=0.0.26"]
+sarvamai = ["videosdk-plugins-sarvamai>=0.0.26"] 
+silero = ["videosdk-plugins-silero>=0.0.26"]
+simli = ["videosdk-plugins-simli>=0.0.26"]
+sip = ["videosdk-plugins-sip>=0.0.26"]
+smallestai = ["videosdk-plugins-smallestai>=0.0.26"]
+speechify = ["videosdk-plugins-speechify>=0.0.26"]
+turn-detector = ["videosdk-plugins-turn-detector>=0.0.26"]
 
 [tool.hatch.version]
 path = "videosdk/agents/version.py"
