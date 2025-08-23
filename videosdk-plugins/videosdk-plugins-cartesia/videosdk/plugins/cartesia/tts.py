@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 CARTESIA_SAMPLE_RATE = 24000
 CARTESIA_CHANNELS = 1
 DEFAULT_MODEL = "sonic-2"
-DEFAULT_VOICE_ID = "794f9389-aac1-45b6-b727-9d9369183238"
+DEFAULT_VOICE_ID = "794f9389-aac1-45b6-b726-9d9369183238"
 
 class CartesiaTTS(TTS):
     def __init__(

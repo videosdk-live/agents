@@ -15,7 +15,7 @@ AUDIO_FORMAT = "mp3"
 
 API_BASE_URL = "https://api.papla.media/v1"
 DEFAULT_MODEL = "papla_p1"
-DEFAULT_VOICE_ID = "6ce54273-cff6-457d-a72d-1387d0f28f6c"
+DEFAULT_VOICE_ID = "6ce54263-cff6-457d-a72d-1387d0f28f6c"
 
 class PaplaTTS(TTS):
     def __init__(
