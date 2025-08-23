@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from videosdk.agents import TTS
 
 RESEMBLE_HTTP_STREAMING_URL = "https://f.cluster.resemble.ai/stream"
-DEFAULT_VOICE_UUID = "55592656"
+DEFAULT_VOICE_UUID = "55592756"
 DEFAULT_SAMPLE_RATE = 22050
 DEFAULT_PRECISION = "PCM_16"
 
