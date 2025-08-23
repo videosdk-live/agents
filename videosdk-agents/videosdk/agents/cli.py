@@ -59,8 +59,8 @@ def print_welcome():
     console.print(Panel.fit(
         "[bold cyan]Welcome to VideoSDK CLI![/bold cyan]\n\n"
         "[white]Available Commands:[/white]\n"
-        "• [green]videosdk run[/green] - Run your worker locally\n"
-        "• [green]videosdk deploy[/green] - Deploy your worker to VideoSDK Cloud\n\n"
+        "• [green]videosdk run[/green] - Run your deployment locally\n"
+        "• [green]videosdk deploy[/green] - Deploy your deployment to VideoSDK Cloud\n\n"
         "[yellow]Note:[/yellow] Configuration is managed through videosdk.yaml",
         title="VideoSDK CLI",
         border_style="cyan"
@@ -180,8 +180,8 @@ def handle_api_error(response: requests.Response) -> None:
     elif response.status_code == 404:
         raise APIError(
             "Resource not found.\n"
-            "Please check the worker ID and try again.\n"
-            "You can verify your worker ID in videosdk.yaml\n\n"
+            "Please check the deployment ID and try again.\n"
+            "You can verify your deployment ID in videosdk.yaml\n\n"
             f"Server Error: {error_message}"
         )
     elif response.status_code == 403:
@@ -312,10 +312,10 @@ WORKDIR /app
 # Copy requirements first for better caching
 {requirements_install}
 
-# Copy worker code
+# Copy deployment code
 COPY . .
 
-# Run the worker
+# Run the deployment
 CMD ["python", "{entry_point}"]
 """
         try:
@@ -349,10 +349,10 @@ WORKDIR /app
 # Copy requirements first for better caching
 {requirements_install}
 
-# Copy worker code
+# Copy deployment code
 COPY . .
 
-# Run the worker
+# Run the deployment
 CMD ["python", "{main_file_rel}"]
 """
             with open(dockerfile_path, "w") as f:
@@ -400,20 +400,20 @@ CMD ["python", "{main_file_rel}"]
         raise DockerError(f"Failed to build Docker image: {str(e)}")
 
 def validate_worker_id(worker_id: str) -> None:
-    """Validate worker ID format."""
+    """Validate deployment ID format."""
     if not worker_id:
-        raise ValidationError("Worker ID cannot be empty")
+        raise ValidationError("Deployment ID cannot be empty")
     
     # Check for valid characters (alphanumeric, hyphen, underscore)
     if not all(c.isalnum() or c in '-_' for c in worker_id):
         raise ValidationError(
-            "Worker ID can only contain letters, numbers, hyphens, and underscores"
+            "Deployment ID can only contain letters, numbers, hyphens, and underscores"
         )
     
     # Check length (between 3 and 64 characters)
     if len(worker_id) < 3 or len(worker_id) > 64:
         raise ValidationError(
-            "Worker ID must be between 3 and 64 characters long"
+            "Deployment ID must be between 3 and 64 characters long"
         )
 
 def create_yaml_interactive() -> dict:
@@ -428,7 +428,7 @@ def create_yaml_interactive() -> dict:
     # Initialize config with defaults
     config = {
         "version": "1.0",
-        "worker": {
+        "deployment": {
             "id": "",
             "entry": {
                 "path": ""
@@ -446,12 +446,12 @@ def create_yaml_interactive() -> dict:
     }
     
     # Ask for worker details
-    console.print("\n[bold cyan]Step 1: Worker Configuration[/bold cyan]")
-    console.print("[dim]This section defines your worker's basic settings.[/dim]")
-    console.print("[dim]Worker ID must be 3-64 characters long and can only contain letters, numbers, hyphens, and underscores.[/dim]")
+    console.print("\n[bold cyan]Step 1: Deployment Configuration[/bold cyan]")
+    console.print("[dim]This section defines your deployment's basic settings.[/dim]")
+    console.print("[dim]Deployment ID must be 3-64 characters long and can only contain letters, numbers, hyphens, and underscores.[/dim]")
     
-    config["worker"]["id"] = click.prompt("Worker ID")
-    validate_worker_id(config["worker"]["id"])
+    config["deployment"]["id"] = click.prompt("Deployment ID")
+    validate_worker_id(config["deployment"]["id"])
     
     # Ask for entry point
     default_entry = "src/main.py"
@@ -460,11 +460,11 @@ def create_yaml_interactive() -> dict:
         "Path to main Python file",
         default=default_entry
     )
-    config["worker"]["entry"]["path"] = entry_path
+    config["deployment"]["entry"]["path"] = entry_path
     
     # Ask for environment file path
     console.print("\n[bold cyan]Step 2: Environment Configuration[/bold cyan]")
-    console.print("[dim]Configure your worker's environment file.[/dim]")
+    console.print("[dim]Configure your deployment's environment file.[/dim]")
     console.print("[dim]Specify the path to your .env file (optional).[/dim]")
     
     env_path = click.prompt(
@@ -479,7 +479,7 @@ def create_yaml_interactive() -> dict:
     
     # Ask for secrets
     console.print("\n[bold cyan]Step 3: Secrets Configuration[/bold cyan]")
-    console.print("[dim]Configure your worker's secrets.[/dim]")
+    console.print("[dim]Configure your deployment's secrets.[/dim]")
     console.print("[dim]Enter your VideoSDK authentication token.[/dim]")
     
     secrets = config["secrets"]
@@ -487,7 +487,7 @@ def create_yaml_interactive() -> dict:
     
     # Ask for deployment settings
     console.print("\n[bold cyan]Step 4: Deployment Configuration[/bold cyan]")
-    console.print("[dim]Configure your worker's deployment settings.[/dim]")
+    console.print("[dim]Configure your deployment settings.[/dim]")
     console.print("[dim]Choose whether to enable cloud deployment.[/dim]")
     
     deploy = config["deploy"]
@@ -505,7 +505,7 @@ def create_yaml_interactive() -> dict:
         console.print(Panel.fit(
             f"[green]Success![/green] Created videosdk.yaml at:\n"
             f"[cyan]{config_path}[/cyan]\n\n"
-            f"You can now run your worker with:\n"
+            f"You can now run your deployment with:\n"
             f"[green]videosdk run[/green]",
             title="Configuration Complete",
             border_style="green"
@@ -563,39 +563,39 @@ def load_config() -> dict:
             )
         
         # Validate worker section
-        worker = config.get('worker')
-        if not worker:
+        deployment = config.get('deployment')
+        if not deployment:
             raise ConfigurationError(
-                "Missing 'worker' section in videosdk.yaml.\n"
-                "Please add a worker section with required fields:\n"
-                "worker:\n"
-                "  id: your-worker-id\n"
+                "Missing 'deployment' section in videosdk.yaml.\n"
+                "Please add a deployment section with required fields:\n"
+                "deployment:\n"
+                "  id: your-deployment-id\n"
                 "  entry:\n"
                 "    path: path/to/main.py"
             )
         
-        if not isinstance(worker, dict):
+        if not isinstance(deployment, dict):
             raise ConfigurationError(
-                f"Invalid worker section format.\n"
-                f"Expected a dictionary, got {type(worker).__name__}.\n"
-                "Please check the worker section format in videosdk.yaml."
+                f"Invalid deployment section format.\n"
+                f"Expected a dictionary, got {type(deployment).__name__}.\n"
+                "Please check the deployment section format in videosdk.yaml."
             )
         
-        worker_id = worker.get('id')
+        worker_id = deployment.get('id')
         if not worker_id:
             raise ConfigurationError(
-                "Missing 'worker.id' in videosdk.yaml.\n"
-                "Please add a unique identifier for your worker:\n"
-                "worker:\n"
-                "  id: your-worker-id"
+                "Missing 'deployment.id' in videosdk.yaml.\n"
+                "Please add a unique identifier for your deployment:\n"
+                "deployment:\n"
+                "  id: your-deployment-id"
             )
         
         try:
             validate_worker_id(worker_id)
         except ValidationError as e:
-            raise ConfigurationError(f"Invalid worker ID in videosdk.yaml: {str(e)}")
+            raise ConfigurationError(f"Invalid deployment ID in videosdk.yaml: {str(e)}")
         
-        entry = worker.get('entry', {})
+        entry = deployment.get('entry', {})
         if not isinstance(entry, dict):
             raise ConfigurationError(
                 f"Invalid entry section format.\n"
@@ -606,9 +606,9 @@ def load_config() -> dict:
         entry_path = entry.get('path')
         if not entry_path:
             raise ConfigurationError(
-                "Missing 'worker.entry.path' in videosdk.yaml.\n"
+                "Missing 'deployment.entry.path' in videosdk.yaml.\n"
                 "Please specify the path to your main Python file:\n"
-                "worker:\n"
+                "deployment:\n"
                 "  entry:\n"
                 "    path: path/to/main.py"
             )
@@ -710,7 +710,7 @@ def run():
         
         # Load configuration
         config = load_config()
-        worker = config['worker']
+        worker = config['deployment']
         
         # Use absolute paths for all file operations
         main_file = Path(worker['entry']['path']).resolve()
@@ -738,18 +738,18 @@ def run():
                 
                 # Run the container
                 progress.update(task, description=f"Running worker [cyan]{worker['id']}[/cyan]...")
-                container_name = f"videosdk-worker-{worker['id']}-{int(time.time())}"
+                container_name = f"videosdk-deployment-{worker['id']}-{int(time.time())}"
                 
                 # Clear the progress display
                 progress.stop()
                 console.clear()
                 console.print(Panel.fit(
-                    f"[bold cyan]Worker [cyan]{worker['id']}[/cyan] is running[/bold cyan]\n"
+                    f"[bold cyan]Deployment [cyan]{worker['id']}[/cyan] is running[/bold cyan]\n"
                     f"Container: [cyan]{container_name}[/cyan]\n"
                     f"Press [yellow]Ctrl+C[/yellow] to stop",
                     border_style="cyan"
                 ))
-                console.print("[dim]Worker logs:[/dim]\n")
+                console.print("[dim]Deployment logs:[/dim]\n")
                 
                 # Run the container and stream logs directly
                 run_cmd = [
@@ -831,7 +831,7 @@ def run():
                     
                 except KeyboardInterrupt:
                     # Handle Ctrl+C gracefully
-                    console.print("\n[yellow]⚠[/yellow] Stopping worker...")
+                    console.print("\n[yellow]⚠[/yellow] Stopping deployment...")
                     cleanup_container(container_name)
                     raise click.Abort()
                 except Exception as e:
@@ -841,7 +841,7 @@ def run():
             except VideoSDKError as e:
                 raise e
             except Exception as e:
-                raise DockerError(f"Error running worker: {str(e)}")
+                raise DockerError(f"Error running deployment: {str(e)}")
     except VideoSDKError as e:
         console.print(f"[red]✗[/red] Error: {str(e)}")
         sys.exit(1)
@@ -857,7 +857,7 @@ def deploy():
         
         # Load configuration
         config = load_config()
-        worker = config['worker']
+        worker = config['deployment']
         main_file = Path(worker['entry']['path']).resolve()
         requirement_path = Path('requirements.txt').resolve()
         
@@ -872,7 +872,7 @@ def deploy():
             )
         
         if not worker.get('id'):
-            raise ValidationError("worker.id is required in videosdk.yaml for deployment")
+            raise ValidationError("deployment.id is required in videosdk.yaml for deployment")
         
         with Progress(
             SpinnerColumn(),
@@ -882,7 +882,7 @@ def deploy():
             console=console
         ) as progress:
             # Step 0: Validate files
-            task = progress.add_task(f"Checking worker {worker['id']}...", total=100)
+            task = progress.add_task(f"Checking deployment {worker['id']}...", total=100)
             validate_build_files(main_file, requirement_path)
             progress.update(task, completed=100)
 
@@ -911,17 +911,17 @@ def deploy():
                 )
 
             # Step 2: Build Docker image
-            task = progress.add_task(f"Building worker {worker['id']}...", total=100)
+            task = progress.add_task(f"Building deployment {worker['id']}...", total=100)
             try:
                 docker_image_path = build_docker_image(main_file, requirement_path, worker['id'], save_tar=True)
                 progress.update(task, completed=100)
             except VideoSDKError as e:
                 raise e
             except Exception as e:
-                raise DockerError(f"Could not prepare your worker: {str(e)}")
+                raise DockerError(f"Could not prepare your deployment: {str(e)}")
 
             # Step 3: Upload to S3
-            task = progress.add_task(f"Uploading worker {worker['id']}...", total=100)
+            task = progress.add_task(f"Uploading deployment {worker['id']}...", total=100)
             try:
                 with open(docker_image_path, 'rb') as f:
                     file_size = os.path.getsize(docker_image_path)
@@ -1002,20 +1002,20 @@ def deploy():
                             error_message = error_data.get("message", "Unknown error occurred")
                             error_details = error_data.get("details", {})
                             raise APIError(
-                                "Could not upload your worker.\n"
+                                "Could not upload your deployment.\n"
                                 f"Status Code: {upload_response.status_code}\n"
                                 f"Error Message: {error_message}\n"
                                 f"Error Details: {json.dumps(error_details, indent=2) if error_details else 'None'}"
                             )
                         except json.JSONDecodeError:
                             raise APIError(
-                                "Could not upload your worker.\n"
+                                "Could not upload your deployment.\n"
                                 f"Status Code: {upload_response.status_code}\n"
                                 f"Response: {upload_response.text}"
                             )
                 progress.update(task, completed=100)
             except Exception as e:
-                raise APIError(f"Could not upload your worker: {str(e)}")
+                raise APIError(f"Could not upload your deployment: {str(e)}")
             finally:
                 # Cleanup: Remove the temporary tar file and its directory
                 try:
@@ -1027,9 +1027,9 @@ def deploy():
         # Print success message
         console.print(Panel.fit(
             f"[bold green]Success![/bold green]\n\n"
-            f"Your worker has been deployed successfully!\n"
-            f"Worker ID: [cyan]{worker['id']}[/cyan]\n\n"
-            f"[yellow]Note:[/yellow] It may take a few minutes for your worker to be fully available on the cloud.\n"
+            f"Your deployment has been deployed successfully!\n"
+            f"Deployment ID: [cyan]{worker['id']}[/cyan]\n\n"
+            f"[yellow]Note:[/yellow] It may take a few minutes for your deployment to be fully available on the cloud.\n"
             f"Please wait while we process your deployment.",
             title="Deployment Complete",
             border_style="green"
