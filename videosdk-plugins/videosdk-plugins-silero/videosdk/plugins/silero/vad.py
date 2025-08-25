@@ -57,7 +57,7 @@ class SileroVAD(BaseVAD):
         self._pub_silence_duration = 0.0
         self._pub_timestamp = 0.0
 
-        self._input_copy_remaining_fract = 0.0
+        self._remaining_input_fraction = 0.0
 
         self._input_accumulator = np.array([], dtype=np.int16)
         self._inference_accumulator = np.array([], dtype=np.float32)
@@ -108,13 +108,15 @@ class SileroVAD(BaseVAD):
                 self._pub_timestamp += window_duration
 
                 resampling_ratio = self._input_sample_rate / self._model_sample_rate
-                to_copy = self._model.frame_size * \
-                    resampling_ratio + self._input_copy_remaining_fract
-                to_copy_int = int(to_copy)
-                self._input_copy_remaining_fract = to_copy - to_copy_int
 
-                if len(self._input_accumulator) >= to_copy_int:
-                    self._input_accumulator = self._input_accumulator[to_copy_int:]
+                _copy = self._model.frame_size * \
+                    resampling_ratio + self._remaining_input_fraction
+                int_copy = int(_copy)
+
+                self._remaining_input_fraction = _copy - int_copy
+
+                if len(self._input_accumulator) >= int_copy:
+                    self._input_accumulator = self._input_accumulator[int_copy:]
 
                 if self._pub_speaking:
                     self._pub_speech_duration += window_duration
