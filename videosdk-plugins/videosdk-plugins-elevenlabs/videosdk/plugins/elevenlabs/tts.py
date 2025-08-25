@@ -198,10 +198,10 @@ class ElevenLabsTTS(TTS):
             if isinstance(text, str):
                 await self._chunked_synthesis(text, voice_id)
             else:
-                full_text = ""
-                async for chunk in text:
-                    full_text += chunk
-                await self._chunked_synthesis(full_text, voice_id)
+                async for segment in segment_text(text):
+                    if self._should_stop:
+                        break
+                    await self._chunked_synthesis(segment, voice_id)
 
         finally:
             for task in [self._send_task, self._recv_task]:
