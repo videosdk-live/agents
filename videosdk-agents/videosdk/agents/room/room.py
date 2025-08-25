@@ -71,7 +71,6 @@ class VideoSDKHandler:
         self.on_session_end = on_session_end
         self._session_ended = False
         self._session_end_task = None
-        self._has_left_meeting = False  # Track if we've already left the meeting
 
         # VideoSDK connection
         self.signaling_base_url = signaling_base_url
@@ -128,24 +127,12 @@ class VideoSDKHandler:
         if self.signaling_base_url is not None:
             self.meeting_config["signaling_base_url"] = self.signaling_base_url
 
-        self.pipeline = pipeline
-        self.audio_listener_tasks = {}
-        self.meeting = None
         self.attributes = {}
-        self.participants_data = {}
-        self.video_listener_tasks = {}
-        self.vision = vision
         self.on_room_error = on_room_error
         self._participant_joined_events: dict[str, asyncio.Event] = {}
-        self._first_participant_event = asyncio.Event()
         self._left: bool = False
         # Session management
         self.auto_end_session = auto_end_session
-        self.session_timeout_seconds = session_timeout_seconds
-        self.on_session_end = on_session_end
-        self._session_end_task: Optional[asyncio.Task] = None
-        self._session_ended = False
-        self._non_agent_participant_count = 0
 
     def init_meeting(self):
         self._left: bool = False
