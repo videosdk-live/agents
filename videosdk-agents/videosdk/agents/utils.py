@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable, Callable, Optional, get_type_hints, Annotated, get_origin, get_args, Literal
+from typing import Any, Protocol, runtime_checkable, Callable, Optional, get_type_hints, Annotated, get_origin, get_args, Literal, AsyncIterator
 from functools import wraps
 import inspect
 from docstring_parser import parse_from_object
@@ -12,6 +12,7 @@ from pydantic.fields import FieldInfo
 from abc import abstractmethod
 import json
 import asyncio
+
 @dataclass
 class FunctionToolInfo:
     name: str
@@ -369,3 +370,69 @@ def build_nova_sonic_schema(function_tool: FunctionTool) -> dict[str, Any]:
             }
         }
     }
+
+async def segment_text(
+    chunks: AsyncIterator[str],
+    delimiters: str = ".?!,;:\n",
+    keep_delimiter: bool = True,
+    min_chars: int = 50,
+    min_words: int = 12,
+    max_buffer: int = 600,
+) -> AsyncIterator[str]:
+    """
+    Segment an async stream of text on delimiters or soft boundaries to reduce TTS latency.
+    Yields segments while keeping the delimiter if requested.
+    """
+    buffer = ""
+
+    def words_count(s: str) -> int:
+        return len(s.split())
+
+    def find_first_delim_index(s: str) -> int:
+        indices = [i for d in delimiters if (i := s.find(d)) != -1]
+        return min(indices) if indices else -1
+
+    async for chunk in chunks:
+        if not chunk:
+            continue
+        buffer += chunk
+
+        while True:
+            di = find_first_delim_index(buffer)
+            if di != -1:
+                seg = buffer[: di + (1 if keep_delimiter else 0)]
+                yield seg
+                buffer = buffer[di + 1 :].lstrip()
+                continue
+            else:
+                if len(buffer) >= max_buffer or words_count(buffer) >= (min_words * 2):
+                    target = max(min_chars, min(len(buffer), max_buffer))
+                    cut_idx = buffer.rfind(" ", 0, target)
+                    if cut_idx == -1:
+                        cut_idx = target
+                    seg = buffer[:cut_idx].rstrip()
+                    if seg:
+                        yield seg
+                    buffer = buffer[cut_idx:].lstrip()
+                    continue
+                break
+
+    if buffer:
+        yield buffer
+
+async def graceful_cancel(*tasks: asyncio.Task) -> None:
+    """Simple utility to cancel tasks and wait for them to complete"""
+    if not tasks:
+        return
+
+    for task in tasks:
+        if not task.done():
+            task.cancel()
+    
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(*tasks, return_exceptions=True),
+            timeout=0.5
+        )
+    except asyncio.TimeoutError:
+        pass

@@ -8,7 +8,7 @@ import json
 import base64
 import numpy as np
 
-from videosdk.agents import TTS
+from videosdk.agents import TTS, segment_text
 
 try:
     from scipy import signal
@@ -60,41 +60,48 @@ class HumeAITTS(TTS):
         **kwargs: Any,
     ) -> None:
         try:
-            if isinstance(text, AsyncIterator):
-                full_text = "".join([chunk async for chunk in text])
-            else:
-                full_text = text
-
-            if not full_text.strip():
-                return
-
             if not self.audio_track or not self.loop:
                 self.emit("error", "Audio track not set")
                 return
 
-            utterance = {"text": full_text, "speed": kwargs.get("speed", self.speed)}
-            if self.instant_mode:
-                utterance["voice"] = {
-                    "name": voice_id or self.voice,
-                    "provider": "HUME_AI",
-                }
-
-            payload = {
-                "utterances": [utterance],
-                "format": {"type": self.response_format},
-                "instant_mode": self.instant_mode,
-                "strip_headers": False,
-            }
-
-            await self._stream_synthesis(payload)
+            if isinstance(text, AsyncIterator):
+                async for segment in segment_text(text):
+                    await self._synthesize_audio(segment, voice_id, **kwargs)
+            else:
+                await self._synthesize_audio(text, voice_id, **kwargs)
 
         except Exception as e:
             self.emit("error", f"Synthesis failed: {str(e)}")
 
+    async def _synthesize_audio(self, text: str, voice_id: Optional[str] = None, **kwargs: Any) -> None:
+        """Synthesize a single text segment"""
+        if not text.strip():
+            return
+
+        utterance = {
+            "text": text,
+            "speed": kwargs.get("speed", self.speed)
+        }
+        if self.instant_mode:
+            utterance["voice"] = {
+                "name": voice_id or self.voice, "provider": "HUME_AI"}
+
+        payload = {
+            "utterances": [utterance],
+            "format": {"type": self.response_format},
+            "instant_mode": self.instant_mode,
+            "strip_headers": False,
+        }
+
+        await self._stream_synthesis(payload)
+
     async def _stream_synthesis(self, payload: dict) -> None:
         """Stream audio from Hume AI API"""
         url = f"{API_BASE_URL}/tts/stream/json"
-        headers = {"X-Hume-Api-Key": self.api_key, "Content-Type": "application/json"}
+        headers = {
+            "X-Hume-Api-Key": self.api_key,
+            "Content-Type": "application/json"
+        }
 
         try:
             async with self._session.stream(
@@ -112,11 +119,11 @@ class HumeAITTS(TTS):
                             try:
                                 data = json.loads(line)
                                 if "audio" in data and data["audio"]:
-                                    audio_bytes = base64.b64decode(data["audio"])
+                                    audio_bytes = base64.b64decode(
+                                        data["audio"])
                                     if self.response_format == "wav":
                                         audio_bytes = self._remove_wav_header(
-                                            audio_bytes
-                                        )
+                                            audio_bytes)
                                     await self._stream_audio_chunks(audio_bytes)
                             except json.JSONDecodeError:
                                 continue
@@ -127,7 +134,8 @@ class HumeAITTS(TTS):
                         if "audio" in data and data["audio"]:
                             audio_bytes = base64.b64decode(data["audio"])
                             if self.response_format == "wav":
-                                audio_bytes = self._remove_wav_header(audio_bytes)
+                                audio_bytes = self._remove_wav_header(
+                                    audio_bytes)
                             await self._stream_audio_chunks(audio_bytes)
                     except json.JSONDecodeError:
                         pass

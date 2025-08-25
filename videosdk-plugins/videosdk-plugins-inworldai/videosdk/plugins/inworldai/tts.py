@@ -7,7 +7,7 @@ import json
 import httpx
 import asyncio
 
-from videosdk.agents import TTS
+from videosdk.agents import TTS, segment_text
 
 INWORLD_SAMPLE_RATE = 24000
 INWORLD_CHANNELS = 1
@@ -50,7 +50,8 @@ class InworldAITTS(TTS):
         self._auth_header = f"Basic {self.api_key}"
 
         self._http_client = httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=15.0, read=30.0, write=5.0, pool=5.0),
+            timeout=httpx.Timeout(connect=15.0, read=30.0,
+                                  write=5.0, pool=5.0),
             follow_redirects=True,
             limits=httpx.Limits(
                 max_connections=50,
@@ -78,18 +79,15 @@ class InworldAITTS(TTS):
             **kwargs: Additional provider-specific arguments
         """
         try:
-            if isinstance(text, AsyncIterator):
-                full_text = ""
-                async for chunk in text:
-                    full_text += chunk
-            else:
-                full_text = text
-
             if not self.audio_track or not self.loop:
                 self.emit("error", "Audio track or event loop not set")
                 return
 
-            await self._synthesize_streaming(full_text, voice_id)
+            if isinstance(text, AsyncIterator):
+                async for segment in segment_text(text):
+                    await self._synthesize_streaming(segment, voice_id)
+            else:
+                await self._synthesize_streaming(text, voice_id)
 
         except Exception as e:
             self.emit("error", f"InworldAI TTS synthesis failed: {str(e)}")
@@ -134,42 +132,39 @@ class InworldAITTS(TTS):
                         if "error" in data:
                             error = data["error"]
                             self.emit(
-                                "error",
-                                f"InworldAI API error: {error.get('message', 'Unknown error')}",
-                            )
+                                "error", f"InworldAI API error: {error.get('message', 'Unknown error')}")
                             return
 
                         if "result" in data and "audioContent" in data["result"]:
                             audio_content_b64 = data["result"]["audioContent"]
                             if audio_content_b64:
-                                audio_bytes = base64.b64decode(audio_content_b64)
+                                audio_bytes = base64.b64decode(
+                                    audio_content_b64)
 
                                 await self._stream_audio_chunk(audio_bytes)
 
                     except json.JSONDecodeError:
                         continue
                     except Exception as e:
-                        self.emit("error", f"Error processing stream chunk: {str(e)}")
+                        self.emit(
+                            "error", f"Error processing stream chunk: {str(e)}")
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 401:
                 self.emit(
-                    "error",
-                    "InworldAI authentication failed. Please check your API key.",
-                )
+                    "error", "InworldAI authentication failed. Please check your API key.")
             elif e.response.status_code == 400:
                 try:
                     error_data = e.response.json()
                     error_msg = error_data.get("error", {}).get(
-                        "message", "Bad request"
-                    )
+                        "message", "Bad request")
                     self.emit("error", f"InworldAI request error: {error_msg}")
                 except:
                     self.emit(
-                        "error", "InworldAI bad request. Please check your parameters."
-                    )
+                        "error", "InworldAI bad request. Please check your parameters.")
             else:
-                self.emit("error", f"InworldAI HTTP error: {e.response.status_code}")
+                self.emit(
+                    "error", f"InworldAI HTTP error: {e.response.status_code}")
             raise
 
     async def _stream_audio_chunk(self, audio_bytes: bytes) -> None:
@@ -192,7 +187,7 @@ class InworldAITTS(TTS):
         if audio_bytes.startswith(b"RIFF"):
             data_pos = audio_bytes.find(b"data")
             if data_pos != -1:
-                return audio_bytes[data_pos + 8 :]
+                return audio_bytes[data_pos + 8:]
 
         return audio_bytes
 

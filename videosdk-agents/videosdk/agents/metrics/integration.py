@@ -1,7 +1,7 @@
 from typing import Dict, Any, Optional
 from opentelemetry.trace import Span
 from .telemetry import initialize_telemetry, get_telemetry
-from .logs import initialize_logs, get_logs, shutdown_logs
+from .logs import initialize_logs, get_logs
 
 
 def auto_initialize_telemetry_and_logs(room_id: str, peer_id: str, 

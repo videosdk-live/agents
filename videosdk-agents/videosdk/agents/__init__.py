@@ -51,6 +51,7 @@ from .utils import (
     build_gemini_schema,
     ToolChoice,
     build_nova_sonic_schema,
+    segment_text,
 )
 from .room.audio_stream import CustomAudioStreamTrack, TeeCustomAudioStreamTrack
 from .event_emitter import EventEmitter
@@ -149,6 +150,7 @@ __all__ = [
     "Options",
     "realtime_metrics_collector",
     "ImageContent",
+    "segment_text",
     "Worker",
     "WorkerOptions",
     "WorkerType",

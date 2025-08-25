@@ -1,7 +1,7 @@
 import time
 import hashlib
-from typing import Dict, List, Optional, Any
-from dataclasses import asdict, field, fields
+from typing import Dict, Optional, Any
+from dataclasses import asdict
 from opentelemetry.trace import Span
 from .models import TimelineEvent, CascadingTurnData, CascadingMetricsData
 from .analytics import AnalyticsClient
@@ -420,7 +420,7 @@ class CascadingMetricsCollector:
             # ttfb = now - self.data.tts_start_time // no need to take the difference as we are using the start time of the tts span
             if self.data.current_turn:
                 self.data.current_turn.ttfb = now
-                logger.info(f"tts ttfb: {self.data.current_turn.ttfb - self.data.tts_start_time}ms")
+                logger.info(f"tts ttfb: {(self.data.current_turn.ttfb - self.data.tts_start_time) * 1000}ms")
             self.data.tts_first_byte_time = now
     
     def on_eou_start(self):

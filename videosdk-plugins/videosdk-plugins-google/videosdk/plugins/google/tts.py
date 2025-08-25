@@ -7,7 +7,7 @@ import base64
 import httpx
 from dataclasses import dataclass
 
-from videosdk.agents import TTS
+from videosdk.agents import TTS, segment_text
 
 GOOGLE_SAMPLE_RATE = 24000
 GOOGLE_CHANNELS = 1
@@ -39,7 +39,6 @@ class GoogleTTS(TTS):
         self.audio_track = None
         self.loop = None
         self._first_chunk_sent = False
-
         self.voice_config = voice_config or GoogleVoiceConfig()
         self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
 
@@ -51,7 +50,8 @@ class GoogleTTS(TTS):
             )
 
         self._http_client = httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=15.0, read=30.0, write=5.0, pool=5.0),
+            timeout=httpx.Timeout(connect=15.0, read=30.0,
+                                  write=5.0, pool=5.0),
             follow_redirects=True,
         )
 
@@ -66,17 +66,14 @@ class GoogleTTS(TTS):
     ) -> None:
         try:
             if isinstance(text, AsyncIterator):
-                full_text = ""
-                async for chunk in text:
-                    full_text += chunk
+                async for segment in segment_text(text):
+                    await self._synthesize_audio(segment)
             else:
-                full_text = text
+                await self._synthesize_audio(text)
 
             if not self.audio_track or not self.loop:
                 self.emit("error", "Audio track or loop not initialized")
                 return
-
-            await self._synthesize_audio(full_text)
 
         except Exception as e:
             self.emit("error", f"Google TTS synthesis failed: {str(e)}")
@@ -125,37 +122,33 @@ class GoogleTTS(TTS):
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 403:
                 self.emit(
-                    "error",
-                    "Google TTS authentication failed. Please check your API key.",
-                )
+                    "error", "Google TTS authentication failed. Please check your API key.")
             elif e.response.status_code == 400:
                 try:
                     error_data = e.response.json()
                     error_msg = error_data.get("error", {}).get(
-                        "message", "Bad request"
-                    )
-                    self.emit("error", f"Google TTS request error: {error_msg}")
+                        "message", "Bad request")
+                    self.emit(
+                        "error", f"Google TTS request error: {error_msg}")
                 except:
                     self.emit(
-                        "error",
-                        "Google TTS bad request. Please check your configuration.",
-                    )
+                        "error", "Google TTS bad request. Please check your configuration.")
             else:
-                self.emit("error", f"Google TTS HTTP error: {e.response.status_code}")
+                self.emit(
+                    "error", f"Google TTS HTTP error: {e.response.status_code}")
             raise
 
     async def _stream_audio_chunks(self, audio_bytes: bytes) -> None:
         """Stream audio data in chunks to avoid beeps and ensure smooth playback"""
         chunk_size = 960
-
         audio_data = self._remove_wav_header(audio_bytes)
 
         for i in range(0, len(audio_data), chunk_size):
-            chunk = audio_data[i : i + chunk_size]
+            chunk = audio_data[i:i + chunk_size]
 
             if len(chunk) < chunk_size and len(chunk) > 0:
                 padding_needed = chunk_size - len(chunk)
-                chunk += b"\x00" * padding_needed
+                chunk += b'\x00' * padding_needed
 
             if len(chunk) == chunk_size:
                 if not self._first_chunk_sent and self._first_audio_callback:
@@ -170,7 +163,7 @@ class GoogleTTS(TTS):
         if audio_bytes.startswith(b"RIFF"):
             data_pos = audio_bytes.find(b"data")
             if data_pos != -1:
-                return audio_bytes[data_pos + 8 :]
+                return audio_bytes[data_pos + 8:]
 
         return audio_bytes
 

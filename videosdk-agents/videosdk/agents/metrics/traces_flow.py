@@ -2,7 +2,7 @@ from typing import Dict, Any, Optional
 from opentelemetry.trace import Span, StatusCode
 from opentelemetry import trace
 from .integration import create_span, complete_span, create_log
-from .models import CascadingTurnData, RealtimeTurnData, TimelineEvent
+from .models import CascadingTurnData, RealtimeTurnData
 import asyncio
 import time
 

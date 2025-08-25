@@ -32,6 +32,7 @@ class AnthropicLLM(LLM):
         self.max_tokens = max_tokens
         self.top_k = top_k
         self.top_p = top_p
+        self._cancelled = False
         
         self._client = anthropic.AsyncClient(
             api_key=self.api_key,
@@ -64,6 +65,8 @@ class AnthropicLLM(LLM):
         Yields:
             LLMResponse objects containing the model's responses
         """
+        self._cancelled = False
+        
         try:
             anthropic_messages, system_content = self._convert_messages_to_anthropic_format(messages)
             completion_params = {
@@ -104,7 +107,7 @@ class AnthropicLLM(LLM):
                         }
                         formatted_tools.append(anthropic_tool)
                     except Exception as e:
-                        print(f"Failed to format tool {tool}: {e}")
+                        self.emit("error", f"Failed to format tool {tool}: {e}")
                         continue
                 
                 if formatted_tools:
@@ -127,6 +130,9 @@ class AnthropicLLM(LLM):
             current_tool_arguments = ""
 
             async for event in response_stream:
+                if self._cancelled:
+                    break
+                    
                 if event.type == "content_block_start":
                     if event.content_block.type == "tool_use":
                         current_tool_call_id = event.content_block.id
@@ -139,7 +145,7 @@ class AnthropicLLM(LLM):
                 elif event.type == "content_block_delta":
                     delta = event.delta
                     if delta.type == "text_delta":
-                        current_content += delta.text
+                        current_content = delta.text
                         yield LLMResponse(
                             content=current_content,
                             role=ChatRole.ASSISTANT
@@ -173,13 +179,16 @@ class AnthropicLLM(LLM):
                         current_tool_arguments = ""
 
         except anthropic.APIError as e:
-            print(f"Anthropic API Error: {e}")
-            self.emit("error", e)
+            if not self._cancelled:
+                self.emit("error", e)
             raise
         except Exception as e:
-            print(f"Unexpected Error: {type(e).__name__}: {e}")
-            self.emit("error", e)
+            if not self._cancelled:
+                self.emit("error", e)
             raise
+
+    async def cancel_current_generation(self) -> None:
+        self._cancelled = True
 
     def _convert_messages_to_anthropic_format(self, messages: ChatContext) -> tuple[list[dict], str | None]:
         """Convert ChatContext to Anthropic message format"""
@@ -272,5 +281,6 @@ class AnthropicLLM(LLM):
 
     async def aclose(self) -> None:
         """Cleanup resources by closing the HTTP client"""
+        await self.cancel_current_generation()
         if self._client:
             await self._client.close()
