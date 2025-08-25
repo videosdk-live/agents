@@ -10,7 +10,7 @@ from pydub import AudioSegment
 
 from videosdk.agents import TTS
 
-SPEECHIFY_SAMPLE_RATE = 24000  
+SPEECHIFY_SAMPLE_RATE = 24000
 SPEECHIFY_CHANNELS = 1
 SPEECHIFY_STREAM_ENDPOINT = "https://api.sws.speechify.com/v1/audio/stream"
 
@@ -21,11 +21,15 @@ class SpeechifyTTS(TTS):
         *,
         voice_id: str = "kristy",
         api_key: Optional[str] = None,
-        model: Literal["simba-base", "simba-english", "simba-multilingual", "simba-turbo"] = "simba-english",
+        model: Literal[
+            "simba-base", "simba-english", "simba-multilingual", "simba-turbo"
+        ] = "simba-english",
         language: Optional[str] = None,
         audio_format: Literal["mp3", "ogg", "aac"] = "mp3",
     ) -> None:
-        super().__init__(sample_rate=SPEECHIFY_SAMPLE_RATE, num_channels=SPEECHIFY_CHANNELS)
+        super().__init__(
+            sample_rate=SPEECHIFY_SAMPLE_RATE, num_channels=SPEECHIFY_CHANNELS
+        )
 
         self.voice_id = voice_id
         self.model = model
@@ -36,7 +40,7 @@ class SpeechifyTTS(TTS):
         self._first_chunk_sent = False
 
         self.api_key = api_key or os.getenv("SPEECHIFY_API_KEY")
-        
+
         if not self.api_key:
             raise ValueError(
                 "Speechify API key required. Provide either:\n"
@@ -83,31 +87,28 @@ class SpeechifyTTS(TTS):
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",
             }
-            
+
             payload = {
                 "input": text,
                 "voice_id": self.voice_id,
                 "model": self.model,
             }
-            
+
             if self.language:
                 payload["language"] = self.language
 
             async with self._http_client.stream(
-                "POST", 
-                SPEECHIFY_STREAM_ENDPOINT, 
-                headers=headers, 
-                json=payload
+                "POST", SPEECHIFY_STREAM_ENDPOINT, headers=headers, json=payload
             ) as response:
                 response.raise_for_status()
-                
+
                 audio_data = b""
                 async for chunk in response.aiter_bytes():
                     if chunk:
                         audio_data += chunk
-                
+
                 await self._decode_and_stream(audio_data)
-                        
+
         except httpx.HTTPStatusError as e:
             error_msg = f"HTTP error {e.response.status_code}"
             try:
@@ -124,33 +125,34 @@ class SpeechifyTTS(TTS):
         """Decode compressed audio to PCM and stream it"""
         try:
             audio = AudioSegment.from_file(
-                io.BytesIO(audio_bytes), 
-                format=self.audio_format
+                io.BytesIO(audio_bytes), format=self.audio_format
             )
-            
+
             audio = audio.set_frame_rate(SPEECHIFY_SAMPLE_RATE)
             audio = audio.set_channels(SPEECHIFY_CHANNELS)
-            audio = audio.set_sample_width(2)  
-            
+            audio = audio.set_sample_width(2)
+
             pcm_data = audio.raw_data
-            
-            chunk_size = int(SPEECHIFY_SAMPLE_RATE * SPEECHIFY_CHANNELS * 2 * 20 / 1000)  # 20ms chunks
-            
+
+            chunk_size = int(
+                SPEECHIFY_SAMPLE_RATE * SPEECHIFY_CHANNELS * 2 * 20 / 1000
+            )  # 20ms chunks
+
             for i in range(0, len(pcm_data), chunk_size):
-                chunk = pcm_data[i:i + chunk_size]
-                
+                chunk = pcm_data[i : i + chunk_size]
+
                 if len(chunk) < chunk_size and len(chunk) > 0:
                     padding_needed = chunk_size - len(chunk)
-                    chunk += b'\x00' * padding_needed
-                
+                    chunk += b"\x00" * padding_needed
+
                 if len(chunk) == chunk_size:
                     if not self._first_chunk_sent and self._first_audio_callback:
                         self._first_chunk_sent = True
                         await self._first_audio_callback()
-                    
-                    self.loop.create_task(self.audio_track.add_new_bytes(chunk))
+
+                    asyncio.create_task(self.audio_track.add_new_bytes(chunk))
                     await asyncio.sleep(0.001)
-                    
+
         except Exception as e:
             self.emit("error", f"Audio decoding failed: {str(e)}")
 
@@ -161,4 +163,4 @@ class SpeechifyTTS(TTS):
 
     async def interrupt(self) -> None:
         if self.audio_track:
-            self.audio_track.interrupt() 
+            self.audio_track.interrupt()

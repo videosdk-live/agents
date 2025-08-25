@@ -72,6 +72,7 @@ A brief but informative README is crucial.
 This plugin integrates {Your Service} with the VideoSDK Agent Framework.
 
 **Implemented Features:**
+
 - [x] STT
 - [ ] LLM
 - [ ] TTS
@@ -97,8 +98,8 @@ from .llm import YourServiceLLM
 from .tts import YourServiceTTS
 
 __all__ = [
-    'YourServiceSTT', 
-    'YourServiceLLM', 
+    'YourServiceSTT',
+    'YourServiceLLM',
     'YourServiceTTS'
 ]
 ```
@@ -118,7 +119,7 @@ class YourServiceSTT(BaseSTT):
         super().__init__()
         self.api_key = api_key
         # Initialize your WebSocket client and other resources here
-        
+
     async def process_audio(self, audio_frames: bytes, language: Optional[str] = None, **kwargs):
         """
         Process incoming audio frames. The framework provides audio at 48kHz.
@@ -128,7 +129,7 @@ class YourServiceSTT(BaseSTT):
         # 2. Receive transcription data.
         # 3. Call self._transcript_callback(response) with STTResponse objects.
         pass
-        
+
     async def aclose(self):
         """Clean up all resources, like closing WebSocket connections."""
         # Your cleanup logic here
@@ -146,7 +147,7 @@ class YourServiceLLM(BaseLLM):
         super().__init__()
         self.api_key = api_key
         # Initialize your HTTP client here
-        
+
     async def chat(
         self,
         messages: ChatContext,
@@ -174,7 +175,7 @@ class YourServiceTTS(BaseTTS):
         super().__init__(sample_rate=24000, num_channels=1)
         self.api_key = api_key
         self.audio_track = None # This is set by the framework
-        
+
     async def synthesize(self, text: Union[AsyncIterator[str], str], voice_id: Optional[str] = None, **kwargs: Any):
         """
         Convert text to speech and stream the audio data.
@@ -182,9 +183,9 @@ class YourServiceTTS(BaseTTS):
         # 1. Make a streaming API request to your provider with the text.
         # 2. As you receive audio chunks, push them to the audio track.
         # if self.audio_track:
-        #     self.loop.create_task(self.audio_track.add_new_bytes(chunk))
+        #     asyncio.create_task(self.audio_track.add_new_bytes(chunk))
         pass
-        
+
     async def interrupt(self):
         """Interrupt any ongoing audio synthesis."""
         if self.audio_track:
@@ -194,6 +195,7 @@ class YourServiceTTS(BaseTTS):
 ## Implementation Checklist
 
 ### For All Plugins
+
 - [ ] Inherit from the correct base class (`STT`, `LLM`, or `TTS`).
 - [ ] Implement all abstract methods defined in the base class.
 - [ ] Emit errors consistently using `self.emit("error", message)`.
@@ -201,14 +203,17 @@ class YourServiceTTS(BaseTTS):
 - [ ] Use async patterns correctly for all I/O operations.
 
 ### STT Specific
+
 - [ ] Handle WebSocket connections gracefully (connect, disconnect, errors).
 - [ ] The framework provides 48kHz audio. **Resample audio if your provider requires a different sample rate.**
 
 ### LLM Specific
+
 - [ ] Ensure the `chat()` method is a streaming implementation (using `async for` and `yield`).
 - [ ] Support function tools if the provider's API allows for it.
 
 ### TTS Specific
+
 - [ ] Set the correct `sample_rate` and `num_channels` in the `super().__init__()` call.
 - [ ] Push audio chunks to `self.audio_track` for playback.
 
@@ -230,10 +235,12 @@ We highly recommend running your plugin with the example scripts in the `example
 ## Submitting a Pull Request
 
 Once your plugin is ready:
+
 1.  Push your branch to your fork.
 2.  Create a Pull Request against the main repository.
 3.  Fill out the PR template with details about your service, implemented features, and any special configuration notes.
 
 ## Reference
+
 - **Base Classes**: `videosdk-agents/videosdk/agents/`
 - **Plugin Examples**: `videosdk-plugins/videosdk-plugins-openai/`

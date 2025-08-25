@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Literal
 import asyncio
 import av
@@ -66,7 +67,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
                 
                 model_name = self.model.__class__.__name__
                 if requested_vision and model_name != 'GeminiRealtime':
-                    print(f"Warning: Vision mode requested but {model_name} doesn't support video input. Only GeminiRealtime supports vision. Disabling vision.")
+                    logger.warning(f"Vision mode requested but {model_name} doesn't support video input. Only GeminiRealtime supports vision. Disabling vision.")
                     self.vision = False
                 
                 if self.avatar:

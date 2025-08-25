@@ -17,8 +17,9 @@ DEFAULT_LANGUAGE = "eng"
 
 KNOWN_SPEAKERS = {
     "mist": ["river", "storm", "brook", "ember", "iris", "pearl"],
-    "mistv2": ["river", "storm", "brook", "ember", "iris", "pearl"]  
+    "mistv2": ["river", "storm", "brook", "ember", "iris", "pearl"],
 }
+
 
 class RimeTTS(TTS):
     def __init__(
@@ -52,7 +53,7 @@ class RimeTTS(TTS):
         self._first_chunk_sent = False
 
         self.api_key = api_key or os.getenv("RIME_API_KEY")
-        
+
         if not self.api_key:
             raise ValueError(
                 "Rime AI API key required. Provide either:\n"
@@ -62,8 +63,10 @@ class RimeTTS(TTS):
 
         if model_id in KNOWN_SPEAKERS and speaker not in KNOWN_SPEAKERS[model_id]:
             available = ", ".join(KNOWN_SPEAKERS[model_id])
-            print(f" Warning: Speaker '{speaker}' may not be available for model '{model_id}'. "
-                  f"Known speakers: {available}")
+            print(
+                f" Warning: Speaker '{speaker}' may not be available for model '{model_id}'. "
+                f"Known speakers: {available}"
+            )
 
         self._http_client = httpx.AsyncClient(
             timeout=httpx.Timeout(connect=15.0, read=30.0, write=5.0, pool=5.0),
@@ -100,7 +103,10 @@ class RimeTTS(TTS):
         """Synthesize text to speech using Rime AI streaming API"""
         try:
             if len(text) > 500:
-                self.emit("error", f"Text exceeds 500 character limit. Got {len(text)} characters.")
+                self.emit(
+                    "error",
+                    f"Text exceeds 500 character limit. Got {len(text)} characters.",
+                )
                 return
 
             payload = {
@@ -114,7 +120,7 @@ class RimeTTS(TTS):
                 "pauseBetweenBrackets": self.pause_between_brackets,
                 "phonemizeBetweenBrackets": self.phonemize_between_brackets,
             }
-            
+
             if self.inline_speed_alpha:
                 payload["inlineSpeedAlpha"] = self.inline_speed_alpha
 
@@ -125,37 +131,43 @@ class RimeTTS(TTS):
             }
 
             async with self._http_client.stream(
-                "POST",
-                RIME_TTS_ENDPOINT,
-                headers=headers,
-                json=payload
+                "POST", RIME_TTS_ENDPOINT, headers=headers, json=payload
             ) as response:
                 response.raise_for_status()
-                
+
                 audio_data = b""
                 async for chunk in response.aiter_bytes():
                     if chunk:
                         audio_data += chunk
-                
+
                 if not audio_data:
                     self.emit("error", "No audio data received from Rime TTS")
                     return
-                
+
                 await self._stream_audio_chunks(audio_data)
-            
+
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 401:
-                self.emit("error", "Rime TTS authentication failed. Please check your API key.")
+                self.emit(
+                    "error",
+                    "Rime TTS authentication failed. Please check your API key.",
+                )
             elif e.response.status_code == 400:
                 error_text = e.response.text
                 if "doesn't match list" in error_text:
                     available = ", ".join(KNOWN_SPEAKERS.get(self.model_id, []))
-                    self.emit("error", f"Speaker '{self.speaker}' not available for model '{self.model_id}'. "
-                              f"Try one of: {available}")
+                    self.emit(
+                        "error",
+                        f"Speaker '{self.speaker}' not available for model '{self.model_id}'. "
+                        f"Try one of: {available}",
+                    )
                 else:
                     self.emit("error", f"Rime TTS bad request: {error_text}")
             else:
-                self.emit("error", f"Rime TTS HTTP error: {e.response.status_code} - {e.response.text}")
+                self.emit(
+                    "error",
+                    f"Rime TTS HTTP error: {e.response.status_code} - {e.response.text}",
+                )
             raise
         except Exception as e:
             self.emit("error", f"Rime TTS request failed: {str(e)}")
@@ -164,31 +176,31 @@ class RimeTTS(TTS):
     async def _stream_audio_chunks(self, audio_bytes: bytes) -> None:
         """Stream audio data in chunks to avoid beeps and ensure smooth playback"""
         chunk_size = int(self.sampling_rate * RIME_CHANNELS * 2 * 20 / 1000)
-        
+
         audio_data = self._remove_wav_header(audio_bytes)
-        
+
         for i in range(0, len(audio_data), chunk_size):
-            chunk = audio_data[i:i + chunk_size]
-            
+            chunk = audio_data[i : i + chunk_size]
+
             if len(chunk) < chunk_size and len(chunk) > 0:
                 padding_needed = chunk_size - len(chunk)
-                chunk += b'\x00' * padding_needed
-            
+                chunk += b"\x00" * padding_needed
+
             if len(chunk) == chunk_size:
                 if not self._first_chunk_sent and self._first_audio_callback:
                     self._first_chunk_sent = True
                     await self._first_audio_callback()
-                
-                self.loop.create_task(self.audio_track.add_new_bytes(chunk))
+
+                asyncio.create_task(self.audio_track.add_new_bytes(chunk))
                 await asyncio.sleep(0.001)
 
     def _remove_wav_header(self, audio_bytes: bytes) -> bytes:
         """Remove WAV header if present to get raw PCM data"""
-        if audio_bytes.startswith(b'RIFF'):
-            data_pos = audio_bytes.find(b'data')
+        if audio_bytes.startswith(b"RIFF"):
+            data_pos = audio_bytes.find(b"data")
             if data_pos != -1:
-                return audio_bytes[data_pos + 8:]
-        
+                return audio_bytes[data_pos + 8 :]
+
         return audio_bytes
 
     async def aclose(self) -> None:
@@ -200,4 +212,4 @@ class RimeTTS(TTS):
     async def interrupt(self) -> None:
         """Interrupt the TTS audio stream"""
         if self.audio_track:
-            self.audio_track.interrupt() 
+            self.audio_track.interrupt()

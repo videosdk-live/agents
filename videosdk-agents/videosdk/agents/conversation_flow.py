@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from typing import Awaitable, Callable, Literal, AsyncIterator
 import time
@@ -22,6 +23,9 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+logger = logging.getLogger(__name__)
+
+
 class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
     """
     Manages the conversation flow by listening to transcription events.
@@ -29,8 +33,10 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
     def __init__(self, agent: Agent, stt: STT | None = None, llm: LLM | None = None, tts: TTS | None = None, vad: VAD | None = None, turn_detector: EOU | None = None, denoise: Denoise | None = None) -> None:
         """Initialize conversation flow with event emitter capabilities"""
-        super().__init__() 
-        self.transcription_callback: Callable[[STTResponse], Awaitable[None]] | None = None
+        super().__init__()
+        self.transcription_callback: Callable[[STTResponse], Awaitable[None]] | None = (
+            None
+        )
         self.stt = stt
         self.llm = llm
         self.tts = tts
@@ -49,7 +55,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             self.stt.on_stt_transcript(self.on_stt_transcript)
         if self.vad:
             self.vad.on_vad_event(self.on_vad_event)
-        
+
     async def start(self) -> None:
         global_event_emitter.on("speech_started", self.on_speech_started_stt)
         global_event_emitter.on("speech_stopped", self.on_speech_stopped_stt)
@@ -60,7 +66,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
     def on_transcription(self, callback: Callable[[str], None]) -> None:
         """
         Set the callback for transcription events.
-        
+
         Args:
             callback: Function to call when transcription occurs, takes transcribed text as argument
         """
@@ -77,7 +83,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 await self.stt.process_audio(audio_data)
         if self.vad:
             await self.vad.process_audio(audio_data)
-                        
+
     async def on_vad_event(self, vad_response: VADResponse) -> None:
         if vad_response.event_type == VADEventType.START_OF_SPEECH:
             self.on_speech_started()
@@ -212,7 +218,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                     role=ChatRole.ASSISTANT,
                     content=full_response
                 )
-                            
+                           
     async def say(self, message: str) -> None:
         """
         Direct TTS synthesis (used for initial messages)
@@ -237,11 +243,11 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             role=ChatRole.USER,
             content=text
         )
-        
+       
         full_response = ""
         async for response_chunk in self.process_with_llm():
             full_response += response_chunk
-        
+
         if full_response:
             cascading_metrics_collector.set_agent_response(full_response)
             cascading_metrics_collector.complete_current_turn()
@@ -254,11 +260,11 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         """
         async for response in self.process_with_llm():
             yield response
-    
+
     async def on_turn_start(self, transcript: str) -> None:
         """Called at the start of a user turn."""
         pass
-    
+
     async def on_turn_end(self) -> None:
         """Called at the end of a user turn."""
         pass
@@ -287,7 +293,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             await self.tts.interrupt()
     
     def on_speech_stopped(self) -> None:
-        
         if not self._stt_started:
             cascading_metrics_collector.on_stt_start()
             self._stt_started = True

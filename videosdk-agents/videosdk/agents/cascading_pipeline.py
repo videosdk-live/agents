@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 from typing import Any, Callable, Dict, Literal
 import asyncio
 
@@ -18,12 +17,15 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+logger = logging.getLogger(__name__)
+
+
 class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
     """
     Cascading pipeline implementation that processes data in sequence (STT -> LLM -> TTS).
     Inherits from Pipeline base class and adds cascade-specific events.
     """
-    
+
     def __init__(
         self,
         stt: STT | None = None,
@@ -36,7 +38,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
     ) -> None:
         """
         Initialize the cascading pipeline.
-        
+
         Args:
             stt: Speech-to-Text processor (optional)
             llm: Language Model processor (optional)
@@ -52,32 +54,75 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         self.avatar = avatar
 
         if self.stt:
-            self.stt.on("error", lambda data: self.on_component_error("STT", data))
+            self.stt.on(
+                "error",
+                lambda *args: self.on_component_error(
+                    "STT", args[0] if args else "Unknown error"
+                ),
+            )
         if self.llm:
-            self.llm.on("error", lambda data: self.on_component_error("LLM", data))
+            self.llm.on(
+                "error",
+                lambda *args: self.on_component_error(
+                    "LLM", args[0] if args else "Unknown error"
+                ),
+            )
         if self.tts:
-            self.tts.on("error", lambda data: self.on_component_error("TTS", data))
+            self.tts.on(
+                "error",
+                lambda *args: self.on_component_error(
+                    "TTS", args[0] if args else "Unknown error"
+                ),
+            )
         if self.vad:
-            self.vad.on("error", lambda data: self.on_component_error("VAD", data))
+            self.vad.on(
+                "error",
+                lambda *args: self.on_component_error(
+                    "VAD", args[0] if args else "Unknown error"
+                ),
+            )
         if self.turn_detector:
-            self.turn_detector.on("error", lambda data: self.on_component_error("TURN-D", data))
-        
+            self.turn_detector.on(
+                "error",
+                lambda *args: self.on_component_error(
+                    "TURN-D", args[0] if args else "Unknown error"
+                ),
+            )
+
         self.denoise = denoise
         super().__init__()
-        
+
     def set_agent(self, agent: Agent) -> None:
         self.agent = agent
 
     def _configure_components(self) -> None:
         if self.loop and self.tts:
             self.tts.loop = self.loop
+            logger.info("TTS loop configured")
             job_context = get_current_job_context()
             if self.avatar and job_context and job_context.room:
-                self.tts.audio_track = getattr(job_context.room, 'agent_audio_track', None) or job_context.room.audio_track
-            elif hasattr(self, 'audio_track'):
+                self.tts.audio_track = (
+                    getattr(job_context.room, "agent_audio_track", None)
+                    or job_context.room.audio_track
+                )
+                logger.info(f"TTS audio track configured from room (avatar mode)")
+            elif hasattr(self, "audio_track"):
                 self.tts.audio_track = self.audio_track
-    
+                logger.info(f"TTS audio track configured from pipeline")
+            else:
+                logger.warning("No audio track available for TTS configuration")
+
+            if self.tts.audio_track:
+                logger.info(
+                    f"TTS audio track successfully configured: {type(self.tts.audio_track).__name__}"
+                )
+            else:
+                logger.error(
+                    "TTS audio track is None - this will prevent audio playback"
+                )
+
     def set_conversation_flow(self, conversation_flow: ConversationFlow) -> None:
+        logger.info("Setting conversation flow in pipeline")
         self.conversation_flow = conversation_flow
         self.conversation_flow.stt = self.stt
         self.conversation_flow.llm = self.llm
@@ -88,7 +133,9 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         self.conversation_flow.denoise = self.denoise
         self.conversation_flow.user_speech_callback = self.on_user_speech_started
         if self.conversation_flow.stt:
-            self.conversation_flow.stt.on_stt_transcript(self.conversation_flow.on_stt_transcript)
+            self.conversation_flow.stt.on_stt_transcript(
+                self.conversation_flow.on_stt_transcript
+            )
         if self.conversation_flow.vad:
             self.conversation_flow.vad.on_vad_event(self.conversation_flow.on_vad_event)
 
@@ -107,7 +154,9 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
                 self.stt = stt
                 self.conversation_flow.stt = stt
                 if self.conversation_flow.stt:
-                    self.conversation_flow.stt.on_stt_transcript(self.conversation_flow.on_stt_transcript)
+                    self.conversation_flow.stt.on_stt_transcript(
+                        self.conversation_flow.on_stt_transcript
+                    )
         if llm and self.llm:
             async with self.conversation_flow.llm_lock:
                 await self.llm.aclose()
@@ -119,13 +168,16 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
                 self.tts = tts
                 self._configure_components()
                 self.conversation_flow.tts = tts
-    
+
     async def start(self, **kwargs: Any) -> None:
         if self.conversation_flow:
             await self.conversation_flow.start()
 
     async def send_message(self, message: str) -> None:
-        await self.conversation_flow.say(message)
+        if self.conversation_flow:
+            await self.conversation_flow.say(message)
+        else:
+            logger.warning("No conversation flow found in pipeline")
 
     async def send_text_message(self, message: str) -> None:
         """
@@ -142,7 +194,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         Handle incoming audio data from the user
         """
         await self.conversation_flow.send_audio_delta(audio_data)
-    
+
     def on_user_speech_started(self) -> None:
         """
         Handle user speech started event
@@ -169,63 +221,96 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         def extract_model_info(config_dict: Dict[str, Any]) -> Dict[str, Any]:
             """Helper to extract model-related info from a dictionary with limited nesting."""
             model_info = {}
-            model_keys = ['model', 'model_id', 'model_name', 'voice', 'voice_id', 'name']
+            model_keys = [
+                "model",
+                "model_id",
+                "model_name",
+                "voice",
+                "voice_id",
+                "name",
+            ]
             try:
                 for k, v in config_dict.items():
                     if k in model_keys and v is not None:
                         model_info[k] = v
-                    elif k in ['config', '_config', 'voice_config'] and isinstance(v, dict):
+                    elif k in ["config", "_config", "voice_config"] and isinstance(
+                        v, dict
+                    ):
                         for nk, nv in v.items():
                             if nk in model_keys and nv is not None:
                                 model_info[nk] = nv
-                    elif k in ['voice_config', 'config'] and hasattr(v, '__dict__'):
+                    elif k in ["voice_config", "config"] and hasattr(v, "__dict__"):
                         for nk, nv in v.__dict__.items():
-                            if nk in model_keys and nv is not None and not nk.startswith('_'):
+                            if (
+                                nk in model_keys
+                                and nv is not None
+                                and not nk.startswith("_")
+                            ):
                                 model_info[nk] = nv
             except Exception as e:
                 pass
             return model_info
 
         configs: Dict[str, Dict[str, Any]] = {}
-        for comp_name, comp in [('stt', self.stt), ('llm', self.llm), ('tts', self.tts), ('vad', self.vad), ('eou', self.turn_detector)]:
+        for comp_name, comp in [
+            ("stt", self.stt),
+            ("llm", self.llm),
+            ("tts", self.tts),
+            ("vad", self.vad),
+            ("eou", self.turn_detector),
+        ]:
             if comp:
                 try:
-                    configs[comp_name] = {k: v for k, v in comp.__dict__.items() if not k.startswith('_') and not callable(v)}
+                    configs[comp_name] = {
+                        k: v
+                        for k, v in comp.__dict__.items()
+                        if not k.startswith("_") and not callable(v)
+                    }
 
                     model_info = extract_model_info(comp.__dict__)
                     if model_info:
-                        if 'model' not in configs[comp_name] and 'model' in model_info:
-                            configs[comp_name]['model'] = model_info['model']
-                        elif 'model' not in configs[comp_name] and 'name' in model_info:
-                            configs[comp_name]['model'] = model_info['name']
-                        configs[comp_name].update({k: v for k, v in model_info.items() if k != 'model' and k != 'name' and k not in configs[comp_name]})
-                    
-                    if comp_name == 'vad' and 'model' not in configs[comp_name]:
-                        if hasattr(comp, '_model_sample_rate'):
-                            configs[comp_name]['model'] = f"silero_vad_{comp._model_sample_rate}hz"
+                        if "model" not in configs[comp_name] and "model" in model_info:
+                            configs[comp_name]["model"] = model_info["model"]
+                        elif "model" not in configs[comp_name] and "name" in model_info:
+                            configs[comp_name]["model"] = model_info["name"]
+                        configs[comp_name].update(
+                            {
+                                k: v
+                                for k, v in model_info.items()
+                                if k != "model"
+                                and k != "name"
+                                and k not in configs[comp_name]
+                            }
+                        )
+
+                    if comp_name == "vad" and "model" not in configs[comp_name]:
+                        if hasattr(comp, "_model_sample_rate"):
+                            configs[comp_name][
+                                "model"
+                            ] = f"silero_vad_{comp._model_sample_rate}hz"
                         else:
-                            configs[comp_name]['model'] = "silero_vad"
-                    elif comp_name == 'eou' and 'model' not in configs[comp_name]:
+                            configs[comp_name]["model"] = "silero_vad"
+                    elif comp_name == "eou" and "model" not in configs[comp_name]:
                         class_name = comp.__class__.__name__
-                        if 'VideoSDK' in class_name:
-                            configs[comp_name]['model'] = "videosdk_turn_detector"
-                        elif 'TurnDetector' in class_name:
-                            configs[comp_name]['model'] = "turnsense_model"
+                        if "VideoSDK" in class_name:
+                            configs[comp_name]["model"] = "videosdk_turn_detector"
+                        elif "TurnDetector" in class_name:
+                            configs[comp_name]["model"] = "turnsense_model"
                         else:
-                            configs[comp_name]['model'] = "turn_detector"
-                            
+                            configs[comp_name]["model"] = "turn_detector"
+
                 except Exception as e:
                     configs[comp_name] = configs.get(comp_name, {})
 
-        sensitive_keys = ['api_key', 'token', 'secret', 'key', 'password', 'credential']
+        sensitive_keys = ["api_key", "token", "secret", "key", "password", "credential"]
         for comp in configs.values():
             for key in sensitive_keys:
                 comp.pop(key, None)
         return configs
 
-
     def on_component_error(self, source: str, error_data: Any) -> None:
         """Handle error events from components (STT, LLM, TTS, VAD, TURN-D)"""
         from .metrics import cascading_metrics_collector
+
         cascading_metrics_collector.add_error(source, str(error_data))
         logger.error(f"[{source}] Component error: {error_data}")

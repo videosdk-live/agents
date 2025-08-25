@@ -13,11 +13,13 @@ GOOGLE_SAMPLE_RATE = 24000
 GOOGLE_CHANNELS = 1
 GOOGLE_TTS_ENDPOINT = "https://texttospeech.googleapis.com/v1/text:synthesize"
 
+
 @dataclass
 class GoogleVoiceConfig:
     languageCode: str = "en-US"
     name: str = "en-US-Chirp3-HD-Aoede"
     ssmlGender: str = "FEMALE"
+
 
 class GoogleTTS(TTS):
     def __init__(
@@ -40,7 +42,7 @@ class GoogleTTS(TTS):
 
         self.voice_config = voice_config or GoogleVoiceConfig()
         self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
-        
+
         if not self.api_key:
             raise ValueError(
                 "Google TTS API key required. Provide either:\n"
@@ -86,10 +88,10 @@ class GoogleTTS(TTS):
                 "languageCode": self.voice_config.languageCode,
                 "name": self.voice_config.name,
             }
-            
+
             if not self.voice_config.name.startswith("en-US-Studio"):
                 voice_config["ssmlGender"] = self.voice_config.ssmlGender
-            
+
             payload = {
                 "input": {"text": text},
                 "voice": voice_config,
@@ -102,12 +104,10 @@ class GoogleTTS(TTS):
             }
 
             response = await self._http_client.post(
-                GOOGLE_TTS_ENDPOINT,
-                params={"key": self.api_key},
-                json=payload
+                GOOGLE_TTS_ENDPOINT, params={"key": self.api_key}, json=payload
             )
             response.raise_for_status()
-            
+
             response_data = response.json()
             audio_content = response_data.get("audioContent")
             if not audio_content:
@@ -115,55 +115,63 @@ class GoogleTTS(TTS):
                 return
 
             audio_bytes = base64.b64decode(audio_content)
-            
+
             if not audio_bytes:
                 self.emit("error", "Decoded audio bytes are empty")
                 return
 
             await self._stream_audio_chunks(audio_bytes)
-            
+
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 403:
-                self.emit("error", "Google TTS authentication failed. Please check your API key.")
+                self.emit(
+                    "error",
+                    "Google TTS authentication failed. Please check your API key.",
+                )
             elif e.response.status_code == 400:
                 try:
                     error_data = e.response.json()
-                    error_msg = error_data.get("error", {}).get("message", "Bad request")
+                    error_msg = error_data.get("error", {}).get(
+                        "message", "Bad request"
+                    )
                     self.emit("error", f"Google TTS request error: {error_msg}")
                 except:
-                    self.emit("error", "Google TTS bad request. Please check your configuration.")
+                    self.emit(
+                        "error",
+                        "Google TTS bad request. Please check your configuration.",
+                    )
             else:
                 self.emit("error", f"Google TTS HTTP error: {e.response.status_code}")
             raise
 
     async def _stream_audio_chunks(self, audio_bytes: bytes) -> None:
         """Stream audio data in chunks to avoid beeps and ensure smooth playback"""
-        chunk_size = 960  
-        
+        chunk_size = 960
+
         audio_data = self._remove_wav_header(audio_bytes)
-        
+
         for i in range(0, len(audio_data), chunk_size):
-            chunk = audio_data[i:i + chunk_size]
-            
+            chunk = audio_data[i : i + chunk_size]
+
             if len(chunk) < chunk_size and len(chunk) > 0:
                 padding_needed = chunk_size - len(chunk)
-                chunk += b'\x00' * padding_needed
-            
+                chunk += b"\x00" * padding_needed
+
             if len(chunk) == chunk_size:
                 if not self._first_chunk_sent and self._first_audio_callback:
                     self._first_chunk_sent = True
                     await self._first_audio_callback()
-                
-                self.loop.create_task(self.audio_track.add_new_bytes(chunk))
+
+                asyncio.create_task(self.audio_track.add_new_bytes(chunk))
                 await asyncio.sleep(0.001)
 
     def _remove_wav_header(self, audio_bytes: bytes) -> bytes:
         """Remove WAV header if present to get raw PCM data"""
-        if audio_bytes.startswith(b'RIFF'):
-            data_pos = audio_bytes.find(b'data')
+        if audio_bytes.startswith(b"RIFF"):
+            data_pos = audio_bytes.find(b"data")
             if data_pos != -1:
-                return audio_bytes[data_pos + 8:]
-        
+                return audio_bytes[data_pos + 8 :]
+
         return audio_bytes
 
     async def aclose(self) -> None:
