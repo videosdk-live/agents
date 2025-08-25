@@ -111,12 +111,12 @@ class SileroVAD(BaseVAD):
 
                 _copy = self._model.frame_size * \
                     resampling_ratio + self._remaining_input_fraction
-                int_copy = int(_copy)
+                _int_copy = int(_copy)
 
-                self._remaining_input_fraction = _copy - int_copy
+                self._remaining_input_fraction = _copy - _int_copy
 
-                if len(self._input_accumulator) >= int_copy:
-                    self._input_accumulator = self._input_accumulator[int_copy:]
+                if len(self._input_accumulator) >= _int_copy:
+                    self._input_accumulator = self._input_accumulator[_int_copy:]
 
                 if self._pub_speaking:
                     self._pub_speech_duration += window_duration
