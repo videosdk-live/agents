@@ -30,7 +30,7 @@ class HumeAITTS(TTS):
         instant_mode: bool = True,
     ) -> None:
         super().__init__(sample_rate=24000, num_channels=1)
-        
+
         self.voice = voice
         self.speed = speed
         self.response_format = response_format
@@ -38,20 +38,20 @@ class HumeAITTS(TTS):
         self.audio_track = None
         self.loop = None
         self._first_chunk_sent = False
-        
+
         if self.instant_mode and not self.voice:
             raise ValueError("Voice required for instant mode")
-        
+
         self.api_key = api_key or os.getenv("HUMEAI_API_KEY")
         if not self.api_key:
             raise ValueError("HUMEAI_API_KEY required")
-        
+
         self._session = httpx.AsyncClient(timeout=30.0)
-    
+
     def reset_first_audio_tracking(self) -> None:
         """Reset the first audio tracking state for next TTS task"""
         self._first_chunk_sent = False
-    
+
     async def synthesize(
         self,
         text: AsyncIterator[str] | str,
@@ -82,8 +82,9 @@ class HumeAITTS(TTS):
             "speed": kwargs.get("speed", self.speed)
         }
         if self.instant_mode:
-            utterance["voice"] = {"name": voice_id or self.voice, "provider": "HUME_AI"}
-        
+            utterance["voice"] = {
+                "name": voice_id or self.voice, "provider": "HUME_AI"}
+
         payload = {
             "utterances": [utterance],
             "format": {"type": self.response_format},
@@ -100,11 +101,11 @@ class HumeAITTS(TTS):
             "X-Hume-Api-Key": self.api_key,
             "Content-Type": "application/json"
         }
-        
+
         try:
             async with self._session.stream("POST", url, headers=headers, json=payload) as response:
                 response.raise_for_status()
-                
+
                 buffer = b""
                 async for chunk in response.aiter_bytes():
                     lines = (buffer + chunk).split(b'\n')
@@ -115,24 +116,27 @@ class HumeAITTS(TTS):
                             try:
                                 data = json.loads(line)
                                 if "audio" in data and data["audio"]:
-                                    audio_bytes = base64.b64decode(data["audio"])
+                                    audio_bytes = base64.b64decode(
+                                        data["audio"])
                                     if self.response_format == "wav":
-                                        audio_bytes = self._remove_wav_header(audio_bytes)
+                                        audio_bytes = self._remove_wav_header(
+                                            audio_bytes)
                                     await self._stream_audio_chunks(audio_bytes)
                             except json.JSONDecodeError:
                                 continue
-                
+
                 if buffer.strip():
                     try:
                         data = json.loads(buffer)
                         if "audio" in data and data["audio"]:
                             audio_bytes = base64.b64decode(data["audio"])
                             if self.response_format == "wav":
-                                audio_bytes = self._remove_wav_header(audio_bytes)
+                                audio_bytes = self._remove_wav_header(
+                                    audio_bytes)
                             await self._stream_audio_chunks(audio_bytes)
                     except json.JSONDecodeError:
                         pass
-                        
+
         except Exception as e:
             self.emit("error", f"Streaming failed: {str(e)}")
 
@@ -140,15 +144,15 @@ class HumeAITTS(TTS):
         """Stream audio with 48kHz->24kHz resampling"""
         if not audio_bytes:
             return
-            
+
         try:
             audio_array = np.frombuffer(audio_bytes, dtype=np.int16)
             if len(audio_array) == 0:
                 return
-                
-            resampled_audio = audio_array[::2]  
+
+            resampled_audio = audio_array[::2]
             audio_bytes = resampled_audio.tobytes()
-            
+
             chunk_size = 960
             for i in range(0, len(audio_bytes), chunk_size):
                 chunk = audio_bytes[i:i + chunk_size]
@@ -158,8 +162,9 @@ class HumeAITTS(TTS):
                     if not self._first_chunk_sent and self._first_audio_callback:
                         self._first_chunk_sent = True
                         await self._first_audio_callback()
-                    
-                    self.loop.create_task(self.audio_track.add_new_bytes(chunk))
+
+                    self.loop.create_task(
+                        self.audio_track.add_new_bytes(chunk))
                     await asyncio.sleep(0.001)
         except Exception as e:
             self.emit("error", f"Audio streaming failed: {str(e)}")
@@ -181,4 +186,4 @@ class HumeAITTS(TTS):
     async def interrupt(self) -> None:
         """Interrupt TTS"""
         if self.audio_track:
-            self.audio_track.interrupt() 
+            self.audio_track.interrupt()

@@ -46,7 +46,6 @@ class SmallestAITTS(TTS):
                 "2. SMALLEST_API_KEY environment variable"
             )
 
-        
         try:
             from smallestai.waves import AsyncWavesClient
         except ImportError:
@@ -100,10 +99,10 @@ class SmallestAITTS(TTS):
                 "enhancement": kwargs.get("enhancement", self.enhancement),
                 "sample_rate": kwargs.get("sample_rate", SMALLESTAI_SAMPLE_RATE),
             }
-            
+
             async with self._client as tts:
                 audio_bytes = await tts.synthesize(text, **synthesis_kwargs)
-                
+
                 if not audio_bytes:
                     self.emit("error", "No audio data received from SmallestAI")
                     return
@@ -116,44 +115,44 @@ class SmallestAITTS(TTS):
 
     async def _stream_audio_chunks(self, audio_bytes: bytes) -> None:
         """Stream audio data in chunks to ensure smooth playback"""
-        chunk_size = int(SMALLESTAI_SAMPLE_RATE * SMALLESTAI_CHANNELS * 2 * 20 / 1000)
-        
+        chunk_size = int(SMALLESTAI_SAMPLE_RATE *
+                         SMALLESTAI_CHANNELS * 2 * 20 / 1000)
+
         for i in range(0, len(audio_bytes), chunk_size):
             chunk = audio_bytes[i:i + chunk_size]
-            
-            
+
             if len(chunk) < chunk_size and len(chunk) > 0:
                 padding_needed = chunk_size - len(chunk)
                 chunk += b'\x00' * padding_needed
-            
+
             if len(chunk) == chunk_size:
                 if not self._first_chunk_sent and self._first_audio_callback:
                     self._first_chunk_sent = True
                     self.loop.create_task(self._first_audio_callback())
-                
+
                 self.loop.create_task(self.audio_track.add_new_bytes(chunk))
-                await asyncio.sleep(0.001)  
+                await asyncio.sleep(0.001)
 
     def _remove_wav_header(self, audio_bytes: bytes) -> bytes:
         """Remove WAV header if present to get raw PCM data"""
         if audio_bytes.startswith(b'RIFF'):
-            
+
             data_pos = audio_bytes.find(b'data')
             if data_pos != -1:
-                
+
                 return audio_bytes[data_pos + 8:]
-        
+
         return audio_bytes
 
     async def aclose(self) -> None:
         """Cleanup resources"""
         if hasattr(self, '_client'):
             try:
-                
+
                 if hasattr(self._client, 'aclose'):
                     await self._client.aclose()
             except Exception:
-                pass  
+                pass
         await super().aclose()
 
     async def interrupt(self) -> None:

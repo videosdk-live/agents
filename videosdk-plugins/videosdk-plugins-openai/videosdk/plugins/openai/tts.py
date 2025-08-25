@@ -13,7 +13,9 @@ OPENAI_TTS_CHANNELS = 1
 
 DEFAULT_MODEL = "gpt-4o-mini-tts"
 DEFAULT_VOICE = "ash"
-_RESPONSE_FORMATS = Union[Literal["mp3", "opus", "aac", "flac", "wav", "pcm"], str]
+_RESPONSE_FORMATS = Union[Literal["mp3",
+                                  "opus", "aac", "flac", "wav", "pcm"], str]
+
 
 class OpenAITTS(TTS):
     def __init__(
@@ -28,7 +30,7 @@ class OpenAITTS(TTS):
         response_format: str = "pcm"
     ) -> None:
         super().__init__(sample_rate=OPENAI_TTS_SAMPLE_RATE, num_channels=OPENAI_TTS_CHANNELS)
-        
+
         self.model = model
         self.voice = voice
         self.speed = speed
@@ -39,17 +41,19 @@ class OpenAITTS(TTS):
         self._first_chunk_sent = False
         self._current_synthesis_task: asyncio.Task | None = None
         self._interrupted = False
-        
+
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         if not self.api_key:
-            raise ValueError("OpenAI API key must be provided either through api_key parameter or OPENAI_API_KEY environment variable")
-        
+            raise ValueError(
+                "OpenAI API key must be provided either through api_key parameter or OPENAI_API_KEY environment variable")
+
         self._client = openai.AsyncClient(
             max_retries=0,
             api_key=self.api_key,
             base_url=base_url or None,
             http_client=httpx.AsyncClient(
-                timeout=httpx.Timeout(connect=15.0, read=5.0, write=5.0, pool=5.0),
+                timeout=httpx.Timeout(
+                    connect=15.0, read=5.0, write=5.0, pool=5.0),
                 follow_redirects=True,
                 limits=httpx.Limits(
                     max_connections=50,
@@ -62,7 +66,7 @@ class OpenAITTS(TTS):
     def reset_first_audio_tracking(self) -> None:
         """Reset the first audio tracking state for next TTS task"""
         self._first_chunk_sent = False
-    
+
     async def synthesize(
         self,
         text: AsyncIterator[str] | str,
@@ -71,7 +75,7 @@ class OpenAITTS(TTS):
     ) -> None:
         """
         Convert text to speech using OpenAI's TTS API and stream to audio track
-        
+
         Args:
             text: Text to convert to speech
             voice_id: Optional voice override
@@ -83,7 +87,7 @@ class OpenAITTS(TTS):
                 return
 
             self._interrupted = False
-            
+
             if isinstance(text, AsyncIterator):
                 async for segment in segment_text(text):
                     if self._interrupted:
@@ -126,20 +130,21 @@ class OpenAITTS(TTS):
 
     async def _stream_audio_chunks(self, audio_bytes: bytes) -> None:
         """Stream audio data in chunks for smooth playback"""
-        chunk_size = int(OPENAI_TTS_SAMPLE_RATE * OPENAI_TTS_CHANNELS * 2 * 20 / 1000) 
-        
+        chunk_size = int(OPENAI_TTS_SAMPLE_RATE *
+                         OPENAI_TTS_CHANNELS * 2 * 20 / 1000)
+
         for i in range(0, len(audio_bytes), chunk_size):
             chunk = audio_bytes[i:i + chunk_size]
-            
+
             if len(chunk) < chunk_size and len(chunk) > 0:
                 padding_needed = chunk_size - len(chunk)
                 chunk += b'\x00' * padding_needed
-            
+
             if len(chunk) == chunk_size:
                 if not self._first_chunk_sent and self._first_audio_callback:
                     self._first_chunk_sent = True
                     await self._first_audio_callback()
-                
+
                 self.loop.create_task(self.audio_track.add_new_bytes(chunk))
                 await asyncio.sleep(0.001)
 

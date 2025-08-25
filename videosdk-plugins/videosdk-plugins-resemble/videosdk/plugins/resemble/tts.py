@@ -14,6 +14,7 @@ DEFAULT_VOICE_UUID = "55592656"
 DEFAULT_SAMPLE_RATE = 22050
 DEFAULT_PRECISION = "PCM_16"
 
+
 class ResembleTTS(TTS):
     def __init__(
         self,
@@ -27,8 +28,9 @@ class ResembleTTS(TTS):
 
         self.api_key = api_key or os.getenv("RESEMBLE_API_KEY")
         if not self.api_key:
-            raise ValueError("Resemble API key is required. Provide either `api_key` or set `RESEMBLE_API_KEY` environment variable.")
-        
+            raise ValueError(
+                "Resemble API key is required. Provide either `api_key` or set `RESEMBLE_API_KEY` environment variable.")
+
         self.voice_uuid = voice_uuid
         self.precision = precision
 
@@ -38,7 +40,8 @@ class ResembleTTS(TTS):
         self._interrupted = False
         self._current_synthesis_task: asyncio.Task | None = None
         self._http_client = httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=15.0, read=30.0, write=5.0, pool=5.0),
+            timeout=httpx.Timeout(connect=15.0, read=30.0,
+                                  write=5.0, pool=5.0),
             follow_redirects=True,
         )
 
@@ -57,7 +60,7 @@ class ResembleTTS(TTS):
                 return
 
             self._interrupted = False
-            
+
             if isinstance(text, AsyncIterator):
                 async for segment in segment_text(text):
                     if self._interrupted:
@@ -86,7 +89,7 @@ class ResembleTTS(TTS):
             "Authorization": f"Token {self.api_key}",
             "Content-Type": "application/json",
         }
-        
+
         payload = {
             "voice_uuid": self.voice_uuid,
             "data": text,
@@ -96,9 +99,9 @@ class ResembleTTS(TTS):
 
         try:
             async with self._http_client.stream(
-                "POST", 
+                "POST",
                 RESEMBLE_HTTP_STREAMING_URL,
-                headers=headers, 
+                headers=headers,
                 json=payload
             ) as response:
                 response.raise_for_status()
@@ -122,33 +125,35 @@ class ResembleTTS(TTS):
 
                 if audio_data and not self._interrupted:
                     await self._stream_audio_chunks(audio_data)
-                        
+
         except httpx.HTTPStatusError as e:
             if not self._interrupted:
-                self.emit("error", f"HTTP error {e.response.status_code}: {e.response.text}")
+                self.emit(
+                    "error", f"HTTP error {e.response.status_code}: {e.response.text}")
         except Exception as e:
             if not self._interrupted:
-                self.emit("error", f"HTTP streaming synthesis failed: {str(e)}")
+                self.emit(
+                    "error", f"HTTP streaming synthesis failed: {str(e)}")
 
     async def _stream_audio_chunks(self, audio_bytes: bytes) -> None:
         """Stream audio data in chunks for smooth playback """
-        chunk_size = int(self.sample_rate * 1 * 2 * 20 / 1000)  
-        
+        chunk_size = int(self.sample_rate * 1 * 2 * 20 / 1000)
+
         for i in range(0, len(audio_bytes), chunk_size):
             if self._interrupted:
                 break
-                
+
             chunk = audio_bytes[i:i + chunk_size]
-            
+
             if len(chunk) < chunk_size and len(chunk) > 0:
                 padding_needed = chunk_size - len(chunk)
                 chunk += b'\x00' * padding_needed
-            
+
             if len(chunk) == chunk_size:
                 if not self._first_chunk_sent and self._first_audio_callback:
                     self._first_chunk_sent = True
                     await self._first_audio_callback()
-                
+
                 self.loop.create_task(self.audio_track.add_new_bytes(chunk))
                 await asyncio.sleep(0.001)
 
