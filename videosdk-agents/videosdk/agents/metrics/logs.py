@@ -66,12 +66,10 @@ class VideoSDKLogs:
         if not self.logs_enabled or not self.endpoint:
             return
 
-        # Create async task to send logs non-blocking
         try:
             asyncio.create_task(self._push_logs_async(
                 log_type, log_text, attributes))
         except RuntimeError:
-            # No event loop running, just ignore the log
             pass
 
     async def _push_logs_async(self, log_type: str, log_text: str, attributes: Dict[str, Any] = None):
