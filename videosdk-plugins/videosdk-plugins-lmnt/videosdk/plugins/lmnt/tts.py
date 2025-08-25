@@ -82,7 +82,7 @@ class LMNTTTS(TTS):
         self,
         text: AsyncIterator[str] | str,
         voice_id: Optional[str] = None,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> None:
         """
         Convert text to speech using LMNT's TTS API and stream to audio track

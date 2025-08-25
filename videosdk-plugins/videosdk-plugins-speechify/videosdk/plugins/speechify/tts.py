@@ -21,12 +21,15 @@ class SpeechifyTTS(TTS):
         *,
         voice_id: str = "kristy",
         api_key: Optional[str] = None,
-        model: Literal["simba-base", "simba-english",
-                       "simba-multilingual", "simba-turbo"] = "simba-english",
+        model: Literal[
+            "simba-base", "simba-english", "simba-multilingual", "simba-turbo"
+        ] = "simba-english",
         language: Optional[str] = None,
         audio_format: Literal["mp3", "ogg", "aac"] = "mp3",
     ) -> None:
-        super().__init__(sample_rate=SPEECHIFY_SAMPLE_RATE, num_channels=SPEECHIFY_CHANNELS)
+        super().__init__(
+            sample_rate=SPEECHIFY_SAMPLE_RATE, num_channels=SPEECHIFY_CHANNELS
+        )
 
         self.voice_id = voice_id
         self.model = model
@@ -170,7 +173,7 @@ class SpeechifyTTS(TTS):
                         self._first_chunk_sent = True
                         await self._first_audio_callback()
 
-                    self.loop.create_task(
+                    asyncio.create_task(
                         self.audio_track.add_new_bytes(chunk))
                     await asyncio.sleep(0.001)
 

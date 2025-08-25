@@ -157,7 +157,7 @@ class NeuphonicTTS(TTS):
             "api_key": self.api_key,
             "speed": self.speed,
             "sampling_rate": self._sample_rate,
-            "encoding": self.encoding
+            "encoding": self.encoding,
         }
 
         if self.voice_id:
@@ -229,7 +229,7 @@ class NeuphonicTTS(TTS):
                     self._first_chunk_sent = True
                     await self._first_audio_callback()
 
-                self.loop.create_task(self.audio_track.add_new_bytes(chunk))
+                asyncio.create_task(self.audio_track.add_new_bytes(chunk))
                 await asyncio.sleep(0.001)
 
     async def _sse_synthesis(self, text: str) -> None:

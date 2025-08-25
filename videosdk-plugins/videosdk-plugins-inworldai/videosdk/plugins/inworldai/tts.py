@@ -68,7 +68,7 @@ class InworldAITTS(TTS):
         self,
         text: AsyncIterator[str] | str,
         voice_id: Optional[str] = None,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> None:
         """
         Convert text to speech using InworldAI's streaming TTS API
@@ -92,7 +92,9 @@ class InworldAITTS(TTS):
         except Exception as e:
             self.emit("error", f"InworldAI TTS synthesis failed: {str(e)}")
 
-    async def _synthesize_streaming(self, text: str, voice_id: Optional[str] = None) -> None:
+    async def _synthesize_streaming(
+        self, text: str, voice_id: Optional[str] = None
+    ) -> None:
         """Synthesize text using the streaming endpoint"""
         try:
             payload = {
@@ -103,7 +105,7 @@ class InworldAITTS(TTS):
                     "temperature": self.temperature,
                     "audioEncoding": self.audio_encoding,
                     "sampleRateHertz": self._sample_rate,
-                }
+                },
             }
 
             headers = {
@@ -177,13 +179,13 @@ class InworldAITTS(TTS):
                 self._first_chunk_sent = True
                 await self._first_audio_callback()
 
-            self.loop.create_task(self.audio_track.add_new_bytes(audio_data))
+            asyncio.create_task(self.audio_track.add_new_bytes(audio_data))
             await asyncio.sleep(0.001)
 
     def _remove_wav_header(self, audio_bytes: bytes) -> bytes:
         """Remove WAV header if present to get raw PCM data"""
-        if audio_bytes.startswith(b'RIFF'):
-            data_pos = audio_bytes.find(b'data')
+        if audio_bytes.startswith(b"RIFF"):
+            data_pos = audio_bytes.find(b"data")
             if data_pos != -1:
                 return audio_bytes[data_pos + 8:]
 

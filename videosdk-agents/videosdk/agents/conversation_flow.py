@@ -22,7 +22,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-
 class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
     """
     Manages the conversation flow by listening to transcription events.
@@ -388,7 +387,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             logger.error(f"LLM cancellation failed: {e}")
 
     def on_speech_stopped(self) -> None:
-
         if not self._stt_started:
             cascading_metrics_collector.on_stt_start()
             self._stt_started = True

@@ -41,7 +41,9 @@ class ElevenLabsTTS(TTS):
         enable_streaming: bool = True,
         inactivity_timeout: int = WS_INACTIVITY_TIMEOUT,
     ) -> None:
-        super().__init__(sample_rate=ELEVENLABS_SAMPLE_RATE, num_channels=ELEVENLABS_CHANNELS)
+        super().__init__(
+            sample_rate=ELEVENLABS_SAMPLE_RATE, num_channels=ELEVENLABS_CHANNELS
+        )
 
         self.model = model
         self.voice = voice

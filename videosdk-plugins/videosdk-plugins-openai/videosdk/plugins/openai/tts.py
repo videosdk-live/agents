@@ -17,6 +17,7 @@ _RESPONSE_FORMATS = Union[Literal["mp3",
                                   "opus", "aac", "flac", "wav", "pcm"], str]
 
 
+
 class OpenAITTS(TTS):
     def __init__(
         self,
@@ -27,7 +28,7 @@ class OpenAITTS(TTS):
         instructions: str | None = None,
         api_key: str | None = None,
         base_url: str | None = None,
-        response_format: str = "pcm"
+        response_format: str = "pcm",
     ) -> None:
         super().__init__(sample_rate=OPENAI_TTS_SAMPLE_RATE, num_channels=OPENAI_TTS_CHANNELS)
 
@@ -71,7 +72,7 @@ class OpenAITTS(TTS):
         self,
         text: AsyncIterator[str] | str,
         voice_id: Optional[str] = None,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> None:
         """
         Convert text to speech using OpenAI's TTS API and stream to audio track
@@ -113,7 +114,7 @@ class OpenAITTS(TTS):
                 input=text,
                 speed=self.speed,
                 response_format=self.response_format,
-                **({"instructions": self.instructions} if self.instructions else {})
+                **({"instructions": self.instructions} if self.instructions else {}),
             ) as response:
                 async for chunk in response.iter_bytes():
                     if self._interrupted:
@@ -145,7 +146,7 @@ class OpenAITTS(TTS):
                     self._first_chunk_sent = True
                     await self._first_audio_callback()
 
-                self.loop.create_task(self.audio_track.add_new_bytes(chunk))
+                asyncio.create_task(self.audio_track.add_new_bytes(chunk))
                 await asyncio.sleep(0.001)
 
     async def aclose(self) -> None:

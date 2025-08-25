@@ -114,7 +114,7 @@ class ResembleTTS(TTS):
                         break
                     if not header_processed:
                         audio_data += chunk
-                        data_pos = audio_data.find(b'data')
+                        data_pos = audio_data.find(b"data")
                         if data_pos != -1:
                             header_size = data_pos + 8
                             audio_data = audio_data[header_size:]
@@ -154,7 +154,7 @@ class ResembleTTS(TTS):
                     self._first_chunk_sent = True
                     await self._first_audio_callback()
 
-                self.loop.create_task(self.audio_track.add_new_bytes(chunk))
+                asyncio.create_task(self.audio_track.add_new_bytes(chunk))
                 await asyncio.sleep(0.001)
 
     async def aclose(self) -> None:

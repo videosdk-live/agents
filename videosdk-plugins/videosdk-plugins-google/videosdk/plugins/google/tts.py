@@ -101,9 +101,7 @@ class GoogleTTS(TTS):
             }
 
             response = await self._http_client.post(
-                GOOGLE_TTS_ENDPOINT,
-                params={"key": self.api_key},
-                json=payload
+                GOOGLE_TTS_ENDPOINT, params={"key": self.api_key}, json=payload
             )
             response.raise_for_status()
 
@@ -157,13 +155,13 @@ class GoogleTTS(TTS):
                     self._first_chunk_sent = True
                     await self._first_audio_callback()
 
-                self.loop.create_task(self.audio_track.add_new_bytes(chunk))
+                asyncio.create_task(self.audio_track.add_new_bytes(chunk))
                 await asyncio.sleep(0.001)
 
     def _remove_wav_header(self, audio_bytes: bytes) -> bytes:
         """Remove WAV header if present to get raw PCM data"""
-        if audio_bytes.startswith(b'RIFF'):
-            data_pos = audio_bytes.find(b'data')
+        if audio_bytes.startswith(b"RIFF"):
+            data_pos = audio_bytes.find(b"data")
             if data_pos != -1:
                 return audio_bytes[data_pos + 8:]
 

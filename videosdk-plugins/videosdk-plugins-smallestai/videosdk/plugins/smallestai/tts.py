@@ -25,7 +25,9 @@ class SmallestAITTS(TTS):
         enhancement: bool = False,
         api_key: str | None = None,
     ) -> None:
-        super().__init__(sample_rate=SMALLESTAI_SAMPLE_RATE, num_channels=SMALLESTAI_CHANNELS)
+        super().__init__(
+            sample_rate=SMALLESTAI_SAMPLE_RATE, num_channels=SMALLESTAI_CHANNELS
+        )
 
         self.model = model
         self.voice_id = voice_id
@@ -130,7 +132,7 @@ class SmallestAITTS(TTS):
                     self._first_chunk_sent = True
                     self.loop.create_task(self._first_audio_callback())
 
-                self.loop.create_task(self.audio_track.add_new_bytes(chunk))
+                asyncio.create_task(self.audio_track.add_new_bytes(chunk))
                 await asyncio.sleep(0.001)
 
     def _remove_wav_header(self, audio_bytes: bytes) -> bytes:
@@ -146,7 +148,7 @@ class SmallestAITTS(TTS):
 
     async def aclose(self) -> None:
         """Cleanup resources"""
-        if hasattr(self, '_client'):
+        if hasattr(self, "_client"):
             try:
 
                 if hasattr(self._client, 'aclose'):

@@ -12,12 +12,14 @@ from videosdk.agents import TTS, segment_text
 try:
     import boto3
     from botocore.exceptions import BotoCoreError, ClientError
+
     BOTO3_AVAILABLE = True
 except ImportError:
     BOTO3_AVAILABLE = False
 
 try:
     from scipy import signal
+
     SCIPY_AVAILABLE = True
 except ImportError:
     SCIPY_AVAILABLE = False
@@ -37,6 +39,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class PollyVoiceConfig:
     """Configuration for AWS Polly voice settings"""
+
     voice_id: str = DEFAULT_VOICE
     engine: str = DEFAULT_ENGINE
     output_format: str = DEFAULT_OUTPUT_FORMAT
@@ -64,7 +67,7 @@ class AWSPollyTTS(TTS):
         aws_session_token: Optional[str] = None,
         speed: float = 1.0,
         pitch: float = 0.0,
-        **kwargs: Any
+        **kwargs: Any,
     ):
         super().__init__(sample_rate=VIDEOSDK_TTS_SAMPLE_RATE,
                          num_channels=VIDEOSDK_TTS_CHANNELS)
@@ -90,13 +93,13 @@ class AWSPollyTTS(TTS):
             raise ValueError(
                 "AWS credentials must be provided or set as environment variables.")
         client_kwargs = {
-            'service_name': 'polly',
-            'region_name': self.region,
-            'aws_access_key_id': self.aws_access_key_id,
-            'aws_secret_access_key': self.aws_secret_access_key,
+            "service_name": "polly",
+            "region_name": self.region,
+            "aws_access_key_id": self.aws_access_key_id,
+            "aws_secret_access_key": self.aws_secret_access_key,
         }
         if self.aws_session_token:
-            client_kwargs['aws_session_token'] = self.aws_session_token
+            client_kwargs["aws_session_token"] = self.aws_session_token
         self._client = boto3.client(**client_kwargs)
 
     def reset_first_audio_tracking(self) -> None:
@@ -166,7 +169,7 @@ class AWSPollyTTS(TTS):
                              self.num_channels * 2 * 20 / 1000)
 
             for i in range(0, len(audio_data), chunk_size):
-                chunk = audio_data[i:i+chunk_size]
+                chunk = audio_data[i : i + chunk_size]
                 if len(chunk) < chunk_size:
                     chunk += b'\x00' * (chunk_size - len(chunk))
 
@@ -175,8 +178,7 @@ class AWSPollyTTS(TTS):
                         self._first_chunk_sent = True
                         await self._first_audio_callback()
 
-                    self.loop.create_task(
-                        self.audio_track.add_new_bytes(chunk))
+                    asyncio.create_task(self.audio_track.add_new_bytes(chunk))
                     await asyncio.sleep(0.01)
 
         except Exception as e:
@@ -185,7 +187,7 @@ class AWSPollyTTS(TTS):
                              self.num_channels * 2 * 20 / 1000)
 
             for i in range(0, len(audio_data), chunk_size):
-                chunk = audio_data[i:i+chunk_size]
+                chunk = audio_data[i : i + chunk_size]
                 if len(chunk) < chunk_size:
                     chunk += b'\x00' * (chunk_size - len(chunk))
 

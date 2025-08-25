@@ -63,8 +63,10 @@ class RimeTTS(TTS):
 
         if model_id in KNOWN_SPEAKERS and speaker not in KNOWN_SPEAKERS[model_id]:
             available = ", ".join(KNOWN_SPEAKERS[model_id])
-            print(f" Warning: Speaker '{speaker}' may not be available for model '{model_id}'. "
-                  f"Known speakers: {available}")
+            print(
+                f" Warning: Speaker '{speaker}' may not be available for model '{model_id}'. "
+                f"Known speakers: {available}"
+            )
 
         self._http_client = httpx.AsyncClient(
             timeout=httpx.Timeout(connect=15.0, read=30.0,
@@ -125,10 +127,7 @@ class RimeTTS(TTS):
             }
 
             async with self._http_client.stream(
-                "POST",
-                RIME_TTS_ENDPOINT,
-                headers=headers,
-                json=payload
+                "POST", RIME_TTS_ENDPOINT, headers=headers, json=payload
             ) as response:
                 response.raise_for_status()
 
@@ -172,13 +171,13 @@ class RimeTTS(TTS):
             await self._first_audio_callback()
 
         if self.audio_track and self.loop:
-            self.loop.create_task(
+            asyncio.create_task(
                 self.audio_track.add_new_bytes(processed_chunk))
 
     def _remove_wav_header(self, audio_bytes: bytes) -> bytes:
         """Remove WAV header if present to get raw PCM data"""
-        if audio_bytes.startswith(b'RIFF'):
-            data_pos = audio_bytes.find(b'data')
+        if audio_bytes.startswith(b"RIFF"):
+            data_pos = audio_bytes.find(b"data")
             if data_pos != -1:
                 return audio_bytes[data_pos + 8:]
 

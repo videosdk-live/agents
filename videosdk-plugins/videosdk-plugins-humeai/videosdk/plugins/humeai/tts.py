@@ -12,6 +12,7 @@ from videosdk.agents import TTS, segment_text
 
 try:
     from scipy import signal
+
     SCIPY_AVAILABLE = True
 except ImportError:
     SCIPY_AVAILABLE = False
@@ -56,7 +57,7 @@ class HumeAITTS(TTS):
         self,
         text: AsyncIterator[str] | str,
         voice_id: Optional[str] = None,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> None:
         try:
             if not self.audio_track or not self.loop:
@@ -103,12 +104,14 @@ class HumeAITTS(TTS):
         }
 
         try:
-            async with self._session.stream("POST", url, headers=headers, json=payload) as response:
+            async with self._session.stream(
+                "POST", url, headers=headers, json=payload
+            ) as response:
                 response.raise_for_status()
 
                 buffer = b""
                 async for chunk in response.aiter_bytes():
-                    lines = (buffer + chunk).split(b'\n')
+                    lines = (buffer + chunk).split(b"\n")
                     buffer = lines.pop()
 
                     for line in lines:
@@ -155,26 +158,25 @@ class HumeAITTS(TTS):
 
             chunk_size = 960
             for i in range(0, len(audio_bytes), chunk_size):
-                chunk = audio_bytes[i:i + chunk_size]
+                chunk = audio_bytes[i : i + chunk_size]
                 if len(chunk) < chunk_size and len(chunk) > 0:
-                    chunk += b'\x00' * (chunk_size - len(chunk))
+                    chunk += b"\x00" * (chunk_size - len(chunk))
                 if chunk:
                     if not self._first_chunk_sent and self._first_audio_callback:
                         self._first_chunk_sent = True
                         await self._first_audio_callback()
 
-                    self.loop.create_task(
-                        self.audio_track.add_new_bytes(chunk))
+                    asyncio.create_task(self.audio_track.add_new_bytes(chunk))
                     await asyncio.sleep(0.001)
         except Exception as e:
             self.emit("error", f"Audio streaming failed: {str(e)}")
 
     def _remove_wav_header(self, audio_bytes: bytes) -> bytes:
         """Remove WAV header if present"""
-        if audio_bytes.startswith(b'RIFF'):
-            data_pos = audio_bytes.find(b'data')
+        if audio_bytes.startswith(b"RIFF"):
+            data_pos = audio_bytes.find(b"data")
             if data_pos != -1:
-                return audio_bytes[data_pos + 8:]
+                return audio_bytes[data_pos + 8 :]
         return audio_bytes
 
     async def aclose(self) -> None:

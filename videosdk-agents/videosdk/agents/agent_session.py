@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 from typing import Any, Callable, Optional
 import asyncio
 
@@ -15,12 +14,11 @@ from .job import get_current_job_context
 from .event_bus import global_event_emitter
 import logging
 logger = logging.getLogger(__name__)
-
 class AgentSession:
     """
     Manages an agent session with its associated conversation flow and pipeline.
     """
-    
+
     def __init__(
         self,
         agent: Agent,
@@ -30,7 +28,7 @@ class AgentSession:
     ) -> None:
         """
         Initialize an agent session.
-        
+
         Args:
             agent: Instance of an Agent class that handles the core logic
             pipeline: Pipeline instance to process the agent's operations
@@ -46,10 +44,12 @@ class AgentSession:
         self._wake_up_task: Optional[asyncio.Task] = None
         self._wake_up_timer_active = False
         self._closed: bool = False
-        
         if hasattr(self.pipeline, 'set_agent'):
             self.pipeline.set_agent(self.agent)
-        if hasattr(self.pipeline, 'set_conversation_flow') and self.conversation_flow is not None:
+        if (
+            hasattr(self.pipeline, "set_conversation_flow")
+            and self.conversation_flow is not None
+        ):
             self.pipeline.set_conversation_flow(self.conversation_flow)
         if hasattr(self.pipeline, 'set_wake_up_callback'):
             self.pipeline.set_wake_up_callback(self._reset_wake_up_timer)
@@ -159,13 +159,12 @@ class AgentSession:
         
         if hasattr(self.pipeline, 'set_agent'):
             self.pipeline.set_agent(self.agent)
-        
+
         await self.pipeline.start()
         await self.agent.on_enter()
         global_event_emitter.emit("AGENT_STARTED", {"session": self})
         if self.on_wake_up is not None:
             self._start_wake_up_timer()
-        
     async def say(self, message: str) -> None:
         """
         Send an initial message to the agent.
@@ -176,7 +175,7 @@ class AgentSession:
                 traces_flow_manager.agent_say_called(message)
         self.agent.chat_context.add_message(role=ChatRole.ASSISTANT, content=message)
         await self.pipeline.send_message(message)
-    
+
     async def close(self) -> None:
         """
         Close the agent session.
@@ -202,10 +201,9 @@ class AgentSession:
         self._cancel_wake_up_timer()
         await self.agent.on_exit()
         await self.pipeline.cleanup()
-    
+
     async def leave(self) -> None:
         """
         Leave the agent session.
         """
         await self.pipeline.leave()
-        
