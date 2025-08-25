@@ -89,7 +89,7 @@ class VideoSDKHandler:
     def init_meeting(self):
         self.sdk_metadata = {
             "sdk": "agents",
-            "sdk_version": "0.0.23"
+            "sdk_version": "0.0.27"
         }
 
         self.meeting = VideoSDK.init_meeting(
