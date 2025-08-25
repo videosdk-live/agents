@@ -1,7 +1,7 @@
 import time
 import hashlib
-from typing import Dict, List, Optional, Any
-from dataclasses import asdict, field, fields
+from typing import Dict, Optional, Any
+from dataclasses import asdict
 from opentelemetry.trace import Span
 from .models import TimelineEvent, CascadingTurnData, CascadingMetricsData
 from .analytics import AnalyticsClient

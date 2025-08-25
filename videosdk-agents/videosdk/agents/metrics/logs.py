@@ -1,7 +1,3 @@
-import os
-import json
-import requests
-import logging
 from datetime import datetime
 from typing import Dict, Any, Optional
 from opentelemetry.trace import get_current_span

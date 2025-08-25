@@ -2,14 +2,12 @@ from __future__ import annotations
 
 import logging
 from typing import Any, Literal
-import asyncio
 import av
 import time
 
 from .pipeline import Pipeline
 from .event_emitter import EventEmitter
 from .realtime_base_model import RealtimeBaseModel
-from .room.room import VideoSDKHandler
 from .agent import Agent
 from .job import get_current_job_context
 from .metrics import realtime_metrics_collector

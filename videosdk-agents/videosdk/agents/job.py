@@ -5,7 +5,7 @@ from typing import Callable, Coroutine, Optional, Any
 import os
 import asyncio
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum, unique
 from typing import TYPE_CHECKING
 import logging

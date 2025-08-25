@@ -8,16 +8,13 @@ from videosdk import (
 )
 from .meeting_event_handler import MeetingHandler
 from .participant_event_handler import ParticipantHandler
-from .audio_stream import CustomAudioStreamTrack, TeeCustomAudioStreamTrack
+from .audio_stream import TeeCustomAudioStreamTrack
 from videosdk.agents.pipeline import Pipeline
 from dotenv import load_dotenv
 import numpy as np
 import asyncio
 import os
 from asyncio import AbstractEventLoop
-from .audio_stream import TeeCustomAudioStreamTrack
-from opentelemetry.trace import StatusCode, Span
-from ..metrics.integration import create_span, complete_span, create_log
 from ..metrics.traces_flow import TracesFlowManager
 from ..metrics import cascading_metrics_collector
 from ..metrics.integration import auto_initialize_telemetry_and_logs

@@ -1,6 +1,5 @@
 from __future__ import annotations
-from typing import Any, Callable, Dict, Literal
-import asyncio
+from typing import Any, Dict, Literal
 
 from .pipeline import Pipeline
 from .event_emitter import EventEmitter
@@ -105,12 +104,14 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
                     getattr(job_context.room, "agent_audio_track", None)
                     or job_context.room.audio_track
                 )
-                logger.info(f"TTS audio track configured from room (avatar mode)")
+                logger.info(
+                    f"TTS audio track configured from room (avatar mode)")
             elif hasattr(self, "audio_track"):
                 self.tts.audio_track = self.audio_track
                 logger.info(f"TTS audio track configured from pipeline")
             else:
-                logger.warning("No audio track available for TTS configuration")
+                logger.warning(
+                    "No audio track available for TTS configuration")
 
             if self.tts.audio_track:
                 logger.info(
@@ -137,7 +138,8 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
                 self.conversation_flow.on_stt_transcript
             )
         if self.conversation_flow.vad:
-            self.conversation_flow.vad.on_vad_event(self.conversation_flow.on_vad_event)
+            self.conversation_flow.vad.on_vad_event(
+                self.conversation_flow.on_vad_event)
 
     async def change_component(
         self,
@@ -302,7 +304,8 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
                 except Exception as e:
                     configs[comp_name] = configs.get(comp_name, {})
 
-        sensitive_keys = ["api_key", "token", "secret", "key", "password", "credential"]
+        sensitive_keys = ["api_key", "token",
+                          "secret", "key", "password", "credential"]
         for comp in configs.values():
             for key in sensitive_keys:
                 comp.pop(key, None)

@@ -7,7 +7,6 @@ from the VideoSDK API server, including registry URL.
 
 import aiohttp
 import logging
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 

@@ -1,4 +1,4 @@
-from typing import Dict, Set, Callable, TypeVar, Generic, Literal
+from typing import TypeVar, Literal
 from .event_emitter import EventEmitter
 
 EventTypes = Literal[
