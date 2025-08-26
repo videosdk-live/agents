@@ -8,7 +8,9 @@ from dataclasses import asdict
 from .models import RealtimeTurnData, TimelineEvent
 from .analytics import AnalyticsClient
 from .traces_flow import TracesFlowManager
+import logging
 
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from videosdk.agents.agent import Agent
@@ -238,6 +240,7 @@ class RealtimeMetricsCollector:
     async def add_tool_call(self, tool_name: str) -> None:
         if self.current_turn and tool_name not in self.current_turn.function_tools_called:
             self.current_turn.function_tools_called.append(tool_name)
+            logger.info(f"function tool called: {tool_name}")
 
     async def set_user_transcript(self, text: str) -> None:
         """Set the user transcript for the current turn and update timeline"""
@@ -248,6 +251,7 @@ class RealtimeMetricsCollector:
             if self.current_turn.user_speech_end_time is None:
                 self.current_turn.user_speech_end_time = time.perf_counter()
                 await self.end_timeline_event("user_speech")
+            logger.info(f"user input speech: {text}")
             await self.update_timeline_event_text("user_speech", text)
 
     async def set_agent_response(self, text: str) -> None:
@@ -256,11 +260,13 @@ class RealtimeMetricsCollector:
             if self.current_turn.agent_speech_start_time is None:
                 self.current_turn.agent_speech_start_time = time.perf_counter()
                 await self.start_timeline_event("agent_speech")
+                logger.info(f"agent output speech: {text}")
             await self.update_timeline_event_text("agent_speech", text)
 
     def set_realtime_model_error(self, error: Dict[str, Any]) -> None:
         """Set a realtime model-specific error for the current turn"""
         if self.current_turn:
+            logger.error(f"realtime model error: {error}")
             self.current_turn.realtime_model_errors.append(error)
 
     async def set_interrupted(self) -> None:

@@ -170,9 +170,6 @@ class Worker:
         """Initialize the worker."""
         self.options = options
 
-        # Setup logging with the specified log level from options
-        self._setup_logging()
-
         self._shutdown = False
         self._draining = False
         self._worker_load = 0.0
@@ -205,24 +202,6 @@ class Worker:
             raise ValueError(
                 "auth_token is required, or add VIDEOSDK_AUTH_TOKEN in your environment"
             )
-
-    def _setup_logging(self):
-        """Setup logging with the specified log level from WorkerOptions."""
-        from . import setup_logging
-        import logging
-
-        # Convert string log level to logging constant
-        log_level_map = {
-            "DEBUG": logging.DEBUG,
-            "INFO": logging.INFO,
-            "WARNING": logging.WARNING,
-            "ERROR": logging.ERROR,
-        }
-
-        level = log_level_map.get(self.options.log_level.upper(), logging.INFO)
-        setup_logging(level=level)
-
-        logger.info(f"Logging configured with level: {self.options.log_level.upper()}")
 
     @staticmethod
     def run_worker(
