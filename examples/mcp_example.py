@@ -71,7 +71,7 @@ async def entrypoint(ctx: JobContext):
 
     pipeline = RealTimePipeline(model=model)
     
-    agent = MCPAgent(ctx)
+    agent = MCPAgent()
 
     session = AgentSession(
         agent=agent,
