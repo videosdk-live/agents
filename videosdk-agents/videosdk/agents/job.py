@@ -268,8 +268,9 @@ class JobContext:
         if self.room_options.playground and self.room_options.join_meeting and not self.want_console:
             if self.videosdk_auth:
                 playground_url = f"https://playground.videosdk.live?token={self.videosdk_auth}&meetingId={self.room_options.room_id}"
-                print("Agent started in playground mode")
-                print(f"Interact with agent here at: {playground_url}")
+                print(f"\033[1;36m" + "Agent started in playground mode" + "\033[0m")
+                print("\033[1;75m" + "Interact with agent here at:" + "\033[0m")
+                print("\033[1;4;94m" + playground_url + "\033[0m")
             else:
                 raise ValueError("VIDEOSDK_AUTH_TOKEN environment variable not found")
 
