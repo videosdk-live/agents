@@ -10,6 +10,7 @@ from enum import Enum, unique
 from typing import TYPE_CHECKING
 import logging
 import requests
+import sys
 
 if TYPE_CHECKING:
     from .worker import ExecutorType, WorkerPermissions, _default_executor_type
@@ -198,6 +199,8 @@ class JobContext:
         self.room: Optional[VideoSDKHandler] = None
         self._shutdown_callbacks: list[Callable[[], Coroutine[None, None, None]]] = []
         self._is_shutting_down: bool = False
+        self.want_console = (len(sys.argv) > 1 and sys.argv[1].lower() == "console")
+
     def _set_pipeline_internal(self, pipeline: Any) -> None:
         """Internal method called by pipeline constructors"""
         self._pipeline = pipeline
@@ -233,37 +236,41 @@ class JobContext:
                 custom_microphone_audio_track = avatar.audio_track
                 sinks.append(avatar)
 
-            if self.room_options.join_meeting:
-                self.room = VideoSDKHandler(
-                    meeting_id=self.room_options.room_id,
-                    auth_token=self.videosdk_auth,
-                    name=self.room_options.name,
-                    pipeline=self._pipeline,
-                    loop=self._loop,
-                    vision=self.room_options.vision,
-                    recording=self.room_options.recording,
-                    custom_camera_video_track=custom_camera_video_track,
-                    custom_microphone_audio_track=custom_microphone_audio_track,
-                    audio_sinks=sinks,
-                    on_room_error=self.room_options.on_room_error,
-                    auto_end_session=self.room_options.auto_end_session,
-                    session_timeout_seconds=self.room_options.session_timeout_seconds,
-                    signaling_base_url=self.room_options.signaling_base_url,
-                )
-            if self._pipeline and hasattr(self._pipeline, "_set_loop_and_audio_track"):
-                self._pipeline._set_loop_and_audio_track(
-                    self._loop, self.room.audio_track
-                )
+
+            if self.want_console:
+                from .console_mode import setup_console_voice_for_ctx
+                if not self._pipeline:
+                    raise RuntimeError("Pipeline must be constructed before ctx.connect() in console mode")
+                cleanup_callback = await setup_console_voice_for_ctx(self)
+                self.add_shutdown_callback(cleanup_callback)
+            else:
+                if self.room_options.join_meeting:
+                    self.room = VideoSDKHandler(
+                        meeting_id=self.room_options.room_id,
+                        auth_token=self.videosdk_auth,
+                        name=self.room_options.name,
+                        pipeline=self._pipeline,
+                        loop=self._loop,
+                        vision=self.room_options.vision,
+                        recording=self.room_options.recording,
+                        custom_camera_video_track=custom_camera_video_track,
+                        custom_microphone_audio_track=custom_microphone_audio_track,
+                        audio_sinks=sinks,
+                        on_room_error= self.room_options.on_room_error
+                    )
+                if self._pipeline and hasattr(self._pipeline, '_set_loop_and_audio_track'):
+                    self._pipeline._set_loop_and_audio_track(self._loop, self.room.audio_track)
 
         if self.room and self.room_options.join_meeting:
             self.room.init_meeting()
             await self.room.join()
 
-        if self.room_options.playground and self.room_options.join_meeting:
+        if self.room_options.playground and self.room_options.join_meeting and not self.want_console:
             if self.videosdk_auth:
                 playground_url = f"https://playground.videosdk.live?token={self.videosdk_auth}&meetingId={self.room_options.room_id}"
-                logger.info("Agent started in playground mode")
-                logger.info(f"Interact with agent here at: {playground_url}")
+                print(f"\033[1;36m" + "Agent started in playground mode" + "\033[0m")
+                print("\033[1;75m" + "Interact with agent here at:" + "\033[0m")
+                print("\033[1;4;94m" + playground_url + "\033[0m")
             else:
                 raise ValueError("VIDEOSDK_AUTH_TOKEN environment variable not found")
 
@@ -310,7 +317,9 @@ class JobContext:
             ValueError: If the VIDEOSDK_AUTH_TOKEN is missing.
             RuntimeError: If the API request fails or the response is invalid.
         """
-
+        if self.want_console:
+            return None
+        
         if self.videosdk_auth:
             url = "https://api.videosdk.live/v2/rooms"
             headers = {"Authorization": self.videosdk_auth}

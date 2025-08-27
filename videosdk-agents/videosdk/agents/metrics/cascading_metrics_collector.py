@@ -403,7 +403,7 @@ class CascadingMetricsCollector:
             if self.data.current_turn:
                 self.data.current_turn.llm_end_time = llm_end_time
                 self.data.current_turn.llm_latency = self._round_latency(llm_latency)
-                logger.info(f"llm ttfw: {self.data.current_turn.llm_latency}ms")
+                logger.info(f"llm latency: {self.data.current_turn.llm_latency}ms")
             self.data.llm_start_time = None
     
     def on_tts_start(self):
@@ -445,6 +445,7 @@ class CascadingMetricsCollector:
     def set_user_transcript(self, transcript: str):
         """Set the user transcript for the current turn and update timeline"""
         if self.data.current_turn:
+            logger.info(f"user input speech: {transcript}")
             user_speech_events = [event for event in self.data.current_turn.timeline 
                                 if event.event_type == "user_speech"]
             
@@ -460,6 +461,7 @@ class CascadingMetricsCollector:
     def set_agent_response(self, response: str):
         """Set the agent response for the current turn and update timeline"""
         if self.data.current_turn:
+            logger.info(f"agent output speech: {response}")
             if not any(event.event_type == "agent_speech" for event in self.data.current_turn.timeline):
                 current_time = time.perf_counter()
                 self._start_timeline_event("agent_speech", current_time)
