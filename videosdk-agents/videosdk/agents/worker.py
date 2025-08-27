@@ -6,6 +6,7 @@ from typing import Any, Callable, Dict, Optional, Set
 from dataclasses import dataclass, field
 from enum import Enum
 import logging
+import signal
 
 from .init_config import fetch_agent_init_config
 
@@ -236,8 +237,10 @@ class Worker:
             ```
         """
         worker = Worker(options)
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
 
-        async def main():
+        async def main_task():
             try:
                 await worker.initialize()
 
@@ -254,15 +257,45 @@ class Worker:
                     while not worker._shutdown:
                         await asyncio.sleep(1)
 
-            except KeyboardInterrupt:
-                logger.info("Received interrupt signal")
+            except asyncio.CancelledError:
+                logger.info("Main task cancelled")
             except Exception as e:
                 logger.error(f"Worker error: {e}")
                 raise
             finally:
                 await worker.shutdown()
 
-        asyncio.run(main())
+        main_future = loop.create_task(main_task())
+        shutting_down = False
+
+        def signal_handler(signum, frame):
+            nonlocal shutting_down
+            if shutting_down:
+                return
+            shutting_down = True
+            logger.info(f"Received signal {signum}. Initiating graceful shutdown...")
+            loop.call_soon_threadsafe(main_future.cancel)
+
+        try:
+            signal.signal(signal.SIGINT, signal_handler)
+            signal.signal(signal.SIGTERM, signal_handler)
+
+            loop.run_until_complete(main_future)
+        except KeyboardInterrupt:
+            logger.info("Keyboard interrupt received")
+            if not shutting_down:
+                shutting_down = True
+                if not main_future.done():
+                    main_future.cancel()
+                loop.run_until_complete(worker.shutdown())
+        finally:
+            try:
+                loop.close()
+            except Exception as e:
+                logger.error(f"Error closing event loop: {e}")
+            
+        if loop.is_closed():
+            logger.info("Event loop closed successfully")
 
     async def initialize(self):
         """Initialize the worker."""
