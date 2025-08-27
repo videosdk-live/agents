@@ -17,17 +17,8 @@ except Exception:
 import numpy as np
 from .room.audio_stream import TeeCustomAudioStreamTrack
 import logging
-from .metrics import cascading_metrics_collector, realtime_metrics_collector
 
 logger = logging.getLogger(__name__)
-
-def find_device_id(name: str, kind: str) -> int | None:
-    """Find an audio device ID by its name."""
-    devices = sd.query_devices()
-    for i, d in enumerate(devices):
-        if name.lower() in d["name"].lower() and d[f'max_{kind}_channels'] > 0:
-            return i
-    return None
 
 class LocalAudioPlayer:
     def __init__(self, samplerate: int = 24000, channels: int = 1, output_device: Optional[int] = None,
