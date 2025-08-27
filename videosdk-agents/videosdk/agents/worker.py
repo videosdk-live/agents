@@ -271,10 +271,16 @@ class Worker:
         def signal_handler(signum, frame):
             nonlocal shutting_down
             if shutting_down:
+                # If already shutting down, cancel all tasks more aggressively
+                for task in asyncio.all_tasks(loop):
+                    task.cancel()
                 return
             shutting_down = True
             logger.info(f"Received signal {signum}. Initiating graceful shutdown...")
+            # Cancel the main task
             loop.call_soon_threadsafe(main_future.cancel)
+            # Set a timeout for graceful shutdown
+            loop.call_later(3.0, lambda: [task.cancel() for task in asyncio.all_tasks(loop)])
 
         try:
             signal.signal(signal.SIGINT, signal_handler)
@@ -482,9 +488,8 @@ class Worker:
         if termination.job_id in self._current_jobs:
             job_info = self._current_jobs[termination.job_id]
 
-            # Terminate the job
             try:
-                await job_info.terminate()
+                await job_info.job.shutdown()
                 logger.info(f"Successfully terminated job {termination.job_id}")
             except Exception as e:
                 logger.error(f"Error terminating job {termination.job_id}: {e}")
@@ -1121,6 +1126,13 @@ class Worker:
             else:
                 await self._wait_for_jobs()
 
+    async def _wait_for_jobs(self) -> None:
+        """Wait for all current jobs to complete."""
+        while self._current_jobs:
+            # Wait a bit and check again
+            await asyncio.sleep(1)
+            logger.info(f"Still waiting for {len(self._current_jobs)} jobs to complete")
+
     async def _cleanup_all_jobs(self):
         """Clean up all current jobs and notify registry."""
         if not self._current_jobs:
@@ -1128,12 +1140,18 @@ class Worker:
 
         logger.info(f"Cleaning up {len(self._current_jobs)} jobs during shutdown")
 
-        # Get list of job IDs to avoid modification during iteration
-        job_ids = list(self._current_jobs.keys())
-
-        for job_id in job_ids:
+        # Create a copy of jobs to iterate over, as they will be modified
+        jobs_to_clean = list(self._current_jobs.items())
+        
+        for job_id, job_info in jobs_to_clean:
             try:
-                # Notify registry about job completion
+                logger.info(f"Terminating job {job_id}...")
+                await job_info.job.shutdown()  # This calls job.shutdown()
+                logger.info(f"Job {job_id} terminated successfully.")
+            except Exception as e:
+                logger.error(f"Error terminating job {job_id}: {e}")
+
+            try:
                 if self.backend_connection and self.backend_connection.is_connected:
                     job_update = JobUpdate(
                         job_id=job_id,
@@ -1146,62 +1164,72 @@ class Worker:
                     )
             except Exception as e:
                 logger.error(
-                    f"Failed to send job completion update for job {job_id}: {e}"
+                    f"Failed to send job completion update for {job_id}: {e}"
                 )
-
-        # Clear all jobs
+        
+        # Clear all jobs from the worker's state
         self._current_jobs.clear()
         logger.info("All jobs cleared from worker")
 
-        # Send immediate status update to reflect zero jobs
-        await self._send_immediate_status_update()
-
-    async def _wait_for_jobs(self) -> None:
-        """Wait for all current jobs to complete."""
-        while self._current_jobs:
-            # Wait a bit and check again
-            await asyncio.sleep(1)
-            logger.info(f"Still waiting for {len(self._current_jobs)} jobs to complete")
-
+        # Send a final status update reflecting zero jobs
+        if self.backend_connection and self.backend_connection.is_connected:
+            await self._send_immediate_status_update()
+            
     async def shutdown(self):
         """Shutdown the worker."""
         logger.info("Shutting down VideoSDK worker")
         self._shutdown = True
-
-        # Mark worker as draining
         self._draining = True
 
-        # Send final status update to registry
-        if self.backend_connection and self.backend_connection.is_connected:
-            try:
-                await self._update_worker_status()
-                logger.info("Sent final status update to registry")
-            except Exception as e:
-                logger.warning(f"Failed to send final status update: {e}")
+        try:
+            # Clean up all jobs first to ensure proper room cleanup
+            await self._cleanup_all_jobs()
+        except Exception as e:
+            logger.error(f"Error during job cleanup: {e}")
 
-        # Clean up all jobs and notify registry
-        await self._cleanup_all_jobs()
+        try:
+            # Send final status update to registry
+            if self.backend_connection and self.backend_connection.is_connected:
+                try:
+                    await self._update_worker_status()
+                    logger.info("Sent final status update to registry")
+                except Exception as e:
+                    logger.warning(f"Failed to send final status update: {e}")
 
-        # Disconnect from backend FIRST (this will send offline notification and prevent reconnection)
-        if self.backend_connection:
-            logger.info("Disconnecting from backend")
-            await self.backend_connection.disconnect()
+            # Disconnect from backend
+            if self.backend_connection:
+                logger.info("Disconnecting from backend")
+                await self.backend_connection.disconnect()
+        except Exception as e:
+            logger.error(f"Error during backend cleanup: {e}")
 
-        # Cancel all tasks
-        for task in self._tasks:
-            task.cancel()
+        try:
+            # Cancel all tasks
+            for task in self._tasks:
+                if not task.done():
+                    task.cancel()
 
-        # Wait for tasks to complete
-        if self._tasks:
-            await asyncio.gather(*self._tasks, return_exceptions=True)
+            # Wait briefly for tasks to complete
+            if self._tasks:
+                done, pending = await asyncio.wait(self._tasks, timeout=2.0)
+                for task in pending:
+                    task.cancel()
+        except Exception as e:
+            logger.error(f"Error during task cleanup: {e}")
 
-        # Shutdown task executor
-        if self.process_manager:
-            await self.process_manager.stop()
+        try:
+            # Shutdown task executor
+            if self.process_manager:
+                await self.process_manager.stop()
+        except Exception as e:
+            logger.error(f"Error stopping process manager: {e}")
 
-        # Stop debug HTTP server
-        if self._http_server:
-            await self._http_server.aclose()
+        try:
+            # Stop debug HTTP server
+            if self._http_server:
+                await self._http_server.aclose()
+        except Exception as e:
+            logger.error(f"Error stopping HTTP server: {e}")
 
         logger.info("VideoSDK worker shutdown complete")
 

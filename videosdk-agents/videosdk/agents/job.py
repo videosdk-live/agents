@@ -380,7 +380,11 @@ class RunningJobInfo:
     """Information about a running job."""
 
     accept_arguments: JobAcceptArguments
-    job: Any
+    job: JobContext
     url: str
     token: str
     worker_id: str
+
+    async def _run(self):
+        # Placeholder for job execution logic if needed in the future
+        pass
