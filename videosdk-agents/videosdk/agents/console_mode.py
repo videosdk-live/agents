@@ -2,11 +2,21 @@ from __future__ import annotations
 import asyncio
 import queue
 from typing import Any, Optional, Callable
+import sys
 
-try:
-    import aec_audio_processing  as apm
-except ImportError:
-    raise ImportError("aec-audio-processing is required for echo cancellation. Install with: pip install aec-audio-processing")
+if sys.platform in ("darwin", "linux", "linux2"):
+    try:
+        import aec_audio_processing as apm
+    except ImportError:
+        raise ImportError(
+            "aec-audio-processing is required for Console mode on macOS/Linux. "
+            "Install with: pip install aec-audio-processing"
+        )
+else:
+    raise RuntimeError(
+        "Console mode is not supported on this platform. "
+        "Currently only macOS and Linux are supported."
+    )
 
 try:
     import sounddevice as sd
