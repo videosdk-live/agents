@@ -256,7 +256,10 @@ class JobContext:
                         custom_camera_video_track=custom_camera_video_track,
                         custom_microphone_audio_track=custom_microphone_audio_track,
                         audio_sinks=sinks,
-                        on_room_error= self.room_options.on_room_error
+                        on_room_error= self.room_options.on_room_error,
+                        auto_end_session=self.room_options.auto_end_session,
+                        session_timeout_seconds=self.room_options.session_timeout_seconds,
+                        signaling_base_url=self.room_options.signaling_base_url,
                     )
                 if self._pipeline and hasattr(self._pipeline, '_set_loop_and_audio_track'):
                     self._pipeline._set_loop_and_audio_track(self._loop, self.room.audio_track)
@@ -377,7 +380,11 @@ class RunningJobInfo:
     """Information about a running job."""
 
     accept_arguments: JobAcceptArguments
-    job: Any
+    job: JobContext
     url: str
     token: str
     worker_id: str
+
+    async def _run(self):
+        # Placeholder for job execution logic if needed in the future
+        pass
