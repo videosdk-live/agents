@@ -15,9 +15,6 @@ from videosdk.agents import (
 from videosdk.plugins.openai import OpenAILLM
 from videosdk.plugins.deepgram import DeepgramSTT
 from videosdk.plugins.silero import SileroVAD
-
-# from videosdk.plugins.elevenlabs import ElevenLabsTTS
-# from videosdk.plugins.sarvamai import SarvamTTS
 from videosdk.plugins.google import GoogleTTS
 
 
@@ -66,11 +63,9 @@ class VoiceAgent(Agent):
         )
 
     async def on_enter(self) -> None:
-        print("DEBUG: Agent on_enter called")
         await self.session.say("Hello, how can I help you today?")
 
     async def on_exit(self) -> None:
-        print("DEBUG: Agent on_exit called")
         await self.session.say("Goodbye!")
 
     # # Static test function
@@ -93,17 +88,14 @@ class VoiceAgent(Agent):
 
 
 async def entrypoint(ctx: JobContext):
-    print("DEBUG: Entrypoint started")
 
     agent = VoiceAgent()
     conversation_flow = ConversationFlow(agent)
 
-    print("DEBUG: Creating pipeline with GoogleTTS")
     pipeline = CascadingPipeline(
         stt=DeepgramSTT(), llm=OpenAILLM(), tts=GoogleTTS(), vad=SileroVAD()
     )
 
-    print("DEBUG: Creating agent session")
     session = AgentSession(
         agent=agent,
         pipeline=pipeline,
@@ -116,14 +108,11 @@ async def entrypoint(ctx: JobContext):
     ctx.add_shutdown_callback(cleanup_session)
 
     try:
-        print("DEBUG: Connecting to room")
         await ctx.connect()
         print("Waiting for participant...")
         await ctx.room.wait_for_participant()
         print("Participant joined")
-        print("DEBUG: Starting session")
         await session.start()
-        print("DEBUG: Session started, waiting for events")
         await asyncio.Event().wait()
     except KeyboardInterrupt:
         print("\nShutting down gracefully...")
@@ -135,9 +124,8 @@ async def entrypoint(ctx: JobContext):
 def make_context() -> JobContext:
     room_options = RoomOptions(
         name="Sandbox Agent",
-        room_id="4gga-v342-sfe9", 
+        room_id="<room_id>",
         playground=True,
-        signaling_base_url="dev-api.videosdk.live",
         auto_end_session=True,
         session_timeout_seconds=10,
     )
@@ -150,7 +138,7 @@ if __name__ == "__main__":
         entrypoint=entrypoint,
         jobctx=make_context,
         options=Options(
-            signaling_base_url="dev-api.videosdk.live", log_level="INFO", register=True
+            log_level="INFO", register=True,
         ),
     )
     job.start()
