@@ -2,52 +2,42 @@
 import asyncio
 import logging
 from videosdk.agents import Agent, AgentSession, RealTimePipeline, function_tool, WorkerJob, JobContext, RoomOptions
-from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig
+from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig
+from openai.types.beta.realtime.session import TurnDetection
 
 logging.getLogger().setLevel(logging.CRITICAL)
 class RealtimeAgent(Agent):
     def __init__(self):
         super().__init__(
-            instructions=""" You are a helpful voice assistant that can answer questions and help with tasks. """,
+            instructions="""You are a high-energy game-show host guiding the caller to guess a secret number from 1 to 100 to win 1,000,000$.""",
         )
 
     async def on_enter(self) -> None:
-        await self.session.say("Hello, how can I help you today?")
+        await self.session.say("Welcome to the Videosdk's AI Agent game show! I'm your host, and we're about to play for 1,000,000$. Are you ready to play?")
 
     async def on_exit(self) -> None:
         await self.session.say("Goodbye!")
 
-    @function_tool
-    async def get_horoscope(self, sign: str) -> dict:
-        horoscopes = {
-            "Aries": "Today is your lucky day!",
-            "Taurus": "Focus on your goals today.",
-            "Gemini": "Communication will be important today.",
-        }
-        return {
-            "sign": sign,
-            "horoscope": horoscopes.get(sign, "The stars are aligned for you today!"),
-        }
-
 async def entrypoint(ctx: JobContext):
-    
-    model = GeminiRealtime(
-        model="gemini-2.0-flash-live-001",
-        config=GeminiLiveConfig(
-            voice="Leda", # Puck, Charon, Kore, Fenrir, Aoede, Leda, Orus, and Zephyr.
-            response_modalities=["AUDIO"]
+
+    # Initialize the OpenAI GPT real-time model
+    model = OpenAIRealtime(
+        model="gpt-realtime-2025-08-28",
+        config=OpenAIRealtimeConfig(
+            voice="alloy", # alloy, ash, ballad, coral, echo, fable, onyx, nova, sage, shimmer, and verse
+            modalities=["audio"],
+            turn_detection=TurnDetection(
+                type="server_vad",
+                threshold=0.5,
+                prefix_padding_ms=300,
+                silence_duration_ms=200,
+            ),
+            tool_choice="auto"
         )
     )
     
     pipeline = RealTimePipeline(model=model)
     
-    def on_transcription(data: dict):
-        role = data.get("role")
-        text = data.get("text")
-        print(f"[TRANSCRIPT][{role}: {text}")
-
-        pipeline.on("realtime_model_transcription", on_transcription)
-
     agent = RealtimeAgent()
     
     session = AgentSession(
@@ -69,7 +59,7 @@ async def entrypoint(ctx: JobContext):
         await ctx.shutdown()
 
 def make_context() -> JobContext:
-    room_options = RoomOptions(room_id="4gga-v342-sfe9", name="Sandbox Agent", playground=True) 
+    room_options = RoomOptions(room_id="<room_id>", name="Sandbox Agent", playground=True) 
     return JobContext(
         room_options=room_options
         )
