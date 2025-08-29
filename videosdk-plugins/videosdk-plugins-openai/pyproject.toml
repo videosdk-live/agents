@@ -9,7 +9,7 @@ description = "VideoSDK Agent Framework plugin for OpenAI services"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.11"
-authors = [{ name = "videosdk"}]
+authors = [{ name = "videosdk" }]
 keywords = ["video", "audio", "ai", "openai", "videosdk"]
 classifiers = [
     "Intended Audience :: Developers",
@@ -20,10 +20,7 @@ classifiers = [
     "Topic :: Multimedia :: Video",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-dependencies = [
-    "videosdk-agents>=0.0.29",
-    "openai[realtime]>=1.68.2",
-]
+dependencies = ["videosdk-agents>=0.0.30", "openai[realtime]>=1.68.2"]
 
 [tool.hatch.version]
 path = "videosdk/plugins/openai/version.py"

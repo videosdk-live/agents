@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "VideoSDK Agent Framework plugin for Simli Virtual Avatar"
 readme = "README.md"
 requires-python = ">=3.12"
-authors = [{ name = "videosdk"}]
+authors = [{ name = "videosdk" }]
 keywords = ["video", "audio", "ai", "simli", "videosdk", "simli"]
 classifiers = [
     "Intended Audience :: Developers",
@@ -20,11 +20,11 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "videosdk-agents>=0.0.29",
+    "videosdk-agents>=0.0.30",
     "httpx",
     "aiortc<1.7.0",
     "websockets",
-    "av<14.0.0"
+    "av<14.0.0",
 ]
 
 [tool.hatch.version]

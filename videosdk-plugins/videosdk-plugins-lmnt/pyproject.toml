@@ -9,7 +9,7 @@ description = "VideoSDK Agent Framework plugin for LMNT AI Text-to-Speech servic
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.11"
-authors = [{ name = "videosdk"}]
+authors = [{ name = "videosdk" }]
 keywords = ["video", "audio", "ai", "lmnt", "tts", "videosdk", "lmnt"]
 classifiers = [
     "Intended Audience :: Developers",
@@ -20,10 +20,7 @@ classifiers = [
     "Topic :: Multimedia :: Video",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-dependencies = [
-    "videosdk-agents>=0.0.29",
-    "httpx>=0.24.0",
-]
+dependencies = ["videosdk-agents>=0.0.30", "httpx>=0.24.0"]
 
 [tool.hatch.version]
 path = "videosdk/plugins/lmnt/version.py"
@@ -32,4 +29,4 @@ path = "videosdk/plugins/lmnt/version.py"
 packages = ["videosdk"]
 
 [tool.hatch.build.targets.sdist]
-include = ["/videosdk"] 
+include = ["/videosdk"]

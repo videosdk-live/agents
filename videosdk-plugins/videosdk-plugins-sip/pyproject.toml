@@ -9,7 +9,7 @@ description = "VideoSDK Agent Framework plugin for SIP integration with multiple
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.11"
-authors = [{ name = "videosdk"}]
+authors = [{ name = "videosdk" }]
 keywords = ["video", "audio", "ai", "sip", "telephony", "videosdk"]
 classifiers = [
     "Intended Audience :: Developers",
@@ -22,11 +22,11 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "videosdk-agents>=0.0.29",
+    "videosdk-agents>=0.0.30",
     "fastapi>=0.115.0",
     "httpx>=0.29.0",
     "twilio>=9.6.0",
-    "pyngrok>=7.1.6"
+    "pyngrok>=7.1.6",
 ]
 
 [tool.hatch.version]
