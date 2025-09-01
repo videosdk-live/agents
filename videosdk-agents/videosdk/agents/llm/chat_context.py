@@ -30,10 +30,6 @@ class ImageContent(BaseModel):
     """
     Represents image content in chat messages.
 
-    This class handles image data that can be included in chat messages,
-    supporting both VideoFrame objects and string URLs. It provides
-    automatic encoding and resizing capabilities for optimal LLM processing.
-
     Attributes:
         id (str): Unique identifier for the image. Auto-generated if not provided.
         type (Literal["image"]): Type identifier, always "image".
@@ -62,10 +58,6 @@ class ImageContent(BaseModel):
         """
         Convert the image to a data URL format.
 
-        If the image is already a string URL, it returns as-is. Otherwise,
-        it encodes the VideoFrame to the specified format and returns a
-        base64-encoded data URL suitable for LLM processing.
-
         Returns:
             str: A data URL string representing the image.
         """
@@ -84,9 +76,6 @@ class FunctionCall(BaseModel):
     """
     Represents a function call in the chat context.
 
-    This class tracks when the LLM requests to call a specific function,
-    storing the function name, arguments, and a unique call identifier
-    for tracking the execution flow.
 
     Attributes:
         id (str): Unique identifier for the function call. Auto-generated if not provided.
@@ -105,10 +94,6 @@ class FunctionCall(BaseModel):
 class FunctionCallOutput(BaseModel):
     """
     Represents the output of a function call.
-
-    This class stores the result of executing a function call, including
-    success/failure status and the output data. It's linked to the original
-    FunctionCall via the call_id.
 
     Attributes:
         id (str): Unique identifier for the function output. Auto-generated if not provided.
@@ -129,10 +114,6 @@ class FunctionCallOutput(BaseModel):
 class ChatMessage(BaseModel):
     """
     Represents a single message in the chat context.
-
-    This class defines the structure of individual chat messages, including
-    role information, content (which can be text or images), and metadata
-    like creation time and interruption status.
 
     Attributes:
         role (ChatRole): The role of the message sender (system, user, or assistant).
@@ -156,14 +137,6 @@ ChatItem = Union[ChatMessage, FunctionCall, FunctionCallOutput]
 class ChatContext:
     """
     Manages a conversation context for LLM interactions.
-
-    This class maintains the complete conversation history including messages,
-    function calls, and function outputs. It provides methods for adding
-    new items, filtering content, and managing the context lifecycle.
-
-    The context supports rich content types including text, images, and
-    function interactions, making it suitable for complex multi-modal
-    conversations with LLMs.
     """
 
     def __init__(self, items: Optional[List[ChatItem]] = None):
@@ -179,9 +152,6 @@ class ChatContext:
     def empty(cls) -> ChatContext:
         """
         Create an empty chat context.
-
-        This class method provides a convenient way to create a new,
-        empty chat context without any existing conversation history.
 
         Returns:
             ChatContext: A new empty chat context instance.
@@ -207,9 +177,6 @@ class ChatContext:
     ) -> ChatMessage:
         """
         Add a new message to the context.
-
-        Creates and adds a new ChatMessage to the conversation context.
-        If content is a string, it's automatically wrapped in a list.
 
         Args:
             role (ChatRole): The role of the message sender.
@@ -241,9 +208,6 @@ class ChatContext:
         """
         Add a function call to the context.
 
-        Creates and adds a new FunctionCall to track when the LLM
-        requests to execute a specific function.
-
         Args:
             name (str): Name of the function to be called.
             arguments (str): JSON string containing the function arguments.
@@ -270,9 +234,6 @@ class ChatContext:
         """
         Add a function output to the context.
 
-        Creates and adds a new FunctionCallOutput to record the result
-        of executing a function call.
-
         Args:
             name (str): Name of the function that was executed.
             output (str): The result or output from the function execution.
@@ -295,9 +256,6 @@ class ChatContext:
         """
         Find an item by its ID.
 
-        Searches through all conversation items to find one with
-        the specified ID.
-
         Args:
             item_id (str): The ID of the item to find.
 
@@ -318,11 +276,6 @@ class ChatContext:
     ) -> ChatContext:
         """
         Create a filtered copy of the chat context.
-
-        This method creates a new ChatContext with selective filtering options.
-        It's useful for creating context variants for different purposes,
-        such as excluding function calls for certain LLM interactions or
-        filtering by available tools.
 
         Args:
             exclude_function_calls (bool, optional): Whether to exclude function calls and outputs. Defaults to False.
@@ -358,10 +311,6 @@ class ChatContext:
         """
         Truncate the context to the last N items while preserving system message.
 
-        This method reduces the context size by keeping only the most recent
-        items while ensuring the system message (if present) is always included.
-        It's useful for managing memory usage in long conversations.
-
         Args:
             max_items (int): Maximum number of items to keep in the context.
 
@@ -389,9 +338,6 @@ class ChatContext:
         """
         Convert the context to a dictionary representation.
 
-        This method serializes the ChatContext to a dictionary format
-        suitable for storage, transmission, or debugging purposes.
-
         Returns:
             dict: Dictionary representation of the chat context.
         """
@@ -415,9 +361,6 @@ class ChatContext:
     def from_dict(cls, data: dict) -> ChatContext:
         """
         Create a ChatContext from a dictionary representation.
-
-        This class method reconstructs a ChatContext instance from
-        a previously serialized dictionary. It's the inverse of to_dict().
 
         Args:
             data (dict): Dictionary containing the serialized chat context data.

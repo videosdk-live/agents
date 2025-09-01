@@ -8,10 +8,6 @@ class AgentCard:
     """
     Represents an agent's capabilities and identity for agent-to-agent communication.
 
-    This class defines the metadata and capabilities of an agent that can participate
-    in A2A (Agent-to-Agent) communication protocols. It serves as a registration
-    card that other agents can use to discover and interact with this agent.
-
     Attributes:
         id (str): Unique identifier for the agent. Auto-generated if not provided.
         name (str): Human-readable name of the agent.
@@ -30,10 +26,6 @@ class AgentCard:
     def __post_init__(self):
         """
         Internal method: Automatically generates a UUID if no ID is provided.
-
-        This method is called automatically after the dataclass is initialized.
-        It ensures that every agent has a unique identifier for tracking
-        and communication purposes.
         """
         if not self.id:
             self.id = str(uuid.uuid4())

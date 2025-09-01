@@ -16,10 +16,6 @@ class A2AMessage:
     """
     Message format for agent-to-agent communication.
 
-    This class defines the structure of messages exchanged between agents
-    in the A2A (Agent-to-Agent) communication system. Each message contains
-    routing information, content, and metadata for tracking and processing.
-
     Attributes:
         from_agent (str): ID of the agent sending the message.
         to_agent (str): ID of the agent receiving the message.
@@ -42,10 +38,6 @@ class A2AMessage:
 class AgentRegistry:
     """
     Singleton registry for managing agent registration and discovery.
-
-    This class maintains a centralized registry of all agents participating
-    in the A2A communication system. It provides methods for agent registration,
-    discovery by domain or capability, and instance retrieval.
     """
     _instance = None
     agents: Dict[str, AgentCard] = field(default_factory=dict)
@@ -54,11 +46,6 @@ class AgentRegistry:
     def __new__(cls):
         """
         Internal method: Implements singleton pattern for AgentRegistry.
-
-        Ensures only one instance of AgentRegistry exists across the system.
-        This is necessary to maintain a single source of truth for agent
-        registration and discovery.
-
         Returns:
             AgentRegistry: The singleton instance of the registry.
         """
@@ -74,11 +61,6 @@ class AgentRegistry:
     def register_agent(self, card: AgentCard, agent_instance: 'Agent' = None):
         """
         Register an agent with its capabilities in the registry.
-
-        This method adds an agent to the registry, making it discoverable
-        by other agents. It also creates tracing spans for monitoring and
-        analytics purposes.
-
         Args:
             card (AgentCard): The agent's capability card containing metadata.
             agent_instance ('Agent', optional): The actual agent instance for direct communication.
@@ -122,9 +104,6 @@ class AgentRegistry:
         """
         Remove an agent from the registry.
 
-        This method removes an agent from both the agents and agent_instances
-        dictionaries, effectively making it undiscoverable by other agents.
-
         Args:
             agent_id (str): The ID of the agent to unregister.
         """
@@ -134,9 +113,6 @@ class AgentRegistry:
     def find_agents_by_domain(self, domain: str) -> List[str]:
         """
         Find all agents that handle a specific domain.
-
-        Searches through registered agents to find those that specialize
-        in the specified domain.
 
         Args:
             domain (str): The domain to search for (e.g., "customer_service", "technical_support").
@@ -174,9 +150,6 @@ class AgentRegistry:
         """
         Find all agents that have a specific capability.
 
-        Searches through registered agents to find those that can perform
-        the specified capability.
-
         Args:
             capability (str): The capability to search for (e.g., "text_generation", "image_analysis").
 
@@ -192,11 +165,6 @@ class AgentRegistry:
 class A2AProtocol:
     """
     Handles agent-to-agent communication and message routing.
-
-    This class implements the core A2A communication protocol, providing
-    methods for message handling, agent registration, and inter-agent
-    communication. It manages message routing, event handling, and
-    maintains communication state between agents.
     """
 
     def __init__(self, agent: 'Agent'):
@@ -217,9 +185,6 @@ class A2AProtocol:
         """
         Register the agent with the global registry.
 
-        This method registers the agent's capabilities and instance with
-        the AgentRegistry, making it discoverable by other agents.
-
         Args:
             card (AgentCard): The agent's capability card.
         """
@@ -228,10 +193,6 @@ class A2AProtocol:
     async def unregister(self) -> None:
         """
         Unregister the agent and clean up event handlers.
-
-        This method removes the agent from the registry, cleans up
-        all message handlers, and ends any active communication traces.
-        It should be called when the agent is shutting down.
         """
         traces_flow_manager = cascading_metrics_collector.traces_flow_manager if cascading_metrics_collector else None
 
@@ -251,10 +212,6 @@ class A2AProtocol:
     def on_message(self, message_type: str, handler: Callable[[A2AMessage], None]) -> None:
         """
         Register a message handler for specific message types.
-
-        This method allows the agent to register callback functions that will
-        be called when messages of a specific type are received. The handler
-        must be an async function that takes an A2AMessage parameter.
 
         Args:
             message_type (str): Type of message to handle (e.g., "model_query", "model_response").
@@ -311,10 +268,6 @@ class A2AProtocol:
         """
         Unregister a message handler.
 
-        This method removes a previously registered message handler for
-        a specific message type. If no handlers remain for a message type,
-        the message type is completely removed from the handler registry.
-
         Args:
             message_type (str): Type of message to unregister the handler from.
             handler (Callable[[A2AMessage], None]): The handler function to remove.
@@ -334,11 +287,6 @@ class A2AProtocol:
     async def send_message(self, to_agent: str, message_type: str, content: Dict[str, Any], metadata: Optional[Dict[str, Any]] = None) -> None:
         """
         Send a message to another agent.
-
-        This method sends a message to a specified agent. It handles message
-        creation, routing, and delivery. The method also creates tracing spans
-        for monitoring and analytics, and handles special message types like
-        "specialist_query" with appropriate metrics collection.
 
         Args:
             to_agent (str): ID of the target agent to send the message to.
