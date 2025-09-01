@@ -24,7 +24,7 @@ class AnthropicLLM(LLM):
         
         Args:
             model: The anthropic model to use for the LLM, e.g. "claude-sonnet-4-20250514"
-            api_key: The API key to use for the LLM
+            api_key: Anthropic API key
             base_url: The base URL to use for the LLM
             temperature: The temperature to use for the LLM, e.g. 0.7
             tool_choice: The tool choice to use for the LLM, e.g. "auto"

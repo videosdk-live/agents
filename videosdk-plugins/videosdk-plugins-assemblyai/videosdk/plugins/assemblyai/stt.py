@@ -33,6 +33,16 @@ class AssemblyAISTT(STT):
         silence_threshold: float = 0.015,
         silence_duration: float = 0.8,
     ) -> None:
+        """Initialize the AssemblyAI STT plugin
+        
+        Args:
+            api_key: AssemblyAI API key
+            language_code: The language code to use for the STT plugin
+            input_sample_rate: The input sample rate to use for the STT plugin
+            target_sample_rate: The target sample rate to use for the STT plugin
+            silence_threshold: The silence threshold to use for the STT plugin
+            silence_duration: The silence duration to use for the STT plugin
+        """
         super().__init__()
         if not SCIPY_AVAILABLE:
             raise ImportError("scipy is not installed. Please install it with 'pip install scipy'")
