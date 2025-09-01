@@ -34,8 +34,8 @@ class GoogleLLM(LLM):
     def __init__(
         self,
         *,
-        model: str = "gemini-2.0-flash-001",
         api_key: str | None = None,
+        model: str = "gemini-2.0-flash-001",
         temperature: float = 0.7,
         tool_choice: ToolChoice = "auto",
         max_output_tokens: int | None = None,
@@ -44,6 +44,19 @@ class GoogleLLM(LLM):
         presence_penalty: float | None = None,
         frequency_penalty: float | None = None,
     ) -> None:
+        """Initialize the Google LLM plugin
+        
+        Args:
+            api_key (str): Google API key. If not provided, will attempt to read from GOOGLE_API_KEY env var
+            model (str): The model to use for the LLM plugin.
+            temperature (float): The temperature to use for the LLM plugin
+            tool_choice (ToolChoice): The tool choice to use for the LLM plugin
+            max_output_tokens (int): The maximum output tokens to use for the LLM plugin
+            top_p (float): The top P to use for the LLM plugin
+            top_k (int): The top K to use for the LLM plugin
+            presence_penalty (float): The presence penalty to use for the LLM plugin
+            frequency_penalty (float): The frequency penalty to use for the LLM plugin
+        """
         super().__init__()
         
         self.api_key = api_key or os.getenv("GOOGLE_API_KEY")

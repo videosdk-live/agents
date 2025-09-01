@@ -22,10 +22,17 @@ class PaplaTTS(TTS):
     def __init__(
         self,
         *,
-        model_id: str = DEFAULT_MODEL,
         api_key: str | None = None,
+        model_id: str = DEFAULT_MODEL,
         base_url: str = API_BASE_URL,
     ) -> None:
+        """Initialize the Papla TTS plugin.
+
+        Args:
+            api_key (Optional[str], optional): Papla API key. Defaults to None.
+            model_id (str): The model ID to use for the TTS plugin. Defaults to "papla_p1".
+            base_url (str): The base URL to use for the TTS plugin. Defaults to "https://api.papla.media/v1".
+        """
         super().__init__(sample_rate=PAPLA_SAMPLE_RATE, num_channels=PAPLA_CHANNELS)
 
         self.model_id = model_id

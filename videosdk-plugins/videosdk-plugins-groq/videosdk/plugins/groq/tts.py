@@ -29,13 +29,23 @@ class GroqTTS(TTS):
     def __init__(
         self,
         *,
+        api_key: str | None = None,
         model: str = DEFAULT_MODEL,
         voice: str = DEFAULT_VOICE,
         speed: float = 1.0,
-        api_key: str | None = None,
         response_format: Literal["flac", "mp3", "mulaw", "ogg", "wav"] = "wav",
         sample_rate: int = 24000,
     ) -> None:
+        """Initialize the Groq TTS plugin.
+
+        Args:
+            api_key (Optional[str], optional): Groq API key. Defaults to None.
+            model (str): The model to use for the TTS plugin. Defaults to "playai-tts".
+            voice (str): The voice to use for the TTS plugin. Defaults to "Fritz-PlayAI".
+            speed (float): The speed to use for the TTS plugin. Must be between 0.5 and 5.0. Defaults to 1.0.
+            response_format (Literal["flac", "mp3", "mulaw", "ogg", "wav"]): The response format to use for the TTS plugin. Defaults to "wav".
+            sample_rate (int): The sample rate to use for the TTS plugin. Must be one of: 8000, 16000, 22050, 24000, 32000, 44100, 48000. Defaults to 24000.
+        """
         if sample_rate not in SAMPLE_RATE_MAP:
             raise ValueError(
                 f"Invalid sample rate: {sample_rate}. Must be one of: {list(SAMPLE_RATE_MAP.keys())}"
@@ -62,7 +72,8 @@ class GroqTTS(TTS):
             )
 
         self._client = httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=15.0, read=30.0, write=5.0, pool=5.0),
+            timeout=httpx.Timeout(connect=15.0, read=30.0,
+                                  write=5.0, pool=5.0),
             follow_redirects=True,
             limits=httpx.Limits(
                 max_connections=50,
@@ -157,7 +168,8 @@ class GroqTTS(TTS):
                     )
                     self.emit("error", f"Groq TTS request error: {error_msg}")
                 except:
-                    self.emit("error", f"Groq TTS bad request: {e.response.text}")
+                    self.emit(
+                        "error", f"Groq TTS bad request: {e.response.text}")
             elif e.response.status_code == 429:
                 self.emit(
                     "error", "Groq TTS rate limit exceeded. Please try again later."
@@ -175,7 +187,7 @@ class GroqTTS(TTS):
         chunk_size = int(24000 * GROQ_TTS_CHANNELS * 2 * 20 / 1000)
 
         for i in range(0, len(audio_bytes), chunk_size):
-            chunk = audio_bytes[i : i + chunk_size]
+            chunk = audio_bytes[i: i + chunk_size]
 
             if len(chunk) < chunk_size and len(chunk) > 0:
                 padding_needed = chunk_size - len(chunk)
@@ -201,7 +213,7 @@ class GroqTTS(TTS):
         if data_pos == -1:
             return wav_data
 
-        return wav_data[data_pos + 8 :]
+        return wav_data[data_pos + 8:]
 
     async def aclose(self) -> None:
         """Cleanup resources"""

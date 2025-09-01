@@ -17,14 +17,25 @@ class SmallestAITTS(TTS):
     def __init__(
         self,
         *,
+        api_key: str | None = None,
         model: str = DEFAULT_MODEL,
         voice_id: str = DEFAULT_VOICE_ID,
         speed: float = 1.0,
         consistency: float = 0.5,
         similarity: float = 0.0,
         enhancement: bool = False,
-        api_key: str | None = None,
     ) -> None:
+        """Initialize the SmallestAI TTS plugin.
+
+        Args:
+            api_key (Optional[str], optional): SmallestAI API key. Defaults to None.
+            model (str): The model to use for the TTS plugin. Defaults to "lightning".
+            voice_id (str): The voice ID to use for the TTS plugin. Defaults to "emily".
+            speed (float): The speed to use for the TTS plugin. Defaults to 1.0.
+            consistency (float): The consistency to use for the TTS plugin. Defaults to 0.5.
+            similarity (float): The similarity to use for the TTS plugin. Defaults to 0.0.
+            enhancement (bool): Whether to enable enhancement for the TTS plugin. Defaults to False.
+        """
         super().__init__(
             sample_rate=SMALLESTAI_SAMPLE_RATE, num_channels=SMALLESTAI_CHANNELS
         )

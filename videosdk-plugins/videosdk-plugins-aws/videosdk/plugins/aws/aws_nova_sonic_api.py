@@ -72,21 +72,21 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
     def __init__(
         self,
         *,
+        aws_secret_access_key: str | None = None,
+        aws_access_key_id: str | None = None,
+        region: str | None = None,
         model: str,
         config: NovaSonicConfig | None = None,
-        region: str | None = None,
-        aws_access_key_id: str | None = None,
-        aws_secret_access_key: str | None = None,
     ) -> None:
         """
         Initialize Nova Sonic realtime model.
 
         Args:
-            model (str): The Nova Sonic model identifier.
-            config (NovaSonicConfig | None, optional): Optional configuration object for customizing model behavior. Defaults to None.
-            region (str | None, optional): AWS region for Bedrock. Defaults to None.
             aws_access_key_id (str | None, optional): AWS access key ID. Defaults to None.
             aws_secret_access_key (str | None, optional): AWS secret access key. Defaults to None.
+            region (str | None, optional): AWS region for Bedrock. Defaults to None.
+            model (str): The Nova Sonic model identifier.
+            config (NovaSonicConfig | None, optional): Optional configuration object for customizing model behavior. Defaults to None.
         """
         super().__init__()
         self.model = model

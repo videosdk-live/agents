@@ -17,19 +17,29 @@ _RESPONSE_FORMATS = Union[Literal["mp3",
                                   "opus", "aac", "flac", "wav", "pcm"], str]
 
 
-
 class OpenAITTS(TTS):
     def __init__(
         self,
         *,
+        api_key: str | None = None,
         model: str = DEFAULT_MODEL,
         voice: str = DEFAULT_VOICE,
         speed: float = 1.0,
         instructions: str | None = None,
-        api_key: str | None = None,
         base_url: str | None = None,
         response_format: str = "pcm",
     ) -> None:
+        """Initialize the OpenAI TTS plugin.
+
+        Args:
+            api_key (Optional[str], optional): OpenAI API key. Defaults to None.
+            model (str): The model to use for the TTS plugin. Defaults to "gpt-4o-mini-tts".
+            voice (str): The voice to use for the TTS plugin. Defaults to "ash".
+            speed (float): The speed to use for the TTS plugin. Defaults to 1.0.
+            instructions (Optional[str], optional): Additional instructions for the TTS plugin. Defaults to None.
+            base_url (Optional[str], optional): Custom base URL for the OpenAI API. Defaults to None.
+            response_format (str): The response format to use for the TTS plugin. Defaults to "pcm".
+        """
         super().__init__(sample_rate=OPENAI_TTS_SAMPLE_RATE, num_channels=OPENAI_TTS_CHANNELS)
 
         self.model = model

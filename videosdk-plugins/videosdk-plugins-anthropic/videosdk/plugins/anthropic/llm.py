@@ -12,8 +12,8 @@ class AnthropicLLM(LLM):
     def __init__(
         self,
         *,
-        model: str = "claude-sonnet-4-20250514",
         api_key: str | None = None,
+        model: str = "claude-sonnet-4-20250514",
         base_url: str | None = None,
         temperature: float = 0.7,
         tool_choice: ToolChoice = "auto",
@@ -24,8 +24,8 @@ class AnthropicLLM(LLM):
         """Initialize the Anthropic LLM
 
         Args:
-            model (str): The anthropic model to use for the LLM, e.g. "claude-sonnet-4-20250514". Defaults to "claude-sonnet-4-20250514".
             api_key (str | None, optional): Anthropic API key. Uses ANTHROPIC_API_KEY environment variable if not provided. Defaults to None.
+            model (str): The anthropic model to use for the LLM, e.g. "claude-sonnet-4-20250514". Defaults to "claude-sonnet-4-20250514".
             base_url (str | None, optional): The base URL to use for the LLM. Defaults to None.
             temperature (float): The temperature to use for the LLM, e.g. 0.7. Defaults to 0.7.
             tool_choice (ToolChoice): The tool choice to use for the LLM, e.g. "auto". Defaults to "auto".

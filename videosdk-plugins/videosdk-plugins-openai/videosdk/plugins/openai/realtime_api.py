@@ -100,15 +100,16 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
     def __init__(
         self,
         *,
+        api_key: str | None = None,
         model: str,
         config: OpenAIRealtimeConfig | None = None,
-        api_key: str | None = None,
         base_url: str | None = None,
     ) -> None:
         """
         Initialize OpenAI realtime model.
 
         Args:
+            api_key: OpenAI API key. If not provided, will attempt to read from OPENAI_API_KEY env var
             model: The OpenAI model identifier to use (e.g. 'gpt-4', 'gpt-3.5-turbo')
             config: Optional configuration object for customizing model behavior. Contains settings for:
                    - voice: Voice ID to use for audio output
@@ -117,7 +118,6 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
                    - input_audio_transcription: Settings for audio transcription
                    - tool_choice: How tools should be selected ('auto' or 'none')
                    - modalities: List of enabled modalities ('text', 'audio')
-            api_key: OpenAI API key. If not provided, will attempt to read from OPENAI_API_KEY env var
             base_url: Base URL for OpenAI API. Defaults to 'https://api.openai.com/v1'
 
         Raises:

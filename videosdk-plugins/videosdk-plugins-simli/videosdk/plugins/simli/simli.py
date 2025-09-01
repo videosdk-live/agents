@@ -41,7 +41,8 @@ DEFAULT_SIMLI_HTTP_URL = "https://api.simli.ai"
 DEFAULT_SIMLI_WS_URL = "wss://api.simli.ai"
 
 
-audioResampler = AudioResampler(format="s16", layout="mono", rate=AUDIO_REsampler_RATE)
+audioResampler = AudioResampler(
+    format="s16", layout="mono", rate=AUDIO_REsampler_RATE)
 
 
 class SimliAudioTrack(CustomAudioTrack):
@@ -91,7 +92,8 @@ class SimliAudioTrack(CustomAudioTrack):
 
     def buildAudioFrames(self, chunk: bytes) -> AudioFrame:
         if len(chunk) != self.chunk_size:
-            logger.warning(f"Incorrect Simli chunk size received {len(chunk)}, expected {self.chunk_size}")
+            logger.warning(
+                f"Incorrect Simli chunk size received {len(chunk)}, expected {self.chunk_size}")
 
         if len(chunk) % 2 != 0:
             chunk = chunk + b'\x00'
@@ -99,12 +101,14 @@ class SimliAudioTrack(CustomAudioTrack):
         data = np.frombuffer(chunk, dtype=np.int16)
         expected_samples = self.samples * self.channels
         if len(data) != expected_samples:
-            logger.warning(f"Incorrect number of samples in Simli chunk {len(data)}, expected {expected_samples}")
+            logger.warning(
+                f"Incorrect number of samples in Simli chunk {len(data)}, expected {expected_samples}")
 
         data = data.reshape(-1, self.channels)
         layout = "mono" if self.channels == 1 else "stereo"
 
-        audio_frame = AudioFrame.from_ndarray(data.T, format="s16", layout=layout)
+        audio_frame = AudioFrame.from_ndarray(
+            data.T, format="s16", layout=layout)
         return audio_frame
 
     def next_timestamp(self):
@@ -124,7 +128,8 @@ class SimliAudioTrack(CustomAudioTrack):
                 self._timestamp = 0
             else:
                 self._timestamp += self.samples
-            wait = self._start_time + (self._timestamp / self.sample_rate) - time.time()
+            wait = self._start_time + \
+                (self._timestamp / self.sample_rate) - time.time()
             if wait > 0:
                 await asyncio.sleep(wait)
 
@@ -146,7 +151,7 @@ class SimliAudioTrack(CustomAudioTrack):
             import traceback
             traceback.print_exc()
             return self._create_silence_frame()
-    
+
     def _create_silence_frame(self) -> AudioFrame:
         """Create a properly formatted silence frame"""
         layout = "mono" if self.channels == 1 else "stereo"
@@ -155,7 +160,7 @@ class SimliAudioTrack(CustomAudioTrack):
             p.update(bytes(p.buffer_size))
         frame.sample_rate = self.sample_rate
         return frame
-            
+
     async def cleanup(self):
         self.interrupt()
         self.stop()
@@ -167,26 +172,28 @@ class SimliAudioTrack(CustomAudioTrack):
         try:
             if hasattr(frame, 'sample_rate') and frame.sample_rate != self.sample_rate:
                 frame.sample_rate = self.sample_rate
-            
+
             try:
                 frame_array = frame.to_ndarray()
                 if len(frame_array.shape) == 2 and frame_array.shape[0] != self.channels:
-                    print(f"Warning: Frame channels {frame_array.shape[0]} != expected {self.channels}")
-                
+                    print(
+                        f"Warning: Frame channels {frame_array.shape[0]} != expected {self.channels}")
+
                 if frame_array.dtype != np.int16:
                     if frame_array.dtype == np.float32 or frame_array.dtype == np.float64:
                         frame_array = (frame_array * 32767).astype(np.int16)
                     else:
                         frame_array = frame_array.astype(np.int16)
-                    
+
                     layout = "mono" if self.channels == 1 else "stereo"
-                    corrected_frame = AudioFrame.from_ndarray(frame_array, format="s16", layout=layout)
+                    corrected_frame = AudioFrame.from_ndarray(
+                        frame_array, format="s16", layout=layout)
                     corrected_frame.sample_rate = self.sample_rate
                     frame = corrected_frame
-                    
+
             except Exception as format_error:
                 frame = self._create_silence_frame()
-            
+
             try:
                 if self.queue.full():
                     self.queue.get_nowait()
@@ -194,9 +201,10 @@ class SimliAudioTrack(CustomAudioTrack):
             except asyncio.QueueEmpty:
                 pass
             except asyncio.QueueFull:
-                logger.warning("Simli: Audio frame queue is full. Frame dropped.")
-                
-        except Exception as e:  
+                logger.warning(
+                    "Simli: Audio frame queue is full. Frame dropped.")
+
+        except Exception as e:
             logger.error(f"Error adding Simli audio frame: {e}")
             try:
                 array = frame.to_ndarray()
@@ -223,18 +231,18 @@ class SimliVideoTrack(CustomVideoTrack):
 
     async def recv(self) -> VideoFrame:
         frame = await self.queue.get()
-        
+
         if self._start_time is None:
             self._start_time = self._shared_start_time if self._shared_start_time else time.time()
             self._timestamp = 0
-        
+
         current_time = time.time()
         elapsed = current_time - self._start_time
         self._timestamp = int(elapsed * VIDEO_TIME_BASE)
-        
+
         frame.pts = self._timestamp
         frame.time_base = fractions.Fraction(1, VIDEO_TIME_BASE)
-        
+
         self._frame_count += 1
 
         return frame
@@ -246,7 +254,7 @@ class SimliVideoTrack(CustomVideoTrack):
                 self.queue.get_nowait()
             except asyncio.QueueEmpty:
                 break
-        
+
         try:
             self.queue.put_nowait(frame)
         except asyncio.QueueFull:
@@ -259,19 +267,27 @@ class SimliConfig:
     faceId: str = "0c2b8b04-5274-41f1-a21c-d5c98322efa9"
     syncAudio: bool = True
     handleSilence: bool = True
-    maxSessionLength: int = 1800  # 30 minutes 
+    maxSessionLength: int = 1800  # 30 minutes
     maxIdleTime: int = 300       # 5 minutes
+
 
 class SimliAvatar:
     def __init__(self, config: SimliConfig, simli_url: str = DEFAULT_SIMLI_HTTP_URL):
+        """Initialize the Simli Avatar plugin.
+
+        Args:
+            config (SimliConfig): The configuration for the Simli avatar.
+            simli_url (str): The Simli API URL. Defaults to "https://api.simli.ai".
+        """
         super().__init__()
         self.config = config
         self._stream_start_time = None
         self.video_track = SimliVideoTrack()
-        self.audio_track = None  
+        self.audio_track = None
         self.pc: Optional[RTCPeerConnection] = None
         self.simli_http_url = simli_url
-        self.simli_ws_url = simli_url.replace("http", "ws") if simli_url else DEFAULT_SIMLI_WS_URL
+        self.simli_ws_url = simli_url.replace(
+            "http", "ws") if simli_url else DEFAULT_SIMLI_WS_URL
         self.run = True
         self._is_speaking = False
         self._speech_timeout_task = None
@@ -290,27 +306,28 @@ class SimliAvatar:
     async def connect(self):
         loop = asyncio.get_event_loop()
         self.audio_track = SimliAudioTrack(loop)
-        
+
         if self._stream_start_time is None:
             self._stream_start_time = time.time()
             self.video_track._shared_start_time = self._stream_start_time
             self.audio_track._shared_start_time = self._stream_start_time
-        
+
         await self._initialize_connection()
-        
+
         if hasattr(self.video_track, 'start'):
             self.video_track.start()
         if hasattr(self.audio_track, 'start'):
             self.audio_track.start()
-        
+
         self._last_audio_time = time.time()
         self._keep_alive_task = asyncio.create_task(self._keep_alive_loop())
 
     async def _initialize_connection(self):
         """Initialize connection with retry logic """
         if self._retry_count == 0:
-            raise Exception(f"Failed to connect to Simli servers. Last error: {self._last_error}")
-        
+            raise Exception(
+                f"Failed to connect to Simli servers. Last error: {self._last_error}")
+
         try:
             await self._start_session()
             await self._wait_for_data_channel()
@@ -319,14 +336,14 @@ class SimliAvatar:
             self._last_error = e
             self._retry_count -= 1
             if self._retry_count > 0:
-                await asyncio.sleep(2) 
+                await asyncio.sleep(2)
                 await self._initialize_connection()
             else:
                 raise
 
     async def _wait_for_data_channel(self):
         """Wait for the data channel to be open"""
-        max_wait = 10  
+        max_wait = 10
         waited = 0
         while waited < max_wait:
             if self.dc and self.dc.readyState == "open":
@@ -338,7 +355,7 @@ class SimliAvatar:
     async def _start_session(self):
         try:
             await self._cleanup_connections()
-            
+
             session_token = await self._http_start_session()
             await self._negotiate_webrtc_via_ws(session_token)
         except Exception as e:
@@ -382,14 +399,16 @@ class SimliAvatar:
 
         ready_msg = await self.ws.recv()
         if ready_msg != "START":
-            raise Exception(f"Failed to start Simli session. Expected START, got {ready_msg}")
+            raise Exception(
+                f"Failed to start Simli session. Expected START, got {ready_msg}")
 
         self.ready.set()
         await self.pc.setRemoteDescription(RTCSessionDescription(**json.loads(answer_str)))
 
         if self._message_handler_task:
             self._message_handler_task.cancel()
-        self._message_handler_task = asyncio.create_task(self._handle_ws_messages())
+        self._message_handler_task = asyncio.create_task(
+            self._handle_ws_messages())
 
     async def _cleanup_connections(self):
         """Clean up existing connections before creating new ones"""
@@ -399,21 +418,21 @@ class SimliAvatar:
                 await self._message_handler_task
             except asyncio.CancelledError:
                 pass
-        
+
         if self.ws:
             try:
                 await self.ws.close()
             except:
                 pass
             self.ws = None
-        
+
         if self.pc:
             try:
                 await self.pc.close()
             except:
                 pass
             self.pc = None
-        
+
         self.ready.clear()
         self._is_speaking = False
         if self._speech_timeout_task and not self._speech_timeout_task.done():
@@ -435,11 +454,11 @@ class SimliAvatar:
                 if not hasattr(self, 'video_receiver_track'):
                     await asyncio.sleep(0.1)
                     continue
-                    
+
                 frame = await asyncio.wait_for(self.video_receiver_track.recv(), timeout=2.0)
                 if frame is None:
                     continue
-                    
+
                 frame_count += 1
                 self.video_track.add_frame(frame)
 
@@ -463,24 +482,26 @@ class SimliAvatar:
                 if not hasattr(self, 'audio_receiver_track'):
                     await asyncio.sleep(0.1)
                     continue
-                    
+
                 frame = await asyncio.wait_for(self.audio_receiver_track.recv(), timeout=2.0)
-                if frame is None:   
-                    logger.warning("Simli: Received None audio frame, continuing...")
+                if frame is None:
+                    logger.warning(
+                        "Simli: Received None audio frame, continuing...")
                     continue
-                    
+
                 frame_count += 1
-                
+
                 try:
                     if not hasattr(frame, 'sample_rate') or frame.sample_rate != AUDIO_SAMPLE_RATE:
                         frame.sample_rate = AUDIO_SAMPLE_RATE
-                        
+
                     self.audio_track.add_frame(frame)
-                    
-                except Exception as frame_error:    
-                    logger.error(f"Simli: Error processing audio frame #{frame_count}: {frame_error}")
+
+                except Exception as frame_error:
+                    logger.error(
+                        f"Simli: Error processing audio frame #{frame_count}: {frame_error}")
                     continue
-                
+
             except asyncio.TimeoutError:
                 if self.run and not self._stopping:
                     continue
@@ -508,26 +529,26 @@ class SimliAvatar:
             while self.run and not self._stopping:
                 await self.ready.wait()
                 message = await self.ws.recv()
-                
+
                 if message == "STOP":
                     self.run = False
                     await self.aclose()
                     break
-                    
+
                 elif "error" in message.lower():
                     self.run = False
                     await self.aclose()
                     break
-                    
+
                 elif message == "SPEAK":
                     self._avatar_speaking = True
-                    
-                elif message == "SILENT": 
+
+                elif message == "SILENT":
                     self._avatar_speaking = False
-                    
+
                 elif message != "ACK":
                     pass
-                    
+
         except Exception as e:
             logger.error(f"Error in Simli websocket message handler: {e}")
             if not self._stopping:
@@ -548,30 +569,31 @@ class SimliAvatar:
     async def handle_audio_input(self, audio_data: bytes):
         if not self.run or self._stopping:
             return
-            
+
         if self.ws and self.ready.is_set():
             try:
                 if len(audio_data) % 2 != 0:
                     audio_data = audio_data + b'\x00'
-                
+
                 audio_array = np.frombuffer(audio_data, dtype=np.int16)
                 input_frame = AudioFrame.from_ndarray(
                     audio_array.reshape(1, -1), format="s16", layout="mono"
                 )
                 input_frame.sample_rate = 24000
-                
+
                 resampled_frames = audioResampler.resample(input_frame)
                 if resampled_frames:
                     resampled_data = resampled_frames[0].to_ndarray().tobytes()
-                    
+
                     await self._send_audio_data(resampled_data)
-                    
+
                     self._last_audio_time = time.time()
 
             except Exception as e:
                 logger.error(f"Error processing/sending audio data: {e}")
         else:
-            logger.error(f"Simli: Cannot send audio - ws available: {self.ws is not None}, ready: {self.ready.is_set()}")
+            logger.error(
+                f"Simli: Cannot send audio - ws available: {self.ws is not None}, ready: {self.ready.is_set()}")
 
     async def _send_audio_data(self, data: bytes):
         """Send audio data via WebSocket to simli """
@@ -581,7 +603,7 @@ class SimliAvatar:
                 await self.ws.send(chunk)
         except Exception as e:
             logger.error(f"Error sending audio data via WebSocket: {e}")
-    
+
     async def send_message(self, message: str):
         pass
 
@@ -590,19 +612,19 @@ class SimliAvatar:
             return
         self._stopping = True
         self.run = False
-        
+
         if self._keep_alive_task and not self._keep_alive_task.done():
             self._keep_alive_task.cancel()
-        
+
         if self._speech_timeout_task and not self._speech_timeout_task.done():
             self._speech_timeout_task.cancel()
-        
+
         try:
             if self.ws:
                 await self.ws.send(b"DONE")
         except:
             pass
-        
+
         await self._cleanup_connections()
 
     def set_agent(self, agent):
@@ -610,9 +632,10 @@ class SimliAvatar:
 
     async def _keep_alive_loop(self):
         """Send periodic keep-alive audio to maintain Simli session"""
-        silence_duration = 0.1875 
-        silence_data = (0).to_bytes(2, "little") * int(16000 * silence_duration)
-        
+        silence_duration = 0.1875
+        silence_data = (0).to_bytes(2, "little") * \
+            int(16000 * silence_duration)
+
         while self.run and not self._stopping:
             try:
                 current_time = time.time()
@@ -623,11 +646,10 @@ class SimliAvatar:
                             self._last_audio_time = current_time
                         except Exception as e:
                             print(f"Simli: Keep-alive send failed: {e}")
-                
-                await asyncio.sleep(3.0) 
-                
+
+                await asyncio.sleep(3.0)
+
             except Exception as e:
                 if not self.run or self._stopping:
                     break
                 await asyncio.sleep(1.0)
-        

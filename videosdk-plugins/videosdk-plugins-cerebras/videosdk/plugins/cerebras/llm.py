@@ -23,8 +23,8 @@ class CerebrasLLM(LLM):
     def __init__(
         self,
         *,
-        model: str = "llama3.3-70b",
         api_key: str | None = None,
+        model: str = "llama3.3-70b",
         temperature: float = 0.7,
         tool_choice: ToolChoice = "auto",
         max_completion_tokens: int | None = None,
@@ -36,8 +36,8 @@ class CerebrasLLM(LLM):
         """Initialize the Cerebras LLM plugin
 
         Args:
-            model (str): The model to use for the LLM plugin, e.g. "llama3.3-70b". Defaults to "llama3.3-70b".
             api_key (str | None, optional): Cerebras API key. Uses CEREBRAS_API_KEY environment variable if not provided. Defaults to None.
+            model (str): The model to use for the LLM plugin, e.g. "llama3.3-70b". Defaults to "llama3.3-70b".
             temperature (float): The temperature to use for the LLM plugin. Defaults to 0.7.
             tool_choice (ToolChoice): The tool choice to use for the LLM plugin, e.g. "auto". Defaults to "auto".
             max_completion_tokens (int | None, optional): The maximum completion tokens to use for the LLM plugin. Defaults to None.
