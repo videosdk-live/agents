@@ -203,3 +203,31 @@ jobs:
                 body: `✅ Documentation PR created: [Update docs for v${{ steps.get_version.outputs.version }}](${{ secrets.DOCS_REPOSITORY }}/pull/...)`
               });
             }
+
+      - name: Cleanup build artifacts
+        if: always()
+        run: |
+          echo "🧹 Cleaning up build artifacts..."
+
+          # Remove generated documentation
+          if [ -d "docs" ]; then
+            echo "Removing docs directory..."
+            rm -rf docs/
+          fi
+
+          # Remove any temporary files
+          if [ -d "docs-repo" ]; then
+            echo "Removing docs-repo directory..."
+            rm -rf docs-repo/
+          fi
+
+          # Clean pip cache
+          echo "Cleaning pip cache..."
+          pip cache purge
+
+          # Clean any Python cache files
+          echo "Cleaning Python cache files..."
+          find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+          find . -type f -name "*.pyc" -delete 2>/dev/null || true
+
+          echo "✅ Cleanup completed!"
