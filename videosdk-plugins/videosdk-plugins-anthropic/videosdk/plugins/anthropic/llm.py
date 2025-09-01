@@ -20,6 +20,18 @@ class AnthropicLLM(LLM):
         top_k: int | None = None,
         top_p: float | None = None,
     ) -> None:
+        """Initialize the Anthropic LLM
+        
+        Args:
+            model: The anthropic model to use for the LLM, e.g. "claude-sonnet-4-20250514"
+            api_key: The API key to use for the LLM
+            base_url: The base URL to use for the LLM
+            temperature: The temperature to use for the LLM, e.g. 0.7
+            tool_choice: The tool choice to use for the LLM, e.g. "auto"
+            max_tokens: The maximum number of tokens to use for the LLM, e.g. 1024
+            top_k: The top K to use for the LLM
+            top_p: The top P to use for the LLM
+        """
         super().__init__()
         
         self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
@@ -191,7 +203,7 @@ class AnthropicLLM(LLM):
         self._cancelled = True
 
     def _convert_messages_to_anthropic_format(self, messages: ChatContext) -> tuple[list[dict], str | None]:
-        """Convert ChatContext to Anthropic message format"""
+        """Internal Method: Convert ChatContext to Anthropic message format"""
 
         def _format_content(content: Union[str, List[ChatContent]]):
             if isinstance(content, str):
@@ -280,7 +292,7 @@ class AnthropicLLM(LLM):
         return anthropic_messages, system_content
 
     async def aclose(self) -> None:
-        """Cleanup resources by closing the HTTP client"""
+        """Internal Method: Cleanup resources by closing the HTTP client"""
         await self.cancel_current_generation()
         if self._client:
             await self._client.close()
