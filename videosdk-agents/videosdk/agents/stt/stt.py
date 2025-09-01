@@ -9,6 +9,7 @@ from ..event_emitter import EventEmitter
 
 
 class SpeechEventType(str, Enum):
+    """Type of speech event"""
     START = "start_of_speech"
     INTERIM = "interim_transcript"
     FINAL = "final_transcript"
@@ -17,7 +18,15 @@ class SpeechEventType(str, Enum):
 
 @dataclass
 class SpeechData:
-    """Data structure for speech recognition results"""
+    """Data structure for speech recognition results
+    
+    Attributes:
+        text: The recognized text.
+        confidence: The confidence level of the recognition.
+        language: The language of the recognized text.
+        start_time: The start time of the speech.
+        end_time: The end time of the speech.
+    """
     text: str
     confidence: float = 0.0
     language: Optional[str] = None
@@ -26,7 +35,13 @@ class SpeechData:
 
 
 class STTResponse(BaseModel):
-    """Response from STT processing"""
+    """Response from STT processing
+    
+    Attributes:
+        event_type: The type of speech event.
+        data: The data from the speech event.
+        metadata: Additional metadata from the speech event.
+    """
     event_type: SpeechEventType
     data: SpeechData
     metadata: Optional[dict[str, Any]] = None
