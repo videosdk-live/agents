@@ -13,12 +13,34 @@ from ..utils import FunctionTool, is_function_tool, get_tool_info
 
 
 class ChatRole(str, Enum):
+    """
+    Enumeration of chat roles for message classification.
+
+    Defines the three standard roles used in chat conversations:
+    - SYSTEM: Instructions and context for the AI assistant
+    - USER: Messages from the human user
+    - ASSISTANT: Responses from the AI assistant
+    """
     SYSTEM = "system"
     USER = "user"
     ASSISTANT = "assistant"
 
 
 class ImageContent(BaseModel):
+    """
+    Represents image content in chat messages.
+
+    This class handles image data that can be included in chat messages,
+    supporting both VideoFrame objects and string URLs. It provides
+    automatic encoding and resizing capabilities for optimal LLM processing.
+
+    Attributes:
+        id (str): Unique identifier for the image. Auto-generated if not provided.
+        type (Literal["image"]): Type identifier, always "image".
+        image (Union[av.VideoFrame, str]): The image data as VideoFrame or URL string.
+        inference_detail (Literal["auto", "high", "low"]): Detail level for LLM image analysis.
+        encode_options (EncodeOptions): Configuration for image encoding and resizing.
+    """
     id: str = Field(default_factory=lambda: f"img_{int(time.time())}")
     type: Literal["image"] = "image"
     image: Union[av.VideoFrame, str]
@@ -32,10 +54,21 @@ class ImageContent(BaseModel):
             ),
         )
     )
+
     class Config:
         arbitrary_types_allowed = True
 
     def to_data_url(self) -> str:
+        """
+        Convert the image to a data URL format.
+
+        If the image is already a string URL, it returns as-is. Otherwise,
+        it encodes the VideoFrame to the specified format and returns a
+        base64-encoded data URL suitable for LLM processing.
+
+        Returns:
+            str: A data URL string representing the image.
+        """
         if isinstance(self.image, str):
             return self.image
 
@@ -48,7 +81,20 @@ ChatContent = Union[str, ImageContent]
 
 
 class FunctionCall(BaseModel):
-    """Represents a function call in the chat context"""
+    """
+    Represents a function call in the chat context.
+
+    This class tracks when the LLM requests to call a specific function,
+    storing the function name, arguments, and a unique call identifier
+    for tracking the execution flow.
+
+    Attributes:
+        id (str): Unique identifier for the function call. Auto-generated if not provided.
+        type (Literal["function_call"]): Type identifier, always "function_call".
+        name (str): Name of the function to be called.
+        arguments (str): JSON string containing the function arguments.
+        call_id (str): Unique identifier linking this call to its output.
+    """
     id: str = Field(default_factory=lambda: f"call_{int(time.time())}")
     type: Literal["function_call"] = "function_call"
     name: str
@@ -57,7 +103,21 @@ class FunctionCall(BaseModel):
 
 
 class FunctionCallOutput(BaseModel):
-    """Represents the output of a function call"""
+    """
+    Represents the output of a function call.
+
+    This class stores the result of executing a function call, including
+    success/failure status and the output data. It's linked to the original
+    FunctionCall via the call_id.
+
+    Attributes:
+        id (str): Unique identifier for the function output. Auto-generated if not provided.
+        type (Literal["function_call_output"]): Type identifier, always "function_call_output".
+        name (str): Name of the function that was called.
+        call_id (str): Identifier linking this output to the original function call.
+        output (str): The result or output from the function execution.
+        is_error (bool): Flag indicating if the function execution failed.
+    """
     id: str = Field(default_factory=lambda: f"output_{int(time.time())}")
     type: Literal["function_call_output"] = "function_call_output"
     name: str
@@ -67,7 +127,21 @@ class FunctionCallOutput(BaseModel):
 
 
 class ChatMessage(BaseModel):
-    """Represents a single message in the chat context"""
+    """
+    Represents a single message in the chat context.
+
+    This class defines the structure of individual chat messages, including
+    role information, content (which can be text or images), and metadata
+    like creation time and interruption status.
+
+    Attributes:
+        role (ChatRole): The role of the message sender (system, user, or assistant).
+        content (Union[str, List[ChatContent]]): The message content as text or list of content items.
+        id (str): Unique identifier for the message. Auto-generated if not provided.
+        type (Literal["message"]): Type identifier, always "message".
+        created_at (float): Unix timestamp when the message was created.
+        interrupted (bool): Flag indicating if the message was interrupted during generation.
+    """
     role: ChatRole
     content: Union[str, List[ChatContent]]
     id: str = Field(default_factory=lambda: f"msg_{int(time.time())}")
@@ -80,19 +154,48 @@ ChatItem = Union[ChatMessage, FunctionCall, FunctionCallOutput]
 
 
 class ChatContext:
-    """Manages a conversation context for LLM interactions"""
-    
+    """
+    Manages a conversation context for LLM interactions.
+
+    This class maintains the complete conversation history including messages,
+    function calls, and function outputs. It provides methods for adding
+    new items, filtering content, and managing the context lifecycle.
+
+    The context supports rich content types including text, images, and
+    function interactions, making it suitable for complex multi-modal
+    conversations with LLMs.
+    """
+
     def __init__(self, items: Optional[List[ChatItem]] = None):
+        """
+        Initialize the chat context.
+
+        Args:
+            items (Optional[List[ChatItem]]): Initial list of chat items. If None, starts with empty context.
+        """
         self._items: List[ChatItem] = items or []
 
     @classmethod
     def empty(cls) -> ChatContext:
-        """Create an empty chat context"""
+        """
+        Create an empty chat context.
+
+        This class method provides a convenient way to create a new,
+        empty chat context without any existing conversation history.
+
+        Returns:
+            ChatContext: A new empty chat context instance.
+        """
         return cls([])
 
     @property
     def items(self) -> List[ChatItem]:
-        """Get all items in the context"""
+        """
+        Get all items in the context.
+
+        Returns:
+            List[ChatItem]: List of all conversation items (messages, function calls, outputs).
+        """
         return self._items
 
     def add_message(
@@ -102,7 +205,21 @@ class ChatContext:
         message_id: Optional[str] = None,
         created_at: Optional[float] = None,
     ) -> ChatMessage:
-        """Add a new message to the context"""
+        """
+        Add a new message to the context.
+
+        Creates and adds a new ChatMessage to the conversation context.
+        If content is a string, it's automatically wrapped in a list.
+
+        Args:
+            role (ChatRole): The role of the message sender.
+            content (Union[str, List[ChatContent]]): The message content as text or content items.
+            message_id (Optional[str], optional): Custom message ID. Auto-generated if not provided.
+            created_at (Optional[float], optional): Custom creation timestamp. Uses current time if not provided.
+
+        Returns:
+            ChatMessage: The newly created and added message.
+        """
         if isinstance(content, str):
             content = [content]
 
@@ -121,7 +238,20 @@ class ChatContext:
         arguments: str,
         call_id: Optional[str] = None
     ) -> FunctionCall:
-        """Add a function call to the context"""
+        """
+        Add a function call to the context.
+
+        Creates and adds a new FunctionCall to track when the LLM
+        requests to execute a specific function.
+
+        Args:
+            name (str): Name of the function to be called.
+            arguments (str): JSON string containing the function arguments.
+            call_id (Optional[str], optional): Custom call ID. Auto-generated if not provided.
+
+        Returns:
+            FunctionCall: The newly created and added function call.
+        """
         call = FunctionCall(
             name=name,
             arguments=arguments,
@@ -137,7 +267,21 @@ class ChatContext:
         call_id: str,
         is_error: bool = False
     ) -> FunctionCallOutput:
-        """Add a function output to the context"""
+        """
+        Add a function output to the context.
+
+        Creates and adds a new FunctionCallOutput to record the result
+        of executing a function call.
+
+        Args:
+            name (str): Name of the function that was executed.
+            output (str): The result or output from the function execution.
+            call_id (str): ID linking this output to the original function call.
+            is_error (bool, optional): Flag indicating if the function execution failed. Defaults to False.
+
+        Returns:
+            FunctionCallOutput: The newly created and added function output.
+        """
         function_output = FunctionCallOutput(
             name=name,
             output=output,
@@ -148,7 +292,18 @@ class ChatContext:
         return function_output
 
     def get_by_id(self, item_id: str) -> Optional[ChatItem]:
-        """Find an item by its ID"""
+        """
+        Find an item by its ID.
+
+        Searches through all conversation items to find one with
+        the specified ID.
+
+        Args:
+            item_id (str): The ID of the item to find.
+
+        Returns:
+            Optional[ChatItem]: The found item or None if not found.
+        """
         return next(
             (item for item in self._items if item.id == item_id),
             None
@@ -161,9 +316,25 @@ class ChatContext:
         exclude_system_messages: bool = False,
         tools: Optional[List[FunctionTool]] = None,
     ) -> ChatContext:
-        """Create a filtered copy of the chat context"""
+        """
+        Create a filtered copy of the chat context.
+
+        This method creates a new ChatContext with selective filtering options.
+        It's useful for creating context variants for different purposes,
+        such as excluding function calls for certain LLM interactions or
+        filtering by available tools.
+
+        Args:
+            exclude_function_calls (bool, optional): Whether to exclude function calls and outputs. Defaults to False.
+            exclude_system_messages (bool, optional): Whether to exclude system messages. Defaults to False.
+            tools (Optional[List[FunctionTool]], optional): List of available tools to filter function calls by. Defaults to None.
+
+        Returns:
+            ChatContext: A new ChatContext instance with the filtered items.
+        """
         items = []
-        valid_tool_names = {get_tool_info(tool).name for tool in (tools or []) if is_function_tool(tool)}
+        valid_tool_names = {get_tool_info(tool).name for tool in (
+            tools or []) if is_function_tool(tool)}
 
         for item in self._items:
             # Skip function calls if excluded
@@ -184,32 +355,52 @@ class ChatContext:
         return ChatContext(items)
 
     def truncate(self, max_items: int) -> ChatContext:
-        """Truncate the context to the last N items while preserving system message"""
+        """
+        Truncate the context to the last N items while preserving system message.
+
+        This method reduces the context size by keeping only the most recent
+        items while ensuring the system message (if present) is always included.
+        It's useful for managing memory usage in long conversations.
+
+        Args:
+            max_items (int): Maximum number of items to keep in the context.
+
+        Returns:
+            ChatContext: The current context instance after truncation.
+        """
         system_msg = next(
-            (item for item in self._items 
+            (item for item in self._items
              if isinstance(item, ChatMessage) and item.role == ChatRole.SYSTEM),
             None
         )
-        
+
         new_items = self._items[-max_items:]
-        
+
         while new_items and isinstance(new_items[0], (FunctionCall, FunctionCallOutput)):
             new_items.pop(0)
-            
+
         if system_msg and system_msg not in new_items:
             new_items.insert(0, system_msg)
-            
+
         self._items = new_items
         return self
 
     def to_dict(self) -> dict:
-        """Convert the context to a dictionary representation"""
+        """
+        Convert the context to a dictionary representation.
+
+        This method serializes the ChatContext to a dictionary format
+        suitable for storage, transmission, or debugging purposes.
+
+        Returns:
+            dict: Dictionary representation of the chat context.
+        """
         return {
             "items": [
                 {
                     "type": item.type,
                     "id": item.id,
-                    **({"role": item.role.value, "content": item.content} 
+                    **({"role": item.role.value, "content": item.content}
                        if isinstance(item, ChatMessage) else {}),
                     **({"name": item.name, "arguments": item.arguments, "call_id": item.call_id}
                        if isinstance(item, FunctionCall) else {}),
@@ -222,7 +413,18 @@ class ChatContext:
 
     @classmethod
     def from_dict(cls, data: dict) -> ChatContext:
-        """Create a ChatContext from a dictionary representation"""
+        """
+        Create a ChatContext from a dictionary representation.
+
+        This class method reconstructs a ChatContext instance from
+        a previously serialized dictionary. It's the inverse of to_dict().
+
+        Args:
+            data (dict): Dictionary containing the serialized chat context data.
+
+        Returns:
+            ChatContext: A new ChatContext instance reconstructed from the data.
+        """
         items = []
         for item_data in data["items"]:
             if item_data["type"] == "message":
