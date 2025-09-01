@@ -20,8 +20,7 @@ def flatten_plugin_docs(plugin_output_dir, plugin_name):
 
             shutil.rmtree(plugin_output_dir / "videosdk")
         else:
-            print(
-                f"Nested path not found for {plugin_name}: {nested_path}")
+            print(f"Nested path not found for {plugin_name}: {nested_path}")
 
     except Exception as e:
         print(f"Error flattening docs for {plugin_name}: {e}")
@@ -43,7 +42,6 @@ def flatten_agents_docs(agents_output_dir):
                 item.rename(target_item)
 
             shutil.rmtree(agents_output_dir / "agents")
-            print(f"Flattened agents documentation structure")
         else:
             print(f"Nested agents path not found: {nested_path}")
 
