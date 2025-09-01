@@ -17,6 +17,7 @@ from av.audio.resampler import AudioResampler
 import websockets.asyncio.client
 import numpy as np
 from av import AudioFrame
+import requests
 from vsaiortc.mediastreams import MediaStreamError
 
 from videosdk import CustomVideoTrack, CustomAudioTrack
@@ -39,6 +40,7 @@ VIDEO_TIME_BASE = 90000
 
 DEFAULT_SIMLI_HTTP_URL = "https://api.simli.ai"
 DEFAULT_SIMLI_WS_URL = "wss://api.simli.ai"
+DEFAULT_SIMLI_ICE_SERVER_URL = "https://api.simli.ai/getIceServers"
 
 
 audioResampler = AudioResampler(format="s16", layout="mono", rate=AUDIO_REsampler_RATE)
@@ -357,9 +359,37 @@ class SimliAvatar:
 
     async def _negotiate_webrtc_via_ws(self, session_token: str):
         """Sets up WebRTC connection and negotiates it through WebSocket."""
-        ice_servers = [RTCIceServer(urls=["stun:stun.l.google.com:19302"])]
-        self.pc = RTCPeerConnection(RTCConfiguration(iceServers=ice_servers))
+        payload = {"apiKey": self.config.apiKey}
+        headers = {"Content-Type": "application/json"}
 
+        loop = asyncio.get_event_loop()
+
+        def fetch_ice_servers():
+            try:
+                response = requests.post(DEFAULT_SIMLI_ICE_SERVER_URL, json=payload, headers=headers, timeout=10)
+                response.raise_for_status()
+                return response.json()
+            except requests.exceptions.RequestException as e:
+                    raise RuntimeError(f"Failed to fetch ICE servers from Simli API: {e}")
+
+        data = await loop.run_in_executor(None, fetch_ice_servers)
+
+        if not isinstance(data, list):
+            raise RuntimeError(f"Unexpected ICE server response format: {data}")
+
+        ice_servers = [
+            RTCIceServer(
+                urls=server.get("urls"),
+                username=server.get("username"),
+                credential=server.get("credential"),
+            )
+            for server in data
+        ]
+
+        if not ice_servers:
+            raise RuntimeError("No ICE servers returned from Simli API")
+        
+        self.pc = RTCPeerConnection(RTCConfiguration(iceServers=ice_servers))
         self.pc.addTransceiver("audio", direction="recvonly")
         self.pc.addTransceiver("video", direction="recvonly")
         self.pc.on("track", self._on_track)
