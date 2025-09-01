@@ -6,8 +6,9 @@ import httpx
 import anthropic
 from videosdk.agents import LLM, LLMResponse, ChatContext, ChatRole, ChatMessage, FunctionCall, FunctionCallOutput, ToolChoice, FunctionTool, is_function_tool, build_openai_schema, ImageContent, ChatContent
 
+
 class AnthropicLLM(LLM):
-    
+
     def __init__(
         self,
         *,
@@ -21,23 +22,24 @@ class AnthropicLLM(LLM):
         top_p: float | None = None,
     ) -> None:
         """Initialize the Anthropic LLM
-        
+
         Args:
-            model (str): The anthropic model to use for the LLM, e.g. "claude-sonnet-4-20250514"
-            api_key (str): Anthropic API key
-            base_url (str): The base URL to use for the LLM
-            temperature (float): The temperature to use for the LLM, e.g. 0.7
-            tool_choice (ToolChoice): The tool choice to use for the LLM, e.g. "auto"
-            max_tokens (int): The maximum number of tokens to use for the LLM, e.g. 1024
-            top_k (int): The top K to use for the LLM
-            top_p (float): The top P to use for the LLM
+            model (str): The anthropic model to use for the LLM, e.g. "claude-sonnet-4-20250514". Defaults to "claude-sonnet-4-20250514".
+            api_key (str | None, optional): Anthropic API key. Uses ANTHROPIC_API_KEY environment variable if not provided. Defaults to None.
+            base_url (str | None, optional): The base URL to use for the LLM. Defaults to None.
+            temperature (float): The temperature to use for the LLM, e.g. 0.7. Defaults to 0.7.
+            tool_choice (ToolChoice): The tool choice to use for the LLM, e.g. "auto". Defaults to "auto".
+            max_tokens (int): The maximum number of tokens to use for the LLM, e.g. 1024. Defaults to 1024.
+            top_k (int | None, optional): The top K to use for the LLM. Defaults to None.
+            top_p (float | None, optional): The top P to use for the LLM. Defaults to None.
         """
         super().__init__()
-        
+
         self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
         if not self.api_key:
-            raise ValueError("Anthropic API key must be provided either through api_key parameter or ANTHROPIC_API_KEY environment variable")
-        
+            raise ValueError(
+                "Anthropic API key must be provided either through api_key parameter or ANTHROPIC_API_KEY environment variable")
+
         self.model = model
         self.temperature = temperature
         self.tool_choice = tool_choice
@@ -45,12 +47,13 @@ class AnthropicLLM(LLM):
         self.top_k = top_k
         self.top_p = top_p
         self._cancelled = False
-        
+
         self._client = anthropic.AsyncClient(
             api_key=self.api_key,
             base_url=base_url or None,
             http_client=httpx.AsyncClient(
-                timeout=httpx.Timeout(connect=15.0, read=5.0, write=5.0, pool=5.0),
+                timeout=httpx.Timeout(
+                    connect=15.0, read=5.0, write=5.0, pool=5.0),
                 follow_redirects=True,
                 limits=httpx.Limits(
                     max_connections=50,
@@ -68,19 +71,20 @@ class AnthropicLLM(LLM):
     ) -> AsyncIterator[LLMResponse]:
         """
         Implement chat functionality using Anthropic's Claude API
-        
+
         Args:
             messages: ChatContext containing conversation history
             tools: Optional list of function tools available to the model
             **kwargs: Additional arguments passed to the Anthropic API
-            
+
         Yields:
             LLMResponse objects containing the model's responses
         """
         self._cancelled = False
-        
+
         try:
-            anthropic_messages, system_content = self._convert_messages_to_anthropic_format(messages)
+            anthropic_messages, system_content = self._convert_messages_to_anthropic_format(
+                messages)
             completion_params = {
                 "model": self.model,
                 "messages": anthropic_messages,
@@ -100,17 +104,17 @@ class AnthropicLLM(LLM):
             if tools:
                 formatted_tools = []
                 seen_tool_names = set()
-                
+
                 for tool in tools:
                     if not is_function_tool(tool):
                         continue
                     try:
                         openai_schema = build_openai_schema(tool)
                         tool_name = openai_schema["name"]
-                        
+
                         if tool_name in seen_tool_names:
                             continue
-                        
+
                         seen_tool_names.add(tool_name)
                         anthropic_tool = {
                             "name": tool_name,
@@ -119,12 +123,13 @@ class AnthropicLLM(LLM):
                         }
                         formatted_tools.append(anthropic_tool)
                     except Exception as e:
-                        self.emit("error", f"Failed to format tool {tool}: {e}")
+                        self.emit(
+                            "error", f"Failed to format tool {tool}: {e}")
                         continue
-                
+
                 if formatted_tools:
                     completion_params["tools"] = formatted_tools
-                    
+
                     if self.tool_choice == "required":
                         completion_params["tool_choice"] = {"type": "any"}
                     elif self.tool_choice == "auto":
@@ -135,7 +140,7 @@ class AnthropicLLM(LLM):
             completion_params.update(kwargs)
 
             response_stream = await self._client.messages.create(**completion_params)
-            
+
             current_content = ""
             current_tool_call = None
             current_tool_call_id = None
@@ -144,7 +149,7 @@ class AnthropicLLM(LLM):
             async for event in response_stream:
                 if self._cancelled:
                     break
-                    
+
                 if event.type == "content_block_start":
                     if event.content_block.type == "tool_use":
                         current_tool_call_id = event.content_block.id
@@ -153,7 +158,7 @@ class AnthropicLLM(LLM):
                             "arguments": ""
                         }
                         current_tool_arguments = ""
-                
+
                 elif event.type == "content_block_delta":
                     delta = event.delta
                     if delta.type == "text_delta":
@@ -165,15 +170,16 @@ class AnthropicLLM(LLM):
                     elif delta.type == "input_json_delta":
                         if current_tool_call:
                             current_tool_arguments += delta.partial_json
-                
+
                 elif event.type == "content_block_stop":
                     if current_tool_call and current_tool_call_id:
                         try:
-                            parsed_args = json.loads(current_tool_arguments) if current_tool_arguments else {}
+                            parsed_args = json.loads(
+                                current_tool_arguments) if current_tool_arguments else {}
                             current_tool_call["arguments"] = parsed_args
                         except json.JSONDecodeError:
                             current_tool_call["arguments"] = {}
-                        
+
                         yield LLMResponse(
                             content="",
                             role=ChatRole.ASSISTANT,
@@ -255,14 +261,16 @@ class AnthropicLLM(LLM):
                 if item.role == ChatRole.SYSTEM:
                     if isinstance(item.content, list):
                         system_content = next(
-                            (str(p) for p in item.content if isinstance(p, str)), ""
+                            (str(p)
+                             for p in item.content if isinstance(p, str)), ""
                         )
                     else:
                         system_content = str(item.content)
                     continue
                 else:
                     anthropic_messages.append(
-                        {"role": item.role.value, "content": _format_content(item.content)}
+                        {"role": item.role.value,
+                            "content": _format_content(item.content)}
                     )
             elif isinstance(item, FunctionCall):
                 anthropic_messages.append({
@@ -288,7 +296,7 @@ class AnthropicLLM(LLM):
                         }
                     ]
                 })
-        
+
         return anthropic_messages, system_content
 
     async def aclose(self) -> None:

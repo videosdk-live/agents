@@ -82,17 +82,18 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
         Initialize Nova Sonic realtime model.
 
         Args:
-            model: The Nova Sonic model identifier
-            config: Optional configuration object for customizing model behavior
-            region: AWS region for Bedrock
-            aws_access_key_id: AWS access key ID
-            aws_secret_access_key: AWS secret access key
+            model (str): The Nova Sonic model identifier.
+            config (NovaSonicConfig | None, optional): Optional configuration object for customizing model behavior. Defaults to None.
+            region (str | None, optional): AWS region for Bedrock. Defaults to None.
+            aws_access_key_id (str | None, optional): AWS access key ID. Defaults to None.
+            aws_secret_access_key (str | None, optional): AWS secret access key. Defaults to None.
         """
         super().__init__()
         self.model = model
         self.config = config or NovaSonicConfig()
         self.region = region or os.getenv("AWS_DEFAULT_REGION")
-        self.aws_access_key_id = aws_access_key_id or os.getenv("AWS_ACCESS_KEY_ID")
+        self.aws_access_key_id = aws_access_key_id or os.getenv(
+            "AWS_ACCESS_KEY_ID")
         self.aws_secret_access_key = aws_secret_access_key or os.getenv(
             "AWS_SECRET_ACCESS_KEY"
         )
@@ -278,7 +279,8 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
 
         try:
             event = InvokeModelWithBidirectionalStreamInputChunk(
-                value=BidirectionalInputPayloadPart(bytes_=event_json.encode("utf-8"))
+                value=BidirectionalInputPayloadPart(
+                    bytes_=event_json.encode("utf-8"))
             )
 
             await self.stream.input_stream.send(event)
@@ -325,13 +327,15 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                 audio_array = np.mean(audio_array, axis=1).astype(np.int16)
 
             target_length = int(
-                len(audio_array) * self.target_sample_rate / self.input_sample_rate
+                len(audio_array) * self.target_sample_rate /
+                self.input_sample_rate
             )
             resampled_float = signal.resample(
                 audio_array.astype(np.float32), target_length
             )
 
-            resampled_int16 = np.clip(resampled_float, -32768, 32767).astype(np.int16)
+            resampled_int16 = np.clip(
+                resampled_float, -32768, 32767).astype(np.int16)
             resampled_bytes = resampled_int16.tobytes()
 
             encoded_audio = base64.b64encode(resampled_bytes).decode("utf-8")
@@ -390,7 +394,8 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                     text_output = json_data["event"]["textOutput"]
                                     if "content" in text_output:
                                         transcript = text_output["content"]
-                                        role = text_output.get("role", "UNKNOWN")
+                                        role = text_output.get(
+                                            "role", "UNKNOWN")
                                         if role == "USER":
                                             await realtime_metrics_collector.set_user_speech_start()
                                             await realtime_metrics_collector.set_user_transcript(
@@ -398,7 +403,8 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                             )
                                             await realtime_metrics_collector.set_user_speech_end()
                                             self._safe_emit(
-                                                "user_speech_started", {"type": "done"}
+                                                "user_speech_started", {
+                                                    "type": "done"}
                                             )
                                             try:
                                                 await self.emit(
@@ -449,7 +455,8 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                         continue
 
                                     try:
-                                        audio_bytes = base64.b64decode(audio_content)
+                                        audio_bytes = base64.b64decode(
+                                            audio_content)
                                         if not self._agent_speaking:
                                             await realtime_metrics_collector.set_agent_speech_start()
                                             self._agent_speaking = True
@@ -473,7 +480,8 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                 elif "contentEnd" in json_data["event"]:
                                     content_end = json_data["event"]["contentEnd"]
                                     if (
-                                        content_end.get("stopReason", "") == "END_TURN"
+                                        content_end.get(
+                                            "stopReason", "") == "END_TURN"
                                         and self._agent_speaking
                                     ):
                                         await realtime_metrics_collector.set_agent_speech_end(
@@ -490,7 +498,8 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                         tool_use["toolName"]
                                     )
                                     asyncio.create_task(
-                                        self._execute_tool_and_send_result(tool_use)
+                                        self._execute_tool_and_send_result(
+                                            tool_use)
                                     )
 
                                 elif "completionEnd" in json_data["event"]:
@@ -511,8 +520,10 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                 print(f"Non-event response: {json_data}")
 
                         except json.JSONDecodeError as e:
-                            self.emit("error", f"Failed to parse response: {e}")
-                            self.emit("error", f"Raw data: {response_data[:200]}...")
+                            self.emit(
+                                "error", f"Failed to parse response: {e}")
+                            self.emit(
+                                "error", f"Raw data: {response_data[:200]}...")
 
                 except Exception as e:
                     self.emit("error", f"Error processing response: {e}")
@@ -579,9 +590,11 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
         """Safely emit an event without requiring await"""
         try:
             if self.loop and not self.loop.is_closed():
-                asyncio.run_coroutine_threadsafe(self.emit(event_type, data), self.loop)
+                asyncio.run_coroutine_threadsafe(
+                    self.emit(event_type, data), self.loop)
         except Exception as e:
-            self.emit("error", f"Error safely emitting event {event_type}: {e}")
+            self.emit(
+                "error", f"Error safely emitting event {event_type}: {e}")
 
     async def interrupt(self) -> None:
         """Interrupt current response"""
