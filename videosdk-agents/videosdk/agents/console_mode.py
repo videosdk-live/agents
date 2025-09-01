@@ -2,20 +2,12 @@ from __future__ import annotations
 import asyncio
 import queue
 from typing import Any, Optional, Callable
-import sys
-
-if sys.platform in ("darwin", "linux", "linux2"):
-    try:
-        import aec_audio_processing as apm
-    except ImportError:
-        raise ImportError(
-            "aec-audio-processing is required for Console mode on macOS/Linux. "
-            "Install with: pip install aec-audio-processing"
-        )
-else:
-    raise RuntimeError(
-        "Console mode is not supported on this platform. "
-        "Currently only macOS and Linux are supported."
+try:
+    import aec_audio_processing as apm
+except ImportError:
+    raise ImportError(
+        "aec-audio-processing is required. "
+        "Install with: pip install aec-audio-processing"
     )
 
 try:
@@ -400,7 +392,7 @@ async def setup_console_voice_for_ctx(
     stt_agent = getattr(ctx._pipeline, 'stt', None)
     needs_stereo = False
 
-    if stt_agent and type(stt_agent).__name__ == 'GoogleSTT' or type(stt_agent).__name__ == 'DeepgramSTT' or type(stt_agent).__name__ == 'SarvamAISTT':
+    if stt_agent and type(stt_agent).__name__ == 'GoogleSTT' or type(stt_agent).__name__ == 'DeepgramSTT' or type(stt_agent).__name__ == 'SarvamAISTT' or type(stt_agent).__name__ == 'AssemblyAISTT':
         needs_stereo = True
     
     if needs_stereo:
