@@ -1,0 +1,205 @@
+name: Build and Deploy Documentation
+
+on:
+  push:
+    tags:
+      - "v*" # Triggers on version tags like v1.0.0, v2.1.0, etc.
+  workflow_dispatch:
+    inputs:
+      test_mode:
+        description: "Test mode (creates test tag)"
+        required: false
+        default: "false"
+        type: boolean
+      version:
+        description: "Version to test (e.g., 0.0.1-test)"
+        required: false
+        default: "0.0.1-test"
+        type: string
+
+jobs:
+  build-docs:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Fetch full history for proper tagging
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.12"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pdoc3
+
+      - name: Install agents package
+        run: |
+          pip install -e ./videosdk-agents
+
+      - name: Install all plugins
+        run: |
+          # Install all plugin packages in editable mode
+          for plugin_dir in videosdk-plugins/videosdk-plugins-*; do
+            if [ -d "$plugin_dir" ]; then
+              echo "Installing plugin: $plugin_dir"
+              pip install -e "$plugin_dir"
+            fi
+          done
+
+      - name: Build documentation
+        run: |
+          python scripts/build_docs.py
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Test mode summary
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.test_mode == 'true' }}
+        run: |
+          echo "🧪 TEST MODE ENABLED"
+          echo "Documentation built successfully!"
+          echo "Version: ${{ steps.get_version.outputs.version }}"
+          echo "Tag: ${{ steps.get_version.outputs.tag }}"
+          echo ""
+          echo "📁 Generated docs location:"
+          ls -la docs/api/
+          echo ""
+          echo "✅ Test completed - workflow would deploy to docs repository"
+          echo "To deploy for real, push a git tag or run without test mode"
+
+      - name: Checkout docs repository
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.test_mode != 'true' }}
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.DOCS_REPOSITORY }} # e.g., 'your-org/your-docs-repo'
+          token: ${{ secrets.DOCS_REPO_TOKEN }} # Personal access token with repo access
+          path: docs-repo
+
+      - name: Get tag version
+        id: get_version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # Manual trigger - use input version
+            VERSION="${{ github.event.inputs.version }}"
+            TAG="refs/tags/v$VERSION"
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            echo "tag=$TAG" >> $GITHUB_OUTPUT
+            echo "Manual trigger detected - using version: $VERSION"
+          else
+            # Tag push - extract from git ref
+            VERSION=${GITHUB_REF#refs/tags/}
+            VERSION=${VERSION#v}
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            echo "tag=$GITHUB_REF" >> $GITHUB_OUTPUT
+            echo "Tag push detected - using version: $VERSION"
+          fi
+
+      - name: Create new branch for docs update
+        run: |
+          cd docs-repo
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          BRANCH_NAME="docs-update-v${{ steps.get_version.outputs.version }}"
+          git checkout -b "$BRANCH_NAME"
+
+          echo "branch_name=$BRANCH_NAME" >> $GITHUB_ENV
+
+      - name: Update documentation
+        run: |
+          cd docs-repo
+
+          # Remove old API docs
+          rm -rf api/
+
+          # Copy new API docs
+          cp -r ../docs/api/ ./
+
+          # Update version info if you have a version file
+          if [ -f "VERSION" ]; then
+            echo "${{ steps.get_version.outputs.version }}" > VERSION
+          fi
+
+          # Update last updated timestamp
+          echo "Last updated: $(date -u +"%Y-%m-%d %H:%M:%S UTC") - Version ${{ steps.get_version.outputs.version }}" > LAST_UPDATED
+
+      - name: Commit and push changes
+        run: |
+          cd docs-repo
+          git add .
+          git commit -m "Update documentation for version ${{ steps.get_version.outputs.version }}
+
+          - Auto-generated from tag ${{ steps.get_version.outputs.tag }}
+          - Built on $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          - Triggered by GitHub Actions workflow"
+
+          git push origin "${{ env.branch_name }}"
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.DOCS_REPO_TOKEN }}
+          repository: ${{ secrets.DOCS_REPOSITORY }}
+          branch: ${{ env.branch_name }}
+          title: "📚 Update documentation for version ${{ steps.get_version.outputs.version }}"
+          body: |
+            ## Documentation Update
+
+            This PR updates the documentation for version **${{ steps.get_version.outputs.version }}**.
+
+            ### Changes
+            - Updated API documentation for all packages and plugins
+            - Generated from git tag: `${{ steps.get_version.outputs.tag }}`
+            - Built automatically by GitHub Actions workflow
+
+            ### Trigger
+            This update was automatically triggered by pushing the git tag `${{ steps.get_version.outputs.tag }}`.
+
+            ### Review
+            Please review the changes and merge when ready.
+
+            ---
+            *Auto-generated by GitHub Actions*
+          labels: |
+            documentation
+            automated
+            version-update
+          assignees: ${{ secrets.DOCS_REVIEWERS }}
+          reviewers: ${{ secrets.DOCS_REVIEWERS }}
+
+      - name: Comment on original tag
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: comments } = await github.rest.repos.listCommitCommentsForRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: context.ref
+            });
+
+            // Check if we already commented
+            const hasComment = comments.some(comment => 
+              comment.body.includes('Documentation PR created')
+            );
+
+            if (!hasComment) {
+              await github.rest.repos.createCommitComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                commit_sha: context.sha,
+                body: `✅ Documentation PR created: [Update docs for v${{ steps.get_version.outputs.version }}](${{ secrets.DOCS_REPOSITORY }}/pull/...)`
+              });
+            }
