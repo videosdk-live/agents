@@ -67,6 +67,28 @@ def build_docs_for_path(path, output_dir, name, python_executable):
             working_dir = str(plugin_root)
             module_path = f"videosdk.plugins.{name}"
 
+            # Special handling for rnnoise plugin to avoid .so file issues
+            so_backups = []
+            if name == "rnnoise":
+                print(f"  Applying special handling for {name} plugin...")
+                # Create a mock library file for documentation building
+                files_dir = path / "files"
+                if files_dir.exists():
+                    # Create mock library files for all platforms
+                    mock_libs = {
+                        "librnnoise.so": b"",  # Linux
+                        "librnnoise.dylib": b"",  # macOS
+                        "rnnoise.dll": b""  # Windows
+                    }
+
+                    for lib_name, content in mock_libs.items():
+                        lib_path = files_dir / lib_name
+                        if not lib_path.exists():
+                            lib_path.write_bytes(content)
+                            # Mark as created, not renamed
+                            so_backups.append((lib_path, None))
+                            print(f"    Created mock library: {lib_name}")
+
         cmd = [
             python_executable, "-m", "pdoc",
             "--html",
@@ -99,6 +121,25 @@ def build_docs_for_path(path, output_dir, name, python_executable):
     except Exception as e:
         print(f"Error building documentation for {name}: {e}")
         return False
+    finally:
+        # Clean up mock library files if they were created
+        if "plugins" in str(path) and name == "rnnoise":
+            try:
+                for file_path, backup_path in so_backups:
+                    if backup_path is None:
+                        # This was a created mock file, remove it
+                        if file_path.exists():
+                            file_path.unlink()
+                            print(
+                                f"    Removed mock library: {file_path.name}")
+                    else:
+                        # This was a renamed file, restore it
+                        if Path(backup_path).exists():
+                            Path(backup_path).rename(file_path)
+                            print(f"    Restored {file_path.name}")
+            except Exception as cleanup_error:
+                print(
+                    f"    Warning: Could not clean up library files: {cleanup_error}")
 
 
 def get_python_executable():
