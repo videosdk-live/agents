@@ -77,7 +77,6 @@ def build_docs_for_path(path, output_dir, name, python_executable):
 
         # Special handling for rnnoise plugin to avoid .so file issues
         if name == "rnnoise":
-            print(f"  Applying special handling for {name} plugin...")
             so_backups = []
 
             rnnoise_py = path / "rnnoise.py"
