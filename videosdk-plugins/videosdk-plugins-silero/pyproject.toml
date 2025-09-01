@@ -20,7 +20,7 @@ classifiers = [
     "Topic :: Multimedia :: Video",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-dependencies = ["videosdk-agents>=0.0.30", "onnxruntime>=1.18", "numpy>=1.27"]
+dependencies = ["videosdk-agents>=0.0.31", "onnxruntime>=1.18", "numpy>=1.27"]
 
 [tool.hatch.version]
 path = "videosdk/plugins/silero/version.py"

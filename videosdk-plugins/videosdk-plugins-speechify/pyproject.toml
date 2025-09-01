@@ -19,7 +19,7 @@ classifiers = [
     "Topic :: Multimedia :: Video",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-dependencies = ["videosdk-agents>=0.0.30", "httpx>=0.25.0", "pydub>=0.25.1"]
+dependencies = ["videosdk-agents>=0.0.31", "httpx>=0.25.0", "pydub>=0.25.1"]
 
 [tool.hatch.version]
 path = "videosdk/plugins/speechify/version.py"

@@ -20,7 +20,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "videosdk-agents>=0.0.30",
+    "videosdk-agents>=0.0.31",
     "httpx",
     "aiortc<1.7.0",
     "websockets",
