@@ -6,6 +6,72 @@ import shutil
 from pathlib import Path
 
 
+def remove_version_files(output_dir):
+    """Remove version.py files and their references from the generated documentation."""
+    try:
+        # Remove version.html files
+        for html_file in output_dir.rglob("*.html"):
+            if "version" in html_file.name.lower():
+                html_file.unlink()
+
+                # Clean up references in all HTML files
+        for html_file in output_dir.rglob("*.html"):
+            try:
+                content = html_file.read_text(encoding='utf-8')
+
+                # Remove version module references from the index
+                # Handle both <dt> and <li> patterns
+                import re
+
+                # Remove <dt> pattern: <dt><code class="name"><a title="module.version" href="version.html">module.version</a></code></dt>
+                content = re.sub(
+                    r'<dt><code class="name"><a title="[^"]*\.version" href="version\.html">[^<]*\.version</a></code></dt>\s*',
+                    '',
+                    content
+                )
+
+                # Remove <li> pattern: <li><code><a title="module.version" href="version.html">module.version</a></code></li>
+                content = re.sub(
+                    r'<li><code><a title="[^"]*\.version" href="version\.html">[^<]*\.version</a></code></li>\s*',
+                    '',
+                    content
+                )
+
+                # Also remove any empty <dd> tags that might be left behind
+                content = re.sub(r'<dd>\s*</dd>\s*', '', content)
+
+                # Fix href paths to use explicit relative paths with ./
+                # Pattern: href="filename.html" -> href="./filename.html"
+                content = re.sub(
+                    r'href="([^"]*\.html)"',
+                    r'href="./\1"',
+                    content
+                )
+
+                # Also fix href="index.html" -> href="./index.html" for current directory
+                content = re.sub(
+                    r'href="index\.html"',
+                    r'href="./index.html"',
+                    content
+                )
+
+                # Fix supermodule references: href="module.html" -> href="./module.html" for parent modules
+                # Pattern: href="agents.html" -> href="./agents.html" (when in submodule)
+                content = re.sub(
+                    r'href="([a-zA-Z_][a-zA-Z0-9_]*\.html)"',
+                    r'href="./\1"',
+                    content
+                )
+
+                html_file.write_text(content, encoding='utf-8')
+
+            except Exception as e:
+                print(f"  Warning: Could not clean up {html_file.name}: {e}")
+
+    except Exception as e:
+        print(f"Warning: Could not remove version files: {e}")
+
+
 def flatten_plugin_docs(plugin_output_dir, plugin_name):
     """Flatten the plugin documentation structure by moving files up from nested directories."""
     try:
@@ -123,6 +189,8 @@ lib.__doc__ = "Library object."
         )
 
         if result.returncode == 0:
+            remove_version_files(output_dir)
+
             if "plugins" in str(path):
                 flatten_plugin_docs(output_dir, name)
             elif "agents" in str(path):
