@@ -23,14 +23,14 @@ class AnthropicLLM(LLM):
         """Initialize the Anthropic LLM
         
         Args:
-            model: The anthropic model to use for the LLM, e.g. "claude-sonnet-4-20250514"
-            api_key: Anthropic API key
-            base_url: The base URL to use for the LLM
-            temperature: The temperature to use for the LLM, e.g. 0.7
-            tool_choice: The tool choice to use for the LLM, e.g. "auto"
-            max_tokens: The maximum number of tokens to use for the LLM, e.g. 1024
-            top_k: The top K to use for the LLM
-            top_p: The top P to use for the LLM
+            model (str): The anthropic model to use for the LLM, e.g. "claude-sonnet-4-20250514"
+            api_key (str): Anthropic API key
+            base_url (str): The base URL to use for the LLM
+            temperature (float): The temperature to use for the LLM, e.g. 0.7
+            tool_choice (ToolChoice): The tool choice to use for the LLM, e.g. "auto"
+            max_tokens (int): The maximum number of tokens to use for the LLM, e.g. 1024
+            top_k (int): The top K to use for the LLM
+            top_p (float): The top P to use for the LLM
         """
         super().__init__()
         

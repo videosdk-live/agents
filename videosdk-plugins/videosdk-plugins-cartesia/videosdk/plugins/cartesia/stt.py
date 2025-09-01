@@ -26,11 +26,11 @@ class CartesiaSTT(BaseSTT):
         """Initialize the Cartesia STT plugin
         
         Args:
-            api_key: Cartesia API key
-            model: The model to use for the STT plugin
-            language: The language to use for the STT plugin, e.g. "en"
-            sample_rate: The sample rate to use for the STT plugin
-            base_url: The base URL to use for the STT plugin
+            api_key (str): Cartesia API key
+            model (str): The model to use for the STT plugin
+            language (str): The language to use for the STT plugin, e.g. "en"
+            sample_rate (int): The sample rate to use for the STT plugin
+            base_url (str): The base URL to use for the STT plugin
         """
         super().__init__()
         

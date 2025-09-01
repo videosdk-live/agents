@@ -26,6 +26,20 @@ class DeepgramSTT(BaseSTT):
         filler_words: bool = True,
         base_url: str = "wss://api.deepgram.com/v1/listen",
     ) -> None:
+        """Initialize the Deepgram STT plugin
+        
+        Args:
+            api_key (str): Deepgram API key
+            model (str): The model to use for the STT plugin
+            language (str): The language to use for the STT plugin
+            interim_results (bool): interim results to use for the STT plugin
+            punctuate (bool): punctuate to use for the STT plugin
+            smart_format (bool): smart format to use for the STT plugin
+            sample_rate (int): sample rate to use for the STT plugin
+            endpointing (int): endpointing to use for the STT plugin
+            filler_words (bool): Use filler words
+            base_url (str): The base URL to use for the STT plugin
+        """
         super().__init__()
         
         self.api_key = api_key or os.getenv("DEEPGRAM_API_KEY")
