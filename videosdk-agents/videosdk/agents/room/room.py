@@ -34,6 +34,10 @@ load_dotenv()
 
 
 class VideoSDKHandler:
+    """
+    Handles VideoSDK meeting operations and participant management.
+    """
+
     def __init__(
         self,
         *,
@@ -55,6 +59,29 @@ class VideoSDKHandler:
         # VideoSDK connection options
         signaling_base_url: Optional[str] = None,
     ):
+        """
+        Initialize the VideoSDK handler.
+
+        Args:
+            meeting_id (str): Unique identifier for the meeting.
+            auth_token (str | None, optional): Authentication token. Uses environment variable if not provided.
+            name (str): Display name of the agent in the meeting.
+            pipeline (Pipeline): Audio/video processing pipeline.
+            loop (AbstractEventLoop): Event loop for async operations.
+            vision (bool, optional): Whether video processing is enabled. Defaults to False.
+            recording (bool, optional): Whether recording is enabled. Defaults to False.
+            custom_camera_video_track: Custom video track for camera input.
+            custom_microphone_audio_track: Custom audio track for microphone input.
+            audio_sinks: List of audio sinks for processing.
+            on_room_error (Optional[Callable[[Any], None]], optional): Error callback function.
+            auto_end_session (bool, optional): Whether to automatically end sessions. Defaults to True.
+            session_timeout_seconds (Optional[int], optional): Timeout for session auto-end.
+            on_session_end (Optional[Callable[[str], None]], optional): Session end callback function.
+            signaling_base_url (Optional[str], optional): Custom signaling server URL.
+
+        Raises:
+            ValueError: If VIDEOSDK_AUTH_TOKEN is not set in environment or parameters.
+        """
         self.meeting_id = meeting_id
         self.auth_token = auth_token
         self.name = name
@@ -135,6 +162,9 @@ class VideoSDKHandler:
         self.auto_end_session = auto_end_session
 
     def init_meeting(self):
+        """
+        Initialize the VideoSDK meeting instance.
+        """
         self._left: bool = False
         self.sdk_metadata = {
             "sdk": "agents",
@@ -154,9 +184,15 @@ class VideoSDKHandler:
         )
 
     async def join(self):
+        """
+        Join the meeting.
+        """
         await self.meeting.async_join()
 
     async def leave(self):
+        """
+        Leave the meeting and clean up resources.
+        """
         if self._left:
             logger.info("Meeting already left")
             return
@@ -187,10 +223,25 @@ class VideoSDKHandler:
             logger.error(f"Error leaving meeting: {e}")
 
     def on_error(self, data):
+        """
+        Handle room errors.
+
+        This method is called when VideoSDK encounters an error and
+        forwards it to the configured error callback if provided.
+
+        Args:
+            data: Error data from VideoSDK.
+        """
         if self.on_room_error:
             self.on_room_error(data)
 
     def on_meeting_joined(self, data):
+        """
+        Handle meeting join event.
+
+        Args:
+            data: Meeting join event data from VideoSDK.
+        """
         logger.info(f"Agent joined the meeting")
         self._meeting_joined_data = data
         asyncio.create_task(self._collect_session_id())
@@ -202,6 +253,12 @@ class VideoSDKHandler:
             )
 
     def on_meeting_left(self, data):
+        """
+        Handle meeting leave event.
+
+        Args:
+            data: Meeting leave event data from VideoSDK.
+        """
         logger.info(f"Meeting Left: {data}")
         self._cancel_session_end_task()
 
@@ -214,7 +271,9 @@ class VideoSDKHandler:
                     f"Error in session end callback during meeting left: {e}")
 
     def _is_agent_participant(self, participant: Participant) -> bool:
-        """Check if a participant is an agent (based on name or other criteria)."""
+        """
+        Internal method: Check if a participant is an agent.
+        """
         # Consider participants with names containing 'agent' or matching our agent name as agents
         participant_name = participant.display_name.lower()
         return (
@@ -226,7 +285,9 @@ class VideoSDKHandler:
         )
 
     def _update_non_agent_participant_count(self):
-        """Update the count of non-agent participants."""
+        """
+        Internal method: Update the count of non-agent participants.
+        """
         if not self.meeting:
             return
 
@@ -239,13 +300,17 @@ class VideoSDKHandler:
         logger.debug(f"Non-agent participant count: {count}")
 
     def _cancel_session_end_task(self):
-        """Cancel the session end task if it exists."""
+        """
+        Internal method: Cancel the session end task if it exists.
+        """
         if self._session_end_task and not self._session_end_task.done():
             self._session_end_task.cancel()
             self._session_end_task = None
 
     async def _end_session(self, reason: str = "session_ended"):
-        """End the current session."""
+        """
+        Internal method: End the current session.
+        """
         if self._session_ended:
             return
 
@@ -267,12 +332,19 @@ class VideoSDKHandler:
         self._session_ended = True
 
     def setup_session_end_callback(self, callback):
-        """Set up the session end callback."""
+        """
+        Set up the session end callback.
+
+        Args:
+            callback: Function to call when session ends.
+        """
         self.on_session_end = callback
         logger.debug("Session end callback set up")
 
     def _schedule_session_end(self, timeout_seconds: int):
-        """Schedule session end after timeout."""
+        """
+        Internal method: Schedule session end after timeout.
+        """
         if self._session_end_task and not self._session_end_task.done():
             self._session_end_task.cancel()
 
@@ -282,11 +354,19 @@ class VideoSDKHandler:
         logger.info(f"Session end scheduled in {timeout_seconds} seconds")
 
     async def _delayed_session_end(self, timeout_seconds: int):
-        """Delayed session end after timeout."""
+        """
+        Internal method: Delayed session end after timeout.
+        """
         await asyncio.sleep(timeout_seconds)
         await self._end_session("no_participants")
 
     def on_participant_joined(self, participant: Participant):
+        """
+        Handle participant join event.
+
+        Args:
+            participant (Participant): The participant that joined.
+        """
         peer_name = participant.display_name
         self.participants_data[participant.id] = {"name": peer_name}
         logger.info(f"Participant joined: {peer_name}")
@@ -307,6 +387,9 @@ class VideoSDKHandler:
             self._cancel_session_end_task()
 
         def on_stream_enabled(stream: Stream):
+            """
+            Internal method: Handle stream enabled event.
+            """
             if stream.kind == "audio":
                 global_event_emitter.emit("AUDIO_STREAM_ENABLED", {
                                           "stream": stream, "participant": participant})
@@ -323,6 +406,9 @@ class VideoSDKHandler:
                 )
 
         def on_stream_disabled(stream: Stream):
+            """
+            Internal method: Handle stream disabled event.
+            """
             if stream.kind == "audio":
                 audio_task = self.audio_listener_tasks[stream.id]
                 if audio_task is not None:
@@ -344,6 +430,12 @@ class VideoSDKHandler:
             )
 
     def on_participant_left(self, participant: Participant):
+        """
+        Handle participant leave event.
+
+        Args:
+            participant (Participant): The participant that left.
+        """
         logger.info(f"Participant left: {participant.display_name}")
         if participant.id in self.audio_listener_tasks:
             self.audio_listener_tasks[participant.id].cancel()
@@ -368,6 +460,9 @@ class VideoSDKHandler:
             self._schedule_session_end(self.session_timeout_seconds)
 
     async def add_audio_listener(self, stream: Stream):
+        """
+        Add audio listener for a participant stream.
+        """
         while True:
             try:
                 await asyncio.sleep(0.01)
@@ -385,6 +480,9 @@ class VideoSDKHandler:
                 break
 
     async def add_video_listener(self, stream: Stream):
+        """
+        Add video listener for a participant stream.
+        """
         while True:
             try:
                 await asyncio.sleep(0.01)
@@ -402,10 +500,10 @@ class VideoSDKHandler:
         Wait for a specific participant to join, or wait for the first participant if none specified.
 
         Args:
-            participant_id: Optional participant ID to wait for. If None, waits for first participant.
+            participant_id (str | None, optional): Optional participant ID to wait for. If None, waits for first participant.
 
         Returns:
-            str: The participant ID that joined
+            str: The participant ID that joined.
         """
         if participant_id:
             if participant_id in self.participants_data:
@@ -425,26 +523,63 @@ class VideoSDKHandler:
             return next(iter(self.participants_data.keys()))
 
     async def subscribe_to_pubsub(self, pubsub_config: PubSubSubscribeConfig):
+        """
+        Subscribe to pubsub messages.
+
+        Args:
+            pubsub_config (PubSubSubscribeConfig): Configuration for pubsub subscription.
+
+        Returns:
+            List of existing messages from the subscription.
+        """
         old_messages = await self.meeting.pubsub.subscribe(pubsub_config)
         return old_messages
 
     async def publish_to_pubsub(self, pubsub_config: PubSubPublishConfig):
+        """
+        Publish message to pubsub.
+
+        Args:
+            pubsub_config (PubSubPublishConfig): Configuration for pubsub publishing.
+        """
         await self.meeting.pubsub.publish(pubsub_config)
 
     async def upload_file(self, base64_data, file_name):
+        """
+        Upload a file to the temporary storage.
+
+        Args:
+            base64_data: Base64-encoded file data.
+            file_name (str): Name of the file to upload.
+
+        Returns:
+            Upload response from VideoSDK API.
+        """
         return self.meeting.upload_base64(base64_data, self.auth_token, file_name)
 
     async def fetch_file(self, url):
+        """
+        Fetch a file from a URL.
+
+        Args:
+            url (str): URL of the file to fetch.
+
+        Returns:
+            Base64-encoded file data.
+        """
         return self.meeting.fetch_base64(url, self.auth_token)
 
     async def cleanup(self):
-        """Add cleanup method"""
-
+        """
+        Clean up resources.
+        """
         if hasattr(self, "audio_track"):
             await self.audio_track.cleanup()
 
     async def _collect_session_id(self) -> None:
-        """Collect session ID from room and set it in metrics cascading_metrics_collector/realtime_metrics_collector"""
+        """
+        Internal method: Collect session ID from room and set it in metrics.
+        """
         if self.meeting and not self._session_id_collected:
             try:
                 session_id = getattr(self.meeting, "session_id", None)
@@ -460,8 +595,7 @@ class VideoSDKHandler:
 
     async def _collect_meeting_attributes(self) -> None:
         """
-        Collect meeting attributes from room and initialize telemetry and logs.
-        Also creates parent-child spans and logs after meeting is joined.
+        Internal method: Collect meeting attributes and initialize telemetry.
         """
         if not self.meeting:
             logger.error("Meeting not initialized")
@@ -504,6 +638,9 @@ class VideoSDKHandler:
                 f"Error collecting meeting attributes and creating spans: {e}")
 
     async def stop_participants_recording(self):
+        """
+        Stop recording for all participants.
+        """
         await self.stop_participant_recording(self.meeting.local_participant.id)
         for participant_id in self.participants_data.keys():
             logger.info("stopping participant recording for id",
@@ -511,6 +648,12 @@ class VideoSDKHandler:
             await self.stop_participant_recording(participant_id)
 
     async def start_participant_recording(self, id: str):
+        """
+        Start recording for a specific participant.
+
+        Args:
+            id (str): Participant ID to start recording for.
+        """
         headers = {"Authorization": self.auth_token,
                    "Content-Type": "application/json"}
         response = requests.request(
@@ -522,6 +665,12 @@ class VideoSDKHandler:
         logger.info("response for id", id, response.text)
 
     async def stop_participant_recording(self, id: str):
+        """
+        Stop recording for a specific participant.
+
+        Args:
+            id (str): Participant ID to stop recording for.
+        """
         headers = {"Authorization": self.auth_token,
                    "Content-Type": "application/json"}
         response = requests.request(
@@ -533,6 +682,9 @@ class VideoSDKHandler:
         logger.info("response for id", id, response.text)
 
     async def merge_participant_recordings(self):
+        """
+        Merge recordings from all participants.
+        """
         headers = {"Authorization": self.auth_token,
                    "Content-Type": "application/json"}
         response = requests.request(
@@ -551,6 +703,9 @@ class VideoSDKHandler:
         logger.info(response.text)
 
     async def stop_and_merge_recordings(self):
+        """
+        Stop all recordings and merge them.
+        """
         await self.stop_participants_recording()
         await self.merge_participant_recordings()
         logger.info("stopped and merged recordings")
