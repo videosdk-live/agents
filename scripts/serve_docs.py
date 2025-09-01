@@ -9,7 +9,7 @@ def main():
     docs_dir = root_dir / "docs" / "api"
 
     if not docs_dir.exists():
-        print("Documentation not found. Run 'docs-build' first.")
+        print("Documentation not found. Run 'build_docs' first.")
         return
 
     print("Serving documentation at http://localhost:8000")
