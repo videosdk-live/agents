@@ -69,6 +69,19 @@ class AWSPollyTTS(TTS):
         pitch: float = 0.0,
         **kwargs: Any,
     ):
+        """Initialize the AWS Polly TTS plugin
+        
+        Args:
+            voice: The voice to use for the TTS plugin, e.g. "Joanna"
+            engine: The engine to use for the TTS plugin
+            region: The region to use for the TTS plugin
+            aws_access_key_id: AWS access key ID
+            aws_secret_access_key: AWS secret access key
+            aws_session_token: AWS session token
+            speed: The speed to use for the TTS plugin
+            pitch: The pitch to use for the TTS plugin
+            kwargs: Additional keyword arguments to pass to the TTS plugin
+        """
         super().__init__(sample_rate=VIDEOSDK_TTS_SAMPLE_RATE,
                          num_channels=VIDEOSDK_TTS_CHANNELS)
         if not BOTO3_AVAILABLE:
