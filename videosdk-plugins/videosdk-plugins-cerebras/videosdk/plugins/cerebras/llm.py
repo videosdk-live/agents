@@ -32,6 +32,19 @@ class CerebrasLLM(LLM):
         stop: str | None = None,
         user: str | None = None,
     ) -> None:
+        """Initialize the Cerebras LLM plugin
+        
+        Args:
+            model: The model to use for the LLM plugin, e.g. "llama3.3-70b"
+            api_key: Cerebras API key
+            temperature: The temperature to use for the LLM plugin
+            tool_choice: The tool choice to use for the LLM plugin, e.g. "auto"
+            max_completion_tokens: The maximum completion tokens to use for the LLM plugin
+            top_p: top P to use for the LLM plugin
+            seed: seed to use for the LLM plugin
+            stop: stop to use for the LLM plugin
+            user: user to use for the LLM plugin
+        """
         super().__init__()
         self.api_key = api_key or os.getenv("CEREBRAS_API_KEY")
         if not self.api_key:
