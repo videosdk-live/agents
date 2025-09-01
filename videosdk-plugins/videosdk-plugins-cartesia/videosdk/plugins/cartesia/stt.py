@@ -23,6 +23,15 @@ class CartesiaSTT(BaseSTT):
         sample_rate: int = 48000,
         base_url: str = "wss://api.cartesia.ai/stt/websocket",
     ) -> None:
+        """Initialize the Cartesia STT plugin
+        
+        Args:
+            api_key: Cartesia API key
+            model: The model to use for the STT plugin
+            language: The language to use for the STT plugin, e.g. "en"
+            sample_rate: The sample rate to use for the STT plugin
+            base_url: The base URL to use for the STT plugin
+        """
         super().__init__()
         
         self.api_key = api_key or os.getenv("CARTESIA_API_KEY")

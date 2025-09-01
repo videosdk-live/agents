@@ -32,6 +32,15 @@ class CartesiaTTS(TTS):
         language: str = "en",
         base_url: str = "https://api.cartesia.ai",
     ) -> None:
+        """Initialize the Cartesia TTS plugin
+        
+        Args:
+            model: The model to use for the TTS plugin
+            voice_id: The voice ID to use for the TTS plugin
+            api_key: Cartesia API key
+            language: The language to use for the TTS plugin
+            base_url: The base URL to use for the TTS plugin
+        """
         super().__init__(sample_rate=CARTESIA_SAMPLE_RATE, num_channels=CARTESIA_CHANNELS)
 
         self.model = model
