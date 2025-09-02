@@ -49,7 +49,7 @@ jobs:
 
       - name: Build documentation
         run: |
-          python scripts/build_docs.py
+          python scripts/build_docs.py --base-url "/agent-sdk-reference"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

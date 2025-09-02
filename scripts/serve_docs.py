@@ -6,7 +6,7 @@ from pathlib import Path
 def main():
     """Serve documentation locally."""
     root_dir = Path(__file__).parent.parent
-    docs_dir = root_dir / "docs" / "api"
+    docs_dir = root_dir / "agent-sdk-reference"
 
     if not docs_dir.exists():
         print("Documentation not found. Run 'build_docs' first.")
