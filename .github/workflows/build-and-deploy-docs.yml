@@ -3,19 +3,7 @@ name: Build and Deploy Documentation
 on:
   push:
     tags:
-      - "v*" # Triggers on version tags like v1.0.0, v2.1.0, etc.
-  workflow_dispatch:
-    inputs:
-      test_mode:
-        description: "Test mode (creates test tag)"
-        required: false
-        default: "false"
-        type: boolean
-      version:
-        description: "Version to test (e.g., 0.0.1-test)"
-        required: false
-        default: "0.0.1-test"
-        type: string
+      - "v*"
 
 jobs:
   build-docs:
@@ -25,7 +13,7 @@ jobs:
       - name: Checkout source repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Fetch full history for proper tagging
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -52,7 +40,6 @@ jobs:
 
       - name: Install all plugins
         run: |
-          # Install all plugin packages in editable mode
           for plugin_dir in videosdk-plugins/videosdk-plugins-*; do
             if [ -d "$plugin_dir" ]; then
               echo "Installing plugin: $plugin_dir"
@@ -66,46 +53,21 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Test mode summary
-        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.test_mode == 'true' }}
-        run: |
-          echo "🧪 TEST MODE ENABLED"
-          echo "Documentation built successfully!"
-          echo "Version: ${{ steps.get_version.outputs.version }}"
-          echo "Tag: ${{ steps.get_version.outputs.tag }}"
-          echo ""
-          echo "📁 Generated docs location:"
-          ls -la agent-sdk-reference/
-          echo ""
-          echo "✅ Test completed - workflow would deploy to docs repository"
-          echo "To deploy for real, push a git tag or run without test mode"
-
       - name: Checkout docs repository
-        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.test_mode != 'true' }}
         uses: actions/checkout@v4
         with:
-          repository: ${{ secrets.DOCS_REPOSITORY }} # e.g., 'your-org/your-docs-repo'
-          token: ${{ secrets.DOCS_REPO_TOKEN }} # Personal access token with repo access
+          repository: ${{ secrets.DOCS_REPOSITORY }}
+          token: ${{ secrets.DOCS_REPO_TOKEN }}
           path: docs-repo
 
       - name: Get tag version
         id: get_version
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            # Manual trigger - use input version
-            VERSION="${{ github.event.inputs.version }}"
-            TAG="refs/tags/v$VERSION"
-            echo "version=$VERSION" >> $GITHUB_OUTPUT
-            echo "tag=$TAG" >> $GITHUB_OUTPUT
-            echo "Manual trigger detected - using version: $VERSION"
-          else
-            # Tag push - extract from git ref
-            VERSION=${GITHUB_REF#refs/tags/}
-            VERSION=${VERSION#v}
-            echo "version=$VERSION" >> $GITHUB_OUTPUT
-            echo "tag=$GITHUB_REF" >> $GITHUB_OUTPUT
-            echo "Tag push detected - using version: $VERSION"
-          fi
+          VERSION=${GITHUB_REF#refs/tags/}
+          VERSION=${VERSION#v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=$GITHUB_REF" >> $GITHUB_OUTPUT
+          echo "Tag push detected - using version: $VERSION"
 
       - name: Create new branch for docs update
         run: |
@@ -122,25 +84,20 @@ jobs:
         run: |
           cd docs-repo
 
-          # Remove only the old agent-sdk-reference directory, preserve other static content
           if [ -d "static/agent-sdk-reference" ]; then
             echo "Removing old agent-sdk-reference directory..."
             rm -rf static/agent-sdk-reference/
           fi
 
-          # Ensure static directory exists
           mkdir -p static/
 
-          # Copy new agent-sdk-reference to static folder
           echo "Copying new agent-sdk-reference to static folder..."
           cp -r ../agent-sdk-reference/ static/
 
-          # Update version info if you have a version file
           if [ -f "VERSION" ]; then
             echo "${{ steps.get_version.outputs.version }}" > VERSION
           fi
 
-          # Update last updated timestamp
           echo "Last updated: $(date -u +"%Y-%m-%d %H:%M:%S UTC") - Version ${{ steps.get_version.outputs.version }}" > LAST_UPDATED
 
       - name: Commit and push changes
@@ -159,7 +116,6 @@ jobs:
         run: |
           cd docs-repo
 
-          # Create PR using GitHub CLI
           gh pr create \
             --title "Update documentation for version ${{ steps.get_version.outputs.version }}" \
             --body "## Documentation Update
@@ -184,56 +140,24 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.DOCS_REPO_TOKEN }}
 
-      - name: Comment on original tag
-        uses: actions/github-script@v7
-        with:
-          script: |
-            try {
-              const { data: comments } = await github.rest.repos.listCommitComments({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                commit_sha: context.sha
-              });
-
-              // Check if we already commented
-              const hasComment = comments.some(comment => 
-                comment.body.includes('Documentation PR created')
-              );
-
-              if (!hasComment) {
-                await github.rest.repos.createCommitComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  commit_sha: context.sha,
-                  body: `✅ Documentation PR created: [Update docs for v${{ steps.get_version.outputs.version }}](${{ secrets.DOCS_REPOSITORY }}/pull/...)`
-                });
-              }
-            } catch (error) {
-              console.log('Could not comment on commit:', error.message);
-            }
-
       - name: Cleanup build artifacts
         if: always()
         run: |
           echo "🧹 Cleaning up build artifacts..."
 
-          # Remove generated documentation
           if [ -d "docs" ]; then
             echo "Removing docs directory..."
             rm -rf docs/
           fi
 
-          # Remove any temporary files
           if [ -d "docs-repo" ]; then
             echo "Removing docs-repo directory..."
             rm -rf docs-repo/
           fi
 
-          # Clean pip cache
           echo "Cleaning pip cache..."
           pip cache purge
 
-          # Clean any Python cache files
           echo "Cleaning Python cache files..."
           find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
           find . -type f -name "*.pyc" -delete 2>/dev/null || true
