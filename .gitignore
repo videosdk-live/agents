@@ -8,7 +8,6 @@ __pycache__/
 test_env/
 dist/
 .DS_Store
-
 node_modules/
 credentials.json
 .Python
@@ -17,3 +16,4 @@ eggs/
 sdist/
 wheels/
 docs/
+agent-sdk-reference/
