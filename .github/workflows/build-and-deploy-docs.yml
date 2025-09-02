@@ -75,7 +75,7 @@ jobs:
           echo "Tag: ${{ steps.get_version.outputs.tag }}"
           echo ""
           echo "📁 Generated docs location:"
-          ls -la docs/api/
+          ls -la agent-sdk-reference/
           echo ""
           echo "✅ Test completed - workflow would deploy to docs repository"
           echo "To deploy for real, push a git tag or run without test mode"
@@ -122,11 +122,18 @@ jobs:
         run: |
           cd docs-repo
 
-          # Remove old API docs
-          rm -rf api/
+          # Remove only the old agent-sdk-reference directory, preserve other static content
+          if [ -d "static/agent-sdk-reference" ]; then
+            echo "Removing old agent-sdk-reference directory..."
+            rm -rf static/agent-sdk-reference/
+          fi
 
-          # Copy new API docs
-          cp -r ../docs/api/ ./
+          # Ensure static directory exists
+          mkdir -p static/
+
+          # Copy new agent-sdk-reference to static folder
+          echo "Copying new agent-sdk-reference to static folder..."
+          cp -r ../agent-sdk-reference/ static/
 
           # Update version info if you have a version file
           if [ -f "VERSION" ]; then

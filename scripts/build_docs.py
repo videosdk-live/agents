@@ -281,7 +281,7 @@ def main():
     python_executable = get_python_executable()
     ensure_pdoc_installed(python_executable)
 
-    docs_dir = root_dir / "docs" / "api"
+    docs_dir = root_dir / "agent-sdk-reference"
     docs_dir.mkdir(parents=True, exist_ok=True)
 
     build_agents_docs(root_dir, docs_dir, python_executable)
