@@ -188,24 +188,28 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const { data: comments } = await github.rest.repos.listCommitCommentsForRef({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: context.ref
-            });
-
-            // Check if we already commented
-            const hasComment = comments.some(comment => 
-              comment.body.includes('Documentation PR created')
-            );
-
-            if (!hasComment) {
-              await github.rest.repos.createCommitComment({
+            try {
+              const { data: comments } = await github.rest.repos.listCommitComments({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                commit_sha: context.sha,
-                body: `✅ Documentation PR created: [Update docs for v${{ steps.get_version.outputs.version }}](${{ secrets.DOCS_REPOSITORY }}/pull/...)`
+                commit_sha: context.sha
               });
+
+              // Check if we already commented
+              const hasComment = comments.some(comment => 
+                comment.body.includes('Documentation PR created')
+              );
+
+              if (!hasComment) {
+                await github.rest.repos.createCommitComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  commit_sha: context.sha,
+                  body: `✅ Documentation PR created: [Update docs for v${{ steps.get_version.outputs.version }}](${{ secrets.DOCS_REPOSITORY }}/pull/...)`
+                });
+              }
+            } catch (error) {
+              console.log('Could not comment on commit:', error.message);
             }
 
       - name: Cleanup build artifacts
