@@ -9,7 +9,7 @@ description = "VideoSDK Agent Framework plugin for turnsense turn detector model
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.11"
-authors = [{ name = "videosdk"}]
+authors = [{ name = "videosdk" }]
 keywords = ["video", "audio", "ai", "videosdk"]
 classifiers = [
     "Intended Audience :: Developers",
@@ -21,7 +21,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "videosdk-agents>=0.0.27",
+    "videosdk-agents>=0.0.31",
     "transformers>=4.47.1",
     "numpy>=1.27",
     "onnxruntime>=1.18",

@@ -9,8 +9,17 @@ description = "Hume AI TTS plugin for videosdk-agents"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.11"
-authors = [{ name = "videosdk"}]
-keywords = ["tts", "text-to-speech", "hume", "ai", "voice", "videosdk", "agents", "humeai"]
+authors = [{ name = "videosdk" }]
+keywords = [
+    "tts",
+    "text-to-speech",
+    "hume",
+    "ai",
+    "voice",
+    "videosdk",
+    "agents",
+    "humeai",
+]
 classifiers = [
     "Intended Audience :: Developers",
     "Development Status :: 4 - Beta",
@@ -21,10 +30,10 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "videosdk-agents>=0.0.27",
+    "videosdk-agents>=0.0.31",
     "httpx>=0.24.0",
     "scipy>=1.11.0",
-    "numpy"
+    "numpy",
 ]
 
 [tool.hatch.version]

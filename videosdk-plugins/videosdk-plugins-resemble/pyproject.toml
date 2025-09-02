@@ -9,7 +9,7 @@ description = "VideoSDK Agent Framework plugin for Resemble"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.11"
-authors = [{ name = "videosdk"}]
+authors = [{ name = "videosdk" }]
 keywords = ["video", "audio", "ai", "videosdk", "resemble"]
 classifiers = [
     "Intended Audience :: Developers",
@@ -20,9 +20,7 @@ classifiers = [
     "Topic :: Multimedia :: Video",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-dependencies = [
-    "videosdk-agents>=0.0.27"
-]
+dependencies = ["videosdk-agents>=0.0.31"]
 
 [tool.hatch.version]
 path = "videosdk/plugins/resemble/version.py"

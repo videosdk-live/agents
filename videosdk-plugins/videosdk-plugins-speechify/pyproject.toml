@@ -9,7 +9,7 @@ description = "VideoSDK Agent Framework plugin for Speechify AI TTS"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.11"
-authors = [{ name = "videosdk"}]
+authors = [{ name = "videosdk" }]
 keywords = ["video", "audio", "ai", "speechify", "tts", "videosdk", "speechify"]
 classifiers = [
     "Intended Audience :: Developers",
@@ -19,11 +19,7 @@ classifiers = [
     "Topic :: Multimedia :: Video",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-dependencies = [
-    "videosdk-agents>=0.0.27",
-    "httpx>=0.25.0",
-    "pydub>=0.25.1",
-]
+dependencies = ["videosdk-agents>=0.0.31", "httpx>=0.25.0", "pydub>=0.25.1"]
 
 [tool.hatch.version]
 path = "videosdk/plugins/speechify/version.py"
@@ -32,4 +28,4 @@ path = "videosdk/plugins/speechify/version.py"
 packages = ["videosdk"]
 
 [tool.hatch.build.targets.sdist]
-include = ["/videosdk"] 
+include = ["/videosdk"]

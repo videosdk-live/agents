@@ -663,7 +663,7 @@ def load_config() -> dict:
             )
 
         # Validate signaling base URL
-        signaling_base_url = worker.get("signaling_base_url", "api.videosdk.live")
+        signaling_base_url = deployment.get("signaling_base_url", "api.videosdk.live")
         if not signaling_base_url:
             raise ConfigurationError(
                 "Missing 'worker.signaling_base_url' in videosdk.yaml.\n"

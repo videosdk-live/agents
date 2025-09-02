@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "VideoSDK Agent Framework plugin for Neuphonic AI"
 readme = "README.md"
 requires-python = ">=3.11"
-authors = [{ name = "videosdk"}]
+authors = [{ name = "videosdk" }]
 keywords = ["video", "audio", "ai", "videosdk", "neuphonic", "tts"]
 classifiers = [
     "Intended Audience :: Developers",
@@ -19,10 +19,7 @@ classifiers = [
     "Topic :: Multimedia :: Video",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-dependencies = [
-    "videosdk-agents>=0.0.27",
-    "aiohttp>=3.9.0",
-]
+dependencies = ["videosdk-agents>=0.0.31", "aiohttp>=3.9.0"]
 
 [tool.hatch.version]
 path = "videosdk/plugins/neuphonic/version.py"
@@ -31,4 +28,4 @@ path = "videosdk/plugins/neuphonic/version.py"
 packages = ["videosdk"]
 
 [tool.hatch.build.targets.sdist]
-include = ["/videosdk"] 
+include = ["/videosdk"]

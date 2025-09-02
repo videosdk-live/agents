@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "VideoSDK Agent Framework plugin for Groq TTS services"
 readme = "README.md"
 requires-python = ">=3.11"
-authors = [{ name = "videosdk"}]
+authors = [{ name = "videosdk" }]
 keywords = ["video", "audio", "ai", "groq", "tts", "videosdk", "groq"]
 classifiers = [
     "Intended Audience :: Developers",
@@ -18,10 +18,7 @@ classifiers = [
     "Topic :: Multimedia :: Video",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-dependencies = [
-    "videosdk-agents>=0.0.27",
-    "httpx>=0.24.0",
-]
+dependencies = ["videosdk-agents>=0.0.31", "httpx>=0.24.0"]
 
 [tool.hatch.version]
 path = "videosdk/plugins/groq/version.py"
@@ -30,4 +27,4 @@ path = "videosdk/plugins/groq/version.py"
 packages = ["videosdk"]
 
 [tool.hatch.build.targets.sdist]
-include = ["/videosdk"] 
+include = ["/videosdk"]
