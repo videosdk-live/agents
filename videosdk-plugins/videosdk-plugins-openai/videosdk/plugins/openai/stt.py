@@ -3,8 +3,11 @@ from __future__ import annotations
 import asyncio
 import base64
 import os
+import time
 from typing import Any, Optional
 from urllib.parse import urlencode
+import io
+import wave
 from scipy import signal
 import aiohttp
 import httpx
@@ -17,11 +20,14 @@ class OpenAISTT(BaseSTT):
         self,
         *,
         api_key: str | None = None,
-        model: str = "whisper-1",
+        model: str = "gpt-4o-mini-transcribe",
         base_url: str | None = None,
         prompt: str | None = None,
         language: str = "en",
         turn_detection: dict | None = None,
+        enable_streaming: bool = True,
+        silence_threshold: float = 0.01,
+        silence_duration: float = 0.8,
     ) -> None:
         super().__init__()
         
@@ -38,6 +44,11 @@ class OpenAISTT(BaseSTT):
             "prefix_padding_ms": 300,
             "silence_duration_ms": 500,
         }
+        self.enable_streaming = enable_streaming
+        
+        # Custom VAD parameters for non-streaming mode
+        self.silence_threshold_bytes = int(silence_threshold * 32767)
+        self.silence_duration_frames = int(silence_duration * 48000)  # input_sample_rate
         
         self.client = openai.AsyncClient(
             max_retries=0,
@@ -59,9 +70,88 @@ class OpenAISTT(BaseSTT):
         self._ws_task: Optional[asyncio.Task] = None
         self._current_text = ""
         self._last_interim_at = 0
-    
         self.input_sample_rate = 48000
         self.target_sample_rate = 16000
+        self._audio_buffer = bytearray()
+        
+        # Custom VAD state for non-streaming mode
+        self._is_speaking = False
+        self._silence_frames = 0
+        
+    @staticmethod
+    def azure(
+        *,
+        model: str = "gpt-4o-mini-transcribe",
+        language: str = "en",
+        prompt: str | None = None,
+        turn_detection: dict | None = None,
+        azure_endpoint: str | None = None,
+        azure_deployment: str | None = None,
+        api_version: str | None = None,
+        api_key: str | None = None,
+        azure_ad_token: str | None = None,
+        organization: str | None = None,
+        project: str | None = None,
+        base_url: str | None = None,
+        enable_streaming: bool = False,
+        timeout: httpx.Timeout | None = None,
+    ) -> "OpenAISTT":
+        """
+        Create a new instance of Azure OpenAI STT.
+
+        This automatically infers the following arguments from their corresponding environment variables if they are not provided:
+        - `api_key` from `AZURE_OPENAI_API_KEY`
+        - `organization` from `OPENAI_ORG_ID`
+        - `project` from `OPENAI_PROJECT_ID`
+        - `azure_ad_token` from `AZURE_OPENAI_AD_TOKEN`
+        - `api_version` from `OPENAI_API_VERSION`
+        - `azure_endpoint` from `AZURE_OPENAI_ENDPOINT`
+        - `azure_deployment` from `AZURE_OPENAI_DEPLOYMENT` (if not provided, uses `model` as deployment name)
+        """
+        
+        # Get values from environment variables if not provided
+        azure_endpoint = azure_endpoint or os.getenv("AZURE_OPENAI_ENDPOINT")
+        azure_deployment = azure_deployment or os.getenv("AZURE_OPENAI_DEPLOYMENT")
+        api_version = api_version or os.getenv("OPENAI_API_VERSION")
+        api_key = api_key or os.getenv("AZURE_OPENAI_API_KEY")
+        azure_ad_token = azure_ad_token or os.getenv("AZURE_OPENAI_AD_TOKEN")
+        organization = organization or os.getenv("OPENAI_ORG_ID")
+        project = project or os.getenv("OPENAI_PROJECT_ID")
+        
+        # If azure_deployment is not provided, use model as the deployment name
+        if not azure_deployment:
+            azure_deployment = model
+        
+        if not azure_endpoint:
+            raise ValueError("Azure endpoint must be provided either through azure_endpoint parameter or AZURE_OPENAI_ENDPOINT environment variable")
+        
+        if not api_key and not azure_ad_token:
+            raise ValueError("Either API key or Azure AD token must be provided")
+        
+        azure_client = openai.AsyncAzureOpenAI(
+            max_retries=0,
+            azure_endpoint=azure_endpoint,
+            azure_deployment=azure_deployment,
+            api_version=api_version,
+            api_key=api_key,
+            azure_ad_token=azure_ad_token,
+            organization=organization,
+            project=project,
+            base_url=base_url,
+            timeout=timeout
+            if timeout
+            else httpx.Timeout(connect=15.0, read=5.0, write=5.0, pool=5.0),
+        )
+        
+        instance = OpenAISTT(
+            model=model,
+            language=language,
+            prompt=prompt,
+            turn_detection=turn_detection,
+            enable_streaming=enable_streaming,
+        )
+        instance.client = azure_client
+        return instance
         
     async def process_audio(
         self,
@@ -69,7 +159,11 @@ class OpenAISTT(BaseSTT):
         language: Optional[str] = None,
         **kwargs: Any
     ) -> None:
-        """Process audio frames and send to OpenAI's Realtime API"""
+        """Process audio frames and send to OpenAI based on enabled mode"""
+        
+        if not self.enable_streaming:
+            await self._transcribe_non_streaming(audio_frames)
+            return
         
         if not self._ws:
             await self._connect_ws()
@@ -94,6 +188,80 @@ class OpenAISTT(BaseSTT):
                 if self._ws_task:
                     self._ws_task.cancel()
                     self._ws_task = None
+
+    async def _transcribe_non_streaming(self, audio_frames: bytes) -> None:
+        """HTTP-based transcription using OpenAI audio/transcriptions API with custom VAD"""
+        if not audio_frames:
+            return
+            
+        self._audio_buffer.extend(audio_frames)
+        
+        # Custom VAD logic similar to other STT implementations
+        is_silent_chunk = self._is_silent(audio_frames)
+        
+        if not is_silent_chunk:
+            if not self._is_speaking:
+                self._is_speaking = True
+                global_event_emitter.emit("speech_started")
+            self._silence_frames = 0
+        else:
+            if self._is_speaking:
+                self._silence_frames += len(audio_frames) // 4  # Approximate frame count
+                if self._silence_frames > self.silence_duration_frames:
+                    global_event_emitter.emit("speech_stopped")
+                    await self._process_audio_buffer()
+                    self._is_speaking = False
+                    self._silence_frames = 0
+
+    def _is_silent(self, audio_chunk: bytes) -> bool:
+        """Simple VAD: check if the max amplitude is below a threshold."""
+        audio_data = np.frombuffer(audio_chunk, dtype=np.int16)
+        return np.max(np.abs(audio_data)) < self.silence_threshold_bytes
+
+
+
+    async def _process_audio_buffer(self) -> None:
+        """Process the accumulated audio buffer with OpenAI transcription"""
+        if not self._audio_buffer:
+            return
+            
+        audio_data = bytes(self._audio_buffer)
+        self._audio_buffer.clear()
+        
+        wav_bytes = self._audio_frames_to_wav_bytes(audio_data)
+        
+        try:
+            resp = await self.client.audio.transcriptions.create(
+                file=("audio.wav", wav_bytes, "audio/wav"),
+                model=self.model,
+                language=self.language,
+                prompt=self.prompt or openai.NOT_GIVEN,
+            )
+            text = getattr(resp, "text", "")
+            if text and self._transcript_callback:
+                await self._transcript_callback(STTResponse(
+                    event_type=SpeechEventType.FINAL,
+                    data=SpeechData(text=text, language=self.language),
+                    metadata={"model": self.model}
+                ))
+        except Exception as e:
+            print(f"OpenAI transcription error: {str(e)}")
+            self.emit("error", str(e))
+
+    def _audio_frames_to_wav_bytes(self, audio_frames: bytes) -> bytes:
+        """Convert audio frames to WAV bytes"""
+        pcm = np.frombuffer(audio_frames, dtype=np.int16)
+        resampled = signal.resample(pcm, int(len(pcm) * self.target_sample_rate / self.input_sample_rate))
+        resampled = resampled.astype(np.int16)
+        
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wf:
+            wf.setnchannels(1)  # Mono
+            wf.setsampwidth(2)  # 16-bit PCM
+            wf.setframerate(self.target_sample_rate)
+            wf.writeframes(resampled.tobytes())
+        
+        return buf.getvalue()
 
     async def _listen_for_responses(self) -> None:
         """Background task to listen for WebSocket responses"""
@@ -233,6 +401,8 @@ class OpenAISTT(BaseSTT):
 
     async def aclose(self) -> None:
         """Cleanup resources"""
+        self._audio_buffer.clear()
+        
         if self._ws_task:
             self._ws_task.cancel()
             try:
@@ -255,6 +425,3 @@ class OpenAISTT(BaseSTT):
         """Ensure WebSocket is connected, reconnect if necessary"""
         if not self._ws or self._ws.closed:
             await self._connect_ws()
-
-
-
