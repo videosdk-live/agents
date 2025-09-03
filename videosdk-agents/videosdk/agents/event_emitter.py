@@ -54,7 +54,7 @@ class EventEmitter(Generic[T]):
         has_varargs = flags & 0x04 != 0
 
         # If the function expects no arguments (only self), don't pass any
-        if argcount == 1:  # Only self parameter
+        if argcount == 1 and hasattr(func, "__self__"):  # Only self parameter
             func()
         elif has_varargs:
             func(*args)
