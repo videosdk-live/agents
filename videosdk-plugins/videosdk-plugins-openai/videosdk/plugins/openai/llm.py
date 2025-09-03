@@ -27,7 +27,7 @@ class OpenAILLM(LLM):
         self,
         *,
         api_key: str | None = None,
-        model: str = "gpt-4o",
+        model: str = "gpt-4o-mini",
         base_url: str | None = None,
         temperature: float = 0.7,
         tool_choice: ToolChoice = "auto",
@@ -68,6 +68,77 @@ class OpenAILLM(LLM):
                 ),
             ),
         )
+
+    @staticmethod
+    def azure(
+        *,
+        model: str = "gpt-4o-mini",
+        azure_endpoint: str | None = None,
+        azure_deployment: str | None = None,
+        api_version: str | None = None,
+        api_key: str | None = None,
+        azure_ad_token: str | None = None,
+        organization: str | None = None,
+        project: str | None = None,
+        base_url: str | None = None,
+        temperature: float = 0.7,
+        tool_choice: ToolChoice = "auto",
+        max_completion_tokens: int | None = None,
+        timeout: httpx.Timeout | None = None,
+    ) -> "OpenAILLM":
+        """
+        Create a new instance of Azure OpenAI LLM.
+
+        This automatically infers the following arguments from their corresponding environment variables if they are not provided:
+        - `api_key` from `AZURE_OPENAI_API_KEY`
+        - `organization` from `OPENAI_ORG_ID`
+        - `project` from `OPENAI_PROJECT_ID`
+        - `azure_ad_token` from `AZURE_OPENAI_AD_TOKEN`
+        - `api_version` from `OPENAI_API_VERSION`
+        - `azure_endpoint` from `AZURE_OPENAI_ENDPOINT`
+        - `azure_deployment` from `AZURE_OPENAI_DEPLOYMENT` (if not provided, uses `model` as deployment name)
+        """
+        
+        azure_endpoint = azure_endpoint or os.getenv("AZURE_OPENAI_ENDPOINT")
+        azure_deployment = azure_deployment or os.getenv("AZURE_OPENAI_DEPLOYMENT")
+        api_version = api_version or os.getenv("OPENAI_API_VERSION")
+        api_key = api_key or os.getenv("AZURE_OPENAI_API_KEY")
+        azure_ad_token = azure_ad_token or os.getenv("AZURE_OPENAI_AD_TOKEN")
+        organization = organization or os.getenv("OPENAI_ORG_ID")
+        project = project or os.getenv("OPENAI_PROJECT_ID")
+        
+        if not azure_deployment:
+            azure_deployment = model
+        
+        if not azure_endpoint:
+            raise ValueError("Azure endpoint must be provided either through azure_endpoint parameter or AZURE_OPENAI_ENDPOINT environment variable")
+        
+        if not api_key and not azure_ad_token:
+            raise ValueError("Either API key or Azure AD token must be provided")
+        
+        azure_client = openai.AsyncAzureOpenAI(
+            max_retries=0,
+            azure_endpoint=azure_endpoint,
+            azure_deployment=azure_deployment,
+            api_version=api_version,
+            api_key=api_key,
+            azure_ad_token=azure_ad_token,
+            organization=organization,
+            project=project,
+            base_url=base_url,
+            timeout=timeout
+            if timeout
+            else httpx.Timeout(connect=15.0, read=5.0, write=5.0, pool=5.0),
+        )
+        
+        instance = OpenAILLM(
+            model=model,
+            temperature=temperature,
+            tool_choice=tool_choice,
+            max_completion_tokens=max_completion_tokens,
+        )
+        instance._client = azure_client
+        return instance
 
     async def chat(
         self,
@@ -212,4 +283,4 @@ class OpenAILLM(LLM):
         """Cleanup resources by closing the HTTP client"""
         await self.cancel_current_generation()
         if self._client:
-            await self._client.close()       
+            await self._client.close()
