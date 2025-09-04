@@ -143,7 +143,7 @@ jobs:
       - name: Cleanup build artifacts
         if: always()
         run: |
-          echo "🧹 Cleaning up build artifacts..."
+          echo "Cleaning up build artifacts..."
 
           if [ -d "docs" ]; then
             echo "Removing docs directory..."
@@ -162,4 +162,4 @@ jobs:
           find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
           find . -type f -name "*.pyc" -delete 2>/dev/null || true
 
-          echo "✅ Cleanup completed!"
+          echo "Cleanup completed"
