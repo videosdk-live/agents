@@ -19,14 +19,23 @@ class SpeechifyTTS(TTS):
     def __init__(
         self,
         *,
-        voice_id: str = "kristy",
         api_key: Optional[str] = None,
+        voice_id: str = "kristy",
         model: Literal[
             "simba-base", "simba-english", "simba-multilingual", "simba-turbo"
         ] = "simba-english",
         language: Optional[str] = None,
         audio_format: Literal["mp3", "ogg", "aac"] = "mp3",
     ) -> None:
+        """Initialize the Speechify TTS plugin.
+
+        Args:
+            api_key (Optional[str], optional): Speechify API key. Defaults to None.
+            voice_id (str): The voice ID to use for the TTS plugin. Defaults to "kristy".
+            model (Literal["simba-base", "simba-english", "simba-multilingual", "simba-turbo"]): The model to use for the TTS plugin. Defaults to "simba-english".
+            language (Optional[str], optional): The language to use for the TTS plugin. Defaults to None.
+            audio_format (Literal["mp3", "ogg", "aac"]): The audio format to use for the TTS plugin. Defaults to "mp3".
+        """
         super().__init__(
             sample_rate=SPEECHIFY_SAMPLE_RATE, num_channels=SPEECHIFY_CHANNELS
         )

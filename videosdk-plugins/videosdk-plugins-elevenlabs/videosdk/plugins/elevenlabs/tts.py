@@ -31,16 +31,29 @@ class ElevenLabsTTS(TTS):
     def __init__(
         self,
         *,
+        api_key: str | None = None,
         model: str = DEFAULT_MODEL,
         voice: str = DEFAULT_VOICE_ID,
         speed: float = 1.0,
-        api_key: str | None = None,
         response_format: str = "pcm_24000",
         voice_settings: VoiceSettings | None = None,
         base_url: str = API_BASE_URL,
         enable_streaming: bool = True,
         inactivity_timeout: int = WS_INACTIVITY_TIMEOUT,
     ) -> None:
+        """Initialize the ElevenLabs TTS plugin.
+
+        Args:
+            api_key (Optional[str], optional): ElevenLabs API key. Uses ELEVENLABS_API_KEY environment variable if not provided. Defaults to None.
+            model (str): The model to use for the TTS plugin. Defaults to "eleven_flash_v2_5".
+            voice (str): The voice to use for the TTS plugin. Defaults to "EXAVITQu4vr4xnSDxMaL".
+            speed (float): The speed to use for the TTS plugin. Defaults to 1.0.
+            response_format (str): The response format to use for the TTS plugin. Defaults to "pcm_24000".
+            voice_settings (Optional[VoiceSettings], optional): The voice settings to use for the TTS plugin. Defaults to None.
+            base_url (str): The base URL to use for the TTS plugin. Defaults to "https://api.elevenlabs.io/v1".
+            enable_streaming (bool): Whether to enable streaming for the TTS plugin. Defaults to True.
+            inactivity_timeout (int): The inactivity timeout to use for the TTS plugin. Defaults to 300.
+        """
         super().__init__(
             sample_rate=ELEVENLABS_SAMPLE_RATE, num_channels=ELEVENLABS_CHANNELS
         )

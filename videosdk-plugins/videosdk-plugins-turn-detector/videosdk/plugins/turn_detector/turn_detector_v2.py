@@ -25,6 +25,8 @@ class VideoSDKTurnDetector(EOU):
     """
     
     def __init__(self, threshold: float = 0.7, **kwargs):
+        """Initialize the VideoSDKTurnDetector plugin.
+        """
         super().__init__(threshold=threshold, **kwargs)
         self.session = None
         self.tokenizer = None

@@ -29,6 +29,7 @@ class LMNTTTS(TTS):
     def __init__(
         self,
         *,
+        api_key: Optional[str] = None,
         voice: str = DEFAULT_VOICE,
         model: str = DEFAULT_MODEL,
         language: _LanguageCode = DEFAULT_LANGUAGE,
@@ -37,9 +38,22 @@ class LMNTTTS(TTS):
         seed: Optional[int] = None,
         temperature: float = 1.0,
         top_p: float = 0.8,
-        api_key: Optional[str] = None,
         base_url: str = LMNT_API_BASE_URL,
     ) -> None:
+        """Initialize the LMNT TTS plugin.
+
+        Args:
+            api_key (Optional[str], optional): LMNT API key. Defaults to None.
+            voice (str): The voice to use for the TTS plugin. Defaults to "ava".
+            model (str): The model to use for the TTS plugin. Defaults to "blizzard".
+            language (_LanguageCode): The language to use for the TTS plugin. Defaults to "auto".
+            format (_FormatType): The format to use for the TTS plugin. Defaults to "wav".
+            sample_rate (_SampleRate): The sample rate to use for the TTS plugin. Must be one of: 8000, 16000, 24000. Defaults to 24000.
+            seed (Optional[int], optional): The seed to use for the TTS plugin. Defaults to None.
+            temperature (float): The temperature to use for the TTS plugin. Defaults to 1.0.
+            top_p (float): The top_p to use for the TTS plugin. Defaults to 0.8.
+            base_url (str): The base URL to use for the TTS plugin. Defaults to "https://api.lmnt.com".
+        """
         super().__init__(sample_rate=sample_rate, num_channels=LMNT_CHANNELS)
 
         self.voice = voice

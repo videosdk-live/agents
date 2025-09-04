@@ -25,6 +25,7 @@ class RimeTTS(TTS):
     def __init__(
         self,
         *,
+        api_key: str | None = None,
         speaker: str = DEFAULT_SPEAKER,
         model_id: str = DEFAULT_MODEL,
         lang: str = DEFAULT_LANGUAGE,
@@ -34,8 +35,21 @@ class RimeTTS(TTS):
         pause_between_brackets: bool = False,
         phonemize_between_brackets: bool = False,
         inline_speed_alpha: str | None = None,
-        api_key: str | None = None,
     ) -> None:
+        """Initialize the Rime TTS plugin.
+
+        Args:
+            api_key (Optional[str], optional): Rime AI API key. Defaults to None.
+            speaker (str): The speaker to use for the TTS plugin. Defaults to "river".
+            model_id (str): The model ID to use for the TTS plugin. Defaults to "mist".
+            lang (str): The language to use for the TTS plugin. Defaults to "eng".
+            sampling_rate (int): The sampling rate to use for the TTS plugin. Defaults to 24000.
+            speed_alpha (float): The speed alpha to use for the TTS plugin. Defaults to 1.0.
+            reduce_latency (bool): Whether to reduce latency for the TTS plugin. Defaults to True.
+            pause_between_brackets (bool): Whether to pause between brackets for the TTS plugin. Defaults to False.
+            phonemize_between_brackets (bool): Whether to phonemize between brackets for the TTS plugin. Defaults to False.
+            inline_speed_alpha (Optional[str], optional): The inline speed alpha to use for the TTS plugin. Defaults to None.
+        """
         actual_sample_rate = sampling_rate
         super().__init__(sample_rate=actual_sample_rate, num_channels=RIME_CHANNELS)
 

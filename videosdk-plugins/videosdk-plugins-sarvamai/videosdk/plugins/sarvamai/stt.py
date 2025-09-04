@@ -33,6 +33,17 @@ class SarvamAISTT(STT):
         silence_threshold: float = 0.01,
         silence_duration: float = 0.8,
     ) -> None:
+        """Initialize the SarvamAI STT plugin.
+
+        Args:
+            api_key (Optional[str], optional): SarvamAI API key. Defaults to None.
+            model (str): The model to use for the STT plugin. Defaults to "saarika:v2".
+            language (str): The language to use for the STT plugin. Defaults to "en-IN".
+            input_sample_rate (int): The input sample rate for the STT plugin. Defaults to 48000.
+            output_sample_rate (int): The output sample rate for the STT plugin. Defaults to 16000.
+            silence_threshold (float): The silence threshold for the STT plugin. Defaults to 0.01.
+            silence_duration (float): The silence duration for the STT plugin. Defaults to 0.8.
+        """
         super().__init__()
         if not SCIPY_AVAILABLE:
             raise ImportError("scipy is not installed. Please install it with 'pip install scipy'")

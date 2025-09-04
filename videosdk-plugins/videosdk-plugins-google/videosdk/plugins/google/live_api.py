@@ -115,16 +115,18 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
     def __init__(
         self,
         *,
+        api_key: str | None = None,
         model: str,
         config: GeminiLiveConfig | None = None,
-        api_key: str | None = None,
         service_account_path: str | None = None,
     ) -> None:
         """
         Initialize Gemini realtime model.
 
         Args:
-            model: The Gemini model identifier to use (e.g. 'gemini-pro', 'gemini-pro-vision')
+            api_key: Gemini API key. If not provided, will attempt to read from GOOGLE_API_KEY env var
+            service_account_path: Path to Google service account JSON file.
+            model: The Gemini model identifier to use (e.g. 'gemini-pro', 'gemini-pro-vision').
             config: Optional configuration object for customizing model behavior. Contains settings for:
                    - voice: Voice ID for audio output ('Puck', 'Charon', 'Kore', 'Fenrir', 'Aoede'). Defaults to 'Puck'
                    - language_code: Language code for speech synthesis. Defaults to 'en-US'
@@ -137,8 +139,6 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                    - frequency_penalty: Penalizes token frequency in text. Range -2.0 to 2.0
                    - response_modalities: List of enabled response types ["TEXT", "AUDIO"]. Defaults to both
                    - output_audio_transcription: Configuration for audio transcription features
-            api_key: Gemini API key. If not provided, will attempt to read from GOOGLE_API_KEY env var
-            service_account_path: Path to Google service account JSON file.
 
         Raises:
             ValueError: If neither api_key nor service_account_path is provided and no GOOGLE_API_KEY in env vars

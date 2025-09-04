@@ -25,12 +25,21 @@ class GoogleTTS(TTS):
     def __init__(
         self,
         *,
+        api_key: str | None = None,
         speed: float = 1.0,
         pitch: float = 0.0,
-        api_key: str | None = None,
         response_format: Literal["pcm"] = "pcm",
         voice_config: GoogleVoiceConfig | None = None,
     ) -> None:
+        """Initialize the Google TTS plugin.
+
+        Args:
+            api_key (Optional[str], optional): Google API key. Defaults to None.
+            speed (float): The speed to use for the TTS plugin. Defaults to 1.0.
+            pitch (float): The pitch to use for the TTS plugin. Defaults to 0.0.
+            response_format (Literal["pcm"]): The response format to use for the TTS plugin. Defaults to "pcm".
+            voice_config (GoogleVoiceConfig | None): The voice configuration to use for the TTS plugin. Defaults to None.
+        """
         super().__init__(sample_rate=GOOGLE_SAMPLE_RATE, num_channels=GOOGLE_CHANNELS)
 
         self.speed = speed

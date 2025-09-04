@@ -22,13 +22,23 @@ class InworldAITTS(TTS):
     def __init__(
         self,
         *,
+        api_key: str | None = None,
         model_id: str = DEFAULT_MODEL,
         voice_id: str = DEFAULT_VOICE,
         temperature: float = DEFAULT_TEMPERATURE,
-        api_key: str | None = None,
         audio_encoding: str = "LINEAR16",
         sample_rate: int = INWORLD_SAMPLE_RATE,
     ) -> None:
+        """Initialize the InworldAI TTS plugin.
+
+        Args:
+            api_key (Optional[str], optional): InworldAI API key. Defaults to None.
+            model_id (str): The model ID to use for the TTS plugin. Defaults to "inworld-tts-1".
+            voice_id (str): The voice ID to use for the TTS plugin. Defaults to "Hades".
+            temperature (float): The temperature to use for the TTS plugin. Defaults to 0.8.
+            audio_encoding (str): The audio encoding to use for the TTS plugin. Defaults to "LINEAR16".
+            sample_rate (int): The sample rate to use for the TTS plugin. Defaults to 24000.
+        """
         super().__init__(sample_rate=sample_rate, num_channels=INWORLD_CHANNELS)
 
         self.model_id = model_id

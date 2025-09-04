@@ -2,13 +2,12 @@ myenv/
 venv/
 env/
 __pycache__/
-
+.venv/
 .env
 .env.local
 test_env/
 dist/
 .DS_Store
-
 node_modules/
 credentials.json
 .Python
@@ -16,3 +15,5 @@ build/
 eggs/
 sdist/
 wheels/
+docs/
+agent-sdk-reference/

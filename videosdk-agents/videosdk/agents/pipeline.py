@@ -20,7 +20,7 @@ class Pipeline(EventEmitter[Literal["start"]], ABC):
         self._auto_register()
         
     def _auto_register(self) -> None:
-        """Automatically register this pipeline with the current job context"""
+        """Internal Method: Automatically register this pipeline with the current job context"""
         try:
             from .job import get_current_job_context
             job_context = get_current_job_context()
@@ -30,13 +30,13 @@ class Pipeline(EventEmitter[Literal["start"]], ABC):
             pass
 
     def _set_loop_and_audio_track(self, loop: asyncio.AbstractEventLoop, audio_track: CustomAudioStreamTrack) -> None:
-        """Set the event loop and configure components"""
+        """Internal Method: Set the event loop and configure components"""
         self.loop = loop
         self.audio_track = audio_track
         self._configure_components()
 
     def _configure_components(self) -> None:
-        """Configure pipeline components with the loop - to be overridden by subclasses"""
+        """Internal Method: Configure pipeline components with the loop - to be overridden by subclasses"""
         pass
 
     def set_wake_up_callback(self, callback: Callable[[], None]) -> None:

@@ -59,16 +59,30 @@ class AWSPollyTTS(TTS):
     def __init__(
         self,
         *,
-        voice: str = "Joanna",
-        engine: str = "neural",
-        region: str = "us-east-1",
-        aws_access_key_id: Optional[str] = None,
         aws_secret_access_key: Optional[str] = None,
         aws_session_token: Optional[str] = None,
+        aws_access_key_id: Optional[str] = None,
+        region: str = "us-east-1",
+        voice: str = "Joanna",
+        engine: str = "neural",
         speed: float = 1.0,
         pitch: float = 0.0,
         **kwargs: Any,
     ):
+        """Initialize the AWS Polly TTS plugin.
+
+        Args:
+            aws_secret_access_key (Optional[str], optional): AWS secret access key. Defaults to None.
+            aws_session_token (Optional[str], optional): AWS session token. Defaults to None.
+            aws_access_key_id (Optional[str], optional): AWS access key ID. Defaults to None.
+            region (str): The region to use for the TTS plugin. Defaults to "us-east-1".
+            voice (str): The voice to use for the TTS plugin, e.g. "Joanna". Defaults to "Joanna".
+            engine (str): The engine to use for the TTS plugin. Defaults to "neural".
+            region (str): The region to use for the TTS plugin. Defaults to "us-east-1".
+            speed (float): The speed to use for the TTS plugin. Defaults to 1.0.
+            pitch (float): The pitch to use for the TTS plugin. Defaults to 0.0.
+            **kwargs (Any): Additional keyword arguments to pass to the TTS plugin.
+        """
         super().__init__(sample_rate=VIDEOSDK_TTS_SAMPLE_RATE,
                          num_channels=VIDEOSDK_TTS_CHANNELS)
         if not BOTO3_AVAILABLE:
@@ -169,7 +183,7 @@ class AWSPollyTTS(TTS):
                              self.num_channels * 2 * 20 / 1000)
 
             for i in range(0, len(audio_data), chunk_size):
-                chunk = audio_data[i : i + chunk_size]
+                chunk = audio_data[i: i + chunk_size]
                 if len(chunk) < chunk_size:
                     chunk += b'\x00' * (chunk_size - len(chunk))
 
@@ -187,7 +201,7 @@ class AWSPollyTTS(TTS):
                              self.num_channels * 2 * 20 / 1000)
 
             for i in range(0, len(audio_data), chunk_size):
-                chunk = audio_data[i : i + chunk_size]
+                chunk = audio_data[i: i + chunk_size]
                 if len(chunk) < chunk_size:
                     chunk += b'\x00' * (chunk_size - len(chunk))
 

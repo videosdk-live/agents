@@ -21,6 +21,7 @@ class SarvamAITTS(TTS):
     def __init__(
         self,
         *,
+        api_key: str | None = None,
         model: str = DEFAULT_MODEL,
         speaker: str = DEFAULT_SPEAKER,
         target_language_code: str = DEFAULT_TARGET_LANGUAGE,
@@ -28,8 +29,19 @@ class SarvamAITTS(TTS):
         pace: float = 1.0,
         loudness: float = 1.2,
         enable_preprocessing: bool = True,
-        api_key: str | None = None,
     ) -> None:
+        """Initialize the SarvamAI TTS plugin.
+
+        Args:
+            api_key (Optional[str], optional): SarvamAI API key. Defaults to None.
+            model (str): The model to use for the TTS plugin. Defaults to "bulbul:v2".
+            speaker (str): The speaker to use for the TTS plugin. Defaults to "anushka".
+            target_language_code (str): The target language code to use for the TTS plugin. Defaults to "en-IN".
+            pitch (float): The pitch to use for the TTS plugin. Defaults to 0.0.
+            pace (float): The pace to use for the TTS plugin. Defaults to 1.0.
+            loudness (float): The loudness to use for the TTS plugin. Defaults to 1.2.
+            enable_preprocessing (bool): Whether to enable preprocessing for the TTS plugin. Defaults to True.
+        """
         super().__init__(
             sample_rate=SARVAMAI_SAMPLE_RATE, num_channels=SARVAMAI_CHANNELS
         )
@@ -56,7 +68,8 @@ class SarvamAITTS(TTS):
             )
 
         self._http_client = httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=15.0, read=30.0, write=5.0, pool=5.0),
+            timeout=httpx.Timeout(connect=15.0, read=30.0,
+                                  write=5.0, pool=5.0),
             follow_redirects=True,
         )
 
@@ -110,7 +123,8 @@ class SarvamAITTS(TTS):
 
             response_data = response.json()
             if "audios" not in response_data or not response_data["audios"]:
-                self.emit("error", "No audio data found in response from Sarvam AI")
+                self.emit(
+                    "error", "No audio data found in response from Sarvam AI")
                 return
 
             audio_content = response_data["audios"][0]
@@ -134,12 +148,13 @@ class SarvamAITTS(TTS):
             raise
 
     async def _stream_audio_chunks(self, audio_bytes: bytes) -> None:
-        chunk_size = int(SARVAMAI_SAMPLE_RATE * SARVAMAI_CHANNELS * 2 * 20 / 1000)
+        chunk_size = int(SARVAMAI_SAMPLE_RATE *
+                         SARVAMAI_CHANNELS * 2 * 20 / 1000)
 
         audio_data = self._remove_wav_header(audio_bytes)
 
         for i in range(0, len(audio_data), chunk_size):
-            chunk = audio_data[i : i + chunk_size]
+            chunk = audio_data[i: i + chunk_size]
 
             if len(chunk) < chunk_size and len(chunk) > 0:
                 padding_needed = chunk_size - len(chunk)
@@ -157,7 +172,7 @@ class SarvamAITTS(TTS):
         if audio_bytes.startswith(b"RIFF"):
             data_pos = audio_bytes.find(b"data")
             if data_pos != -1:
-                return audio_bytes[data_pos + 8 :]
+                return audio_bytes[data_pos + 8:]
 
         return audio_bytes
 

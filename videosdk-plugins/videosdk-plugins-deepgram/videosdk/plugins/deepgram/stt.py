@@ -11,6 +11,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 class DeepgramSTT(BaseSTT):
     def __init__(
         self,
@@ -26,12 +27,27 @@ class DeepgramSTT(BaseSTT):
         filler_words: bool = True,
         base_url: str = "wss://api.deepgram.com/v1/listen",
     ) -> None:
+        """Initialize the Deepgram STT plugin
+
+        Args:
+            api_key (str | None, optional): Deepgram API key. Uses DEEPGRAM_API_KEY environment variable if not provided. Defaults to None.
+            model (str): The model to use for the STT plugin. Defaults to "nova-2".
+            language (str): The language to use for the STT plugin. Defaults to "en-US".
+            interim_results (bool): Whether to return interim results. Defaults to True.
+            punctuate (bool): Whether to add punctuation. Defaults to True.
+            smart_format (bool): Whether to use smart formatting. Defaults to True.
+            sample_rate (int): Sample rate to use for the STT plugin. Defaults to 48000.
+            endpointing (int): Endpointing threshold. Defaults to 50.
+            filler_words (bool): Whether to include filler words. Defaults to True.
+            base_url (str): The base URL to use for the STT plugin. Defaults to "wss://api.deepgram.com/v1/listen".
+        """
         super().__init__()
-        
+
         self.api_key = api_key or os.getenv("DEEPGRAM_API_KEY")
         if not self.api_key:
-            raise ValueError("Deepgram API key must be provided either through api_key parameter or DEEPGRAM_API_KEY environment variable")
-        
+            raise ValueError(
+                "Deepgram API key must be provided either through api_key parameter or DEEPGRAM_API_KEY environment variable")
+
         self.model = model
         self.language = language
         self.sample_rate = sample_rate
@@ -46,7 +62,7 @@ class DeepgramSTT(BaseSTT):
         self._ws_task: Optional[asyncio.Task] = None
         self._last_speech_event_time = 0.0
         self._previous_speech_event_time = 0.0
-        
+
     async def process_audio(
         self,
         audio_frames: bytes,
@@ -54,11 +70,11 @@ class DeepgramSTT(BaseSTT):
         **kwargs: Any
     ) -> None:
         """Process audio frames and send to Deepgram's Streaming API"""
-        
+
         if not self._ws:
             await self._connect_ws()
             self._ws_task = asyncio.create_task(self._listen_for_responses())
-            
+
         try:
             await self._ws.send_bytes(audio_frames)
         except Exception as e:
@@ -75,7 +91,7 @@ class DeepgramSTT(BaseSTT):
         """Background task to listen for WebSocket responses"""
         if not self._ws:
             return
-            
+
         try:
             async for msg in self._ws:
                 if msg.type == aiohttp.WSMsgType.TEXT:
@@ -86,7 +102,8 @@ class DeepgramSTT(BaseSTT):
                             await self._transcript_callback(response)
                 elif msg.type == aiohttp.WSMsgType.ERROR:
                     logger.error(f"WebSocket error: {self._ws.exception()}")
-                    self.emit("error", f"WebSocket error: {self._ws.exception()}")
+                    self.emit(
+                        "error", f"WebSocket error: {self._ws.exception()}")
                     break
         except Exception as e:
             logger.error(f"Error in WebSocket listener: {str(e)}")
@@ -95,13 +112,13 @@ class DeepgramSTT(BaseSTT):
             if self._ws:
                 await self._ws.close()
                 self._ws = None
-                
+
     async def _connect_ws(self) -> None:
         """Establish WebSocket connection with Deepgram's Streaming API"""
-        
+
         if not self._session:
             self._session = aiohttp.ClientSession()
-            
+
         query_params = {
             "model": self.model,
             "language": self.language,
@@ -109,7 +126,7 @@ class DeepgramSTT(BaseSTT):
             "punctuate": str(self.punctuate).lower(),
             "smart_format": str(self.smart_format).lower(),
             "encoding": "linear16",
-            "sample_rate": str(self.sample_rate), 
+            "sample_rate": str(self.sample_rate),
             "channels": 2,
             "endpointing": self.endpointing,
             "filler_words": str(self.filler_words).lower(),
@@ -119,22 +136,22 @@ class DeepgramSTT(BaseSTT):
         headers = {
             "Authorization": f"Token {self.api_key}",
         }
-        
+
         ws_url = f"{self.base_url}?{urlencode(query_params)}"
-            
+
         try:
             self._ws = await self._session.ws_connect(ws_url, headers=headers)
         except Exception as e:
             logger.error(f"Error connecting to WebSocket: {str(e)}")
             raise
-        
+
     def _handle_ws_message(self, msg: dict) -> list[STTResponse]:
         """Handle incoming WebSocket messages and generate STT responses"""
         responses = []
         try:
             if msg["type"] == "SpeechStarted":
                 current_time = time.time()
-        
+
                 if self._last_speech_event_time == 0.0:
                     self._last_speech_event_time = current_time
                     return responses
@@ -144,17 +161,17 @@ class DeepgramSTT(BaseSTT):
 
                 self._previous_speech_event_time = self._last_speech_event_time
                 self._last_speech_event_time = current_time
-            
+
             if msg["type"] == "Results":
                 channel = msg["channel"]
                 alternatives = channel["alternatives"]
-                
+
                 if alternatives and len(alternatives) > 0:
                     alt = alternatives[0]
                     is_final = msg["is_final"]
                     if alt["transcript"] == "":
                         return responses
-                    
+
                     response = STTResponse(
                         event_type=SpeechEventType.FINAL if is_final else SpeechEventType.INTERIM,
                         data=SpeechData(
@@ -167,10 +184,10 @@ class DeepgramSTT(BaseSTT):
                         metadata={"model": self.model}
                     )
                     responses.append(response)
-                    
+
         except Exception as e:
             logger.error(f"Error handling WebSocket message: {str(e)}")
-        
+
         return responses
 
     async def aclose(self) -> None:
@@ -182,11 +199,11 @@ class DeepgramSTT(BaseSTT):
             except asyncio.CancelledError:
                 pass
             self._ws_task = None
-            
+
         if self._ws:
             await self._ws.close()
             self._ws = None
-            
+
         if self._session:
             await self._session.close()
             self._session = None

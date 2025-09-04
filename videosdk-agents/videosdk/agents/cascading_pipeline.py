@@ -16,9 +16,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-logger = logging.getLogger(__name__)
-
-
 class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
     """
     Cascading pipeline implementation that processes data in sequence (STT -> LLM -> TTS).
@@ -42,6 +39,10 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
             stt: Speech-to-Text processor (optional)
             llm: Language Model processor (optional)
             tts: Text-to-Speech processor (optional)
+            vad: Voice Activity Detector (optional)
+            turn_detector: Turn Detector (optional)
+            avatar: Avatar (optional)
+            denoise: Denoise (optional)
         """
         self.stt = stt
         self.llm = llm

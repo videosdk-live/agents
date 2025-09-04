@@ -7,10 +7,11 @@ import json
 from cerebras.cloud.sdk import Cerebras
 from videosdk.agents import LLM, LLMResponse, ChatContext, ChatRole, ChatMessage, FunctionCall, FunctionCallOutput, ToolChoice, FunctionTool, is_function_tool, build_openai_schema, ChatContent
 
+
 class CerebrasLLM(LLM):
     """
     Cerebras LLM implementation using the Cerebras Cloud SDK.
-    
+
     Supported models:
     - llama3.3-70b (default)
     - llama3.1-8b
@@ -18,12 +19,12 @@ class CerebrasLLM(LLM):
     - qwen-3-32b
     - deepseek-r1-distill-llama-70b (private preview)
     """
-    
+
     def __init__(
         self,
         *,
-        model: str = "llama3.3-70b",
         api_key: str | None = None,
+        model: str = "llama3.3-70b",
         temperature: float = 0.7,
         tool_choice: ToolChoice = "auto",
         max_completion_tokens: int | None = None,
@@ -32,11 +33,25 @@ class CerebrasLLM(LLM):
         stop: str | None = None,
         user: str | None = None,
     ) -> None:
+        """Initialize the Cerebras LLM plugin
+
+        Args:
+            api_key (str | None, optional): Cerebras API key. Uses CEREBRAS_API_KEY environment variable if not provided. Defaults to None.
+            model (str): The model to use for the LLM plugin, e.g. "llama3.3-70b". Defaults to "llama3.3-70b".
+            temperature (float): The temperature to use for the LLM plugin. Defaults to 0.7.
+            tool_choice (ToolChoice): The tool choice to use for the LLM plugin, e.g. "auto". Defaults to "auto".
+            max_completion_tokens (int | None, optional): The maximum completion tokens to use for the LLM plugin. Defaults to None.
+            top_p (float | None, optional): Top P to use for the LLM plugin. Defaults to None.
+            seed (int | None, optional): Seed to use for the LLM plugin. Defaults to None.
+            stop (str | None, optional): Stop sequence to use for the LLM plugin. Defaults to None.
+            user (str | None, optional): User identifier to use for the LLM plugin. Defaults to None.
+        """
         super().__init__()
         self.api_key = api_key or os.getenv("CEREBRAS_API_KEY")
         if not self.api_key:
-            raise ValueError("Cerebras API key must be provided either through api_key parameter or CEREBRAS_API_KEY environment variable")
-        
+            raise ValueError(
+                "Cerebras API key must be provided either through api_key parameter or CEREBRAS_API_KEY environment variable")
+
         self.model = model
         self.temperature = temperature
         self.tool_choice = tool_choice
@@ -44,9 +59,9 @@ class CerebrasLLM(LLM):
         self.top_p = top_p
         self.seed = seed
         self.stop = stop
-        self.user = user     
+        self.user = user
         self._cancelled = False
-        
+
         self._client = Cerebras(
             api_key=self.api_key,
         )
@@ -59,12 +74,12 @@ class CerebrasLLM(LLM):
     ) -> AsyncIterator[LLMResponse]:
         """
         Implement chat functionality using Cerebras's chat completion API
-        
+
         Args:
             messages: ChatContext containing conversation history
             tools: Optional list of function tools available to the model
             **kwargs: Additional arguments passed to the Cerebras API
-            
+
         Yields:
             LLMResponse objects containing the model's responses
         """
@@ -137,26 +152,27 @@ class CerebrasLLM(LLM):
                 except Exception as e:
                     self.emit("error", f"Failed to format tool {tool}: {e}")
                     continue
-            
+
             if formatted_tools:
                 completion_params["tools"] = formatted_tools
                 completion_params["tool_choice"] = self.tool_choice
 
         completion_params.update(kwargs)
         try:
-            response_stream = self._client.chat.completions.create(**completion_params)
+            response_stream = self._client.chat.completions.create(
+                **completion_params)
             current_content = ""
             current_tool_calls = {}
 
             for chunk in response_stream:
                 if self._cancelled:
                     break
-                    
+
                 if not chunk.choices:
                     continue
-                    
+
                 delta = chunk.choices[0].delta
-                
+
                 if hasattr(delta, 'tool_calls') and delta.tool_calls:
                     for tool_call_delta in delta.tool_calls:
                         index = tool_call_delta.index
@@ -177,12 +193,14 @@ class CerebrasLLM(LLM):
                 elif current_tool_calls:
                     for tool_call in current_tool_calls.values():
                         try:
-                            args = json.loads(tool_call["function"]["arguments"])
+                            args = json.loads(
+                                tool_call["function"]["arguments"])
                             tool_call["function"]["arguments"] = args
                         except json.JSONDecodeError:
-                            self.emit("error", f"Failed to parse function arguments: {tool_call['function']['arguments']}")
+                            self.emit(
+                                "error", f"Failed to parse function arguments: {tool_call['function']['arguments']}")
                             tool_call["function"]["arguments"] = {}
-                        
+
                         yield LLMResponse(
                             content="",
                             role=ChatRole.ASSISTANT,
@@ -192,7 +210,7 @@ class CerebrasLLM(LLM):
                             }}
                         )
                     current_tool_calls = {}
-                
+
                 if delta.content is not None:
                     current_content = delta.content
                     yield LLMResponse(

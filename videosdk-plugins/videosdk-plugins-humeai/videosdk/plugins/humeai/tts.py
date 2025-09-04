@@ -24,12 +24,21 @@ class HumeAITTS(TTS):
     def __init__(
         self,
         *,
+        api_key: Optional[str] = None,
         voice: Optional[str] = "Serene Assistant",
         speed: float = 1.0,
-        api_key: Optional[str] = None,
         response_format: Literal["pcm", "mp3", "wav"] = "pcm",
         instant_mode: bool = True,
     ) -> None:
+        """Initialize the HumeAI TTS plugin.
+
+        Args:
+            api_key (Optional[str], optional): HumeAI API key. Defaults to None.
+            voice (Optional[str], optional): The voice to use for the TTS plugin. Defaults to "Serene Assistant".
+            speed (float): The speed to use for the TTS plugin. Defaults to 1.0.
+            response_format (Literal["pcm", "mp3", "wav"]): The response format to use for the TTS plugin. Defaults to "pcm".
+            instant_mode (bool): Whether to use instant mode for the TTS plugin. Defaults to True.
+        """
         super().__init__(sample_rate=24000, num_channels=1)
 
         self.voice = voice
@@ -158,7 +167,7 @@ class HumeAITTS(TTS):
 
             chunk_size = 960
             for i in range(0, len(audio_bytes), chunk_size):
-                chunk = audio_bytes[i : i + chunk_size]
+                chunk = audio_bytes[i: i + chunk_size]
                 if len(chunk) < chunk_size and len(chunk) > 0:
                     chunk += b"\x00" * (chunk_size - len(chunk))
                 if chunk:
@@ -176,7 +185,7 @@ class HumeAITTS(TTS):
         if audio_bytes.startswith(b"RIFF"):
             data_pos = audio_bytes.find(b"data")
             if data_pos != -1:
-                return audio_bytes[data_pos + 8 :]
+                return audio_bytes[data_pos + 8:]
         return audio_bytes
 
     async def aclose(self) -> None:

@@ -26,12 +26,22 @@ class CartesiaTTS(TTS):
     def __init__(
         self,
         *,
+        api_key: str | None = None,
         model: str = DEFAULT_MODEL,
         voice_id: Union[str, List[float]] = DEFAULT_VOICE_ID,
-        api_key: str | None = None,
         language: str = "en",
         base_url: str = "https://api.cartesia.ai",
     ) -> None:
+        """Initialize the Cartesia TTS plugin
+
+        Args:
+            api_key (str | None, optional): Cartesia API key. Uses CARTESIA_API_KEY environment variable if not provided. Defaults to None.
+            model (str): The model to use for the TTS plugin. Defaults to "sonic-2".
+            voice_id (Union[str, List[float]]): The voice ID to use for the TTS plugin. Defaults to "794f9389-aac1-45b6-b726-9d9369183238".
+            api_key (str | None, optional): Cartesia API key. Uses CARTESIA_API_KEY environment variable if not provided. Defaults to None.
+            language (str): The language to use for the TTS plugin. Defaults to "en".
+            base_url (str): The base URL to use for the TTS plugin. Defaults to "https://api.cartesia.ai".
+        """
         super().__init__(sample_rate=CARTESIA_SAMPLE_RATE, num_channels=CARTESIA_CHANNELS)
 
         self.model = model
@@ -47,7 +57,7 @@ class CartesiaTTS(TTS):
         if not api_key:
             raise ValueError("Cartesia API key must be provided")
         self._api_key = api_key
-        
+
         self._ws_session: aiohttp.ClientSession | None = None
         self._ws_connection: aiohttp.ClientWebSocketResponse | None = None
         self._connection_lock = asyncio.Lock()
@@ -67,19 +77,20 @@ class CartesiaTTS(TTS):
 
             ws_url = self.base_url.replace('http', 'ws', 1)
             full_ws_url = f"{ws_url}/tts/websocket?api_key={self._api_key}&cartesia_version={API_VERSION}"
-            
+
             try:
                 self._ws_connection = await asyncio.wait_for(
                     self._ws_session.ws_connect(full_ws_url, heartbeat=30.0), timeout=5.0
                 )
                 return self._ws_connection
             except Exception as e:
-                self.emit("error", f"Failed to establish WebSocket connection: {e}")
+                self.emit(
+                    "error", f"Failed to establish WebSocket connection: {e}")
                 raise
 
     async def _send_task(self, ws: aiohttp.ClientWebSocketResponse, text_iterator: AsyncIterator[str]):
         context_id = os.urandom(8).hex()
-        
+
         voice_payload: dict[str, Any] = {}
         if isinstance(self._voice, str):
             voice_payload["mode"] = "id"
@@ -101,7 +112,8 @@ class CartesiaTTS(TTS):
         async def send_sentence(sentence: str) -> None:
             if not sentence:
                 return
-            payload = {**base_payload, "transcript": sentence + " ", "continue": True}
+            payload = {**base_payload,
+                       "transcript": sentence + " ", "continue": True}
             await ws.send_str(json.dumps(payload))
 
         def first_delim_pos(buf: str) -> int:
@@ -180,13 +192,14 @@ class CartesiaTTS(TTS):
             self._voice = voice_id
 
         if not self.audio_track or not self.loop:
-            self.emit("error", "Audio track or event loop not set"); return
-        
+            self.emit("error", "Audio track or event loop not set")
+            return
+
         self._interrupted = False
         self._current_tasks.clear()
-        
+
         if isinstance(text, str):
-            async def _string_iterator(): 
+            async def _string_iterator():
                 yield text
             text_iterator = _string_iterator()
         else:
@@ -200,13 +213,14 @@ class CartesiaTTS(TTS):
             await asyncio.gather(send_task, receive_task)
         except Exception as e:
             self.emit("error", f"TTS synthesis failed: {str(e)}")
-            if self._ws_connection and not self._ws_connection.closed: await self._ws_connection.close()
+            if self._ws_connection and not self._ws_connection.closed:
+                await self._ws_connection.close()
             self._ws_connection = None
 
     async def _stream_audio(self, audio_chunk: bytes):
         if self._interrupted:
             return
-            
+
         if not self._first_chunk_sent and self._first_audio_callback:
             self._first_chunk_sent = True
             await self._first_audio_callback()
@@ -227,24 +241,27 @@ class CartesiaTTS(TTS):
             if not self._first_chunk_sent and self._first_audio_callback:
                 self._first_chunk_sent = True
                 await self._first_audio_callback()
-            if self.audio_track: await self.audio_track.add_new_bytes(chunk)
+            if self.audio_track:
+                await self.audio_track.add_new_bytes(chunk)
 
     async def aclose(self) -> None:
         await super().aclose()
-        if self._ws_connection and not self._ws_connection.closed: await self._ws_connection.close()
-        if self._ws_session and not self._ws_session.closed: await self._ws_session.close()
+        if self._ws_connection and not self._ws_connection.closed:
+            await self._ws_connection.close()
+        if self._ws_session and not self._ws_session.closed:
+            await self._ws_session.close()
 
     async def interrupt(self) -> None:
         """Interrupt TTS synthesis"""
         self._interrupted = True
-        
+
         for task in self._current_tasks:
             if not task.done():
                 task.cancel()
-        
+
         if self._ws_connection and not self._ws_connection.closed:
             await self._ws_connection.close()
             self._ws_connection = None
-        
-        if self.audio_track: 
+
+        if self.audio_track:
             self.audio_track.interrupt()

@@ -37,17 +37,19 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
         self.mcp_manager = MCPToolManager()
 
     def _register_class_tools(self) -> None:
-        """Register all function tools defined in the class"""
+        """Internal Method: Register all function tools defined in the class"""
         for name, attr in inspect.getmembers(self):
             if is_function_tool(attr):
                 self._tools.append(attr)
 
     @property
     def instructions(self) -> str:
+        """Get the instructions for the agent"""
         return self._instructions
 
     @instructions.setter
     def instructions(self, value: str) -> None:
+        """Set the instructions for the agent"""
         self._instructions = value
         self.chat_context.add_message(
             role=ChatRole.SYSTEM,
@@ -56,33 +58,34 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
 
     @property
     def tools(self) -> List[FunctionTool]:
+        """Get the tools for the agent"""
         return self._tools
     
     def register_tools(self) -> None:
-        """Register external function tools for the agent"""
+        """Internal Method: Register external function tools for the agent"""
         for tool in self._tools:
             if not is_function_tool(tool):
                 raise ValueError(f"Tool {tool.__name__ if hasattr(tool, '__name__') else tool} is not a valid FunctionTool")
     
     async def initialize_mcp(self) -> None:
-        """Initialize the agent, including any MCP server if provided."""
+        """Internal Method: Initialize the agent, including any MCP server if provided."""
         if self._mcp_servers and not self._mcp_initialized:
             for server in self._mcp_servers:
                 await self.add_server(server)
             self._mcp_initialized = True
     
     async def add_server(self, mcp_server: MCPServiceProvider) -> None:
-        """Initialize the MCP server and register the tools"""
+        """Internal Method: Initialize the MCP server and register the tools"""
         await self.mcp_manager.add_mcp_server(mcp_server)
         self._tools.extend(self.mcp_manager.tools)
     
     @abstractmethod
     async def on_enter(self) -> None:
-        """Called when session starts"""
+        """Called when session starts, to be implemented in your custom agent implementation."""
         pass
 
     async def register_a2a(self, card: AgentCard) -> None:
-        """Register the agent for A2A communication"""
+        """ Register the agent for A2A communication"""
         self._agent_card = card
         await self.a2a.register(card)
 
@@ -93,5 +96,5 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
 
     @abstractmethod
     async def on_exit(self) -> None:
-        """Called when session ends"""
+        """Called when session ends, to be implemented in your custom agent implementation."""
         pass

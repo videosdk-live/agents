@@ -22,6 +22,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
     """
     Manages the conversation flow by listening to transcription events.
@@ -93,6 +94,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             self.emit("error", f"Audio processing failed: {str(e)}")
 
     async def on_vad_event(self, vad_response: VADResponse) -> None:
+        """Handle VAD events"""
         if vad_response.event_type == VADEventType.START_OF_SPEECH:
             await self.on_speech_started()
         elif vad_response.event_type == VADEventType.END_OF_SPEECH:

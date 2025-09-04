@@ -20,14 +20,25 @@ class NeuphonicTTS(TTS):
     def __init__(
         self,
         *,
+        api_key: str | None = None,
         lang_code: str = "en",
         voice_id: Optional[str] = None,
         speed: float = 0.8,
         sampling_rate: int = NEUPHONIC_DEFAULT_SAMPLE_RATE,
         encoding: Literal["pcm_linear", "pcm_mulaw"] = "pcm_linear",
-        api_key: str | None = None,
         base_url: str = NEUPHONIC_BASE_URL,
     ) -> None:
+        """Initialize the Neuphonic TTS plugin.
+
+        Args:
+            api_key (Optional[str], optional): Neuphonic API key. Defaults to None.
+            lang_code (str): The language code to use for the TTS plugin. Defaults to "en".
+            voice_id (Optional[str], optional): The voice ID to use for the TTS plugin. Defaults to None.
+            speed (float): The speed to use for the TTS plugin. Must be between 0.7 and 2.0. Defaults to 0.8.
+            sampling_rate (int): The sampling rate to use for the TTS plugin. Must be one of: 8000, 16000, 22050. Defaults to 22050.
+            encoding (Literal["pcm_linear", "pcm_mulaw"]): The encoding to use for the TTS plugin. Defaults to "pcm_linear".
+            base_url (str): The base URL to use for the TTS plugin. Defaults to "wss://eu-west-1.api.neuphonic.com".
+        """
         super().__init__(sample_rate=sampling_rate, num_channels=NEUPHONIC_CHANNELS)
 
         self.lang_code = lang_code

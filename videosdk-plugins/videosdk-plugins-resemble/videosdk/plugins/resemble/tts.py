@@ -24,6 +24,14 @@ class ResembleTTS(TTS):
         sample_rate: int = DEFAULT_SAMPLE_RATE,
         precision: str = DEFAULT_PRECISION,
     ) -> None:
+        """Initialize the Resemble TTS plugin.
+
+        Args:
+            api_key (Optional[str], optional): Resemble API key. Defaults to None.
+            voice_uuid (str): The voice UUID to use for the TTS plugin. Defaults to "55592656".
+            sample_rate (int): The sample rate to use for the TTS plugin. Defaults to 22050.
+            precision (str): The precision to use for the TTS plugin. Defaults to "PCM_16".
+        """
         super().__init__(sample_rate=sample_rate, num_channels=1)
 
         self.api_key = api_key or os.getenv("RESEMBLE_API_KEY")

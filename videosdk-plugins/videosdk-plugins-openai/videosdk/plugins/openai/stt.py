@@ -29,6 +29,16 @@ class OpenAISTT(BaseSTT):
         silence_threshold: float = 0.01,
         silence_duration: float = 0.8,
     ) -> None:
+        """Initialize the OpenAI STT plugin.
+
+        Args:
+            api_key (Optional[str], optional): OpenAI API key. Defaults to None.
+            model (str): The model to use for the STT plugin. Defaults to "whisper-1".
+            base_url (Optional[str], optional): The base URL for the OpenAI API. Defaults to None.
+            prompt (Optional[str], optional): The prompt for the STT plugin. Defaults to None.
+            language (str): The language to use for the STT plugin. Defaults to "en".
+            turn_detection (dict | None): The turn detection for the STT plugin. Defaults to None.
+        """
         super().__init__()
         
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")

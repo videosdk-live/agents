@@ -41,6 +41,18 @@ class GoogleSTT(BaseSTT):
         location: str = "global",
         **kwargs: Any
     ) -> None:
+        """Initialize the Google STT plugin.
+
+        Args:
+            api_key (Optional[str], optional): Google API key. Defaults to None.
+            languages (Union[str, list[str]]): The languages to use for the STT plugin. Defaults to "en-US".
+            model (str): The model to use for the STT plugin. Defaults to "latest_long".
+            sample_rate (int): The sample rate to use for the STT plugin. Defaults to 16000.
+            interim_results (bool): Whether to use interim results for the STT plugin. Defaults to True.
+            punctuate (bool): Whether to use punctuation for the STT plugin. Defaults to True.
+            min_confidence_threshold (float): The minimum confidence threshold for the STT plugin. Defaults to 0.1.
+            location (str): The location to use for the STT plugin. Defaults to "global".
+        """
         super().__init__()
         if not GOOGLE_V2_AVAILABLE:
             logger.error("Google Cloud Speech V2 is not available")

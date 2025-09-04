@@ -26,13 +26,23 @@ class OpenAILLM(LLM):
     def __init__(
         self,
         *,
-        model: str = "gpt-4o-mini",
         api_key: str | None = None,
+        model: str = "gpt-4o-mini",
         base_url: str | None = None,
         temperature: float = 0.7,
         tool_choice: ToolChoice = "auto",
         max_completion_tokens: int | None = None,
     ) -> None:
+        """Initialize the OpenAI LLM plugin.
+
+        Args:
+            api_key (Optional[str], optional): OpenAI API key. Defaults to None.
+            model (str): The model to use for the LLM plugin. Defaults to "gpt-4o".
+            base_url (Optional[str], optional): The base URL for the OpenAI API. Defaults to None.
+            temperature (float): The temperature to use for the LLM plugin. Defaults to 0.7.
+            tool_choice (ToolChoice): The tool choice to use for the LLM plugin. Defaults to "auto".
+            max_completion_tokens (Optional[int], optional): The maximum completion tokens to use for the LLM plugin. Defaults to None.
+        """
         super().__init__()
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         if not self.api_key:

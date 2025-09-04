@@ -20,10 +20,6 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 class AssemblyAISTT(BaseSTT):
-    """
-    VideoSDK Agent Framework STT plugin for AssemblyAI Streaming API.
-    Real-time speech-to-text using WebSocket connection.
-    """
 
     def __init__(
         self,
@@ -37,6 +33,18 @@ class AssemblyAISTT(BaseSTT):
         min_end_of_turn_silence_when_confident: int = 800,
         max_turn_silence: int = 2000,
     ) -> None:
+        """Initialize the AssemblyAI STT plugin.
+
+        Args:
+            api_key (str | None, optional): AssemblyAI API key. Uses ASSEMBLYAI_API_KEY environment variable if not provided. Defaults to None.
+            input_sample_rate (int): The input sample rate to use for the STT plugin. Defaults to 48000.
+            target_sample_rate (int): The target sample rate to use for the STT plugin. Defaults to 16000.
+            format_turns (bool): Whether to format turns. Defaults to True.
+            word_boost (list[str] | None, optional): The word boost to use for the STT plugin. Defaults to None.
+            end_of_turn_confidence_threshold (float): The end of turn confidence threshold to use for the STT plugin. Defaults to 0.5.
+            min_end_of_turn_silence_when_confident (int): The minimum end of turn silence when confident to use for the STT plugin. Defaults to 800.
+            max_turn_silence (int): The maximum turn silence to use for the STT plugin. Defaults to 2000.
+        """
         super().__init__()
         
         if not SCIPY_AVAILABLE:

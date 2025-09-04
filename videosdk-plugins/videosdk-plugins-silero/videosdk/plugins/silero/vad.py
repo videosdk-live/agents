@@ -21,6 +21,16 @@ class SileroVAD(BaseVAD):
         min_silence_duration: float = 0.75,
         force_cpu: bool = True,
     ) -> None:
+        """Initialize the Silero VAD plugin.
+
+        Args:
+            input_sample_rate (int): The input sample rate for the VAD plugin. Defaults to 48000.
+            model_sample_rate (Literal[8000, 16000]): The model sample rate for the VAD plugin. Must be one of: 8000, 16000. Defaults to 16000.
+            threshold (float): The threshold for the VAD plugin. Defaults to 0.30.
+            min_speech_duration (float): The minimum speech duration for the VAD plugin. Defaults to 0.1.
+            min_silence_duration (float): The minimum silence duration for the VAD plugin. Defaults to 0.75.
+            force_cpu (bool): Whether to force CPU usage for the VAD plugin. Defaults to True.
+        """
 
         if model_sample_rate not in SAMPLE_RATES:
             self.emit(
