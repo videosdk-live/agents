@@ -56,6 +56,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self._current_llm_task: asyncio.Task | None = None
         self._partial_response = ""
         self._is_interrupted = False
+        self._eou_timer_task: asyncio.Task | None = None
 
     async def start(self) -> None:
         global_event_emitter.on("speech_started", self.on_speech_started_stt)
@@ -129,6 +130,12 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
         await self.on_turn_start(user_text)
 
+        async def generate_response_after_delay(delay: float):
+            await asyncio.sleep(delay)
+            # Check if the task was cancelled while sleeping
+            if not asyncio.current_task().done():
+                 await self._generate_and_synthesize_response(user_text)
+
         if self.turn_detector:
             cascading_metrics_collector.on_eou_start()
             eou_detected = self.turn_detector.detect_end_of_utterance(
@@ -139,7 +146,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 asyncio.create_task(
                     self._generate_and_synthesize_response(user_text))
             else:
-                cascading_metrics_collector.complete_current_turn()
+                # Start a 2-second timer. If the user doesn't speak, generate a response.
+                self._eou_timer_task = asyncio.create_task(generate_response_after_delay(2.0))
         else:
             asyncio.create_task(
                 self._generate_and_synthesize_response(user_text))
@@ -348,6 +356,13 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         pass
 
     async def on_speech_started(self) -> None:
+        # If the timer is running, cancel it and complete the previous turn.
+        if self._eou_timer_task and not self._eou_timer_task.done():
+            self._eou_timer_task.cancel()
+            self._eou_timer_task = None
+            # This is the crucial addition: complete the turn that was paused.
+            cascading_metrics_collector.complete_current_turn()
+
         cascading_metrics_collector.on_user_speech_start()
 
         if self.user_speech_callback:
