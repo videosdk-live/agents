@@ -4,10 +4,12 @@ import os
 from typing import AsyncIterator
 
 from videosdk.agents import Agent, AgentSession, CascadingPipeline, function_tool, JobContext, RoomOptions, WorkerJob, ConversationFlow, ChatRole
-from videosdk.plugins.google import GoogleTTS, GoogleLLM, GoogleSTT
 from videosdk.plugins.silero import SileroVAD
 from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
 from videosdk.plugins.simli import SimliAvatar, SimliConfig
+from videosdk.plugins.openai import OpenAILLM
+from videosdk.plugins.deepgram import DeepgramSTT
+from videosdk.plugins.elevenlabs import ElevenLabsTTS
 
 # Pre-downloading the Turn Detector model
 pre_download_model()
@@ -53,43 +55,17 @@ class MyVoiceAgent(Agent):
         )
 
     async def on_enter(self) -> None:
-        await self.session.say("Hello! I'm your AI avatar assistant. How can I help you today?")
+        await self.session.say("Hello! I'm your AI avatar assistant powered by VideoSDK. How can I help you today?")
     
     async def on_exit(self) -> None:
         await self.session.say("Goodbye! It was nice talking with you!")
         
 
-class MyConversationFlow(ConversationFlow):
-    def __init__(self, agent: Agent):
-        super().__init__(agent)
-
-    async def run(self, transcript: str) -> AsyncIterator[str]:
-        """Main conversation loop: handle a user turn."""
-        await self.on_turn_start(transcript)
-        processed_transcript = transcript.lower().strip()
-        self.agent.chat_context.add_message(
-            role=ChatRole.USER, content=processed_transcript
-        )
-        async for response_chunk in self.process_with_llm():
-            yield response_chunk
-        await self.on_turn_end()
-
-    async def on_turn_start(self, transcript: str) -> None:
-        """Called at the start of a user turn."""
-        self.is_turn_active = True
-        print(f"User transcript: {transcript}")
-
-    async def on_turn_end(self) -> None:
-        """Called at the end of a user turn."""
-        self.is_turn_active = False
-        print("Agent turn ended.")
-
-
 async def start_session(context: JobContext):
-    # Initialize Google services
-    stt = GoogleSTT(model="latest_long")
-    llm = GoogleLLM(api_key=os.getenv("GOOGLE_API_KEY"))
-    tts = GoogleTTS(api_key=os.getenv("GOOGLE_API_KEY"))
+
+    stt = DeepgramSTT(model="nova-3", language="multi", api_key=os.getenv("DEEPGRAM_API_KEY"))
+    llm = OpenAILLM(model="gpt-4o-mini", api_key=os.getenv("OPENAI_API_KEY"))
+    tts = ElevenLabsTTS(api_key=os.getenv("ELEVENLABS_API_KEY"), enable_streaming=True, speed=1.2)
     
     # Initialize VAD and Turn Detector
     vad = SileroVAD()
@@ -97,14 +73,20 @@ async def start_session(context: JobContext):
 
     # Initialize Simli Avatar
     simli_config = SimliConfig(
-        apiKey=os.getenv("SIMLI_API_KEY")
+        apiKey=os.getenv("SIMLI_API_KEY"),
+        faceId="d2a5c7c6-fed9-4f55-bcb3-062f7cd20103",
+        maxSessionLength=1800,
+        maxIdleTime=600,
     )
-
-    simli_avatar = SimliAvatar(config=simli_config)
+   
+    simli_avatar = SimliAvatar(
+        config=simli_config,
+        is_trinity_avatar=True,
+    )
 
     # Create agent and conversation flow
     agent = MyVoiceAgent()
-    conversation_flow = MyConversationFlow(agent)
+    conversation_flow = ConversationFlow(agent)
 
     # Create pipeline with avatar
     pipeline = CascadingPipeline(
