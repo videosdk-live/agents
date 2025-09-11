@@ -21,10 +21,7 @@ classifiers = [
 ]
 dependencies = [
     "videosdk-agents>=0.0.32",
-    "httpx",
-    "aiortc<1.7.0",
-    "websockets",
-    "av<14.0.0",
+    "simli-ai",
 ]
 
 [tool.hatch.version]
