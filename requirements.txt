@@ -1,12 +1,12 @@
 uvicorn
-videosdk>=0.2.0
+videosdk>=0.2.2
 numpy
 httpx
 aiohttp
 openai
-av
+av>=14.0.0,<15.0.0
 dotenv
-pyee==11.1.0
+pyee>=13.0.0
 grpcio
 protobuf
 docstring_parser

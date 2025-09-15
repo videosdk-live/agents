@@ -20,11 +20,8 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "videosdk-agents>=0.0.32",
-    "httpx",
-    "aiortc<1.7.0",
-    "websockets",
-    "av<14.0.0",
+    "videosdk-agents>=0.0.33",
+    "simli-ai>=0.1.17",
 ]
 
 [tool.hatch.version]

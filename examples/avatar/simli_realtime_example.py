@@ -47,7 +47,7 @@ class MyVoiceAgent(Agent):
         )
 
     async def on_enter(self) -> None:
-        await self.session.say("Hello! I'm your real-time AI avatar assistant. How can I help you today?")
+        await self.session.say("Hello! I'm your real-time AI avatar assistant powered by VideoSDK. How can I help you today?")
     
     async def on_exit(self) -> None:
         await self.session.say("Goodbye! It was great talking with you!")
@@ -68,20 +68,19 @@ async def start_session(context: JobContext):
     # Initialize Simli Avatar
     simli_config = SimliConfig(
         apiKey=os.getenv("SIMLI_API_KEY"),
-        # faceId=os.getenv("SIMLI_FACE_ID"),  # Optional - has default value
+        faceId="d2a5c7c6-fed9-4f55-bcb3-062f7cd20103",
+        maxSessionLength=1800,
+        maxIdleTime=600,
     )
-    simli_avatar = SimliAvatar(config=simli_config)
+    simli_avatar = SimliAvatar(
+        config=simli_config,
+        is_trinity_avatar=True,
+    )
 
     # Create pipeline with avatar
-    pipeline = RealTimePipeline(
-        model=model,
-        avatar=simli_avatar
-    )
-    
-    session = AgentSession(
-        agent=MyVoiceAgent(),
-        pipeline=pipeline
-    )
+    pipeline = RealTimePipeline(model=model, avatar=simli_avatar)
+
+    session = AgentSession(agent=MyVoiceAgent(), pipeline=pipeline)
 
     try:
         await context.connect()
