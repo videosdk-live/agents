@@ -21,7 +21,7 @@ classifiers = [
 ]
 dependencies = [
     "videosdk-agents>=0.0.32",
-    "simli-ai",
+    "simli-ai>=0.1.17",
 ]
 
 [tool.hatch.version]
