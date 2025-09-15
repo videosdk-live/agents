@@ -78,6 +78,10 @@ class AgentSession:
             self._wake_up_task.cancel()
         self._wake_up_timer_active = False
     
+    def _pause_wake_up_timer(self) -> None:
+        if self._wake_up_task and not self._wake_up_task.done():
+            self._wake_up_task.cancel()
+    
     async def _wake_up_timer_loop(self) -> None:
         try:
             await asyncio.sleep(self.wake_up)
