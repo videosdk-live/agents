@@ -417,6 +417,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         if not self.tts:
             return
 
+        self.agent.session._pause_wake_up_timer()
+
         async def on_first_audio_byte():
             cascading_metrics_collector.on_tts_first_byte()
             cascading_metrics_collector.on_agent_speech_start()
@@ -437,4 +439,5 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             await self.tts.synthesize(response_iterator)
 
         finally:
+            self.agent.session._reset_wake_up_timer()
             cascading_metrics_collector.on_agent_speech_end()
