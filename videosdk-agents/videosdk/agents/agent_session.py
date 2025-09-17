@@ -44,6 +44,7 @@ class AgentSession:
         self._wake_up_task: Optional[asyncio.Task] = None
         self._wake_up_timer_active = False
         self._closed: bool = False
+        self._reply_in_progress: bool = False
         if hasattr(self.pipeline, 'set_agent'):
             self.pipeline.set_agent(self.agent)
         if (
@@ -68,10 +69,16 @@ class AgentSession:
     
     def _reset_wake_up_timer(self) -> None:
         if self.wake_up is not None and self.on_wake_up is not None:
+            if self._reply_in_progress:
+                return
             if self._wake_up_task and not self._wake_up_task.done():
                 self._wake_up_task.cancel()
-            if self._wake_up_timer_active:
-                self._wake_up_task = asyncio.create_task(self._wake_up_timer_loop())
+            self._wake_up_timer_active = True
+            self._wake_up_task = asyncio.create_task(self._wake_up_timer_loop())
+    
+    def _pause_wake_up_timer(self) -> None:
+        if self._wake_up_task and not self._wake_up_task.done():
+            self._wake_up_task.cancel()
     
     def _cancel_wake_up_timer(self) -> None:
         if self._wake_up_task and not self._wake_up_task.done():
@@ -81,7 +88,7 @@ class AgentSession:
     async def _wake_up_timer_loop(self) -> None:
         try:
             await asyncio.sleep(self.wake_up)
-            if self._wake_up_timer_active and self.on_wake_up:
+            if self._wake_up_timer_active and self.on_wake_up and not self._reply_in_progress:
                 if asyncio.iscoroutinefunction(self.on_wake_up):
                     await self.on_wake_up()
                 else:
@@ -175,6 +182,33 @@ class AgentSession:
                 traces_flow_manager.agent_say_called(message)
         self.agent.chat_context.add_message(role=ChatRole.ASSISTANT, content=message)
         await self.pipeline.send_message(message)
+    
+    async def reply(self, instructions: str, wait_for_playback: bool = True) -> None:
+        """
+        Generate a response from agent using instructions and current chat context.
+        Subsequent calls are discarded while the first one is still running.
+        """
+        if not instructions:
+            return
+        
+        if self._reply_in_progress:
+            return
+        self._reply_in_progress = True
+        
+        self._pause_wake_up_timer()
+        
+        try:
+            # Use the pipeline to handle the reply with wait_for_playback logic
+            if hasattr(self.pipeline, 'reply_with_context'):
+                await self.pipeline.reply_with_context(instructions, wait_for_playback)
+            else:
+                # Fallback for other pipeline types (like RealTimePipeline)
+                if hasattr(self.pipeline, 'send_text_message'):
+                    await self.pipeline.send_text_message(instructions)
+                else:
+                    await self.pipeline.send_message(instructions)
+        finally:
+            self._reply_in_progress = False
 
     async def close(self) -> None:
         """
