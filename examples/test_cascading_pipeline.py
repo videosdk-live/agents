@@ -91,7 +91,13 @@ async def entrypoint(ctx: JobContext):
         agent=agent, 
         pipeline=pipeline,
         conversation_flow=conversation_flow,
+        wake_up=10.0
     )
+
+    async def on_wake_up():
+        await session.reply("Reply to the user.")
+    
+    session.on_wake_up = on_wake_up
     
     async def cleanup_session():
         pass
