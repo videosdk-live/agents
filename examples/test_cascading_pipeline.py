@@ -95,7 +95,7 @@ async def entrypoint(ctx: JobContext):
     )
 
     async def on_wake_up():
-        await session.reply("Reply to the user.")
+        asyncio.create_task(session.reply("Reply to the user."))
     
     session.on_wake_up = on_wake_up
     
