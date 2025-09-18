@@ -269,6 +269,8 @@ class VideoSDKHandler:
             except Exception as e:
                 logger.error(
                     f"Error in session end callback during meeting left: {e}")
+        if self.participants_data:
+            del self.participants_data
 
     def _is_agent_participant(self, participant: Participant) -> bool:
         """
@@ -443,8 +445,6 @@ class VideoSDKHandler:
         if participant.id in self.video_listener_tasks:
             self.video_listener_tasks[participant.id].cancel()
             del self.video_listener_tasks[participant.id]
-        if participant.id in self.participants_data:
-            del self.participants_data[participant.id]
         global_event_emitter.emit(
             "PARTICIPANT_LEFT", {"participant": participant})
 
@@ -662,7 +662,7 @@ class VideoSDKHandler:
             json={"roomId": self.meeting_id, "participantId": id},
             headers=headers,
         )
-        logger.info("response for id", id, response.text)
+        logger.info(f"starting participant recording response completed for id {id} and response{response.text}")
 
     async def stop_participant_recording(self, id: str):
         """
@@ -679,7 +679,7 @@ class VideoSDKHandler:
             json={"roomId": self.meeting_id, "participantId": id},
             headers=headers,
         )
-        logger.info("response for id", id, response.text)
+        logger.info(f"stop participant recording response for id {id} and response{response.text}")
 
     async def merge_participant_recordings(self):
         """
@@ -700,7 +700,7 @@ class VideoSDKHandler:
             },
             headers=headers,
         )
-        logger.info(response.text)
+        logger.info(f"merging participant recordings completed response:{response.text}" )
 
     async def stop_and_merge_recordings(self):
         """

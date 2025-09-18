@@ -154,16 +154,18 @@ class WorkerJob:
             signaling_base_url=self.options.signaling_base_url,
             host=self.options.host,
             port=self.options.port,
-            log_level=self.options.log_level,
+            log_level=self.options.log_level
         )
-
-        # Create worker and run with job context
-        worker = Worker(worker_options)
 
         # If register=True, run the worker in backend mode (don't execute entrypoint immediately)
         if self.options.register:
+            if self.jobctx:
+                if callable(self.jobctx):
+                    job_context = self.jobctx()
+                else:
+                    job_context = self.jobctx
             # Run the worker normally (for backend registration mode)
-            Worker.run_worker(worker_options)
+            Worker.run_worker(options=worker_options, default_room_options=job_context.room_options)
         else:
             # Direct mode - run entrypoint immediately if we have a job context
             if self.jobctx:

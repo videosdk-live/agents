@@ -145,15 +145,6 @@ class JobRequest:
     on_accept: Callable[[JobAcceptArguments], Any]
 
 
-@dataclass
-class DirectRoomOptions:
-    """Information for direct room joining without backend registration."""
-
-    room_id: str
-    participant_identity: Optional[str] = None
-    room_name: Optional[str] = None
-    auth_token: Optional[str] = None
-
 
 class Worker:
     """
@@ -167,10 +158,10 @@ class Worker:
     Automatically selects the appropriate executor type based on platform.
     """
 
-    def __init__(self, options: WorkerOptions):
+    def __init__(self, options: WorkerOptions, default_room_options: Optional[RoomOptions] = None):
         """Initialize the worker."""
         self.options = options
-
+        self.default_room_options = default_room_options
         self._shutdown = False
         self._draining = False
         self._worker_load = 0.0
@@ -206,7 +197,7 @@ class Worker:
 
     @staticmethod
     def run_worker(
-        options: WorkerOptions, simulate_job: Optional[DirectRoomOptions | str] = None
+        options: WorkerOptions, default_room_options: Optional[RoomOptions] = None
     ):
         """
         Run a VideoSDK worker with the given options.
@@ -216,7 +207,7 @@ class Worker:
 
         Args:
             options: Worker configuration options
-            simulate_job: Optional job simulation for direct room joining
+            default_room_options: Optional default room options
 
         Example:
             ```python
@@ -236,20 +227,14 @@ class Worker:
             Worker.run_worker(options)
             ```
         """
-        worker = Worker(options)
+        worker = Worker(options, default_room_options=default_room_options)
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
 
         async def main_task():
             try:
                 await worker.initialize()
-
-                if simulate_job:
-                    # Direct room joining mode - force register=False for simulation
-                    logger.info("Simulation mode: forcing register=False")
-                    worker.options.register = False
-                    await worker.simulate_job(simulate_job)
-                elif options.register:
+                if options.register:
                     # Backend registration mode
                     await worker._run_backend_mode()
                 else:
@@ -303,7 +288,7 @@ class Worker:
         if loop.is_closed():
             logger.info("Event loop closed successfully")
 
-    async def initialize(self):
+    async def initialize(self, default_room_options: Optional[RoomOptions] = None):
         """Initialize the worker."""
         logger.info("Initializing VideoSDK worker")
 
@@ -683,6 +668,8 @@ class Worker:
                 name=assignment.room_name,  # Use 'name' instead of 'room_name'
                 auth_token=auth_token,
                 signaling_base_url=self.options.signaling_base_url,
+                recording=self.default_room_options.recording,
+                join_meeting=self.default_room_options.join_meeting,
             )
 
             # Apply RoomOptions from assignment if provided
@@ -713,6 +700,9 @@ class Worker:
                 if "join_meeting" in assignment.room_options:
                     room_options.join_meeting = assignment.room_options["join_meeting"]
                     logger.info(f"Set join_meeting: {room_options.join_meeting}")
+                if "recording" in assignment.room_options:
+                    room_options.recording = assignment.room_options["recording"]
+                    logger.info(f"Set recording: {room_options.recording}")
             else:
                 logger.warning("No room_options received from assignment")
 
@@ -971,50 +961,6 @@ class Worker:
             "execution_time": result.execution_time,
             "task_id": result.task_id,
         }
-
-    async def launch_direct_job(self, room_options: "RoomOptions") -> None:
-        """Launch a job directly without backend registration."""
-        logger.info("Launching direct job")
-
-        # Create job context
-        job_context = JobContext(
-            room_options=room_options,
-        )
-
-        # Set up session end callback if room is created
-        if job_context.room:
-
-            def on_session_end(reason: str):
-                logger.info(f"Direct job session ended, reason: {reason}")
-                # For direct jobs, we can just log the session end
-                logger.info(f"Session ended: {reason}")
-
-            job_context.room.on_session_end = on_session_end
-            logger.info("Set up session end callback for direct job")
-
-        # Execute the job using the worker's entrypoint function
-        await self.options.entrypoint_fnc(job_context)
-
-    async def simulate_job(self, info: DirectRoomOptions | str) -> None:
-        """Simulate a job for testing purposes."""
-        if isinstance(info, str):
-            # Simple string format: "room_id"
-            room_id = info
-            info = DirectRoomOptions(room_id=room_id)
-
-        logger.info(f"Simulating job for room: {info.room_id}")
-
-        # Create room options
-        room_options = RoomOptions(
-            room_id=info.room_id,
-            name=info.room_name or f"test_room_{info.room_id}",
-            auth_token=info.auth_token or self.options.auth_token,
-            signaling_base_url=self.options.signaling_base_url,
-            auto_end_session=True,
-        )
-
-        # Launch the job
-        await self.launch_direct_job(room_options)
 
     def get_stats(self) -> Dict[str, Any]:
         """Get worker statistics."""
