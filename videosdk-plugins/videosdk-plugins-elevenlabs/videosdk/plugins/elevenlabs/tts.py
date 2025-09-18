@@ -1,17 +1,16 @@
 from __future__ import annotations
 
-from typing import Any, AsyncIterator, Literal, Optional, Union
+from typing import Any, AsyncIterator, Optional, Union
 import os
 import httpx
 import asyncio
 import json
 import aiohttp
 import weakref
+from dataclasses import dataclass
+from videosdk.agents import TTS, segment_text
 import base64
 import uuid
-from dataclasses import dataclass
-from typing import Dict, Set
-from videosdk.agents import TTS, segment_text
 
 ELEVENLABS_SAMPLE_RATE = 24000
 ELEVENLABS_CHANNELS = 1
@@ -43,7 +42,6 @@ class ElevenLabsTTS(TTS):
         base_url: str = API_BASE_URL,
         enable_streaming: bool = True,
         inactivity_timeout: int = WS_INACTIVITY_TIMEOUT,
-        enable_multi_context: bool = True,
     ) -> None:
         """Initialize the ElevenLabs TTS plugin.
 
@@ -57,7 +55,6 @@ class ElevenLabsTTS(TTS):
             base_url (str): The base URL to use for the TTS plugin. Defaults to "https://api.elevenlabs.io/v1".
             enable_streaming (bool): Whether to enable streaming for the TTS plugin. Defaults to True.
             inactivity_timeout (int): The inactivity timeout to use for the TTS plugin. Defaults to 300.
-            enable_multi_context (bool): Whether to use multi-context WebSocket API for better latency. Defaults to True.
         """
         super().__init__(
             sample_rate=ELEVENLABS_SAMPLE_RATE, num_channels=ELEVENLABS_CHANNELS
@@ -91,14 +88,11 @@ class ElevenLabsTTS(TTS):
         self._send_task: asyncio.Task | None = None
         self._recv_task: asyncio.Task | None = None
         self._should_stop = False
-        
-        self._multi_ws_session = None
-        self._multi_ws_connection = None
-        self._active_contexts: Set[str] = set()
-        self._context_queue = asyncio.Queue()
-        self._multi_send_task: asyncio.Task | None = None
-        self._multi_recv_task: asyncio.Task | None = None
-        self._use_multi_context = enable_multi_context
+
+        self._connection_lock = asyncio.Lock()
+        self._ws_voice_id: str | None = None
+        self._active_contexts: set[str] = set()
+        self._context_futures: dict[str, asyncio.Future[None]] = {}
 
     def reset_first_audio_tracking(self) -> None:
         """Reset the first audio tracking state for next TTS task"""
@@ -119,10 +113,7 @@ class ElevenLabsTTS(TTS):
             self._should_stop = False
 
             if self.enable_streaming:
-                if self._use_multi_context:
-                    await self._multi_context_synthesis(text, target_voice)
-                else:
-                    await self._stream_synthesis(text, target_voice)
+                await self._stream_synthesis(text, target_voice)
             else:
                 if isinstance(text, AsyncIterator):
                     async for segment in segment_text(text):
@@ -182,46 +173,47 @@ class ElevenLabsTTS(TTS):
             self.emit("error", f"Chunked synthesis failed: {str(e)}")
 
     async def _stream_synthesis(self, text: Union[AsyncIterator[str], str], voice_id: str) -> None:
-        """WebSocket-based streaming synthesis"""
-
-        ws_session = None
-        ws_connection = None
-
+        """WebSocket-based streaming synthesis using multi-context connection"""
         try:
-            ws_url = f"wss://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream-input"
-            params = {
-                "model_id": self.model,
-                "output_format": self.response_format,
-                "inactivity_timeout": self.inactivity_timeout,
-            }
-            param_string = "&".join([f"{k}={v}" for k, v in params.items()])
-            full_ws_url = f"{ws_url}?{param_string}"
+            await self._ensure_connection(voice_id)
 
-            headers = {"xi-api-key": self.api_key}
+            context_id = uuid.uuid4().hex[:12]
+            done_future: asyncio.Future[None] = asyncio.get_event_loop().create_future()
+            self.register_context(context_id, done_future)
 
-            ws_session = aiohttp.ClientSession()
-            ws_connection = await asyncio.wait_for(
-                ws_session.ws_connect(full_ws_url, headers=headers),
-                timeout=10.0
-            )
+            async def _single_chunk_gen(s: str) -> AsyncIterator[str]:
+                yield s
 
-            init_message = {
-                "text": " ",
-                "voice_settings": {
-                    "stability": self.voice_settings.stability,
-                    "similarity_boost": self.voice_settings.similarity_boost,
-                    "style": self.voice_settings.style,
-                    "use_speaker_boost": self.voice_settings.use_speaker_boost,
-                },
-            }
-            await ws_connection.send_str(json.dumps(init_message))
+            async def _send_chunks() -> None:
+                try:
+                    first_message_sent = False
+                    if isinstance(text, str):
+                        async for segment in segment_text(_single_chunk_gen(text)):
+                            if self._should_stop:
+                                break
+                            await self.send_text(context_id, f"{segment} ",
+                                                 voice_settings=None if first_message_sent else self._voice_settings_dict(),
+                                                 flush=True)
+                            first_message_sent = True
+                    else:
+                        async for chunk in text:
+                            if self._should_stop:
+                                break
+                            await self.send_text(context_id, f"{chunk} ",
+                                                 voice_settings=None if first_message_sent else self._voice_settings_dict())
+                            first_message_sent = True
 
-            self._send_task = asyncio.create_task(
-                self._send_text_task(ws_connection, text))
-            self._recv_task = asyncio.create_task(
-                self._receive_audio_task(ws_connection))
+                    if not self._should_stop:
+                        await self.flush_context(context_id)
+                        await self.close_context(context_id)
+                except Exception as e:
+                    if not done_future.done():
+                        done_future.set_exception(e)
 
-            await asyncio.gather(self._send_task, self._recv_task)
+            sender = asyncio.create_task(_send_chunks())
+
+            await done_future
+            await sender
 
         except Exception as e:
             self.emit("error", f"Streaming synthesis failed: {str(e)}")
@@ -234,288 +226,13 @@ class ElevenLabsTTS(TTS):
                         break
                     await self._chunked_synthesis(segment, voice_id)
 
-        finally:
-            for task in [self._send_task, self._recv_task]:
-                if task and not task.done():
-                    task.cancel()
-
-            try:
-                await asyncio.wait_for(
-                    asyncio.gather(
-                        *(t for t in [self._send_task, self._recv_task] if t),
-                        return_exceptions=True
-                    ),
-                    timeout=0.3
-                )
-            except asyncio.TimeoutError:
-                pass
-
-            self._send_task = None
-            self._recv_task = None
-
-            if ws_connection and not ws_connection.closed:
-                await ws_connection.close()
-            if ws_session and not ws_session.closed:
-                await ws_session.close()
-
-    async def _multi_context_synthesis(self, text: Union[AsyncIterator[str], str], voice_id: str) -> None:
-        """Multi-context WebSocket-based streaming synthesis for lower latency"""
-        
-        try:
-            await self._ensure_multi_context_connection(voice_id)
-            
-            context_id = str(uuid.uuid4())
-            self._active_contexts.add(context_id)
-            
-            init_message = {
-                "text": " ",
-                "voice_settings": {
-                    "stability": self.voice_settings.stability,
-                    "similarity_boost": self.voice_settings.similarity_boost,
-                    "style": self.voice_settings.style,
-                    "use_speaker_boost": self.voice_settings.use_speaker_boost,
-                },
-                "context_id": context_id,
-            }
-            await self._context_queue.put(("init", init_message))
-            
-            if isinstance(text, str):
-                if not self._should_stop:
-                    text_message = {
-                        "text": f"{text} ",
-                        "context_id": context_id,
-                    }
-                    await self._context_queue.put(("content", text_message))
-            else:
-                async for chunk in text:
-                    if self._should_stop:
-                        break
-                    chunk_message = {
-                        "text": f"{chunk} ",
-                        "context_id": context_id,
-                    }
-                    await self._context_queue.put(("content", chunk_message))
-            
-            if not self._should_stop:
-                flush_message = {
-                    "text": "",
-                    "context_id": context_id,
-                    "flush": True,
-                }
-                await self._context_queue.put(("flush", flush_message))
-                
-                close_message = {
-                    "context_id": context_id,
-                    "close_context": True,
-                }
-                await self._context_queue.put(("close", close_message))
-            
-        except Exception as e:
-            self.emit("error", f"Multi-context synthesis failed: {str(e)}")
-            if isinstance(text, str):
-                await self._chunked_synthesis(text, voice_id)
-            else:
-                async for segment in segment_text(text):
-                    if self._should_stop:
-                        break
-                    await self._chunked_synthesis(segment, voice_id)
-        finally:
-            self._active_contexts.discard(context_id)
-
-    async def _ensure_multi_context_connection(self, voice_id: str) -> None:
-        """Ensure multi-context WebSocket connection is established"""
-        if (self._multi_ws_connection and not self._multi_ws_connection.closed and 
-            self._multi_send_task and not self._multi_send_task.done() and
-            self._multi_recv_task and not self._multi_recv_task.done()):
-            return
-        
-        await self._cleanup_multi_context_connection()
-        
-        try:
-            ws_url = f"wss://api.elevenlabs.io/v1/text-to-speech/{voice_id}/multi-stream-input"
-            params = {
-                "model_id": self.model,
-                "output_format": self.response_format,
-                "inactivity_timeout": self.inactivity_timeout,
-                "auto_mode": "true",
-                "sync_alignment": "false",
-            }
-            param_string = "&".join([f"{k}={v}" for k, v in params.items()])
-            full_ws_url = f"{ws_url}?{param_string}"
-            
-            headers = {"xi-api-key": self.api_key}
-            
-            self._multi_ws_session = aiohttp.ClientSession()
-            self._multi_ws_connection = await asyncio.wait_for(
-                self._multi_ws_session.ws_connect(full_ws_url, headers=headers),
-                timeout=10.0
-            )
-            
-            self._multi_send_task = asyncio.create_task(self._multi_context_send_task())
-            self._multi_recv_task = asyncio.create_task(self._multi_context_receive_task())
-            
-        except Exception as e:
-            await self._cleanup_multi_context_connection()
-            raise e
-
-    async def _multi_context_send_task(self) -> None:
-        """Task for sending messages to multi-context WebSocket"""
-        try:
-            while not self._should_stop and self._multi_ws_connection and not self._multi_ws_connection.closed:
-                try:
-                    message_type, message = await asyncio.wait_for(
-                        self._context_queue.get(), timeout=1.0
-                    )
-                    
-                    if self._multi_ws_connection.closed:
-                        break
-                        
-                    await self._multi_ws_connection.send_str(json.dumps(message))
-                    
-                except asyncio.TimeoutError:
-                    continue
-                except Exception as e:
-                    if not self._should_stop:
-                        self.emit("error", f"Multi-context send error: {str(e)}")
-                    break
-                    
-        except Exception as e:
-            if not self._should_stop:
-                self.emit("error", f"Multi-context send task error: {str(e)}")
-
-    async def _multi_context_receive_task(self) -> None:
-        """Task for receiving audio from multi-context WebSocket"""
-        try:
-            while not self._should_stop and self._multi_ws_connection and not self._multi_ws_connection.closed:
-                try:
-                    msg = await self._multi_ws_connection.receive()
-                    
-                    if msg.type == aiohttp.WSMsgType.TEXT:
-                        data = json.loads(msg.data)
-                        
-                        if data.get("audio"):
-                            audio_chunk = base64.b64decode(data["audio"])
-                            if not self._should_stop:
-                                await self._stream_audio_chunks(audio_chunk)
-                        
-                        elif data.get("is_final") or data.get("isFinal"):
-                            # Context finished
-                            context_id = data.get("contextId", data.get("context_id"))
-                            if context_id:
-                                self._active_contexts.discard(context_id)
-                        
-                        elif data.get("error"):
-                            self.emit("error", f"ElevenLabs multi-context error: {data['error']}")
-                            
-                    elif msg.type == aiohttp.WSMsgType.ERROR:
-                        raise ConnectionError(f"Multi-context WebSocket error: {self._multi_ws_connection.exception()}")
-                        
-                    elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSING):
-                        break
-                        
-                except asyncio.TimeoutError:
-                    if not self._should_stop:
-                        self.emit("error", "Multi-context WebSocket receive timeout")
-                    break
-                    
-        except Exception as e:
-            if not self._should_stop:
-                self.emit("error", f"Multi-context receive task error: {str(e)}")
-
-    async def _cleanup_multi_context_connection(self) -> None:
-        """Clean up multi-context WebSocket connection"""
-        for task in [self._multi_send_task, self._multi_recv_task]:
-            if task and not task.done():
-                task.cancel()
-        
-        try:
-            await asyncio.wait_for(
-                asyncio.gather(
-                    *(t for t in [self._multi_send_task, self._multi_recv_task] if t),
-                    return_exceptions=True
-                ),
-                timeout=0.3
-            )
-        except asyncio.TimeoutError:
-            pass
-        
-        self._multi_send_task = None
-        self._multi_recv_task = None
-        
-        if self._multi_ws_connection and not self._multi_ws_connection.closed:
-            await self._multi_ws_connection.close()
-        if self._multi_ws_session and not self._multi_ws_session.closed:
-            await self._multi_ws_session.close()
-            
-        self._multi_ws_connection = None
-        self._multi_ws_session = None
-        self._active_contexts.clear()
-
-    async def _send_text_task(self, ws_connection: aiohttp.ClientWebSocketResponse, text: Union[AsyncIterator[str], str]) -> None:
-        """Task for sending text to WebSocket"""
-        try:
-            if isinstance(text, str):
-                if not self._should_stop:
-                    text_message = {"text": f"{text} "}
-                    await ws_connection.send_str(json.dumps(text_message))
-            else:
-                async for chunk in text:
-                    if ws_connection.closed or self._should_stop:
-                        break
-
-                    chunk_message = {"text": f"{chunk} "}
-                    await ws_connection.send_str(json.dumps(chunk_message))
-
-            if not ws_connection.closed and not self._should_stop:
-                eos_message = {"text": ""}
-                await ws_connection.send_str(json.dumps(eos_message))
-
-        except Exception as e:
-            if not self._should_stop:
-                self.emit("error", f"Send task error: {str(e)}")
-            raise
-
-    async def _receive_audio_task(self, ws_connection: aiohttp.ClientWebSocketResponse) -> None:
-        """Task for receiving audio from WebSocket"""
-        try:
-            while not ws_connection.closed and not self._should_stop:
-                try:
-                    msg = await ws_connection.receive()
-
-                    if msg.type == aiohttp.WSMsgType.TEXT:
-                        data = json.loads(msg.data)
-
-                        if data.get("audio"):
-                            import base64
-                            audio_chunk = base64.b64decode(data["audio"])
-                            if not self._should_stop:
-                                await self._stream_audio_chunks(audio_chunk)
-
-                        elif data.get("isFinal"):
-                            break
-
-                        elif data.get("error"):
-                            self.emit(
-                                "error", f"ElevenLabs error: {data['error']}")
-                            raise ValueError(
-                                f"ElevenLabs error: {data['error']}")
-
-                    elif msg.type == aiohttp.WSMsgType.ERROR:
-                        raise ConnectionError(
-                            f"WebSocket error: {ws_connection.exception()}")
-
-                    elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSING):
-                        break
-
-                except asyncio.TimeoutError:
-                    if not self._should_stop:
-                        self.emit("error", "WebSocket receive timeout")
-                    break
-
-        except Exception as e:
-            if not self._should_stop:
-                self.emit("error", f"Receive task error: {str(e)}")
-            raise
+    def _voice_settings_dict(self) -> dict[str, Any]:
+        return {
+            "stability": self.voice_settings.stability,
+            "similarity_boost": self.voice_settings.similarity_boost,
+            "style": self.voice_settings.style,
+            "use_speaker_boost": self.voice_settings.use_speaker_boost,
+        }
 
     async def _stream_audio_chunks(self, audio_bytes: bytes) -> None:
         if not audio_bytes or self._should_stop:
@@ -535,18 +252,7 @@ class ElevenLabsTTS(TTS):
         if self.audio_track:
             self.audio_track.interrupt()
 
-        for task in [self._send_task, self._recv_task]:
-            if task and not task.done():
-                task.cancel()
-
-        for task in [self._multi_send_task, self._multi_recv_task]:
-            if task and not task.done():
-                task.cancel()
-
-        if self._ws_connection and not self._ws_connection.closed:
-            await self._ws_connection.close()
-            
-        await self._cleanup_multi_context_connection()
+        await self.close_all_contexts()
 
     async def aclose(self) -> None:
         """Cleanup resources"""
@@ -555,8 +261,6 @@ class ElevenLabsTTS(TTS):
         for task in [self._send_task, self._recv_task]:
             if task and not task.done():
                 task.cancel()
-
-        await self._cleanup_multi_context_connection()
 
         for stream in list(self._streams):
             try:
@@ -567,9 +271,132 @@ class ElevenLabsTTS(TTS):
         self._streams.clear()
 
         if self._ws_connection and not self._ws_connection.closed:
+            try:
+                await self._ws_connection.send_str(json.dumps({"close_socket": True}))
+            except Exception:
+                pass
             await self._ws_connection.close()
-        if self._ws_session:
+        if self._ws_session and not self._ws_session.closed:
             await self._ws_session.close()
+        self._ws_connection = None
+        self._ws_session = None
         if self._session:
             await self._session.aclose()
         await super().aclose()
+
+    async def _ensure_connection(self, voice_id: str) -> None:
+        async with self._connection_lock:
+            if self._ws_connection and not self._ws_connection.closed and self._ws_voice_id == voice_id:
+                return
+
+            if self._ws_connection and not self._ws_connection.closed:
+                try:
+                    await self._ws_connection.send_str(json.dumps({"close_socket": True}))
+                except Exception:
+                    pass
+                await self._ws_connection.close()
+            if self._ws_session and not self._ws_session.closed:
+                await self._ws_session.close()
+
+            self._ws_session = aiohttp.ClientSession()
+            self._ws_voice_id = voice_id
+
+            ws_url = f"{self.base_url}/text-to-speech/{voice_id}/multi-stream-input".replace("https://", "wss://").replace("http://", "ws://")
+            params = {
+                "model_id": self.model,
+                "output_format": self.response_format,
+                "inactivity_timeout": self.inactivity_timeout,
+            }
+            param_string = "&".join([f"{k}={v}" for k, v in params.items()])
+            full_ws_url = f"{ws_url}?{param_string}"
+            headers = {"xi-api-key": self.api_key}
+            self._ws_connection = await asyncio.wait_for(self._ws_session.ws_connect(full_ws_url, headers=headers), timeout=10.0)
+
+            if self._recv_task and not self._recv_task.done():
+                self._recv_task.cancel()
+            self._recv_task = asyncio.create_task(self._recv_loop())
+
+    def register_context(self, context_id: str, done_future: asyncio.Future[None]) -> None:
+        self._context_futures[context_id] = done_future
+
+    async def send_text(
+        self,
+        context_id: str,
+        text: str,
+        *,
+        voice_settings: Optional[dict[str, Any]] = None,
+        flush: bool = False,
+    ) -> None:
+        if not self._ws_connection or self._ws_connection.closed:
+            raise RuntimeError("WebSocket connection is closed")
+
+        if context_id not in self._active_contexts:
+            init_msg = {
+                "context_id": context_id,
+                "text": " ",
+            }
+            if voice_settings:
+                init_msg["voice_settings"] = voice_settings
+            await self._ws_connection.send_str(json.dumps(init_msg))
+            self._active_contexts.add(context_id)
+
+        pkt: dict[str, Any] = {"context_id": context_id, "text": text}
+        if flush:
+            pkt["flush"] = True
+        await self._ws_connection.send_str(json.dumps(pkt))
+
+    async def flush_context(self, context_id: str) -> None:
+        if not self._ws_connection or self._ws_connection.closed:
+            return
+        await self._ws_connection.send_str(json.dumps({"context_id": context_id, "flush": True}))
+
+    async def close_context(self, context_id: str) -> None:
+        if not self._ws_connection or self._ws_connection.closed:
+            return
+        await self._ws_connection.send_str(json.dumps({"context_id": context_id, "close_context": True}))
+
+    async def close_all_contexts(self) -> None:
+        try:
+            for context_id in list(self._active_contexts):
+                await self.close_context(context_id)
+        except Exception:
+            pass
+
+    async def _recv_loop(self) -> None:
+        try:
+            while self._ws_connection and not self._ws_connection.closed:
+                msg = await self._ws_connection.receive()
+                if msg.type == aiohttp.WSMsgType.TEXT:
+                    data = json.loads(msg.data)
+
+                    if data.get("error"):
+                        ctx_id = data.get("contextId")
+                        fut = self._context_futures.get(ctx_id)
+                        if fut and not fut.done():
+                            fut.set_exception(RuntimeError(data["error"]))
+                        continue
+
+                    if data.get("audio"):
+                        audio_chunk = base64.b64decode(data["audio"]) if isinstance(data["audio"], str) else None
+                        if audio_chunk:
+                            if not self._first_chunk_sent and hasattr(self, '_first_audio_callback') and self._first_audio_callback:
+                                self._first_chunk_sent = True
+                                asyncio.create_task(self._first_audio_callback())
+                            if self.audio_track:
+                                await self.audio_track.add_new_bytes(audio_chunk)
+
+                    if data.get("is_final") or data.get("isFinal"):
+                        ctx_id = data.get("contextId")
+                        if ctx_id:
+                            fut = self._context_futures.pop(ctx_id, None)
+                            self._active_contexts.discard(ctx_id)
+                            if fut and not fut.done():
+                                fut.set_result(None)
+
+                elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSING):
+                    break
+        except Exception:
+            for fut in self._context_futures.values():
+                if not fut.done():
+                    fut.set_exception(RuntimeError("WebSocket receive loop error"))
+            self._context_futures.clear()
