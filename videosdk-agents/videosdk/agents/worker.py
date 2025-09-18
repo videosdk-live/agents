@@ -669,6 +669,7 @@ class Worker:
                 auth_token=auth_token,
                 signaling_base_url=self.options.signaling_base_url,
                 recording=self.default_room_options.recording,
+                agent_participant_id=self.default_room_options.agent_participant_id,
                 join_meeting=self.default_room_options.join_meeting,
             )
 
@@ -703,6 +704,9 @@ class Worker:
                 if "recording" in assignment.room_options:
                     room_options.recording = assignment.room_options["recording"]
                     logger.info(f"Set recording: {room_options.recording}")
+                if "agent_participant_id" in assignment.room_options:
+                    room_options.agent_participant_id = assignment.room_options["agent_participant_id"]
+                    logger.info(f"Set agent_participant_id: {room_options.agent_participant_id}")
             else:
                 logger.warning("No room_options received from assignment")
 

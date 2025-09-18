@@ -44,6 +44,7 @@ class VideoSDKHandler:
         meeting_id: str,
         auth_token: str | None = None,
         name: str,
+        agent_participant_id: str,
         pipeline: Pipeline,
         loop: AbstractEventLoop,
         vision: bool = False,
@@ -66,6 +67,7 @@ class VideoSDKHandler:
             meeting_id (str): Unique identifier for the meeting.
             auth_token (str | None, optional): Authentication token. Uses environment variable if not provided.
             name (str): Display name of the agent in the meeting.
+            agent_participant_id (str): Participant ID of the agent in the meeting.
             pipeline (Pipeline): Audio/video processing pipeline.
             loop (AbstractEventLoop): Event loop for async operations.
             vision (bool, optional): Whether video processing is enabled. Defaults to False.
@@ -85,6 +87,7 @@ class VideoSDKHandler:
         self.meeting_id = meeting_id
         self.auth_token = auth_token
         self.name = name
+        self.agent_participant_id = agent_participant_id
         self.pipeline = pipeline
         self.loop = loop
         self.vision = vision
@@ -144,6 +147,7 @@ class VideoSDKHandler:
         # Create meeting config as a dictionary instead of using MeetingConfig
         self.meeting_config = {
             "name": self.name,
+            "participant_id": self.agent_participant_id,
             "meeting_id": self.meeting_id,
             "token": self.auth_token,
             "mic_enabled": True,
@@ -624,6 +628,7 @@ class VideoSDKHandler:
                 start_time = time.perf_counter()
                 agent_joined_attributes = {
                     "roomId": self.meeting_id,
+                    "agent_ParticipantId": self.agent_participant_id,
                     "sessionId": self._session_id,
                     "agent_name": self.name,
                     "peerId": self.meeting.local_participant.id,

@@ -32,6 +32,7 @@ class RoomOptions:
     room_id: Optional[str] = None
     auth_token: Optional[str] = None
     name: Optional[str] = "Agent"
+    agent_participant_id: Optional[str] = None
     playground: bool = True
     vision: bool = False
     recording: bool = False
@@ -251,6 +252,7 @@ class JobContext:
                         meeting_id=self.room_options.room_id,
                         auth_token=self.videosdk_auth,
                         name=self.room_options.name,
+                        agent_participant_id=self.room_options.agent_participant_id,
                         pipeline=self._pipeline,
                         loop=self._loop,
                         vision=self.room_options.vision,
