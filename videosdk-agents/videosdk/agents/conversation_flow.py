@@ -56,6 +56,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self._current_llm_task: asyncio.Task | None = None
         self._partial_response = ""
         self._is_interrupted = False
+        self._eou_timer_task: asyncio.Task | None = None
 
     async def start(self) -> None:
         global_event_emitter.on("speech_started", self.on_speech_started_stt)
@@ -128,6 +129,11 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         )
 
         await self.on_turn_start(user_text)
+        
+        async def generate_response_after_delay(delay: float):
+            await asyncio.sleep(delay)
+            if not asyncio.current_task().done():
+                 await self._generate_and_synthesize_response(user_text)
 
         if self.turn_detector:
             cascading_metrics_collector.on_eou_start()
@@ -139,12 +145,54 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 asyncio.create_task(
                     self._generate_and_synthesize_response(user_text))
             else:
-                cascading_metrics_collector.complete_current_turn()
+                self._eou_timer_task = asyncio.create_task(generate_response_after_delay(2.0))
+                # cascading_metrics_collector.complete_current_turn()
         else:
             asyncio.create_task(
                 self._generate_and_synthesize_response(user_text))
 
         await self.on_turn_end()
+
+    async def _process_reply_instructions(self, instructions: str, wait_for_playback: bool = True) -> None:
+        """Process reply instructions and generate response using existing flow"""
+        
+        original_vad_handler = None
+        original_stt_handler = None
+        
+        if wait_for_playback:
+            # Temporarily disable VAD events
+            if self.vad:
+                original_vad_handler = self.on_vad_event
+                self.on_vad_event = lambda x: None
+            
+            # Temporarily disable STT transcript processing
+            if self.stt:
+                original_stt_handler = self.on_stt_transcript
+                self.on_stt_transcript = lambda x: None
+        
+        try:
+            self.agent.chat_context.add_message(
+                role=ChatRole.USER,
+                content=instructions
+            )
+
+            await self.on_turn_start(instructions)
+            await self._generate_and_synthesize_response(instructions)
+
+            await self.on_turn_end()
+            
+            if wait_for_playback:
+                while (hasattr(cascading_metrics_collector.data, 'is_agent_speaking') and 
+                    cascading_metrics_collector.data.is_agent_speaking):
+                    await asyncio.sleep(0.1)
+                    
+        finally:
+            if wait_for_playback:
+                if original_vad_handler is not None:
+                    self.on_vad_event = original_vad_handler
+                
+                if original_stt_handler is not None:
+                    self.on_stt_transcript = original_stt_handler
 
     async def _generate_and_synthesize_response(self, user_text: str) -> None:
         """Generate agent response"""
@@ -348,6 +396,11 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         pass
 
     async def on_speech_started(self) -> None:
+        if self._eou_timer_task and not self._eou_timer_task.done():
+            self._eou_timer_task.cancel()
+            self._eou_timer_task = None
+            cascading_metrics_collector.complete_current_turn()
+            
         cascading_metrics_collector.on_user_speech_start()
 
         if self.user_speech_callback:
@@ -401,6 +454,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         """
         if not self.tts:
             return
+        
+        self.agent.session._pause_wake_up_timer()
 
         async def on_first_audio_byte():
             cascading_metrics_collector.on_tts_first_byte()
@@ -422,4 +477,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             await self.tts.synthesize(response_iterator)
 
         finally:
+            self.agent.session._reply_in_progress = False
+            self.agent.session._reset_wake_up_timer()
             cascading_metrics_collector.on_agent_speech_end()
