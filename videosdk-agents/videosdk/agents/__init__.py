@@ -56,7 +56,7 @@ from .utils import (
 from .room.audio_stream import CustomAudioStreamTrack, TeeCustomAudioStreamTrack
 from .event_emitter import EventEmitter
 from .job import WorkerJob, JobContext, RoomOptions, Options
-from .worker import Worker, WorkerOptions, WorkerType, DirectRoomOptions
+from .worker import Worker, WorkerOptions, WorkerType
 
 # New execution module exports
 from .execution import (
@@ -154,7 +154,6 @@ __all__ = [
     "Worker",
     "WorkerOptions",
     "WorkerType",
-    "DirectRoomOptions",
     # New execution module exports
     "ExecutorType",
     "ResourceType",

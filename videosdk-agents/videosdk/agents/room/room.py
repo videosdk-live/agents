@@ -44,6 +44,7 @@ class VideoSDKHandler:
         meeting_id: str,
         auth_token: str | None = None,
         name: str,
+        agent_participant_id: str,
         pipeline: Pipeline,
         loop: AbstractEventLoop,
         vision: bool = False,
@@ -66,6 +67,7 @@ class VideoSDKHandler:
             meeting_id (str): Unique identifier for the meeting.
             auth_token (str | None, optional): Authentication token. Uses environment variable if not provided.
             name (str): Display name of the agent in the meeting.
+            agent_participant_id (str): Participant ID of the agent in the meeting.
             pipeline (Pipeline): Audio/video processing pipeline.
             loop (AbstractEventLoop): Event loop for async operations.
             vision (bool, optional): Whether video processing is enabled. Defaults to False.
@@ -85,6 +87,7 @@ class VideoSDKHandler:
         self.meeting_id = meeting_id
         self.auth_token = auth_token
         self.name = name
+        self.agent_participant_id = agent_participant_id
         self.pipeline = pipeline
         self.loop = loop
         self.vision = vision
@@ -144,6 +147,7 @@ class VideoSDKHandler:
         # Create meeting config as a dictionary instead of using MeetingConfig
         self.meeting_config = {
             "name": self.name,
+            "participant_id": self.agent_participant_id,
             "meeting_id": self.meeting_id,
             "token": self.auth_token,
             "mic_enabled": True,
@@ -168,7 +172,7 @@ class VideoSDKHandler:
         self._left: bool = False
         self.sdk_metadata = {
             "sdk": "agents",
-            "sdk_version": "0.0.33"
+            "sdk_version": "0.0.34"
         }
 
         self.meeting = VideoSDK.init_meeting(
@@ -269,6 +273,8 @@ class VideoSDKHandler:
             except Exception as e:
                 logger.error(
                     f"Error in session end callback during meeting left: {e}")
+        if self.participants_data:
+            del self.participants_data
 
     def _is_agent_participant(self, participant: Participant) -> bool:
         """
@@ -443,8 +449,6 @@ class VideoSDKHandler:
         if participant.id in self.video_listener_tasks:
             self.video_listener_tasks[participant.id].cancel()
             del self.video_listener_tasks[participant.id]
-        if participant.id in self.participants_data:
-            del self.participants_data[participant.id]
         global_event_emitter.emit(
             "PARTICIPANT_LEFT", {"participant": participant})
 
@@ -624,6 +628,7 @@ class VideoSDKHandler:
                 start_time = time.perf_counter()
                 agent_joined_attributes = {
                     "roomId": self.meeting_id,
+                    "agent_ParticipantId": self.agent_participant_id,
                     "sessionId": self._session_id,
                     "agent_name": self.name,
                     "peerId": self.meeting.local_participant.id,
@@ -662,7 +667,7 @@ class VideoSDKHandler:
             json={"roomId": self.meeting_id, "participantId": id},
             headers=headers,
         )
-        logger.info("response for id", id, response.text)
+        logger.info(f"starting participant recording response completed for id {id} and response{response.text}")
 
     async def stop_participant_recording(self, id: str):
         """
@@ -679,7 +684,7 @@ class VideoSDKHandler:
             json={"roomId": self.meeting_id, "participantId": id},
             headers=headers,
         )
-        logger.info("response for id", id, response.text)
+        logger.info(f"stop participant recording response for id {id} and response{response.text}")
 
     async def merge_participant_recordings(self):
         """
@@ -700,7 +705,7 @@ class VideoSDKHandler:
             },
             headers=headers,
         )
-        logger.info(response.text)
+        logger.info(f"merging participant recordings completed response:{response.text}" )
 
     async def stop_and_merge_recordings(self):
         """
