@@ -244,15 +244,7 @@ class AzureTTS(TTS):
 
             if audio_data and not self._interrupted:
                 await self._stream_audio_chunks(audio_data)
-
-            # async for chunk in response.aiter_bytes(chunk_size=8192):
-            #     if self._interrupted:
-            #         break
-            #     if chunk:
-            #         # Stream each chunk immediately
-            #         await self._stream_audio_chunks(chunk)
-
-
+                
         except httpx.TimeoutException:
             logger.error("Azure TTS request timeout")
             self.emit("error", "Azure TTS request timeout")
