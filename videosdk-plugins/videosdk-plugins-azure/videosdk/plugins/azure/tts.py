@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Literal, AsyncIterator, Optional, Any
 
-import aiohttp
+import httpx
 
 from videosdk.agents import TTS, segment_text 
 import logging
@@ -84,6 +84,24 @@ class SpeakingStyle:
 
 
 class AzureTTS(TTS):
+    """
+    Initialize the Azure TTS plugin.
+
+    Args:
+        voice (str): Name of the Azure neural voice to use (default: "en-US-EmmaNeural").
+            For a full list of available voices, see:
+            https://eastus2.tts.speech.microsoft.com/cognitiveservices/voices/list
+            (Requires: curl --location --request GET with header 'Ocp-Apim-Subscription-Key')
+        language (str, optional): Language code for the voice (e.g., "en-US"). If not provided, defaults to the voice's language.
+        tuning (VoiceTuning, optional): VoiceTuning object to control speech rate, volume, and pitch.
+        style (SpeakingStyle, optional): SpeakingStyle object for expressive speech synthesis.
+        speech_key (str, optional): Azure Speech API key. If not provided, uses the AZURE_SPEECH_KEY environment variable.
+        speech_region (str, optional): Azure Speech region. If not provided, uses the AZURE_SPEECH_REGION environment variable.
+        speech_endpoint (str, optional): Custom endpoint URL. If not provided, uses the AZURE_SPEECH_ENDPOINT environment variable.
+        deployment_id (str, optional): Custom deployment ID for model deployment scenarios.
+        speech_auth_token (str, optional): Azure Speech authorization token for token-based authentication.
+
+    """
     FIXED_SAMPLE_RATE = 24000
     AZURE_OUTPUT_FORMAT = "raw-24khz-16bit-mono-pcm"
 
@@ -130,7 +148,7 @@ class AzureTTS(TTS):
 
         self._first_chunk_sent = False
         self._interrupted = False
-        self._session: Optional[aiohttp.ClientSession] = None
+        self._http_client: Optional[httpx.AsyncClient] = None
     
     
     def reset_first_audio_tracking(self) -> None:
@@ -148,10 +166,20 @@ class AzureTTS(TTS):
             return f"{base}?deploymentId={self.deployment_id}"
         return base
 
-    def _get_session(self) -> aiohttp.ClientSession:
-        if not self._session:
-            self._session = aiohttp.ClientSession()
-        return self._session
+    def _get_http_client(self) -> httpx.AsyncClient:
+        if not self._http_client:
+            self._http_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(
+                    connect=15.0, read=30.0, write=5.0, pool=5.0
+                ),
+                follow_redirects=True,
+                limits=httpx.Limits(
+                    max_connections=50,
+                    max_keepalive_connections=50,
+                    keepalive_expiry=120,
+                ),
+            )
+        return self._http_client
 
     async def synthesize(
         self,
@@ -200,28 +228,37 @@ class AzureTTS(TTS):
 
             ssml_data = self._build_ssml(text, voice_id or self.voice)
 
-            async with self._get_session().post(
+            response = await self._get_http_client().post(
                 url=self._get_endpoint_url(),
                 headers=headers,
-                data=ssml_data,
-                timeout=aiohttp.ClientTimeout(total=30, sock_connect=5.0),
-            ) as resp:
-                resp.raise_for_status()
+                content=ssml_data,
+            )
+            response.raise_for_status()
 
-                audio_data = b""
-                async for chunk in resp.content.iter_chunked(8192):
-                    if self._interrupted: break
-                    if chunk: audio_data += chunk
+            audio_data = b""
+            async for chunk in response.aiter_bytes(chunk_size=8192):
+                if self._interrupted: 
+                    break
+                if chunk: 
+                    audio_data += chunk
 
-                if audio_data and not self._interrupted:
-                    await self._stream_audio_chunks(audio_data)
+            if audio_data and not self._interrupted:
+                await self._stream_audio_chunks(audio_data)
 
-        except asyncio.TimeoutError:
+            # async for chunk in response.aiter_bytes(chunk_size=8192):
+            #     if self._interrupted:
+            #         break
+            #     if chunk:
+            #         # Stream each chunk immediately
+            #         await self._stream_audio_chunks(chunk)
+
+
+        except httpx.TimeoutException:
             logger.error("Azure TTS request timeout")
             self.emit("error", "Azure TTS request timeout")
-        except aiohttp.ClientResponseError as e:
-            logger.error("Azure TTS HTTP error: %s - %s", e.status, e.message)
-            self.emit("error", f"Azure TTS HTTP error: {e.status} - {e.message}")
+        except httpx.HTTPStatusError as e:
+            logger.error("Azure TTS HTTP error: %s - %s", e.response.status_code, e.response.text)
+            self.emit("error", f"Azure TTS HTTP error: {e.response.status_code} - {e.response.text}")
         except Exception as e:
             if not self._interrupted:
                 logger.error("Azure TTS synthesis failed: %s", str(e), exc_info=True)
@@ -267,7 +304,7 @@ class AzureTTS(TTS):
                     self._first_chunk_sent = True
                     await self._first_audio_callback()
                 if self.audio_track:
-                    await self.audio_track.add_new_bytes(chunk)
+                    asyncio.create_task(self.audio_track.add_new_bytes(chunk))
                 await asyncio.sleep(0.001)
 
     async def interrupt(self) -> None:
@@ -276,7 +313,7 @@ class AzureTTS(TTS):
             self.audio_track.interrupt()
 
     async def aclose(self) -> None:
-        if self._session:
-            await self._session.close()
-            self._session = None
+        if self._http_client:
+            await self._http_client.aclose()
+            self._http_client = None
         await super().aclose()
