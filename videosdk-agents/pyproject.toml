@@ -22,7 +22,7 @@ classifiers = [
 ]
 dependencies = [
     "uvicorn",
-    "videosdk>=0.2.2",
+    "videosdk>=0.2.5",
     "numpy",
     "httpx",
     "aiohttp",
