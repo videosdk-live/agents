@@ -392,7 +392,7 @@ async def setup_console_voice_for_ctx(
     stt_agent = getattr(ctx._pipeline, 'stt', None)
     needs_stereo = False
 
-    if stt_agent and type(stt_agent).__name__ == 'GoogleSTT' or type(stt_agent).__name__ == 'DeepgramSTT' or type(stt_agent).__name__ == 'SarvamAISTT' or type(stt_agent).__name__ == 'AssemblyAISTT':
+    if stt_agent and type(stt_agent).__name__ == 'GoogleSTT' or type(stt_agent).__name__ == 'DeepgramSTT' or type(stt_agent).__name__ == 'SarvamAISTT' or type(stt_agent).__name__ == 'AssemblyAISTT' or type(stt_agent).__name__ == 'AzureSTT':
         needs_stereo = True
     
     if needs_stereo:
