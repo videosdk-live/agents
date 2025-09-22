@@ -18,6 +18,7 @@ from .vad import VAD, VADResponse, VADEventType
 from .eou import EOU
 from .metrics import cascading_metrics_collector
 from .denoise import Denoise
+from .utils import UserState, AgentState
 import logging
 
 logger = logging.getLogger(__name__)
@@ -391,6 +392,9 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
     def on_speech_started_stt(self, event_data: Any) -> None:
         if self.user_speech_callback:
             self.user_speech_callback()
+        
+        if self.agent.session:
+            self.agent.session._emit_user_state(UserState.SPEAKING)
 
     def on_speech_stopped_stt(self, event_data: Any) -> None:
         pass
@@ -411,6 +415,10 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
         if self.tts:
             await self._interrupt_tts()
+        
+        if self.agent.session:
+            self.agent.session._emit_user_state(UserState.SPEAKING)
+            self.agent.session._emit_agent_state(AgentState.LISTENING)
 
     async def _interrupt_tts(self) -> None:
         logger.info("Interrupting TTS and LLM generation")
@@ -447,6 +455,10 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             self._stt_started = True
 
         cascading_metrics_collector.on_user_speech_end()
+        
+        if self.agent.session:
+            self.agent.session._emit_user_state(UserState.IDLE)
+            self.agent.session._emit_agent_state(AgentState.THINKING)
 
     async def _synthesize_with_tts(self, response_gen: AsyncIterator[str] | str) -> None:
         """
@@ -460,6 +472,10 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         async def on_first_audio_byte():
             cascading_metrics_collector.on_tts_first_byte()
             cascading_metrics_collector.on_agent_speech_start()
+            
+            if self.agent.session:
+                self.agent.session._emit_agent_state(AgentState.SPEAKING)
+                self.agent.session._emit_user_state(UserState.LISTENING)
 
         self.tts.on_first_audio_byte(on_first_audio_byte)
         self.tts.reset_first_audio_tracking()
@@ -475,8 +491,13 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 response_iterator = response_gen
 
             await self.tts.synthesize(response_iterator)
+            
 
         finally:
             self.agent.session._reply_in_progress = False
             self.agent.session._reset_wake_up_timer()
             cascading_metrics_collector.on_agent_speech_end()
+            
+            if self.agent.session:
+                self.agent.session._emit_agent_state(AgentState.IDLE)
+                self.agent.session._emit_user_state(UserState.IDLE)

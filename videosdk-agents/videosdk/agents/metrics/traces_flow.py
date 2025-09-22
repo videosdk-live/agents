@@ -354,6 +354,23 @@ class TracesFlowManager:
 
         self.end_span(agent_say_span, "Agent say span created", end_time=time.perf_counter())    
 
+    def agent_reply_called(self, instructions: str):
+        """Creates a span for an agent reply invocation."""
+        if not self.agent_session_span:
+            print("Cannot create agent reply span without an agent session span.")
+            return
+
+        current_span = trace.get_current_span()
+
+        agent_reply_span = create_span(
+            "Agent Reply",
+            {"Agent Reply Instructions": instructions},
+            parent_span=current_span if current_span else self.agent_session_span,
+            start_time=time.perf_counter()
+        )
+
+        self.end_span(agent_reply_span, "Agent reply span created", end_time=time.perf_counter())
+
     def create_a2a_trace(self, name: str, attributes: Dict[str, Any]) -> Optional[Span]:
         """Creates an A2A trace under the main turn span."""
         if not self.main_turn_span:

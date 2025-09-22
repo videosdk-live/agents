@@ -4,7 +4,7 @@ import logging
 from typing import Any, Literal
 import av
 import time
-
+import asyncio
 from .pipeline import Pipeline
 from .event_emitter import EventEmitter
 from .realtime_base_model import RealtimeBaseModel
@@ -13,6 +13,7 @@ from .job import get_current_job_context
 from .metrics import realtime_metrics_collector
 from .denoise import Denoise
 import logging
+from .utils import UserState, AgentState
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +124,16 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         Handle user speech started event
         """
         self._notify_speech_started()
+        if self.agent.session:
+            self.agent.session._emit_user_state(UserState.SPEAKING)
+            self.agent.session._emit_agent_state(AgentState.LISTENING)
+            
+    def interrupt(self) -> None:
+        """
+        Interrupt the realtime pipeline
+        """
+        if self.model:
+            asyncio.create_task(self.model.interrupt())
 
     async def leave(self) -> None:
         """
