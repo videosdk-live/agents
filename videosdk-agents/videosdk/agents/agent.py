@@ -67,6 +67,16 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
             if not is_function_tool(tool):
                 raise ValueError(f"Tool {tool.__name__ if hasattr(tool, '__name__') else tool} is not a valid FunctionTool")
     
+    def update_tools(self, tools: List[FunctionTool]) -> None:
+        """Update the tools for the agent"""
+        self._tools.extend(tools)
+        self._register_class_tools()
+        self.register_tools()
+    
+    async def hangup(self) -> None:
+        """Hang up the agent"""
+        await self.session.close()
+    
     async def initialize_mcp(self) -> None:
         """Internal Method: Initialize the agent, including any MCP server if provided."""
         if self._mcp_servers and not self._mcp_initialized:

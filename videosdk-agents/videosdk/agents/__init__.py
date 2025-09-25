@@ -37,6 +37,7 @@ def setup_logging(level=logging.INFO):
 
 from .agent import Agent
 from .agent_session import AgentSession
+from .utils import UserState, AgentState
 from .conversation_flow import ConversationFlow
 from .realtime_base_model import RealtimeBaseModel
 from .realtime_pipeline import RealTimePipeline
@@ -101,6 +102,8 @@ from .images import EncodeOptions, ResizeOptions, encode
 __all__ = [
     "Agent",
     "AgentSession",
+    "UserState",
+    "AgentState",
     "ConversationFlow",
     "RealtimeBaseModel",
     "RealTimePipeline",

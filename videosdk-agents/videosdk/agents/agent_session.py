@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Literal
 import asyncio
 
 from .agent import Agent
@@ -8,13 +8,15 @@ from .conversation_flow import ConversationFlow
 from .pipeline import Pipeline
 from .metrics import cascading_metrics_collector, realtime_metrics_collector
 from .realtime_pipeline import RealTimePipeline
-from .utils import get_tool_info
+from .utils import get_tool_info, UserState, AgentState
 import time
 from .job import get_current_job_context
+from .event_emitter import EventEmitter
 from .event_bus import global_event_emitter
 import logging
 logger = logging.getLogger(__name__)
-class AgentSession:
+
+class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_changed"]]):
     """
     Manages an agent session with its associated conversation flow and pipeline.
     """
@@ -35,6 +37,7 @@ class AgentSession:
             conversation_flow: ConversationFlow instance to manage conversation state
             wake_up: Time in seconds after which to trigger wake-up callback if no speech detected
         """
+        super().__init__()
         self.agent = agent
         self.pipeline = pipeline
         self.conversation_flow = conversation_flow
@@ -44,6 +47,9 @@ class AgentSession:
         self._wake_up_task: Optional[asyncio.Task] = None
         self._wake_up_timer_active = False
         self._closed: bool = False
+        self._reply_in_progress: bool = False
+        self._user_state: UserState = UserState.IDLE
+        self._agent_state: AgentState = AgentState.IDLE
         if hasattr(self.pipeline, 'set_agent'):
             self.pipeline.set_agent(self.agent)
         if (
@@ -68,10 +74,16 @@ class AgentSession:
     
     def _reset_wake_up_timer(self) -> None:
         if self.wake_up is not None and self.on_wake_up is not None:
+            if self._reply_in_progress:
+                return
             if self._wake_up_task and not self._wake_up_task.done():
                 self._wake_up_task.cancel()
-            if self._wake_up_timer_active:
-                self._wake_up_task = asyncio.create_task(self._wake_up_timer_loop())
+            self._wake_up_timer_active = True
+            self._wake_up_task = asyncio.create_task(self._wake_up_timer_loop())
+    
+    def _pause_wake_up_timer(self) -> None:
+        if self._wake_up_task and not self._wake_up_task.done():
+            self._wake_up_task.cancel()
     
     def _cancel_wake_up_timer(self) -> None:
         if self._wake_up_task and not self._wake_up_task.done():
@@ -81,13 +93,33 @@ class AgentSession:
     async def _wake_up_timer_loop(self) -> None:
         try:
             await asyncio.sleep(self.wake_up)
-            if self._wake_up_timer_active and self.on_wake_up:
+            if self._wake_up_timer_active and self.on_wake_up and not self._reply_in_progress:
                 if asyncio.iscoroutinefunction(self.on_wake_up):
                     await self.on_wake_up()
                 else:
                     self.on_wake_up()
         except asyncio.CancelledError:
             pass
+
+    def _emit_user_state(self, state: UserState, data: dict | None = None) -> None:
+        if state != self._user_state:
+            self._user_state = state
+            payload = {"state": state.value, **(data or {})}
+            self.emit("user_state_changed", payload)
+
+    def _emit_agent_state(self, state: AgentState, data: dict | None = None) -> None:
+        if state != self._agent_state:
+            self._agent_state = state
+            payload = {"state": state.value, **(data or {})}
+            self.emit("agent_state_changed", payload)
+
+    @property
+    def user_state(self) -> UserState:
+        return self._user_state
+
+    @property
+    def agent_state(self) -> AgentState:
+        return self._agent_state
 
     async def start(self, **kwargs: Any) -> None:
         """
@@ -101,6 +133,7 @@ class AgentSession:
         Args:
             **kwargs: Additional arguments to pass to the pipeline start method
         """       
+        self._emit_agent_state(AgentState.STARTING)
         await self.agent.initialize_mcp()
 
         if isinstance(self.pipeline, RealTimePipeline):
@@ -165,6 +198,8 @@ class AgentSession:
         global_event_emitter.emit("AGENT_STARTED", {"session": self})
         if self.on_wake_up is not None:
             self._start_wake_up_timer()
+        self._emit_agent_state(AgentState.IDLE)
+        
     async def say(self, message: str) -> None:
         """
         Send an initial message to the agent.
@@ -175,6 +210,43 @@ class AgentSession:
                 traces_flow_manager.agent_say_called(message)
         self.agent.chat_context.add_message(role=ChatRole.ASSISTANT, content=message)
         await self.pipeline.send_message(message)
+    
+    async def reply(self, instructions: str, wait_for_playback: bool = True) -> None:
+        """
+        Generate a response from agent using instructions and current chat context.
+        Subsequent calls are discarded while the first one is still running.
+        """
+        if not instructions:
+            return
+        
+        if self._reply_in_progress:
+            return
+        self._reply_in_progress = True
+        
+        self._pause_wake_up_timer()
+        
+        try:
+            if not isinstance(self.pipeline, RealTimePipeline):
+                traces_flow_manager = cascading_metrics_collector.traces_flow_manager
+                if traces_flow_manager:
+                    traces_flow_manager.agent_reply_called(instructions)
+            # Use the pipeline to handle the reply with wait_for_playback logic
+            if hasattr(self.pipeline, 'reply_with_context'):
+                await self.pipeline.reply_with_context(instructions, wait_for_playback)
+            else:
+                # Fallback for other pipeline types (like RealTimePipeline)
+                if hasattr(self.pipeline, 'send_text_message'):
+                    await self.pipeline.send_text_message(instructions)
+                else:
+                    await self.pipeline.send_message(instructions)
+        finally:
+            self._reply_in_progress = False
+    
+    async def interrupt(self) -> None:
+        """
+        Interrupt the agent.
+        """
+        await self.pipeline.interrupt()
 
     async def close(self) -> None:
         """
@@ -184,6 +256,7 @@ class AgentSession:
             logger.info("Agent session already closed")
             return
         self._closed = True
+        self._emit_agent_state(AgentState.CLOSING)
         if isinstance(self.pipeline, RealTimePipeline):
             realtime_metrics_collector.finalize_session()
             traces_flow_manager = realtime_metrics_collector.traces_flow_manager
@@ -206,4 +279,5 @@ class AgentSession:
         """
         Leave the agent session.
         """
+        self._emit_agent_state(AgentState.CLOSING)
         await self.pipeline.leave()

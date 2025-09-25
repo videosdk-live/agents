@@ -13,6 +13,7 @@ from .eou import EOU
 from .job import get_current_job_context
 from .denoise import Denoise
 import logging
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -203,6 +204,14 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         Handle user speech started event
         """
         self._notify_speech_started()
+    
+    def interrupt(self) -> None:
+        """
+        Interrupt the pipeline
+        """
+        if self.conversation_flow:
+            asyncio.create_task(self.conversation_flow._interrupt_tts())
+    
 
     async def cleanup(self) -> None:
         """Cleanup all pipeline components"""
@@ -318,3 +327,16 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
 
         cascading_metrics_collector.add_error(source, str(error_data))
         logger.error(f"[{source}] Component error: {error_data}")
+
+    async def reply_with_context(self, instructions: str, wait_for_playback: bool = True) -> None:
+        """
+        Generate a reply using instructions and current chat context.
+        
+        Args:
+            instructions: Instructions to add to chat context
+            wait_for_playback: If True, disable VAD and STT interruptions during response and wait for
+        """
+        if self.conversation_flow:
+            await self.conversation_flow._process_reply_instructions(instructions, wait_for_playback)
+        else:
+            logger.warning("No conversation flow found in pipeline")
