@@ -162,6 +162,7 @@ class AssemblyAISTT(BaseSTT):
             
         headers = {
             "Authorization": self.api_key,
+            "User-Agent": "AssemblyAI/1.0 (integration=VideoSDK)"
         }
         
         try:
