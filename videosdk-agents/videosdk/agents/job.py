@@ -32,6 +32,7 @@ class RoomOptions:
     room_id: Optional[str] = None
     auth_token: Optional[str] = None
     name: Optional[str] = "Agent"
+    agent_participant_id: Optional[str] = None
     playground: bool = True
     vision: bool = False
     recording: bool = False
@@ -154,16 +155,18 @@ class WorkerJob:
             signaling_base_url=self.options.signaling_base_url,
             host=self.options.host,
             port=self.options.port,
-            log_level=self.options.log_level,
+            log_level=self.options.log_level
         )
-
-        # Create worker and run with job context
-        worker = Worker(worker_options)
 
         # If register=True, run the worker in backend mode (don't execute entrypoint immediately)
         if self.options.register:
+            if self.jobctx:
+                if callable(self.jobctx):
+                    job_context = self.jobctx()
+                else:
+                    job_context = self.jobctx
             # Run the worker normally (for backend registration mode)
-            Worker.run_worker(worker_options)
+            Worker.run_worker(options=worker_options, default_room_options=job_context.room_options)
         else:
             # Direct mode - run entrypoint immediately if we have a job context
             if self.jobctx:
@@ -249,6 +252,7 @@ class JobContext:
                         meeting_id=self.room_options.room_id,
                         auth_token=self.videosdk_auth,
                         name=self.room_options.name,
+                        agent_participant_id=self.room_options.agent_participant_id,
                         pipeline=self._pipeline,
                         loop=self._loop,
                         vision=self.room_options.vision,
