@@ -1,0 +1,8 @@
+videosdk-agents
+videosdk-plugins-openai
+videosdk-plugins-deepgram
+videosdk-plugins-elevenlabs
+videosdk-plugins-silero
+openai
+python-dotenv
+aiohttp

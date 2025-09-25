@@ -1,0 +1,6 @@
+videosdk-agents
+videosdk-plugins-google  
+av
+videosdk-plugins-turn-detector  
+videosdk-plugins-silero
+python-dotenv
