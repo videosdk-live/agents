@@ -28,7 +28,7 @@ class AssemblyAISTT(BaseSTT):
         input_sample_rate: int = 48000,
         target_sample_rate: int = 16000,
         format_turns: bool = True,
-        word_boost: list[str] | None = None,
+        keyterms_prompt: list[str] | None = None,
         end_of_turn_confidence_threshold: float = 0.5,
         min_end_of_turn_silence_when_confident: int = 800,
         max_turn_silence: int = 2000,
@@ -40,7 +40,7 @@ class AssemblyAISTT(BaseSTT):
             input_sample_rate (int): The input sample rate to use for the STT plugin. Defaults to 48000.
             target_sample_rate (int): The target sample rate to use for the STT plugin. Defaults to 16000.
             format_turns (bool): Whether to format turns. Defaults to True.
-            word_boost (list[str] | None, optional): The word boost to use for the STT plugin. Defaults to None.
+            keyterms_prompt (list[str] | None, optional): The word boost list to use for the STT plugin. Defaults to None.
             end_of_turn_confidence_threshold (float): The end of turn confidence threshold to use for the STT plugin. Defaults to 0.5.
             min_end_of_turn_silence_when_confident (int): The minimum end of turn silence when confident to use for the STT plugin. Defaults to 800.
             max_turn_silence (int): The maximum turn silence to use for the STT plugin. Defaults to 2000.
@@ -59,7 +59,7 @@ class AssemblyAISTT(BaseSTT):
         self.input_sample_rate = input_sample_rate
         self.target_sample_rate = target_sample_rate
         self.format_turns = format_turns
-        self.word_boost = word_boost or []
+        self.keyterms_prompt = keyterms_prompt or []
         self.end_of_turn_confidence_threshold = end_of_turn_confidence_threshold
         self.min_end_of_turn_silence_when_confident = min_end_of_turn_silence_when_confident
         self.max_turn_silence = max_turn_silence
@@ -77,8 +77,8 @@ class AssemblyAISTT(BaseSTT):
         if self.max_turn_silence != 3000:
             connection_params["max_turn_silence"] = self.max_turn_silence
         
-        if self.word_boost:
-            connection_params["word_boost"] = json.dumps(self.word_boost)
+        if self.keyterms_prompt:
+            connection_params["keyterms_prompt"] = json.dumps(self.keyterms_prompt)
 
         self.ws_url = f"wss://streaming.assemblyai.com/v3/ws?{urlencode(connection_params)}"
         logger.info(f"[AssemblyAI] WebSocket URL: {self.ws_url}")
@@ -162,6 +162,7 @@ class AssemblyAISTT(BaseSTT):
             
         headers = {
             "Authorization": self.api_key,
+            "User-Agent": "AssemblyAI/1.0 (integration=VideoSDK)"
         }
         
         try:
