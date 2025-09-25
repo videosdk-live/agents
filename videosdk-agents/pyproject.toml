@@ -58,6 +58,7 @@ videosdk = "videosdk.agents.cli:main"
 anthropic = ["videosdk-plugins-anthropic>=0.0.34"]
 assemblyai = ["videosdk-plugins-assemblyai>=0.0.34"]
 aws = ["videosdk-plugins-aws>=0.0.34"]
+azure = ["videosdk-plugins-azure>=0.0.34"]
 cartesia = ["videosdk-plugins-cartesia>=0.0.34"]
 cerebras = ["videosdk-plugins-cerebras>=0.0.34"]
 deepgram = ["videosdk-plugins-deepgram>=0.0.34"]
