@@ -5,11 +5,8 @@ import aiohttp
 import json
 from typing import Any, AsyncIterator, Union, Optional
 import os
-import logging
-logger = logging.getLogger(__name__)
-from videosdk.agents import TTS  # This is assumed from your project structure
+from videosdk.agents import TTS
 
-# Default configuration for Deepgram TTS
 DEEPGRAM_SAMPLE_RATE = 24000
 DEEPGRAM_CHANNELS = 1
 DEFAULT_MODEL = "aura-2-thalia-en"
@@ -57,7 +54,6 @@ class DeepgramTTS(TTS):
                 "Deepgram API key must be provided either through the 'api_key' parameter or the DEEPGRAM_API_KEY environment variable."
             )
     def reset_first_audio_tracking(self) -> None:
-        """Reset the first audio tracking state for next TTS task"""
         self._first_chunk_sent = False
 
     async def synthesize(
@@ -67,7 +63,6 @@ class DeepgramTTS(TTS):
     ) -> None:
         try:
             if not self.audio_track or not self.loop:
-                # Assuming an event emitter exists from the base TTS class
                 self.emit("error", "Audio track or event loop not set")
                 return
 
@@ -76,11 +71,8 @@ class DeepgramTTS(TTS):
 
         except Exception as e:
             self.emit("error", f"TTS synthesis failed: {str(e)}")
-            logger.error(f"TTS synthesis failed: {str(e)}")
 
     async def _stream_synthesis(self, text: Union[AsyncIterator[str], str]) -> None:
-        """WebSocket-based streaming synthesis with Deepgram."""
-        logger.info("Synthesising...")
         try:
             params = {
                 "model": self.model,
@@ -98,7 +90,6 @@ class DeepgramTTS(TTS):
                 timeout=50.0
             )
 
-            # Create and manage concurrent send and receive tasks
             self._send_task = asyncio.create_task(self._send_text_task(text))
             self._recv_task = asyncio.create_task(self._receive_audio_task())
 
@@ -106,9 +97,7 @@ class DeepgramTTS(TTS):
 
         except Exception as e:
             self.emit("error", f"Streaming synthesis failed: {str(e)}")
-            logger.error(f"Streaming synthesis failed: {str(e)}")
         finally:
-            # Graceful cleanup of tasks and connections
             for task in [self._send_task, self._recv_task]:
                 if task and not task.done():
                     task.cancel()
@@ -118,14 +107,10 @@ class DeepgramTTS(TTS):
             if self._ws_session and not self._ws_session.closed:
                 await self._ws_session.close()
 
-            # Reset state for the next synthesis task
             self._send_task = None
             self._recv_task = None
 
     async def _send_text_task(self, text: Union[AsyncIterator[str], str]) -> None:
-        """Task for sending text to the Deepgram WebSocket."""
-        logger.info("Sending text...")
-
         if not self._ws_connection:
             return
 
@@ -141,19 +126,15 @@ class DeepgramTTS(TTS):
                     payload = {"type": "Speak", "text": chunk}
                     await self._ws_connection.send_json(payload)
 
-            # Once all text is sent, send a Flush message to get any remaining audio.
             if not self._ws_connection.closed and not self._should_stop:
                 await self._ws_connection.send_json({"type": "Flush"})
 
         except Exception as e:
             if not self._should_stop:
                 self.emit("error", f"Send task error: {str(e)}")
-                logger.error(f"Send task error: {str(e)}")
             raise
 
     async def _receive_audio_task(self) -> None:
-        """Task for receiving audio from the Deepgram WebSocket."""
-        logger.info("Receiving audio...")
         if not self._ws_connection:
             return
 
@@ -165,11 +146,9 @@ class DeepgramTTS(TTS):
                     if not self._should_stop:
                         await self._stream_audio_chunks(msg.data)
                 elif msg.type == aiohttp.WSMsgType.TEXT:
-                    # Deepgram can send JSON messages, e.g., for metadata or errors
                     data = json.loads(msg.data)
                     if data.get('type') == 'Error' and not self._should_stop:
                         self.emit("error", f"Deepgram error: {data.get('description', 'Unknown error')}")
-                        logger.info(logging.ERROR, f"Deepgram error: {data.get('description', 'Unknown error')}")
                         break
                 elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSING):
                     break
@@ -189,8 +168,6 @@ class DeepgramTTS(TTS):
             await self.audio_track.add_new_bytes(audio_bytes)
 
     async def interrupt(self) -> None:
-        """Interrupts the ongoing TTS synthesis."""
-        logger.info("Interrupting Deepgram TTS plugin...")
         self._should_stop = True
 
         if self.audio_track:
@@ -201,13 +178,8 @@ class DeepgramTTS(TTS):
                 task.cancel()
 
         if self._ws_connection and not self._ws_connection.closed:
-            # This will trigger the receive task to break its loop
             await self._ws_connection.close()
 
     async def aclose(self) -> None:
-        logger.info("Closing Deepgram plugin...")
-        """Clean up all resources."""
-        # self._should_stop = True
-
         await self.interrupt()  # Ensure everything is stopped and closing
         await super().aclose()
