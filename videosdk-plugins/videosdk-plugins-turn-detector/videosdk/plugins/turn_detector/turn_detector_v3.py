@@ -125,8 +125,10 @@ class NamoTurnDetectorV1(EOU):
         
         return last_user_text
 
-    def detect_turn(self, sentence: str):
-    
+    def detect_turn(self, sentence: str) -> float:
+        """
+        Detect turn probability for the given sentence.
+        """
         try:
             inputs = self.tokenizer(sentence.strip(), truncation=True, max_length=self.max_length, return_tensors="np")
             
@@ -139,28 +141,31 @@ class NamoTurnDetectorV1(EOU):
                 input_dict["token_type_ids"] = inputs["token_type_ids"]
             
             outputs = self.session.run(None, input_dict)
-            pred = np.argmax(outputs)
-            if pred == 0:
-                pred = "False"
-            else:
-                pred = "True"
-            if pred == "False":
-                self.emit("error", f"Turn detection failed: result was {pred}")
-            return pred
+            
+            logits = outputs[0][0]
+            
+            exp_logits = np.exp(logits - np.max(logits))
+            probabilities = exp_logits / np.sum(exp_logits)
+            
+            eou_probability = float(probabilities[1])
+            
+            return eou_probability
+            
         except Exception as e:
             print(e)
+            logger.error(f"Error detecting turn: {e}")
             self.emit("error", f"Error detecting turn: {str(e)}")
-            return "False"
+            return 0.0
 
     def get_eou_probability(self, chat_context: ChatContext) -> float:
         """
         Get the probability score for end of utterance detection.
-        For binary classifier, returns 1.0 or 0.0 based on classification.
         """
         try:
             sentence = self._chat_context_to_text(chat_context)
-            result = self.detect_turn(sentence)
-            return 1.0 if result == "True" else 0.0
+            if not sentence:
+                return 0.0
+            return self.detect_turn(sentence)
         except Exception as e:
             logger.error(f"Error getting EOU probability: {e}")
             self.emit("error", f"Error getting EOU probability: {str(e)}")
@@ -169,12 +174,13 @@ class NamoTurnDetectorV1(EOU):
     def detect_end_of_utterance(self, chat_context: ChatContext, threshold: Optional[float] = None) -> bool:
         """
         Detect if the given chat context represents an end of utterance.
-        Uses direct binary classification, ignoring threshold.
         """
         try:
-            sentence = self._chat_context_to_text(chat_context)
-            result = self.detect_turn(sentence)
-            return result == "True"
+            effective_threshold = threshold if threshold is not None else self.threshold
+            
+            probability = self.get_eou_probability(chat_context)
+            return probability >= effective_threshold
+            
         except Exception as e:
             logger.error(f"Error in EOU detection: {e}")
             self.emit("error", f"Error in EOU detection: {str(e)}")
