@@ -10,7 +10,7 @@ from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
 from videosdk.plugins.elevenlabs import ElevenLabsTTS
 
 logging.getLogger().setLevel(logging.CRITICAL)
-# pre_download_model()
+pre_download_model()
 
 @function_tool
 async def get_weather(
