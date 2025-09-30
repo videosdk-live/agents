@@ -1,3 +1,3 @@
 from .stt import DeepgramSTT
-
-__all__ = ["DeepgramSTT"]
+from .tts import DeepgramTTS
+__all__ = ["DeepgramSTT", "DeepgramTTS"]
