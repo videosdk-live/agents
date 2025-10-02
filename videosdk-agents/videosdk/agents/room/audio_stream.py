@@ -13,7 +13,13 @@ AUDIO_PTIME = 0.02
 
 
 class MediaStreamError(Exception):
-    pass
+    def __init__(self, message: str, stream_state: str = "unknown"):
+        self.message = message
+        self.stream_state = stream_state
+        super().__init__(self.message)
+
+    def __str__(self):
+        return f"MediaStreamError: {self.message} (Stream State: '{self.stream_state}')"
 
 
 class CustomAudioStreamTrack(CustomAudioTrack):
@@ -80,7 +86,10 @@ class CustomAudioStreamTrack(CustomAudioTrack):
     async def recv(self) -> AudioFrame:
         try:
             if self.readyState != "live":
-                raise MediaStreamError
+                 raise MediaStreamError(
+                       "Cannot receive frames because the stream is not live.",
+                        stream_state=self.readyState
+                     )
 
             if self._start is None:
                 self._start = time()
