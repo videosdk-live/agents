@@ -57,7 +57,15 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self._current_llm_task: asyncio.Task | None = None
         self._partial_response = ""
         self._is_interrupted = False
-        self._eou_timer_task: asyncio.Task | None = None
+
+        # Enhanced transcript accumulation system
+        self._accumulated_transcript = ""
+        self._waiting_for_more_speech = False
+        self._speech_wait_timeout = 0.8  # 800ms timeout
+        self._wait_timer: asyncio.TimerHandle | None = None
+        self._transcript_processing_lock = asyncio.Lock()
+
+        # self._eou_timer_task: asyncio.Task | None = None
 
     async def start(self) -> None:
         global_event_emitter.on("speech_started", self.on_speech_started_stt)
@@ -98,15 +106,103 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
     async def on_vad_event(self, vad_response: VADResponse) -> None:
         """Handle VAD events"""
         if vad_response.event_type == VADEventType.START_OF_SPEECH:
+            # If we're waiting for more speech and user starts speaking again
+            if self._waiting_for_more_speech:
+                await self._handle_continued_speech()
             await self.on_speech_started()
         elif vad_response.event_type == VADEventType.END_OF_SPEECH:
             self.on_speech_stopped()
 
+    async def _handle_continued_speech(self) -> None:
+        """Handle when user continues speaking while we're waiting"""
+        # Cancel the wait timer
+        if self._wait_timer:
+            self._wait_timer.cancel()
+            self._wait_timer = None
+        
+        self._waiting_for_more_speech = False
+
     async def on_stt_transcript(self, stt_response: STTResponse) -> None:
-        """Handle STT transcript events"""
+        """Handle STT transcript events with enhanced EOU logic"""
         if stt_response.event_type == SpeechEventType.FINAL:
             user_text = stt_response.data.text
-            await self._process_final_transcript(user_text)
+            await self._process_transcript_with_eou(user_text)
+
+    async def _process_transcript_with_eou(self, new_transcript: str) -> None:
+        """Enhanced transcript processing with EOU-based decision making"""
+        async with self._transcript_processing_lock:
+            # Append new transcript to accumulated transcript
+            if self._accumulated_transcript:
+                self._accumulated_transcript += " " + new_transcript
+            else:
+                self._accumulated_transcript = new_transcript
+            
+            # Check EOU with accumulated transcript
+            is_eou = await self._check_end_of_utterance(self._accumulated_transcript)
+            
+            if is_eou:
+                await self._finalize_transcript_and_respond()
+            else:
+                await self._wait_for_additional_speech()
+
+    async def _check_end_of_utterance(self, transcript: str) -> bool:
+        """Check if the current transcript represents end of utterance"""
+        if not self.turn_detector:
+            # If no EOU detector, assume it's always end of utterance
+            return True
+        
+        # Create temporary chat context for EOU detection
+        temp_context = self.agent.chat_context.copy()
+        temp_context.add_message(role=ChatRole.USER, content=transcript)
+        
+        cascading_metrics_collector.on_eou_start()
+        is_eou = self.turn_detector.detect_end_of_utterance(temp_context)
+        cascading_metrics_collector.on_eou_complete()
+        
+        return is_eou
+
+    async def _wait_for_additional_speech(self) -> None:
+        """Wait for additional speech within the timeout period"""
+
+        if self._waiting_for_more_speech:
+            # Already waiting, extend the timer
+            if self._wait_timer:
+                self._wait_timer.cancel()
+        
+        self._waiting_for_more_speech = True
+        
+        # Set timer for speech timeout
+        loop = asyncio.get_event_loop()
+        self._wait_timer = loop.call_later(
+            self._speech_wait_timeout,
+            lambda: asyncio.create_task(self._on_speech_timeout())
+        )
+        
+
+    async def _on_speech_timeout(self) -> None:
+        """Handle timeout when no additional speech is detected"""
+        async with self._transcript_processing_lock:
+            if not self._waiting_for_more_speech:
+                return  # Already processed or cancelled
+            
+            self._waiting_for_more_speech = False
+            self._wait_timer = None
+            
+            await self._finalize_transcript_and_respond()
+
+    async def _finalize_transcript_and_respond(self) -> None:
+        """Finalize the accumulated transcript and generate response"""
+        if not self._accumulated_transcript.strip():
+            return
+        
+        final_transcript = self._accumulated_transcript.strip()
+        logger.info(f"Finalizing transcript: '{final_transcript}'")
+        
+        # Reset accumulated transcript
+        self._accumulated_transcript = ""
+        
+        # Process the final transcript
+        await self._process_final_transcript(final_transcript)
 
     async def _process_final_transcript(self, user_text: str) -> None:
         """Process final transcript with EOU detection and response generation"""
@@ -130,27 +226,35 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         )
 
         await self.on_turn_start(user_text)
-        
-        async def generate_response_after_delay(delay: float):
-            await asyncio.sleep(delay)
-            if not asyncio.current_task().done():
-                 await self._generate_and_synthesize_response(user_text)
 
-        if self.turn_detector:
-            cascading_metrics_collector.on_eou_start()
-            eou_detected = self.turn_detector.detect_end_of_utterance(
-                self.agent.chat_context)
-            cascading_metrics_collector.on_eou_complete()
+        # Generate response
+        asyncio.create_task(self._generate_and_synthesize_response(user_text))
 
-            if eou_detected:
-                asyncio.create_task(
-                    self._generate_and_synthesize_response(user_text))
-            else:
-                self._eou_timer_task = asyncio.create_task(generate_response_after_delay(2.0))
-                # cascading_metrics_collector.complete_current_turn()
-        else:
-            asyncio.create_task(
-                self._generate_and_synthesize_response(user_text))
+        # Async helper: waits before generating a response (used if utterance isn't clearly ended)
+        # async def generate_response_after_delay(delay: float):
+        #     await asyncio.sleep(delay)
+        #     if not asyncio.current_task().done():
+        #         await self._generate_and_synthesize_response(user_text)
+
+        # If turn detection is enabled
+        # if self.turn_detector:
+        #     cascading_metrics_collector.on_eou_start()
+        #     eou_detected = self.turn_detector.detect_end_of_utterance(
+        #         self.agent.chat_context)
+        #     cascading_metrics_collector.on_eou_complete()
+
+        #     If user finished speaking → respond immediately
+        #     if eou_detected:
+        #         asyncio.create_task(
+        #             self._generate_and_synthesize_response(user_text))
+        #     Else → start a 2s timer, then respond if no speech continues
+        #     else:
+        #         self._eou_timer_task = asyncio.create_task(generate_response_after_delay(2.0))
+        #         # cascading_metrics_collector.complete_current_turn()
+        # else:
+        #     # If no turn detection, always respond immediately
+        #     asyncio.create_task(
+        #         self._generate_and_synthesize_response(user_text))
 
         await self.on_turn_end()
 
@@ -399,12 +503,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
     def on_speech_stopped_stt(self, event_data: Any) -> None:
         pass
 
-    async def on_speech_started(self) -> None:
-        if self._eou_timer_task and not self._eou_timer_task.done():
-            self._eou_timer_task.cancel()
-            self._eou_timer_task = None
-            cascading_metrics_collector.complete_current_turn()
-            
+    async def on_speech_started(self) -> None:       
         cascading_metrics_collector.on_user_speech_start()
 
         if self.user_speech_callback:
@@ -424,6 +523,12 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         logger.info("Interrupting TTS and LLM generation")
 
         self._is_interrupted = True
+
+        # Cancel any waiting timers
+        if self._wait_timer:
+            self._wait_timer.cancel()
+            self._wait_timer = None
+        self._waiting_for_more_speech = False
 
         if self.tts:
             await self.tts.interrupt()
