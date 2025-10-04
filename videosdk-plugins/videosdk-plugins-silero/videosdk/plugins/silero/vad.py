@@ -7,6 +7,8 @@ import asyncio
 from scipy import signal
 from .onnx_runtime import VadModelWrapper, SAMPLE_RATES
 from videosdk.agents.vad import VAD as BaseVAD, VADResponse, VADEventType, VADData
+import logging
+logger = logging.getLogger(__name__)
 
 
 class SileroVAD(BaseVAD):
@@ -196,7 +198,41 @@ class SileroVAD(BaseVAD):
     async def aclose(self) -> None:
         """Cleanup resources"""
         try:
+            logger.info("SileroVAD cleaning up")
             self._input_accumulator = np.array([], dtype=np.int16)
             self._inference_accumulator = np.array([], dtype=np.float32)
+            if hasattr(self, '_model') and self._model is not None:
+                try:
+                    if hasattr(self._model, '_hidden_state'):
+                        del self._model._hidden_state
+                        self._model._hidden_state = None
+                    if hasattr(self._model, '_prev_context'):
+                        del self._model._prev_context
+                        self._model._prev_context = None
+                    if hasattr(self._model, '_model_session'):
+                        self._model._model_session = None
+                    del self._model
+                    self._model = None
+                    logger.info("SileroVAD model cleaned up")
+                except Exception as e:
+                    logger.error(f"Error cleaning up SileroVAD model: {e}")
+
+            if hasattr(self, '_session') and self._session is not None:
+                try:
+                    del self._session
+                    self._session = None
+                    logger.info("SileroVAD ONNX session cleaned up")
+                except Exception as e:
+                    logger.error(f"Error cleaning up SileroVAD ONNX session: {e}")
+
+            try:
+                import gc
+                gc.collect()
+                logger.info("SileroVAD garbage collection completed")
+            except Exception as e:
+                logger.error(f"Error during SileroVAD garbage collection: {e}")
+                
+            logger.info("SileroVAD cleaned up")
+            await super().aclose()
         except Exception as e:
             self.emit("error", f"Error during VAD cleanup: {str(e)}")

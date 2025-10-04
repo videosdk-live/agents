@@ -185,3 +185,34 @@ class NamoTurnDetectorV1(EOU):
             logger.error(f"Error in EOU detection: {e}")
             self.emit("error", f"Error in EOU detection: {str(e)}")
             return False
+    
+    async def aclose(self) -> None:
+        """Cleanup ONNX model and tokenizer from memory"""
+        logger.info("Cleaning up NamoTurnDetectorV1 model resources")
+        
+        if hasattr(self, 'session') and self.session is not None:
+            try:
+                del self.session
+                self.session = None
+                logger.info("Namo ONNX session cleaned up")
+            except Exception as e:
+                logger.error(f"Error cleaning up Namo ONNX session: {e}")
+        
+        if hasattr(self, 'tokenizer') and self.tokenizer is not None:
+            try:
+                del self.tokenizer
+                self.tokenizer = None
+                logger.info("Namo tokenizer cleaned up")
+            except Exception as e:
+                logger.error(f"Error cleaning up Namo tokenizer: {e}")
+        self.language = None
+        
+        try:
+            import gc
+            gc.collect()
+            logger.info("Garbage collection completed")
+        except Exception as e:
+            logger.error(f"Error during garbage collection: {e}")
+        
+        logger.info("NamoTurnDetectorV1 cleanup completed")
+        await super().aclose()
