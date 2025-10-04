@@ -73,10 +73,10 @@ def remove_version_files(output_dir):
         print(f"Warning: Could not remove version files: {e}")
 
 
-def flatten_plugin_docs(plugin_output_dir, plugin_name):
+def flatten_plugin_docs(plugin_output_dir, plugin_folder_name):
     """Flatten the plugin documentation structure by moving files up from nested directories."""
     try:
-        nested_path = plugin_output_dir / "videosdk" / "plugins" / plugin_name
+        nested_path = plugin_output_dir / "videosdk" / "plugins" / plugin_folder_name
 
         if nested_path.exists():
             for html_file in nested_path.glob("*.html"):
@@ -87,10 +87,10 @@ def flatten_plugin_docs(plugin_output_dir, plugin_name):
 
             shutil.rmtree(plugin_output_dir / "videosdk")
         else:
-            print(f"Nested path not found for {plugin_name}: {nested_path}")
+            print(f"Nested path not found for {plugin_folder_name}: {nested_path}")
 
     except Exception as e:
-        print(f"Error flattening docs for {plugin_name}: {e}")
+        print(f"Error flattening docs for {plugin_folder_name}: {e}")
 
 
 def flatten_agents_docs(agents_output_dir):
@@ -416,12 +416,14 @@ def build_plugin_docs(root_dir, docs_dir, python_executable):
             continue
 
         plugin_name = plugin_dir.name.replace("videosdk-plugins-", "")
-        plugin_path = plugin_dir / "videosdk" / "plugins" / plugin_name
+        # Convert hyphens to underscores for the folder path (Python module naming)
+        plugin_folder_name = plugin_name.replace("-", "_")
+        plugin_path = plugin_dir / "videosdk" / "plugins" / plugin_folder_name
 
         if plugin_path.exists():
             output_dir = docs_dir / f"plugins-{plugin_name}"
             success = build_docs_for_path(
-                plugin_path, output_dir, plugin_name, python_executable)
+                plugin_path, output_dir, plugin_folder_name, python_executable)
 
             if success:
                 print(f"Successfully built documentation for {plugin_name}")
