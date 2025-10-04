@@ -284,3 +284,4 @@ class OpenAILLM(LLM):
         await self.cancel_current_generation()
         if self._client:
             await self._client.close()
+        await super().aclose()

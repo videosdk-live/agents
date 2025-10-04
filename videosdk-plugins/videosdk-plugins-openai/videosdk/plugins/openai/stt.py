@@ -430,6 +430,7 @@ class OpenAISTT(BaseSTT):
             self._session = None
             
         await self.client.close()
+        await super().aclose()
 
     async def _ensure_ws_connection(self):
         """Ensure WebSocket is connected, reconnect if necessary"""

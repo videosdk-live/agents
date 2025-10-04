@@ -295,3 +295,4 @@ class AssemblyAISTT(BaseSTT):
         if self._session:
             await self._session.close()
             self._session = None
+        await super().aclose()

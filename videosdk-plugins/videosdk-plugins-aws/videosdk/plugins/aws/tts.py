@@ -253,8 +253,8 @@ class AWSPollyTTS(TTS):
 
     async def aclose(self):
         """Close the TTS connection"""
-        pass
-
+        await super().aclose()
+        
     async def interrupt(self) -> None:
         """Interrupt the TTS audio stream"""
         if self.audio_track:

@@ -155,3 +155,4 @@ class NavanaSTT(BaseSTT):
         """Cleans up resources by closing the SDK connection."""
         if self._connection_started:
             await self.client.close_connection()
+        await super().aclose()

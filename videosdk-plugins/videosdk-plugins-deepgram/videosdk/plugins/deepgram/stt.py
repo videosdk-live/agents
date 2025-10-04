@@ -194,16 +194,23 @@ class DeepgramSTT(BaseSTT):
         """Cleanup resources"""
         if self._ws_task:
             self._ws_task.cancel()
+            logger.info("DeepgramSTT WebSocket task cancelled")
             try:
                 await self._ws_task
             except asyncio.CancelledError:
                 pass
             self._ws_task = None
+            logger.info("DeepgramSTT WebSocket task cleared")
 
         if self._ws:
             await self._ws.close()
+            logger.info("DeepgramSTT WebSocket closed")
             self._ws = None
 
         if self._session:
             await self._session.close()
+            logger.info("DeepgramSTT cleaned up")
             self._session = None
+        
+        # Call base class cleanup
+        await super().aclose()

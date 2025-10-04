@@ -309,3 +309,4 @@ class GoogleLLM(LLM):
 
     async def aclose(self) -> None:
         await self.cancel_current_generation()
+        await super().aclose()
