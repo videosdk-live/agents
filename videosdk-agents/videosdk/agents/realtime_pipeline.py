@@ -162,6 +162,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
 
     async def cleanup(self):
         """Cleanup resources"""
+        logger.info("Cleaning up realtime pipeline")
         if hasattr(self, 'room') and self.room is not None:
             try:
                 await self.room.leave()
@@ -172,5 +173,34 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
                     await self.room.cleanup()
             except Exception as e:
                 logger.error(f"Error while cleaning up room: {e}")
-        if hasattr(self, 'model'):
-            await self.model.aclose()
+            self.room = None
+        
+        if hasattr(self, 'model') and self.model is not None:
+            try:
+                await self.model.aclose()
+            except Exception as e:
+                logger.error(f"Error while closing model during cleanup: {e}")
+            self.model = None
+        
+        if hasattr(self, 'avatar') and self.avatar is not None:
+            try:
+                if hasattr(self.avatar, 'cleanup'):
+                    await self.avatar.cleanup()
+                elif hasattr(self.avatar, 'aclose'):
+                    await self.avatar.aclose()
+            except Exception as e:
+                logger.error(f"Error while cleaning up avatar: {e}")
+            self.avatar = None
+        
+        if hasattr(self, 'denoise') and self.denoise is not None:
+            try:
+                await self.denoise.aclose()
+            except Exception as e:
+                logger.error(f"Error while cleaning up denoise: {e}")
+            self.denoise = None
+        
+        self.agent = None
+        self.vision = False
+        
+        logger.info("Realtime pipeline cleaned up")
+        await super().cleanup()

@@ -6,7 +6,8 @@ from enum import Enum
 from typing import Any, Awaitable, Callable, Literal, Optional
 from pydantic import BaseModel  
 from ..event_emitter import EventEmitter
-
+import logging
+logger = logging.getLogger(__name__)
 
 class SpeechEventType(str, Enum):
     """Type of speech event"""
@@ -87,7 +88,16 @@ class STT(EventEmitter[Literal["error"]]):
 
     async def aclose(self) -> None:
         """Cleanup resources"""
-        pass
+        logger.info(f"Cleaning up STT: {self.label}")
+        self._transcript_callback = None
+        try:
+            import gc
+            gc.collect()
+            logger.info(f"STT garbage collection completed: {self.label}")
+        except Exception as e:
+            logger.error(f"Error during STT garbage collection: {e}")
+        
+        logger.info(f"STT cleanup completed: {self.label}")
     
     async def __aenter__(self) -> STT:
         return self

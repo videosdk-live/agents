@@ -219,3 +219,31 @@ class TurnDetector(EOU):
             logger.error(f"Error during EOU detection: {e}")
             self.emit("error", f"Error during EOU detection: {str(e)}")
             return False
+    
+    async def aclose(self) -> None:
+        """Cleanup ONNX model and tokenizer from memory"""
+        logger.info("Cleaning up TurnDetector model resources")
+        if hasattr(self, 'session') and self.session is not None:
+            try:
+                del self.session
+                self.session = None
+                logger.info("ONNX session cleaned up")
+            except Exception as e:
+                logger.error(f"Error cleaning up ONNX session: {e}")
+
+        if hasattr(self, 'tokenizer') and self.tokenizer is not None:
+            try:
+                del self.tokenizer
+                self.tokenizer = None
+                logger.info("Tokenizer cleaned up")
+            except Exception as e:
+                logger.error(f"Error cleaning up tokenizer: {e}")        
+        try:
+            import gc
+            gc.collect()
+            logger.info("Garbage collection completed")
+        except Exception as e:
+            logger.error(f"Error during garbage collection: {e}")
+        
+        logger.info("TurnDetector cleanup completed")
+        await super().aclose()

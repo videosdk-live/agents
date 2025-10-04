@@ -4,6 +4,8 @@ import asyncio
 
 from .event_emitter import EventEmitter
 from .room.audio_stream import CustomAudioStreamTrack
+import logging
+logger = logging.getLogger(__name__)
 
 class Pipeline(EventEmitter[Literal["start"]], ABC):
     """
@@ -70,3 +72,21 @@ class Pipeline(EventEmitter[Literal["start"]], ABC):
         Send a message to the pipeline.
         """
         pass
+    
+    async def cleanup(self) -> None:
+        """
+        Cleanup pipeline resources.
+        Base implementation - subclasses should override and call super().cleanup()
+        """
+        self.loop = None
+        self.audio_track = None
+        self._wake_up_callback = None
+        logger.info("Pipeline cleaned up")
+    
+    async def leave(self) -> None:
+        """
+        Leave the pipeline.
+        Base implementation - subclasses should override if needed.
+        """
+        logger.info("Leaving pipeline")
+        await self.cleanup()

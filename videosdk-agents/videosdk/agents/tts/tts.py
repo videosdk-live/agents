@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from typing import Any, AsyncIterator, Literal, Optional, Callable, Awaitable
-
 from ..event_emitter import EventEmitter
+import logging
+logger = logging.getLogger(__name__)
 
 class TTS(EventEmitter[Literal["error"]]):
     """Base class for Text-to-Speech implementations"""
@@ -70,7 +71,15 @@ class TTS(EventEmitter[Literal["error"]]):
 
     async def aclose(self) -> None:
         """Cleanup resources"""
-        pass
+        logger.info(f"Cleaning up TTS: {self.label}")
+        self._first_audio_callback = None
+        try:
+            import gc
+            gc.collect()
+        except Exception as e:
+            logger.error(f"Error during TTS garbage collection: {e}")
+        
+        logger.info(f"TTS cleanup completed: {self.label}")
     
     async def __aenter__(self) -> TTS:
         return self

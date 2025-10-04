@@ -168,3 +168,4 @@ class SarvamAILLM(LLM):
         await self.cancel_current_generation()
         if self._client:
             await self._client.aclose()
+        await super().aclose()

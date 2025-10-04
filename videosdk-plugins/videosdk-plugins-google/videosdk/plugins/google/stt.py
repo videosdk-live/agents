@@ -268,3 +268,4 @@ class SpeechStream:
                 await self._stream_task
             except asyncio.CancelledError:
                 pass
+        await super().aclose()

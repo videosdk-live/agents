@@ -1,3 +1,4 @@
+from functools import partial
 import logging
 from videosdk import (
     VideoSDK,
@@ -200,31 +201,23 @@ class VideoSDKHandler:
         if self._left:
             logger.info("Meeting already left")
             return
+        
+        logger.info("Leaving meeting and cleaning up resources")
         self._left = True
-        for audio_task in list(self.audio_listener_tasks.values()):
-            try:
-                audio_task.cancel()
-            except Exception:
-                pass
-        for video_task in list(self.video_listener_tasks.values()):
-            try:
-                video_task.cancel()
-            except Exception:
-                pass
-        if self.traces_flow_manager:
-            try:
-                self.traces_flow_manager.agent_meeting_end()
-            except Exception as e:
-                logger.error(f"Error while ending agent_meeting_end span: {e}")
+
         if self.recording:
             try:
                 await self.stop_and_merge_recordings()
             except Exception as e:
                 logger.error(f"Error stopping/merging recordings: {e}")
+        
         try:
-            self.meeting.leave()
+            if self.meeting:
+                self.meeting.leave()
         except Exception as e:
             logger.error(f"Error leaving meeting: {e}")
+        
+        await self.cleanup()
 
     def on_error(self, data):
         """
@@ -273,8 +266,11 @@ class VideoSDKHandler:
             except Exception as e:
                 logger.error(
                     f"Error in session end callback during meeting left: {e}")
-        if self.participants_data:
-            del self.participants_data
+        
+        if hasattr(self, 'participants_data') and self.participants_data:
+            self.participants_data.clear()
+        
+        self._session_ended = True
 
     def _is_agent_participant(self, participant: Participant) -> bool:
         """
@@ -324,15 +320,19 @@ class VideoSDKHandler:
 
         logger.info(f"Ending session: {reason}")
 
-        # Call the session end callback if provided
         if self.on_session_end:
+            logger.info(f"Calling session end callback with reason: {reason}")
             try:
                 self.on_session_end(reason)
+                logger.info("Session end callback completed successfully")
             except Exception as e:
                 logger.error(f"Error in session end callback: {e}")
+        else:
+            logger.warning("No session end callback configured")
 
-        # Leave the meeting FIRST, then mark session as ended
+        print("Leaving meeting calling from end_session")
         await self.leave()
+        logger.info("Meeting left called from end_session")
 
         # Mark session as ended AFTER leaving
         self._session_ended = True
@@ -443,25 +443,38 @@ class VideoSDKHandler:
             participant (Participant): The participant that left.
         """
         logger.info(f"Participant left: {participant.display_name}")
+        
         if participant.id in self.audio_listener_tasks:
-            self.audio_listener_tasks[participant.id].cancel()
-            del self.audio_listener_tasks[participant.id]
+            try:
+                self.audio_listener_tasks[participant.id].cancel()
+                del self.audio_listener_tasks[participant.id]
+            except Exception as e:
+                logger.error(f"Error cancelling audio listener task for participant {participant.id}: {e}")
+                
         if participant.id in self.video_listener_tasks:
-            self.video_listener_tasks[participant.id].cancel()
-            del self.video_listener_tasks[participant.id]
+            try:
+                self.video_listener_tasks[participant.id].cancel()
+                del self.video_listener_tasks[participant.id]
+            except Exception as e:
+                logger.error(f"Error cancelling video listener task for participant {participant.id}: {e}")
+        
+        if participant.id in self.participants_data:
+            del self.participants_data[participant.id]
+        
         global_event_emitter.emit(
             "PARTICIPANT_LEFT", {"participant": participant})
 
         # Update participant count and check if session should end
         self._update_non_agent_participant_count()
-        if (
-            self._non_agent_participant_count == 0
-            and self.auto_end_session
-            and self.session_timeout_seconds is not None
-        ):
-            logger.info(
-                "All non-agent participants have left, scheduling session end")
-            self._schedule_session_end(self.session_timeout_seconds)
+        
+        if self._non_agent_participant_count == 0 and self.auto_end_session:
+            if self.session_timeout_seconds is not None and self.session_timeout_seconds > 0:
+                logger.info(
+                    f"All non-agent participants have left, scheduling session end in {self.session_timeout_seconds} seconds")
+                self._schedule_session_end(self.session_timeout_seconds)
+            else:
+                logger.info("All non-agent participants have left, ending session immediately")
+                asyncio.create_task(self._end_session("all_participants_left"))
 
     async def add_audio_listener(self, stream: Stream):
         """
@@ -577,8 +590,70 @@ class VideoSDKHandler:
         """
         Clean up resources.
         """
-        if hasattr(self, "audio_track"):
-            await self.audio_track.cleanup()
+        logger.info("Starting room cleanup")
+        
+        self._cancel_session_end_task()
+        
+        for task_id, task in list(self.audio_listener_tasks.items()):
+            try:
+                if not task.done():
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+            except Exception as e:
+                logger.error(f"Error cancelling audio listener task {task_id}: {e}")
+        self.audio_listener_tasks.clear()
+        
+        for task_id, task in list(self.video_listener_tasks.items()):
+            try:
+                if not task.done():
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+            except Exception as e:
+                logger.error(f"Error cancelling video listener task {task_id}: {e}")
+        self.video_listener_tasks.clear()
+        
+        if hasattr(self, "audio_track") and self.audio_track:
+            try:
+                await self.audio_track.cleanup()
+            except Exception as e:
+                logger.error(f"Error cleaning up audio track: {e}")
+            self.audio_track = None
+            
+        if hasattr(self, "agent_audio_track") and self.agent_audio_track:
+            try:
+                await self.agent_audio_track.cleanup()
+            except Exception as e:
+                logger.error(f"Error cleaning up agent audio track: {e}")
+            self.agent_audio_track = None
+        
+        if hasattr(self, "traces_flow_manager") and self.traces_flow_manager:
+            try:
+                self.traces_flow_manager.agent_meeting_end()
+            except Exception as e:
+                logger.error(f"Error ending traces flow manager: {e}")
+            self.traces_flow_manager = None
+        
+        self.participants_data.clear()
+        self._participant_joined_events.clear()
+        self.meeting = None
+        self.pipeline = None
+        self.custom_camera_video_track = None
+        self.custom_microphone_audio_track = None
+        self.audio_sinks = None
+        self.on_room_error = None
+        self.on_session_end = None        
+        self._session_ended = True
+        self._session_id = None
+        self._session_id_collected = False
+        self._non_agent_participant_count = 0
+        
+        logger.info("Room cleanup completed")
 
     async def _collect_session_id(self) -> None:
         """

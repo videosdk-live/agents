@@ -274,3 +274,4 @@ class AzureSTT(BaseSTT):
 
         await self._cleanup_speech_processor()
         logger.info("Azure STT closed")
+        await super().aclose()

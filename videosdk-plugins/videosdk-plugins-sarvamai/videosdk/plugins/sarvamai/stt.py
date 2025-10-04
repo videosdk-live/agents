@@ -143,3 +143,4 @@ class SarvamAISTT(STT):
 
         if self._http_client:
             await self._http_client.aclose()
+        await super().aclose()

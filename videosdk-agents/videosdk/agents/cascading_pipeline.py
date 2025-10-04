@@ -215,12 +215,40 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
 
     async def cleanup(self) -> None:
         """Cleanup all pipeline components"""
+        logger.info("Cleaning up cascading pipeline")
         if self.stt:
             await self.stt.aclose()
+            self.stt = None
         if self.llm:
             await self.llm.aclose()
+            self.llm = None
         if self.tts:
             await self.tts.aclose()
+            self.tts = None
+        if self.vad:
+            await self.vad.aclose()
+            self.vad = None
+        if self.turn_detector:
+            await self.turn_detector.aclose()
+            self.turn_detector = None
+        if self.denoise:
+            await self.denoise.aclose()
+            self.denoise = None        
+        if self.conversation_flow:
+            try:
+                await self.conversation_flow.cleanup()
+            except Exception as e:
+                logger.error(f"Error cleaning up conversation flow: {e}")
+        
+        self.agent = None
+        self.conversation_flow = None
+        self.avatar = None
+        logger.info("Cascading pipeline cleaned up")
+        await super().cleanup()
+    
+    async def leave(self) -> None:
+        """Leave the cascading pipeline"""
+        await self.cleanup()
 
     def get_component_configs(self) -> dict[str, dict[str, Any]]:
         """Return a dictionary of component configurations (STT, LLM, TTS) with their instance attributes.

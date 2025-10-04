@@ -10,7 +10,8 @@ from pydantic import BaseModel, Field
 from .. import images
 from ..images import EncodeOptions, ResizeOptions
 from ..utils import FunctionTool, is_function_tool, get_tool_info
-
+import logging
+logger = logging.getLogger(__name__)
 
 class ChatRole(str, Enum):
     """
@@ -392,3 +393,29 @@ class ChatContext:
                     id=item_data["id"]
                 ))
         return cls(items)
+
+    def cleanup(self) -> None:
+        """
+        Clear all chat context items and references to free memory.
+        """
+        logger.info(f"Cleaning up ChatContext with {len(self._items)} items")
+        for item in self._items:
+            if isinstance(item, ChatMessage):
+                if isinstance(item.content, list):
+                    for content_item in item.content:
+                        if isinstance(content_item, ImageContent):
+                            content_item.image = None
+                item.content = None
+            elif isinstance(item, FunctionCall):
+                item.arguments = None
+            elif isinstance(item, FunctionCallOutput):
+                item.output = None
+        self._items.clear()
+        try:
+            import gc
+            gc.collect()
+            logger.info("ChatContext garbage collection completed")
+        except Exception as e:
+            logger.error(f"Error during ChatContext garbage collection: {e}")
+        
+        logger.info("ChatContext cleanup completed")
