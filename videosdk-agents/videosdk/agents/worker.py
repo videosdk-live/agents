@@ -519,6 +519,18 @@ class Worker:
         logger.info(f"Current jobs: {list(self._current_jobs.keys())}")
 
         if job_id in self._current_jobs:
+            # Get job info before removing it
+            job_info = self._current_jobs.get(job_id)
+            
+            # Trigger job context shutdown to properly cleanup agent session and components
+            if job_info and job_info.job:
+                logger.info(f"Triggering job context shutdown for job {job_id}")
+                try:
+                    await job_info.job.shutdown()
+                    logger.info(f"Job context shutdown completed for job {job_id}")
+                except Exception as e:
+                    logger.error(f"Error during job context shutdown for job {job_id}: {e}")
+            
             # Remove job from worker's current jobs
             job_info = self._current_jobs.pop(job_id, None)
             if job_info:

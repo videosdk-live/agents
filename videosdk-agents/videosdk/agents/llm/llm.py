@@ -6,6 +6,8 @@ from pydantic import BaseModel
 from ..event_emitter import EventEmitter
 from .chat_context import ChatContext, ChatRole
 from ..utils import FunctionTool
+import logging
+logger = logging.getLogger(__name__)
 
 
 class LLMResponse(BaseModel):
@@ -82,8 +84,18 @@ class LLM(EventEmitter[Literal["error"]]):
         """
         Cleanup resources.
         """
+        logger.info(f"Cleaning up LLM: {self.label}")
+        
         await self.cancel_current_generation()
-        pass
+        
+        try:
+            import gc
+            gc.collect()
+            logger.info(f"LLM garbage collection completed: {self.label}")
+        except Exception as e:
+            logger.error(f"Error during LLM garbage collection: {e}")
+        
+        logger.info(f"LLM cleanup completed: {self.label}")
 
     async def __aenter__(self) -> LLM:
         """

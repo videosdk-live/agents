@@ -12,6 +12,8 @@ import uuid
 from .llm.chat_context import ChatContext, ChatRole
 from .mcp.mcp_manager import MCPToolManager
 from .mcp.mcp_server import MCPServiceProvider
+import logging
+logger = logging.getLogger(__name__)
 
 class Agent(EventEmitter[Literal["agent_started"]], ABC):
     """
@@ -104,6 +106,25 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
         await self.a2a.unregister()
         self._agent_card = None
 
+    async def cleanup(self) -> None:
+        """Internal Method: Cleanup agent resources"""
+        logger.info("Cleaning up agent resources")        
+        if self.mcp_manager:
+            try:
+                await self.mcp_manager.cleanup()
+                logger.info("MCP manager cleaned up")
+            except Exception as e:
+                logger.error(f"Error cleaning up MCP manager: {e}")
+            self.mcp_manager = None
+
+        self._tools = []
+        self._mcp_servers = []
+        self.chat_context = None
+        self._agent_card = None        
+        if hasattr(self, 'session'):
+            self.session = None        
+        logger.info("Agent cleanup completed")
+    
     @abstractmethod
     async def on_exit(self) -> None:
         """Called when session ends, to be implemented in your custom agent implementation."""

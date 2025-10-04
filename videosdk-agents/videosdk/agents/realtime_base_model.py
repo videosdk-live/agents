@@ -36,5 +36,17 @@ class RealtimeBaseModel(EventEmitter[Union[BaseEventTypes, TEvent]], Generic[TEv
 
     @abstractmethod
     async def aclose(self) -> None:
-        """Cleanup resources"""
+        """Cleanup resources - must be implemented by subclasses"""
         pass
+    
+    async def cleanup(self) -> None:
+        """Cleanup resources - calls aclose for compatibility"""
+        await self.aclose()
+    
+    async def __aenter__(self) -> RealtimeBaseModel:
+        """Async context manager entry"""
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Async context manager exit"""
+        await self.aclose()

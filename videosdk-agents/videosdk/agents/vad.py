@@ -5,8 +5,9 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Awaitable, Callable, Literal, Optional
 from pydantic import BaseModel
-
 from .event_emitter import EventEmitter
+import logging
+logger = logging.getLogger(__name__)
 
 class VADEventType(str, Enum):
     START_OF_SPEECH = "start_of_speech"
@@ -78,7 +79,17 @@ class VAD(EventEmitter[Literal["error", "info"]]):
 
     async def aclose(self) -> None:
         """Cleanup resources"""
-        pass
+        logger.info(f"Cleaning up VAD: {self.label}")
+        
+        self._vad_callback = None        
+        try:
+            import gc
+            gc.collect()
+            logger.info(f"VAD garbage collection completed: {self.label}")
+        except Exception as e:
+            logger.error(f"Error during VAD garbage collection: {e}")
+        
+        logger.info(f"VAD cleanup completed: {self.label}")
     
     async def __aenter__(self) -> VAD:
         return self

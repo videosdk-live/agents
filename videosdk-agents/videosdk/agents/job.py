@@ -287,14 +287,26 @@ class JobContext:
             logger.info("JobContext already shutting down")
             return
         self._is_shutting_down = True
+        logger.info("JobContext shutting down")
         for callback in self._shutdown_callbacks:
             try:
                 await callback()
             except Exception as e:
-                logger.error(f"Error in shutdown callback: {e}")        
+                logger.error(f"Error in shutdown callback: {e}")
+        
+        if self._pipeline:
+            try:
+                await self._pipeline.cleanup()
+            except Exception as e:
+                logger.error(f"Error during pipeline cleanup: {e}")
+            self._pipeline = None
+        
         if self.room:
             try:
-                await self.room.leave()
+                if not getattr(self.room, '_left', False):
+                    await self.room.leave()
+                else:
+                    logger.info("Room already left, skipping room.leave()")
             except Exception as e:
                 logger.error(f"Error during room leave: {e}")
             try:
@@ -303,6 +315,12 @@ class JobContext:
             except Exception as e:
                 logger.error(f"Error during room cleanup: {e}")
             self.room = None
+        
+        self.room_options = None
+        self._loop = None
+        self.videosdk_auth = None
+        self._shutdown_callbacks.clear()
+        logger.info("JobContext cleaned up")
 
     def add_shutdown_callback(
         self, callback: Callable[[], Coroutine[None, None, None]]

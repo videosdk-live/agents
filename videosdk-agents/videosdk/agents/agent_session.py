@@ -252,6 +252,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         """
         Close the agent session.
         """
+        logger.info("Closing agent session")
         if self._closed:
             logger.info("Agent session already closed")
             return
@@ -272,8 +273,35 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
                 traces_flow_manager.end_agent_session_closed()
 
         self._cancel_wake_up_timer()
-        await self.agent.on_exit()
-        await self.pipeline.cleanup()
+        
+        logger.info("Cleaning up agent session")
+        try:
+            await self.agent.on_exit()
+        except Exception as e:
+            logger.error(f"Error in agent.on_exit(): {e}")
+        
+        try:
+            await self.pipeline.cleanup()
+        except Exception as e:
+            logger.error(f"Error cleaning up pipeline: {e}")
+        
+        if self.conversation_flow:
+            try:
+                await self.conversation_flow.cleanup()
+            except Exception as e:
+                logger.error(f"Error cleaning up conversation flow: {e}")
+            self.conversation_flow = None
+        
+        try:
+            await self.agent.cleanup()
+        except Exception as e:
+            logger.error(f"Error cleaning up agent: {e}")
+        
+        self.agent = None
+        self.pipeline = None
+        self.on_wake_up = None
+        self._wake_up_task = None
+        logger.info("Agent session cleaned up")
 
     async def leave(self) -> None:
         """

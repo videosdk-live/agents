@@ -501,3 +501,51 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             if self.agent.session:
                 self.agent.session._emit_agent_state(AgentState.IDLE)
                 self.agent.session._emit_user_state(UserState.IDLE)
+    
+    async def cleanup(self) -> None:
+        """Cleanup conversation flow resources"""
+        logger.info("Cleaning up conversation flow")
+        if self._current_tts_task and not self._current_tts_task.done():
+            self._current_tts_task.cancel()
+            try:
+                await self._current_tts_task
+            except asyncio.CancelledError:
+                pass
+            self._current_tts_task = None
+        
+        if self._current_llm_task and not self._current_llm_task.done():
+            self._current_llm_task.cancel()
+            try:
+                await self._current_llm_task
+            except asyncio.CancelledError:
+                pass
+            self._current_llm_task = None
+        
+        if self._eou_timer_task and not self._eou_timer_task.done():
+            self._eou_timer_task.cancel()
+            try:
+                await self._eou_timer_task
+            except asyncio.CancelledError:
+                pass
+            self._eou_timer_task = None
+        
+        if hasattr(self, 'agent') and self.agent and hasattr(self.agent, 'chat_context') and self.agent.chat_context:
+            try:
+                self.agent.chat_context.cleanup()
+                logger.info("Agent chat context cleaned up")
+            except Exception as e:
+                logger.error(f"Error cleaning up agent chat context: {e}")
+        
+        self.transcription_callback = None
+        self.user_speech_callback = None
+        self.stt = None
+        self.llm = None
+        self.tts = None
+        self.vad = None
+        self.turn_detector = None
+        self.agent = None
+        self.denoise = None
+        self._stt_started = False
+        self._partial_response = ""
+        self._is_interrupted = False
+        logger.info("Conversation flow cleaned up")
