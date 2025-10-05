@@ -31,12 +31,18 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         self.time_base_fraction = Fraction(1, self.sample_rate)
         self.samples = int(AUDIO_PTIME * self.sample_rate)
         self.chunk_size = int(self.samples * self.channels * self.sample_width)
+        self.max_buffer_size = self.chunk_size * 10  # Prevent memory leaks
 
     def interrupt(self):
         self.frame_buffer.clear()
         self.audio_data_buffer.clear()
             
     async def add_new_bytes(self, audio_data: bytes):
+        # Prevent buffer overflow
+        if len(self.audio_data_buffer) + len(audio_data) > self.max_buffer_size:
+            logger.warning(f"Audio buffer overflow, clearing buffer")
+            self.audio_data_buffer.clear()
+        
         self.audio_data_buffer += audio_data
 
         while len(self.audio_data_buffer) >= self.chunk_size:
@@ -109,6 +115,14 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         except Exception as e:
             traceback.print_exc()
             logger.error(f"Error while creating tts->rtc frame: {e}")
+            # Return empty frame on error
+            frame = AudioFrame(format="s16", layout="mono", samples=self.samples)
+            for p in frame.planes:
+                p.update(bytes(p.buffer_size))
+            frame.pts = 0
+            frame.time_base = self.time_base_fraction
+            frame.sample_rate = self.sample_rate
+            return frame
 
     async def cleanup(self):
         self.interrupt()
