@@ -41,7 +41,7 @@ class RoomOptions:
     on_room_error: Optional[Callable[[Any], None]] = None
     # Session management options
     auto_end_session: bool = True
-    session_timeout_seconds: Optional[int] = 30
+    session_timeout_seconds: Optional[int] = 5
     # VideoSDK connection options
     signaling_base_url: Optional[str] = None
 
