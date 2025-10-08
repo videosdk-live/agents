@@ -6,7 +6,7 @@
 <!--END_BANNER_IMAGE-->
 
 # VideoSDK AI Agents
-Open-source framework for developing real-time multimodal conversational AI agents.
+Open-source framework for building real-time multimodal conversational AI agents.
 
 ![PyPI - Version](https://img.shields.io/pypi/v/videosdk-agents)
 [![PyPI Downloads](https://static.pepy.tech/badge/videosdk-agents/month)](https://pepy.tech/projects/videosdk-agents)
@@ -16,9 +16,42 @@ Open-source framework for developing real-time multimodal conversational AI agen
 [![Discord](https://img.shields.io/badge/Discord-Join%20Us-7289DA)](https://discord.com/invite/f2WsNDN9S5)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/videosdk-live/agents)
 
+
+The **VideoSDK AI Agents framework** connects your infrastructure, agent worker, VideoSDK room, and user devices, enabling **real-time, natural voice and multimodal interactions** between users and intelligent agents.
+
+<!-- ![VideoSDK AI Agents High Level Architecture](https://strapi.videosdk.live/uploads/Group_15_1_5610ce9c7e.png) -->
+![VideoSDK AI Agents High Level Architecture](https://cdn.videosdk.live/website-resources/docs-resources/voice_agent_intro.png)
+
+
 ## Overview
 
-The AI Agent SDK is a Python framework built on top of the VideoSDK Python SDK that enables AI-powered agents to join VideoSDK rooms as participants. This SDK serves as a real-time bridge between AI models (like OpenAI and Gemini) and your users, facilitating seamless voice and media interactions.
+The AI Agent SDK is a Python framework built on top of the VideoSDK Python SDK that enables AI-powered agents to join VideoSDK rooms as participants. This SDK serves as a real-time bridge between AI models (like OpenAI or Gemini) and your users, facilitating seamless voice and media interactions.
+
+<table width="100%">
+  <tr>
+    <td width="50%" valign="top" style="padding-left: 20px;">
+      <h3>🎙️ <a href="examples/test_cascading_pipeline.py" target="_blank">Agent with Cascading Pipeline</a></h3>
+      <p>Test an AI Voice Agent that uses a Cascading Pipeline for STT → LLM → TTS.</p>
+    </td>
+    <td width="50%" valign="top" style="padding-left: 20px;">
+      <h3>📞 <a href="examples/sip_agent_example.py" target="_blank">AI Telephony Agent</a></h3>
+      <p>Test an AI Agent that answers and interacts over phone calls using SIP.</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top" style="padding-left: 20px;">
+      <h3>💻 <a href="https://docs.videosdk.live/ai_agents/introduction" target="_blank">Agent Documentation</a></h3>
+      <p>The VideoSDK Agent Official Documentation.</p>
+    </td>
+    <td width="50%" valign="top" style="padding-left: 20px;">
+      <h3>📚 <a href="https://docs.videosdk.live/agent-sdk-reference/agents/" target="_blank">SDK Reference</a></h3>
+      <p>Reference Docs for Agents Framework.</p>
+    </td>
+  </tr>
+</table>
+
+<div style={{marginTop: '1.5rem'}}></div>
+
 
 | #  | Feature                         | Description                                                                 |
 |----|----------------------------------|-----------------------------------------------------------------------------|
@@ -27,10 +60,14 @@ The AI Agent SDK is a Python framework built on top of the VideoSDK Python SDK t
 | 3  | **🧍 Virtual Avatars**               | Add lifelike avatars to enhance interaction and presence using Simli.     |
 | 4  | **🤖 Multi-Model Support**           | Integrate with OpenAI, Gemini, AWS NovaSonic, and more.                    |
 | 5  | **🧩 Cascading Pipeline**            | Integrates with different providers of STT, LLM, and TTS seamlessly.       |
-| 6  | **🧠 Conversational Flow**           | Manages turn detection and VAD for smooth interactions.                    |
-| 7  | **🛠️ Function Tools**               | Extend agent capabilities with event scheduling, expense tracking, and more. |
-| 8  | **🌐 MCP Integration**               | Connect agents to external data sources and tools using Model Context Protocol. |
-| 9  | **🔗 A2A Protocol**                  | Enable agent-to-agent interactions for complex workflows.                  |
+| 6  | **⚡ Realtime Pipeline**         | Use unified realtime models (OpenAI Realtime, AWS Nova, Gemini Live) for lowest latency | 
+| 7  | **🧠 Conversational Flow**           | Manages turn detection and VAD for smooth interactions.                    |
+| 8  | **🛠️ Function Tools**               | Extend agent capabilities with event scheduling, expense tracking, and more. |
+| 9  | **🌐 MCP Integration**               | Connect agents to external data sources and tools using Model Context Protocol. |
+| 10  | **🔗 A2A Protocol**                  | Enable agent-to-agent interactions for complex workflows.                  |
+| 11 | **📊 Observability**             | Built-in OpenTelemetry tracing and metrics collection |  
+| 12 | **🚀 CLI Tool**                  | Run agents locally and test with `videosdk` CLI |  
+
 
 
 > \[!IMPORTANT]
@@ -39,11 +76,6 @@ The AI Agent SDK is a Python framework built on top of the VideoSDK Python SDK t
 >
 > Get instant notifications for new releases and updates. Your support helps us grow and improve VideoSDK!
 
-## Architecture
-
-This architecture shows how AI voice agents connect to VideoSDK meetings. The system links your backend with VideoSDK's platform, allowing AI assistants to interact with users in real-time.
-
-![VideoSDK AI Agents High Level Architecture](https://strapi.videosdk.live/uploads/Group_15_1_5610ce9c7e.png)
 
 ## Pre-requisites
 
@@ -268,6 +300,8 @@ After setting up your AI Agent, you'll need a client application to connect with
 - [Android](https://github.com/videosdk-live/quickstart/tree/main/android-rtc)
 - [Flutter](https://github.com/videosdk-live/quickstart/tree/main/flutter-rtc)
 - [iOS](https://github.com/videosdk-live/quickstart/tree/main/ios-rtc)
+- [Unity](http://github.com/videosdk-live/videosdk-rtc-unity-sdk-example)
+- [IoT](https://github.com/videosdk-live/videosdk-rtc-iot-sdk-example)
 
 When setting up your client application, make sure to use the same meeting ID that your AI Agent is using.
 
@@ -277,82 +311,190 @@ Once you have completed the setup, you can run your AI Voice Agent project using
 ```bash
 python main.py
 ```
+> [!TIP]
+> 
+> **Test Your Agent Instantly with the CLI Tool**
+>
+> Run your agent locally using:
+>
+> ```bash
+> python main.py console
+> ```
+>
+> Experience real-time interactions right from your terminal - no meeting room required!  
+> Speak and listen through your system’s mic and speakers for quick testing and rapid development.
+
+
+### Step 7: Deployment
+
+For deployment options and guide, checkout the official documentation here: [Deployment](https://docs.videosdk.live/ai_agents/deployments/introduction)
+
 ---
 
-- For detailed guides, tutorials, and API references, check out our official [VideoSDK AI Agents Documentation](https://docs.videosdk.live/ai_agents/introduction).
-- To see the framework in action, explore the code in the [Examples](examples/) directory. It is a great place to quickstart.
+<!-- - For detailed guides, tutorials, and API references, check out our official [VideoSDK AI Agents Documentation](https://docs.videosdk.live/ai_agents/introduction).
+- To see the framework in action, explore the code in the [Examples](examples/) directory. It is a great place to quickstart. -->
 
 ## Supported Libraries and Plugins
 
-The framework supports integration with various AI models and tools, including:
+The framework supports integration with various AI models and tools, across multiple categories:
 
 
 | Category                 | Services |
 |--------------------------|----------|
-| **Real-time Models**     | [OpenAI](https://docs.videosdk.live/ai_agents/plugins/realtime/openai) &#124; [Gemini](https://docs.videosdk.live/ai_agents/plugins/realtime/google-live-api) &#124; [AWSNovaSonic](https://docs.videosdk.live/ai_agents/plugins/realtime/aws-nova-sonic) |
-| **Speech-to-Text (STT)** | [OpenAI](https://docs.videosdk.live/ai_agents/plugins/stt/openai) &#124; [Google](https://docs.videosdk.live/ai_agents/plugins/stt/google) &#124; [Sarvam AI](https://docs.videosdk.live/ai_agents/plugins/stt/sarvam-ai) &#124; [Deepgram](https://docs.videosdk.live/ai_agents/plugins/stt/deepgram) &#124; [Cartesia](https://docs.videosdk.live/ai_agents/plugins/stt/cartesia-stt) &#124; [AssemblyAI](https://docs.videosdk.live/ai_agents/plugins/stt/assemblyai) &#124; [Navana](https://docs.videosdk.live/ai_agents/plugins/stt/navana)| 
-| **Language Models (LLM)**| [OpenAI](https://docs.videosdk.live/ai_agents/plugins/llm/openai) &#124; [Google](https://docs.videosdk.live/ai_agents/plugins/llm/google-llm) &#124; [Sarvam AI](https://docs.videosdk.live/ai_agents/plugins/llm/sarvam-ai-llm) &#124; [Anthropic](https://docs.videosdk.live/ai_agents/plugins/llm/anthropic-llm) &#124; [Cerebras](https://docs.videosdk.live/ai_agents/plugins/llm/Cerebras-llm) |
-| **Text-to-Speech (TTS)** | [OpenAI](https://docs.videosdk.live/ai_agents/plugins/tts/openai) &#124; [Google](https://docs.videosdk.live/ai_agents/plugins/tts/google-tts) &#124; [AWS Polly](https://docs.videosdk.live/ai_agents/plugins/tts/aws-polly-tts) &#124; [Sarvam AI](https://docs.videosdk.live/ai_agents/plugins/tts/sarvam-ai-tts) &#124; [ElevenLabs](https://docs.videosdk.live/ai_agents/plugins/tts/eleven-labs) &#124; [Cartesia](https://docs.videosdk.live/ai_agents/plugins/tts/cartesia-tts)  &#124; [Resemble AI](https://docs.videosdk.live/ai_agents/plugins/tts/resemble-ai-tts) &#124; [Smallest AI](https://docs.videosdk.live/ai_agents/plugins/tts/smallestai-tts) &#124; [Speechify](https://docs.videosdk.live/ai_agents/plugins/tts/speechify-tts) &#124; [InWorld](https://docs.videosdk.live/ai_agents/plugins/tts/inworld-ai-tts) &#124; [Neuphonic](https://docs.videosdk.live/ai_agents/plugins/tts/neuphonic-tts) &#124; [Rime AI](https://docs.videosdk.live/ai_agents/plugins/tts/rime-ai-tts) &#124; [Hume AI](https://docs.videosdk.live/ai_agents/plugins/tts/hume-ai-tts) &#124; [Groq](https://docs.videosdk.live/ai_agents/plugins/tts/groq-ai-tts) &#124; [LMNT AI](https://docs.videosdk.live/ai_agents/plugins/tts/lmnt-ai-tts) &#124; [Papla Media](https://docs.videosdk.live/ai_agents/plugins/tts/papla-media) |
+| **Real-time Models**     | [OpenAI](https://docs.videosdk.live/ai_agents/plugins/realtime/openai) &#124; [Gemini](https://docs.videosdk.live/ai_agents/plugins/realtime/google-live-api) &#124; [AWS Nova Sonic](https://docs.videosdk.live/ai_agents/plugins/realtime/aws-nova-sonic) &#124; [Azure Voice Live](https://docs.videosdk.live/ai_agents/plugins/realtime/azure-voice-live)|
+| **Speech-to-Text (STT)** | [OpenAI](https://docs.videosdk.live/ai_agents/plugins/stt/openai) &#124; [Google](https://docs.videosdk.live/ai_agents/plugins/stt/google) &#124; [Azure AI Speech](https://docs.videosdk.live/ai_agents/plugins/stt/azure-ai-stt) &#124; [Azure OpenAI](https://docs.videosdk.live/ai_agents/plugins/stt/azureopenai) &#124; [Sarvam AI](https://docs.videosdk.live/ai_agents/plugins/stt/sarvam-ai) &#124; [Deepgram](https://docs.videosdk.live/ai_agents/plugins/stt/deepgram) &#124; [Cartesia](https://docs.videosdk.live/ai_agents/plugins/stt/cartesia-stt) &#124; [AssemblyAI](https://docs.videosdk.live/ai_agents/plugins/stt/assemblyai) &#124; [Navana](https://docs.videosdk.live/ai_agents/plugins/stt/navana) |
+| **Language Models (LLM)**| [OpenAI](https://docs.videosdk.live/ai_agents/plugins/llm/openai) &#124; [Azure OpenAI](https://docs.videosdk.live/ai_agents/plugins/llm/azureopenai) &#124; [Google](https://docs.videosdk.live/ai_agents/plugins/llm/google-llm) &#124; [Sarvam AI](https://docs.videosdk.live/ai_agents/plugins/llm/sarvam-ai-llm) &#124; [Anthropic](https://docs.videosdk.live/ai_agents/plugins/llm/anthropic-llm) &#124; [Cerebras](https://docs.videosdk.live/ai_agents/plugins/llm/Cerebras-llm) |
+| **Text-to-Speech (TTS)** | [OpenAI](https://docs.videosdk.live/ai_agents/plugins/tts/openai) &#124; [Google](https://docs.videosdk.live/ai_agents/plugins/tts/google-tts) &#124; [AWS Polly](https://docs.videosdk.live/ai_agents/plugins/tts/aws-polly-tts) &#124; [Azure AI Speech](https://docs.videosdk.live/ai_agents/plugins/tts/azure-ai-tts) &#124; [Azure OpenAI](https://docs.videosdk.live/ai_agents/plugins/tts/azureopenai) &#124; [Deepgram](https://docs.videosdk.live/ai_agents/plugins/tts/deepgram) &#124; [Sarvam AI](https://docs.videosdk.live/ai_agents/plugins/tts/sarvam-ai-tts) &#124; [ElevenLabs](https://docs.videosdk.live/ai_agents/plugins/tts/eleven-labs) &#124; [Cartesia](https://docs.videosdk.live/ai_agents/plugins/tts/cartesia-tts) &#124; [Resemble AI](https://docs.videosdk.live/ai_agents/plugins/tts/resemble-ai-tts) &#124; [Smallest AI](https://docs.videosdk.live/ai_agents/plugins/tts/smallestai-tts) &#124; [Speechify](https://docs.videosdk.live/ai_agents/plugins/tts/speechify-tts) &#124; [InWorld](https://docs.videosdk.live/ai_agents/plugins/tts/inworld-ai-tts) &#124; [Neuphonic](https://docs.videosdk.live/ai_agents/plugins/tts/neuphonic-tts) &#124; [Rime AI](https://docs.videosdk.live/ai_agents/plugins/tts/rime-ai-tts) &#124; [Hume AI](https://docs.videosdk.live/ai_agents/plugins/tts/hume-ai-tts) &#124; [Groq](https://docs.videosdk.live/ai_agents/plugins/tts/groq-ai-tts) &#124; [LMNT AI](https://docs.videosdk.live/ai_agents/plugins/tts/lmnt-ai-tts) &#124; [Papla Media](https://docs.videosdk.live/ai_agents/plugins/tts/papla-media) |
 | **Voice Activity Detection (VAD)** | [SileroVAD](https://docs.videosdk.live/ai_agents/plugins/silero-vad) |
-| **Turn Detection Model** | [Turn Detector](https://docs.videosdk.live/ai_agents/plugins/turn-detector) |
-| **Virtual Avatar** | [Simli](https://docs.videosdk.live/ai_agents/plugins/avatar/simli) |
-| **SIP Trunking** | [Twilio](https://docs.videosdk.live/ai_agents/sip) |
-| **Denoise** | [RNNoise](https://docs.videosdk.live/ai_agents/plugins/denoise) |
+| **Turn Detection Model** | [Namo Turn Detector](https://docs.videosdk.live/ai_agents/plugins/namo-turn-detector) |
+| **Virtual Avatar** | [Simli](https://docs.videosdk.live/ai_agents/core-components/avatar) |
+| **Denoise** | [RNNoise](https://docs.videosdk.live/ai_agents/core-components/de-noise) |
+
+> [!TIP]
+> **Installation Examples**
+>
+> ```bash
+> # Install with specific plugins
+> pip install videosdk-agents[openai,elevenlabs,silero]
+>
+> # Install individual plugins
+> pip install videosdk-plugins-anthropic
+> pip install videosdk-plugins-deepgram
+> ```
+
+
 
 ## Examples
 
 Explore the following examples to see the framework in action:
 
-<h2>🤖 AI Voice Agent Demos</h2>
+<h2>🤖 AI Voice Agent Usecases</h2>
 
-<table>
+<table width="100%">
   <tr>
-    <td width="50%" valign="top" style="padding: 10px;">
-      <h3>📞 <a href="https://github.com/videosdk-community/ai-telephony-demo" target="_blank">AI Telephony Agent</a></h3>
+    <td width="50%" valign="top" style="padding-left: 20px;">
+      <h3>📞 <a href="https://github.com/videosdk-community/ai-telephony-demo" target="_blank">AI Telephony Agent Quickstart</a></h3>
       <p>Use case: Hospital appointment booking via a voice-enabled agent.</p>
     </td>
-    <td width="50%" valign="top" style="padding: 10px;">
-      <h3>✈️ <a href="https://github.com/videosdk-community/a2a-mcp-agent" target="_blank">A2A MCP Agent</a></h3>
-      <p>Use case: Ask about available flights & hotels and send email with booking info.</p>
+    <td width="50%" valign="top" style="padding-left: 20px;">
+      <h3>✈️ <a href="https://github.com/videosdk-community/videosdk-whatsapp-ai-calling-agent" target="_blank">AI Whatsapp Agent Quickstart</a></h3>
+      <p>Use case: Ask about available hotel rooms and book on the go.</p>
     </td>
   </tr>
   <tr>
-    <td width="50%" valign="top" style="padding: 10px;">
-      <h3>👨‍🏫 <a href="https://github.com/videosdk-community/ai-avatar-demo" target="_blank">AI Avatar</a></h3>
-      <p>Use case: Answering queries about current weather conditions using an avatar.</p>
+    <td width="50%" valign="top" style="padding-left: 20px;">
+      <h3>👨‍🏫 <a href="https://github.com/videosdk-live/agents-quickstart/tree/main/A2A" target="_blank">Multi Agent System</a></h3>
+      <p>Use case: Customer care agent that transfers loan related to queries to Loan Specialist Agent.</p>
     </td>
-    <td width="50%" valign="top" style="padding: 10px;">
-      <h3>🛒 <a href="https://github.com/videosdk-community/ai-agent-demo/tree/conversational-flow" target="_blank">Conversational Flow Agent</a></h3>
-      <p>Use case: E-commerce scenario with turn detection when interrupting the voice agent.</p>
+    <td width="50%" valign="top" style="padding-left: 20px;">
+      <h3>🛒 <a href="https://github.com/videosdk-live/agents-quickstart/tree/main/RAG" target="_blank">Agent with Knowledge (RAG)</a></h3>
+      <p>Use case: Agent that answers questions based on documentation knowledge.</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top" style="padding-left: 20px;">
+      <h3>👨‍🏫 <a href="https://github.com/videosdk-live/agents/tree/main/examples/mcp_server_examples" target="_blank">Agent with MCP Server</a></h3>
+      <p>Use case: Stock Market Analyst Agent with realtime Market Data Access.</p>
+    </td>
+    <td width="50%" valign="top" style="padding-left: 20px;">
+      <h3>🛒 <a href="https://github.com/videosdk-live/agents-quickstart/tree/main/Virtual%20Avatar" target="_blank">Virtual Avatar Agent</a></h3>
+      <p>Use case: A Virtual Avatar Agent that presents weather forecast. </p>
     </td>
   </tr>
 </table>
 
+## Documentation
+
+For comprehensive guides and API references:
+
+<table width="100%">
+  <tr>
+    <td width="33%" valign="top" style="padding-left: 20px;">
+      <h3>📄 <a href="https://docs.videosdk.live/ai_agents/introduction" target="_blank">Official Documentation</a></h3>
+      <p>Complete framework documentation</p>
+    </td>
+    <td width="33%" valign="top" style="padding-left: 20px;">
+      <h3>📝 <a href="https://docs.videosdk.live/agent-sdk-reference/agents/" target="_blank">API Reference</a></h3>
+      <p>Detailed API documentation</p>
+    </td>
+    <td width="33%" valign="top" style="padding-left: 20px;">
+      <h3>📂 <a href="examples/" target="_blank">Examples Directory</a></h3>
+      <p>Additional code examples</p>
+    </td>
+  </tr>
+</table>
+
+
 ## Contributing
 
-The Agents framework is under active development in a rapidly evolving field. We welcome and appreciate contributions of any kind, be it feedback, bugfixes, features, new plugins and tools, or better documentation. You can file issues under this repo, open a PR, or chat with us in VideoSDK's [Discord community](https://discord.com/invite/f2WsNDN9S5).
+We welcome contributions! Here's how you can help:
 
+<table width="100%">
+  <tr>
+    <td width="25%" valign="top" style="padding-left: 20px;">
+      <h3>🐞 <a href="https://github.com/videosdk-live/agents/issues" target="_blank">Report Issues</a></h3>
+      <p>Open an issue for bugs or feature requests</p>
+    </td>
+    <td width="25%" valign="top" style="padding-left: 20px;">
+      <h3>🔀 <a href="https://github.com/videosdk-live/agents/pulls" target="_blank">Submit PRs</a></h3>
+      <p>Create a pull request with improvements</p>
+    </td>
+    <td width="25%" valign="top" style="padding-left: 20px;">
+      <h3>🛠️ <a href="BUILD_YOUR_OWN_PLUGIN.md" target="_blank">Build Plugins</a></h3>
+      <p>Follow our plugin development guide</p>
+    </td>
+    <td width="25%" valign="top" style="padding-left: 20px;">
+      <h3>💬 <a href="https://discord.com/invite/Gpmj6eCq5u" target="_blank">Join Community</a></h3>
+      <p>Connect with us on Discord</p>
+    </td>
+  </tr>
+</table>
 
-When contributing, consider developing new plugins or enhancing existing ones to expand the framework's capabilities. Your contributions can help integrate more AI models and tools, making the framework even more versatile.
+The framework is under active development, so contributions in the form of new plugins, features, bug fixes, or documentation improvements are highly appreciated.
 
 ### 🛠️ Building Custom Plugins
 
-Want to create your own STT, LLM, or TTS plugin? Check out our comprehensive guide: **[BUILD YOUR OWN PLUGIN ](BUILD_YOUR_OWN_PLUGIN.md)**
+Want to integrate a new AI provider? Check out **[BUILD YOUR OWN PLUGIN](BUILD_YOUR_OWN_PLUGIN.md)** for:
 
-This guide provides:
-- Step-by-step instructions for creating custom plugins
-- Directory structure and file requirements
-- Implementation examples for STT, LLM, and TTS plugins
-- Testing and submission guidelines
-- Reference to existing plugin examples
+- Step-by-step plugin creation guide  
+- Directory structure and file requirements  
+- Implementation examples for STT, LLM, and TTS  
+- Testing and submission guidelines  
 
-We love our contributors! Here's how you can contribute:
+## Community & Support
 
-- [Open an issue](https://github.com/videosdk-live/agents/issues) if you believe you've encountered a bug.
-- Follow the [documentation guide](https://docs.videosdk.live/ai_agents/introduction) to get your local dev environment set up.
-- Make a [pull request](https://github.com/videosdk-live/agents/pull) to add new features/make quality-of-life improvements/fix bugs.
-- Create custom plugins following our [plugin development guide](BUILD_YOUR_OWN_PLUGIN.md).
+Stay connected with VideoSDK:
+
+<table width="100%">
+  <tr>
+    <td width="25%" valign="top" style="padding-left: 20px;">
+      <h3>💬 <a href="https://discord.com/invite/Gpmj6eCq5u" target="_blank">Discord</a></h3>
+      <p>Join our community</p>
+    </td>
+    <td width="25%" valign="top" style="padding-left: 20px;">
+      <h3>🐦 <a href="https://x.com/video_sdk" target="_blank">Twitter</a></h3>
+      <p>@video_sdk</p>
+    </td>
+    <td width="25%" valign="top" style="padding-left: 20px;">
+      <h3>▶️ <a href="https://www.youtube.com/c/VideoSDK" target="_blank">YouTube</a></h3>
+      <p>VideoSDK Channel</p>
+    </td>
+    <td width="25%" valign="top" style="padding-left: 20px;">
+      <h3>🔗 <a href="https://www.linkedin.com/company/video-sdk/" target="_blank">LinkedIn</a></h3>
+      <p>VideoSDK Company</p>
+    </td>
+  </tr>
+</table>
+
+> [!TIP]
+>
+> **Support the Project!** ⭐️  
+> Star the repository, join the community, and help us improve VideoSDK by providing feedback, reporting bugs, or contributing plugins.
+
+---
 
 <a href="https://github.com/videosdk-live/agents/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=videosdk-live/agents" />
 </a>
+
+**<center>Made with ❤️ by The VideoSDK Team</center>**
