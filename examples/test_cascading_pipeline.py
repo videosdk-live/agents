@@ -90,46 +90,13 @@ async def entrypoint(ctx: JobContext):
     session = AgentSession(
         agent=agent, 
         pipeline=pipeline,
-        conversation_flow=conversation_flow,
-        # wake_up=10.0
+        conversation_flow=conversation_flow
     )
 
-    # async def on_wake_up():
-    #     asyncio.create_task(session.reply("Reply to the user."))
-    
-    # session.on_wake_up = on_wake_up
-    shutdown_event = asyncio.Event()
-    
-    async def cleanup_session():
-        print("Cleanup session called")
-        await session.close()
-        shutdown_event.set()  
-    
-    ctx.add_shutdown_callback(cleanup_session)
-
-    def on_session_end(reason: str):
-        print(f"Session ended: {reason}")
-        asyncio.create_task(ctx.shutdown())
-
-    try:
-        await ctx.connect()
-        ctx.room.setup_session_end_callback(on_session_end)
-        print("Session end callback configured")
-        print("Waiting for participant...")
-        await ctx.room.wait_for_participant()
-        print("Participant joined")
-        await session.start()
-        print("Agent is running... (will exit automatically when participants leave)")
-        await shutdown_event.wait()
-        print("Shutdown event received, exiting gracefully...")
-    except KeyboardInterrupt:
-        print("\nShutting down gracefully...")
-    finally:
-        await session.close()
-        await ctx.shutdown()
+    await ctx.run_until_shutdown(session=session,wait_for_participant=True)
 
 def make_context() -> JobContext:
-    room_options = RoomOptions(room_id="<room_id>", name="Sandbox Agent", playground=True, auto_end_session=True, session_timeout_seconds=5)
+    room_options = RoomOptions(room_id="<room_id>", name="Sandbox Agent", playground=True)
     
     return JobContext(
         room_options=room_options

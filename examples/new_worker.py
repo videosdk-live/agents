@@ -102,23 +102,7 @@ async def entrypoint(ctx: JobContext):
         conversation_flow=conversation_flow,
     )
 
-    async def cleanup_session():
-        pass
-
-    ctx.add_shutdown_callback(cleanup_session)
-
-    try:
-        await ctx.connect()
-        print("Waiting for participant...")
-        await ctx.room.wait_for_participant()
-        print("Participant joined")
-        await session.start()
-        await asyncio.Event().wait()
-    except KeyboardInterrupt:
-        print("\nShutting down gracefully...")
-    finally:
-        await session.close()
-        await ctx.shutdown()
+    await ctx.run_until_shutdown(session=session,wait_for_participant=True)
 
 
 def make_context() -> JobContext:

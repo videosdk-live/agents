@@ -46,20 +46,8 @@ async def entrypoint(ctx: JobContext):
     
     session.on_wake_up = on_wake_up
 
-    try:
-        await ctx.connect()
-        print("Waiting for participant...")
-        await ctx.room.wait_for_participant()
-        print("Participant joined")
-        await session.start()
-        print("Session started")        
-        await asyncio.Event().wait()
-    except KeyboardInterrupt:
-        print("\nShutting down gracefully...")
-    finally:
-        await session.close()
-        await ctx.shutdown()
-
+    await ctx.run_until_shutdown(session=session,wait_for_participant=True)
+    
 def make_context() -> JobContext:
     room_options = RoomOptions(room_id="<room_id>", name="Sandbox Agent", playground=True)
     
