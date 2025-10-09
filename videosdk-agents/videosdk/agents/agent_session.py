@@ -242,11 +242,11 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         finally:
             self._reply_in_progress = False
     
-    async def interrupt(self) -> None:
+    def interrupt(self) -> None:
         """
         Interrupt the agent.
         """
-        await self.pipeline.interrupt()
+        self.pipeline.interrupt()
 
     async def close(self) -> None:
         """
