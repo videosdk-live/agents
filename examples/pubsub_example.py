@@ -31,7 +31,7 @@ class PubSubAgent(Agent):
     async def send_pubsub_message(self, message: str):
         """Send a message to the pubsub topic CHAT_MESSAGE"""
         publish_config = PubSubPublishConfig(
-            topic="CHAT_MESSAGE",
+            topic="CHAT",
             message=message
         )
         await self.ctx.room.publish_to_pubsub(publish_config)
@@ -60,24 +60,32 @@ async def entrypoint(ctx: JobContext):
         conversation_flow=conversation_flow,
     )
     
+    shutdown_event = asyncio.Event()
+    
     async def cleanup_session():
         print("Cleaning up session...")
+        await session.close()
+        shutdown_event.set()
     
     ctx.add_shutdown_callback(cleanup_session)
+    
+    def on_session_end(reason: str):
+        print(f"Session ended: {reason}")
+        asyncio.create_task(ctx.shutdown())
 
     try:
         await ctx.connect()
+        ctx.room.setup_session_end_callback(on_session_end)        
         print("Waiting for participant...")
         await ctx.room.wait_for_participant()
         print("Participant joined")
-        await session.start()
-        await asyncio.Event().wait()
         subscribe_config = PubSubSubscribeConfig(
             topic="CHAT",
             cb=on_pubsub_message
         )
         await ctx.room.subscribe_to_pubsub(subscribe_config)
-        await asyncio.Event().wait()
+        await session.start()
+        await shutdown_event.wait()
     except KeyboardInterrupt:
         print("\nShutting down gracefully...")
     finally:
