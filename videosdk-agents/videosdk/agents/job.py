@@ -366,7 +366,10 @@ class JobContext:
         if session:
             async def cleanup_session():
                 logger.info("Cleaning up session...")
-                await session.close()
+                try:
+                    await session.close()
+                except Exception as e:
+                    logger.error(f"Error closing session in cleanup: {e}")
                 shutdown_event.set()
             
             self.add_shutdown_callback(cleanup_session)
@@ -382,20 +385,37 @@ class JobContext:
             asyncio.create_task(self.shutdown())
         
         try:
-            await self.connect()
+            try:
+                await self.connect()
+            except Exception as e:
+                logger.error(f"Error connecting to room: {e}")
+                raise
             
             if self.room:
-                self.room.setup_session_end_callback(on_session_end)
-                logger.info("Session end callback configured")
+                try:
+                    self.room.setup_session_end_callback(on_session_end)
+                    logger.info("Session end callback configured")
+                except Exception as e:
+                    logger.warning(f"Error setting up session end callback: {e}")
+            else:
+                logger.warning("Room not available, session end callback not configured")
             
             if wait_for_participant and self.room:
-                logger.info("Waiting for participant...")
-                await self.room.wait_for_participant()
-                logger.info("Participant joined")
+                try:
+                    logger.info("Waiting for participant...")
+                    await self.room.wait_for_participant()
+                    logger.info("Participant joined")
+                except Exception as e:
+                    logger.error(f"Error waiting for participant: {e}")
+                    raise
             
             if session:
-                await session.start()
-                logger.info("Agent session started")
+                try:
+                    await session.start()
+                    logger.info("Agent session started")
+                except Exception as e:
+                    logger.error(f"Error starting session: {e}")
+                    raise
             
             logger.info("Agent is running... (will exit when session ends or on interrupt)")
             await shutdown_event.wait()
@@ -403,10 +423,20 @@ class JobContext:
             
         except KeyboardInterrupt:
             logger.info("Keyboard interrupt received, shutting down...")
+        except Exception as e:
+            logger.error(f"Unexpected error in run_until_shutdown: {e}")
+            raise
         finally:
             if session:
-                await session.close()
-            await self.shutdown()
+                try:
+                    await session.close()
+                except Exception as e:
+                    logger.error(f"Error closing session in finally: {e}")
+            
+            try:
+                await self.shutdown()
+            except Exception as e:
+                logger.error(f"Error in ctx.shutdown: {e}")
 
     def get_room_id(self) -> str:
         """
