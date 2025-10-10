@@ -491,6 +491,7 @@ class VideoSDKHandler:
             try:
                 await asyncio.sleep(0.01)
                 frame = await stream.track.recv()
+                global_event_emitter.emit("ON_SPEECH_IN", {"frame": frame, "stream": stream})
                 audio_data = frame.to_ndarray()[0]
                 pcm_frame = audio_data.flatten().astype(np.int16).tobytes()
                 if self.pipeline:

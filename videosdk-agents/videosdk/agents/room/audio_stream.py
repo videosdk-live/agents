@@ -6,6 +6,7 @@ import traceback
 from av import AudioFrame
 import numpy as np
 from videosdk import CustomAudioTrack
+from ..event_bus import global_event_emitter
 logger = logging.getLogger(__name__)
 
 
@@ -37,6 +38,7 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         self.audio_data_buffer.clear()
             
     async def add_new_bytes(self, audio_data: bytes):
+        global_event_emitter.emit("ON_SPEECH_OUT", {"audio_data": audio_data})
         self.audio_data_buffer += audio_data
 
         while len(self.audio_data_buffer) >= self.chunk_size:

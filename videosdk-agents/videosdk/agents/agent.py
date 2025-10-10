@@ -96,6 +96,14 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
         """Called when session starts, to be implemented in your custom agent implementation."""
         pass
 
+    def on_speech_in(self, data: dict) -> None:
+        """Called when user speech is detected, to be implemented in your custom agent implementation."""
+        pass
+
+    def on_speech_out(self, data: dict) -> None:
+        """Called when agent speech is generated, to be implemented in your custom agent implementation."""
+        pass
+
     async def register_a2a(self, card: AgentCard) -> None:
         """ Register the agent for A2A communication"""
         self._agent_card = card
