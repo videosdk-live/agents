@@ -13,6 +13,7 @@ import time
 from .job import get_current_job_context
 from .event_emitter import EventEmitter
 from .event_bus import global_event_emitter
+from .background_audio import BackgroundAudioConfig
 import logging
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         pipeline: Pipeline,
         conversation_flow: Optional[ConversationFlow] = None,
         wake_up: Optional[int] = None,
+        background_audio: Optional[BackgroundAudioConfig] = None,
     ) -> None:
         """
         Initialize an agent session.
@@ -36,6 +38,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             pipeline: Pipeline instance to process the agent's operations
             conversation_flow: ConversationFlow instance to manage conversation state
             wake_up: Time in seconds after which to trigger wake-up callback if no speech detected
+            background_audio: Configuration for background audio (optional)
         """
         super().__init__()
         self.agent = agent
@@ -52,6 +55,10 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         self._agent_state: AgentState = AgentState.IDLE
         if hasattr(self.pipeline, 'set_agent'):
             self.pipeline.set_agent(self.agent)
+
+        if background_audio and hasattr(self.pipeline, 'background_audio'):
+            self.pipeline.background_audio = background_audio
+        
         if (
             hasattr(self.pipeline, "set_conversation_flow")
             and self.conversation_flow is not None
