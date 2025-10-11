@@ -14,6 +14,7 @@ from .metrics import realtime_metrics_collector
 from .denoise import Denoise
 import logging
 from .utils import UserState, AgentState
+from .background_audio import BackgroundAudio, BackgroundAudioConfig
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,8 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         self.avatar = avatar
         self.vision = False
         self.denoise = denoise
+        self.background_audio: BackgroundAudioConfig | None = None
+        self._background_audio_player: BackgroundAudio | None = None
         super().__init__()
         self.model.on("error", self.on_model_error)
         self.model.on("realtime_model_transcription", self.on_realtime_model_transcription)
@@ -84,13 +87,15 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         """
         await self.model.connect()
         self.model.on("user_speech_started", self.on_user_speech_started)
+        self.model.on("user_speech_ended", lambda data: asyncio.create_task(self.on_user_speech_ended(data)))
+        self.model.on("agent_speech_started", lambda data: asyncio.create_task(self.on_agent_speech_started(data)))
+        self.model.on("agent_speech_ended",{})
 
     async def send_message(self, message: str) -> None:
         """
         Send a message through the realtime model.
         Delegates to the model's send_message implementation.
         """
-
         await self.model.send_message(message)
 
     async def send_text_message(self, message: str) -> None:
@@ -134,6 +139,8 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         """
         if self.model:
             asyncio.create_task(self.model.interrupt())
+        if self._background_audio_player:
+            asyncio.create_task(self._background_audio_player.stop())
 
     async def leave(self) -> None:
         """
@@ -182,6 +189,9 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
                 logger.error(f"Error while closing model during cleanup: {e}")
             self.model = None
         
+        if self._background_audio_player:
+            await self._stop_background_audio()
+        
         if hasattr(self, 'avatar') and self.avatar is not None:
             try:
                 if hasattr(self.avatar, 'cleanup'):
@@ -201,6 +211,31 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         
         self.agent = None
         self.vision = False
+        self.model = None
+        self.avatar = None
+        self.denoise = None
+        self.background_audio = None
+        self._background_audio_player = None
         
         logger.info("Realtime pipeline cleaned up")
         await super().cleanup()
+
+    async def _stop_background_audio(self):
+        if self._background_audio_player:
+            await self._background_audio_player.stop()
+            self._background_audio_player = None
+
+    async def on_user_speech_ended(self, data: dict) -> None:
+        """
+        Handle agent turn started event
+        """
+        if self.background_audio and self.model.audio_track:
+            self._background_audio_player = BackgroundAudio(self.background_audio, self.model.audio_track)
+            await self._background_audio_player.start()
+
+    async def on_agent_speech_started(self, data: dict) -> None:
+        """
+        Handle agent speech started event
+        """
+        if self.background_audio:
+            await self._stop_background_audio()

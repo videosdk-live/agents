@@ -258,14 +258,6 @@ class VideoSDKHandler:
         """
         logger.info(f"Meeting Left: {data}")
         self._cancel_session_end_task()
-
-        # Handle job cleanup if we have a session end callback
-        if hasattr(self, "on_session_end") and self.on_session_end:
-            try:
-                self.on_session_end("meeting_left")
-            except Exception as e:
-                logger.error(
-                    f"Error in session end callback during meeting left: {e}")
         
         if hasattr(self, 'participants_data') and self.participants_data:
             self.participants_data.clear()
@@ -321,18 +313,13 @@ class VideoSDKHandler:
         logger.info(f"Ending session: {reason}")
 
         if self.on_session_end:
-            logger.info(f"Calling session end callback with reason: {reason}")
             try:
                 self.on_session_end(reason)
-                logger.info("Session end callback completed successfully")
             except Exception as e:
                 logger.error(f"Error in session end callback: {e}")
-        else:
-            logger.warning("No session end callback configured")
 
-        print("Leaving meeting calling from end_session")
+        # Leave the meeting FIRST, then mark session as ended
         await self.leave()
-        logger.info("Meeting left called from end_session")
 
         # Mark session as ended AFTER leaving
         self._session_ended = True
@@ -340,12 +327,32 @@ class VideoSDKHandler:
     def setup_session_end_callback(self, callback):
         """
         Set up the session end callback.
+        
+        This chains callbacks - if there's already a callback set (e.g., from worker),
+        both will be called.
 
         Args:
             callback: Function to call when session ends.
         """
-        self.on_session_end = callback
-        logger.debug("Session end callback set up")
+        existing_callback = self.on_session_end
+        
+        if existing_callback:
+        
+            def chained_callback(reason: str):
+                try:
+                    existing_callback(reason)
+                except Exception as e:
+                    logger.error(f"Error in existing session end callback: {e}")
+                try:
+                    callback(reason)
+                except Exception as e:
+                    logger.error(f"Error in new session end callback: {e}")
+            
+            self.on_session_end = chained_callback
+            logger.debug("Session end callback chained with existing callback")
+        else:
+            self.on_session_end = callback
+            logger.debug("Session end callback set up")
 
     def _schedule_session_end(self, timeout_seconds: int):
         """
@@ -484,6 +491,7 @@ class VideoSDKHandler:
             try:
                 await asyncio.sleep(0.01)
                 frame = await stream.track.recv()
+                global_event_emitter.emit("ON_SPEECH_IN", {"frame": frame, "stream": stream})
                 audio_data = frame.to_ndarray()[0]
                 pcm_frame = audio_data.flatten().astype(np.int16).tobytes()
                 if self.pipeline:

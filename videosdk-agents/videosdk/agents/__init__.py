@@ -58,6 +58,7 @@ from .room.audio_stream import CustomAudioStreamTrack, TeeCustomAudioStreamTrack
 from .event_emitter import EventEmitter
 from .job import WorkerJob, JobContext, RoomOptions, Options
 from .worker import Worker, WorkerOptions, WorkerType
+from .background_audio import BackgroundAudioConfig
 
 # New execution module exports
 from .execution import (
@@ -174,4 +175,5 @@ __all__ = [
     "TaskExecutor",
     "DedicatedInferenceResource",
     "setup_logging",
+    "BackgroundAudioConfig",
 ]

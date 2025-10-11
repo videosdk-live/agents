@@ -78,24 +78,7 @@ async def entrypoint(ctx: JobContext):
         pipeline=pipeline,
     )
     
-    async def cleanup_session():
-        print("Cleaning up session...")
-    
-    ctx.add_shutdown_callback(cleanup_session)
-
-    try:
-        await ctx.connect()
-        print("Waiting for participant...")
-        await ctx.room.wait_for_participant()
-        print("Participant joined")
-        await session.start()
-        print("Voice session started. Awaiting interaction...")
-        await asyncio.Event().wait()
-    except KeyboardInterrupt:
-        print("Shutting down...")
-    finally:
-        await session.close()
-        await ctx.shutdown()
+    await ctx.run_until_shutdown(session=session,wait_for_participant=True)
 
 def make_context() -> JobContext:
     room_options = RoomOptions(room_id="<room_id>", name="Sandbox Agent", playground=True)

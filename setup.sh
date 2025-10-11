@@ -2,17 +2,18 @@
 
 set -e
 
-echo "Setting up VideoSDK Agents..."
-
-echo "📦 Installing dependencies..."
-pip install -r requirements.txt
+echo "Creating virtual environment..."
 
 if [ ! -d "venv" ]; then
-    echo "Creating virtual environment..."
     python3.12 -m venv venv
 fi
 
 source venv/bin/activate
+
+echo "Setting up VideoSDK Agents..."
+
+echo "📦 Installing dependencies..."
+pip install -r requirements.txt
 
 echo "Fixing videosdk namespace..."
 PYTHON_PATH=$(python -c "import videosdk; print(videosdk.__file__)" 2>/dev/null || echo "")
@@ -23,7 +24,7 @@ if [ -n "$PYTHON_PATH" ]; then
     fi
 fi
 
-echo "Installing plugins..."
+echo "Installing VideoSDK plugins..."
 for plugin in videosdk-agents videosdk-plugins/*; do
     if [ -d "$plugin" ] && [ -f "$plugin/pyproject.toml" ]; then
         echo "  Installing $(basename "$plugin")..."

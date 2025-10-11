@@ -1,23 +1,18 @@
 import asyncio
-from typing import AsyncIterator, Optional
-from videosdk import PubSubPublishConfig, PubSubSubscribeConfig
-from videosdk.agents import Agent, AgentSession, CascadingPipeline, function_tool, WorkerJob,ConversationFlow,JobContext, RoomOptions
+from typing import Optional
+from videosdk import PubSubSubscribeConfig
+from videosdk.agents import Agent, AgentSession, CascadingPipeline,WorkerJob,ConversationFlow,JobContext, RoomOptions
 from videosdk.plugins.deepgram import DeepgramSTT
 from videosdk.plugins.elevenlabs import ElevenLabsTTS
 from videosdk.plugins.anthropic import AnthropicLLM
 from videosdk.plugins.silero import SileroVAD
 from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
-
-import logging
-
-logging.getLogger().setLevel(logging.CRITICAL)
-
 pre_download_model()
 
 class PubSubAgent(Agent):
     def __init__(self, ctx: Optional[JobContext] = None):
         super().__init__(
-            instructions="You are a helpful voice assistant that can answer questions and help with tasks and help with and sending the pubusb message",
+            instructions="You are a helpful voice assistant that can answer questions and help with tasks.",
         )
         self.ctx = ctx
         
@@ -26,21 +21,7 @@ class PubSubAgent(Agent):
     
     async def on_exit(self) -> None:
         await self.session.say("Goodbye!")
-        
-    @function_tool
-    async def send_pubsub_message(self, message: str):
-        """Send a message to the pubsub topic CHAT_MESSAGE"""
-        publish_config = PubSubPublishConfig(
-            topic="CHAT",
-            message=message
-        )
-        await self.ctx.room.publish_to_pubsub(publish_config)
-        return "Message sent to pubsub topic CHAT_MESSAGE"
     
-
-def on_pubsub_message(message):
-    print("Pubsub message received:", message)
-
 
 async def entrypoint(ctx: JobContext):
     
@@ -61,6 +42,18 @@ async def entrypoint(ctx: JobContext):
     )
     
     shutdown_event = asyncio.Event()
+
+    async def on_pubsub_message(message):
+        print("Pubsub message received:", message)
+        if isinstance(message, dict) and message.get("message") == "reply":
+            print("Replying...")
+            await session.reply("Create a random number between 1 and 100. tell joke to user using that number.")
+        if isinstance(message, dict) and message.get("message") == "interrupt":
+            print("Interrupting...")
+            session.interrupt()
+
+    def on_pubsub_message_wrapper(message):
+        asyncio.create_task(on_pubsub_message(message))
     
     async def cleanup_session():
         print("Cleaning up session...")
@@ -81,7 +74,7 @@ async def entrypoint(ctx: JobContext):
         print("Participant joined")
         subscribe_config = PubSubSubscribeConfig(
             topic="CHAT",
-            cb=on_pubsub_message
+            cb=on_pubsub_message_wrapper
         )
         await ctx.room.subscribe_to_pubsub(subscribe_config)
         await session.start()
@@ -93,7 +86,7 @@ async def entrypoint(ctx: JobContext):
         await ctx.shutdown()
 
 def make_context() -> JobContext:
-    room_options = RoomOptions(room_id="<room_id>", name="Sandbox Agent", playground=True)
+    room_options = RoomOptions(room_id="<room_id>", name="Videosdk's Agent", playground=True)
     
     return JobContext(
         room_options=room_options

@@ -402,6 +402,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                             ):
                                 if input_transcription.text:
                                     if not self._user_speaking:
+                                        self.emit("user_speech_ended", {})
                                         await realtime_metrics_collector.set_user_speech_start()
                                         self._user_speaking = True
                                     self.emit("user_speech_started", {"type": "done"})
@@ -474,6 +475,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                         if "AUDIO" in self.config.response_modalities:
                                             chunk_number += 1
                                             if not self._agent_speaking:
+                                                self.emit("agent_speech_started", {})
                                                 await realtime_metrics_collector.set_agent_speech_start()
                                                 self._agent_speaking = True
 
@@ -531,6 +533,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                 active_response_id = None
                                 accumulated_text = ""
                                 final_transcription = ""
+                                self.emit("agent_speech_ended", {})
                                 await realtime_metrics_collector.set_agent_speech_end(
                                     timeout=1.0
                                 )
@@ -638,6 +641,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                 turns=Content(parts=[Part(text="stop")], role="user"),
                 turn_complete=True,
             )
+            self.emit("agent_speech_ended", {})
             await realtime_metrics_collector.set_interrupted()
             if self.audio_track and "AUDIO" in self.config.response_modalities:
                 self.audio_track.interrupt()

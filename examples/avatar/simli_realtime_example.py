@@ -82,13 +82,7 @@ async def start_session(context: JobContext):
 
     session = AgentSession(agent=MyVoiceAgent(), pipeline=pipeline)
 
-    try:
-        await context.connect()
-        await session.start()
-        await asyncio.Event().wait()
-    finally:
-        await session.close()
-        await context.shutdown()
+    await context.run_until_shutdown(session=session)
 
 def make_context() -> JobContext:
     room_options = RoomOptions(

@@ -13,10 +13,11 @@ import time
 from .job import get_current_job_context
 from .event_emitter import EventEmitter
 from .event_bus import global_event_emitter
+from .background_audio import BackgroundAudioConfig
 import logging
 logger = logging.getLogger(__name__)
 
-class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_changed"]]):
+class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_changed", "on_speech_in", "on_speech_out"]]):
     """
     Manages an agent session with its associated conversation flow and pipeline.
     """
@@ -27,6 +28,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         pipeline: Pipeline,
         conversation_flow: Optional[ConversationFlow] = None,
         wake_up: Optional[int] = None,
+        background_audio: Optional[BackgroundAudioConfig] = None,
     ) -> None:
         """
         Initialize an agent session.
@@ -36,6 +38,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             pipeline: Pipeline instance to process the agent's operations
             conversation_flow: ConversationFlow instance to manage conversation state
             wake_up: Time in seconds after which to trigger wake-up callback if no speech detected
+            background_audio: Configuration for background audio (optional)
         """
         super().__init__()
         self.agent = agent
@@ -52,6 +55,10 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         self._agent_state: AgentState = AgentState.IDLE
         if hasattr(self.pipeline, 'set_agent'):
             self.pipeline.set_agent(self.agent)
+
+        if background_audio and hasattr(self.pipeline, 'background_audio'):
+            self.pipeline.background_audio = background_audio
+        
         if (
             hasattr(self.pipeline, "set_conversation_flow")
             and self.conversation_flow is not None
@@ -60,12 +67,21 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         if hasattr(self.pipeline, 'set_wake_up_callback'):
             self.pipeline.set_wake_up_callback(self._reset_wake_up_timer)
 
+        global_event_emitter.on("ON_SPEECH_IN", self._on_speech_in)
+        global_event_emitter.on("ON_SPEECH_OUT", self._on_speech_out)
+
         try:
             job_ctx = get_current_job_context()
             if job_ctx:
                 job_ctx.add_shutdown_callback(self.close)
         except Exception:
             pass
+
+    def _on_speech_in(self, data: dict) -> None:
+        self.emit("on_speech_in", data)
+
+    def _on_speech_out(self, data: dict) -> None:
+        self.emit("on_speech_out", data)
 
     def _start_wake_up_timer(self) -> None:
         if self.wake_up is not None and self.on_wake_up is not None:
@@ -193,6 +209,9 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         if hasattr(self.pipeline, 'set_agent'):
             self.pipeline.set_agent(self.agent)
 
+        self.on("on_speech_in", self.agent.on_speech_in)
+        self.on("on_speech_out", self.agent.on_speech_out)
+
         await self.pipeline.start()
         await self.agent.on_enter()
         global_event_emitter.emit("AGENT_STARTED", {"session": self})
@@ -242,11 +261,11 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         finally:
             self._reply_in_progress = False
     
-    async def interrupt(self) -> None:
+    def interrupt(self) -> None:
         """
         Interrupt the agent.
         """
-        await self.pipeline.interrupt()
+        self.pipeline.interrupt()
 
     async def close(self) -> None:
         """
@@ -274,6 +293,12 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
 
         self._cancel_wake_up_timer()
         
+        global_event_emitter.off("ON_SPEECH_IN", self._on_speech_in)
+        global_event_emitter.off("ON_SPEECH_OUT", self._on_speech_out)
+
+        self.off("on_speech_in", self.agent.on_speech_in)
+        self.off("on_speech_out", self.agent.on_speech_out)
+
         logger.info("Cleaning up agent session")
         try:
             await self.agent.on_exit()

@@ -519,18 +519,6 @@ class Worker:
         logger.info(f"Current jobs: {list(self._current_jobs.keys())}")
 
         if job_id in self._current_jobs:
-            # Get job info before removing it
-            job_info = self._current_jobs.get(job_id)
-            
-            # Trigger job context shutdown to properly cleanup agent session and components
-            if job_info and job_info.job:
-                logger.info(f"Triggering job context shutdown for job {job_id}")
-                try:
-                    await job_info.job.shutdown()
-                    logger.info(f"Job context shutdown completed for job {job_id}")
-                except Exception as e:
-                    logger.error(f"Error during job context shutdown for job {job_id}: {e}")
-            
             # Remove job from worker's current jobs
             job_info = self._current_jobs.pop(job_id, None)
             if job_info:
@@ -635,33 +623,39 @@ class Worker:
             logger.warning(f"Room not available for job {job_id} in handler setup")
             return
 
-        # Store original event handlers
+        # Store original event handler
         original_on_meeting_left = job_context.room.on_meeting_left
-
-        # Override the on_meeting_left handler
+        
+        # Create wrapper that calls original and then handles cleanup
         def on_meeting_left_wrapper(data=None):
-            # Call original handler with proper parameter handling
-            if original_on_meeting_left:
+            # Call original handler first
+            if original_on_meeting_left and callable(original_on_meeting_left):
                 try:
-                    # Check if original handler expects data parameter
+                    # Call as a method with self bound
                     import inspect
-
                     sig = inspect.signature(original_on_meeting_left)
-                    if len(sig.parameters) > 0:
-                        original_on_meeting_left(data)
+                    # Check if it's a bound method or function
+                    if hasattr(original_on_meeting_left, '__self__'):
+                        # It's a bound method
+                        if len(sig.parameters) > 1:  # self + data
+                            original_on_meeting_left(data)
+                        else:  # just self
+                            original_on_meeting_left()
                     else:
-                        original_on_meeting_left()
+                        # It's a function
+                        if len(sig.parameters) > 0:
+                            original_on_meeting_left(data)
+                        else:
+                            original_on_meeting_left()
                 except Exception as e:
-                    logger.warning(
-                        f"Error calling original on_meeting_left handler: {e}"
-                    )
-
+                    logger.warning(f"Error calling original on_meeting_left: {e}")
+            
             # Handle meeting end for this specific job
+            logger.info(f"Meeting left event - triggering job cleanup for {job_id}")
             asyncio.create_task(self._handle_meeting_end(job_id, "meeting_left"))
 
-        # Set the new handler
+        # Replace the handler with our wrapper
         job_context.room.on_meeting_left = on_meeting_left_wrapper
-
         logger.info(f"Set up meeting end handler for job {job_id}")
 
     async def _launch_job_from_assignment(
@@ -683,6 +677,8 @@ class Worker:
                 recording=self.default_room_options.recording,
                 agent_participant_id=self.default_room_options.agent_participant_id,
                 join_meeting=self.default_room_options.join_meeting,
+                auto_end_session=self.default_room_options.auto_end_session,
+                session_timeout_seconds=self.default_room_options.session_timeout_seconds,
             )
 
             # Apply RoomOptions from assignment if provided
@@ -847,16 +843,27 @@ class Worker:
             logger.warning(f"Room not available for job {job_id} in callback setup")
             return
 
-        def on_session_end(reason: str):
+        # Store original callback if it exists
+        original_on_session_end = job_context.room.on_session_end
+
+        def on_session_end_wrapper(reason: str):
             logger.info(f"Session ended for job {job_id}, reason: {reason}")
+            
+            # Call original callback if it exists
+            if original_on_session_end:
+                try:
+                    original_on_session_end(reason)
+                except Exception as e:
+                    logger.error(f"Error in original session end callback: {e}")
+            
             logger.info(f"Calling _handle_meeting_end for job {job_id}")
-            # Handle session end asynchronously
+            # Handle meeting end asynchronously
             asyncio.create_task(
                 self._handle_meeting_end(job_id, f"session_ended: {reason}")
             )
 
-        # Set the session end callback
-        job_context.room.on_session_end = on_session_end
+        # Set the wrapped session end callback
+        job_context.room.on_session_end = on_session_end_wrapper
         logger.info(f"Session end callback set up for job {job_id}")
 
     async def _status_update_loop(self):

@@ -41,7 +41,7 @@ class RoomOptions:
     on_room_error: Optional[Callable[[Any], None]] = None
     # Session management options
     auto_end_session: bool = True
-    session_timeout_seconds: Optional[int] = 30
+    session_timeout_seconds: Optional[int] = 5
     # VideoSDK connection options
     signaling_base_url: Optional[str] = None
 
@@ -332,7 +332,111 @@ class JobContext:
         if self.room:
             return await self.room.wait_for_participant(participant_id)
         else:
-            raise ValueError("Room not initialized")        
+            raise ValueError("Room not initialized")
+    
+    async def run_until_shutdown(
+        self,
+        session: Any = None,
+        wait_for_participant: bool = False,
+    ) -> None:
+        """
+        Simplified helper that handles all cleanup boilerplate.
+        
+        This method:
+        1. Connects to the room
+        2. Sets up session end callbacks
+        3. Waits for participant (optional)
+        4. Starts the session
+        5. Waits for shutdown signal
+        6. Cleans up gracefully
+        
+        Args:
+            session: AgentSession to manage (will call session.start() and session.close())
+            wait_for_participant: Whether to wait for a participant before starting
+            
+        Example:
+            ```python
+            async def entrypoint(ctx: JobContext):
+                session = AgentSession(agent=agent, pipeline=pipeline)
+                await ctx.run_until_shutdown(session=session, wait_for_participant=True)
+            ```
+        """
+        shutdown_event = asyncio.Event()
+        
+        if session:
+            async def cleanup_session():
+                logger.info("Cleaning up session...")
+                try:
+                    await session.close()
+                except Exception as e:
+                    logger.error(f"Error closing session in cleanup: {e}")
+                shutdown_event.set()
+            
+            self.add_shutdown_callback(cleanup_session)
+        else:
+            async def cleanup_no_session():
+                logger.info("Shutdown called, no session to clean up")
+                shutdown_event.set()
+            
+            self.add_shutdown_callback(cleanup_no_session)
+        
+        def on_session_end(reason: str):
+            logger.info(f"Session ended: {reason}")
+            asyncio.create_task(self.shutdown())
+        
+        try:
+            try:
+                await self.connect()
+            except Exception as e:
+                logger.error(f"Error connecting to room: {e}")
+                raise
+            
+            if self.room:
+                try:
+                    self.room.setup_session_end_callback(on_session_end)
+                    logger.info("Session end callback configured")
+                except Exception as e:
+                    logger.warning(f"Error setting up session end callback: {e}")
+            else:
+                logger.warning("Room not available, session end callback not configured")
+            
+            if wait_for_participant and self.room:
+                try:
+                    logger.info("Waiting for participant...")
+                    await self.room.wait_for_participant()
+                    logger.info("Participant joined")
+                except Exception as e:
+                    logger.error(f"Error waiting for participant: {e}")
+                    raise
+            
+            if session:
+                try:
+                    await session.start()
+                    logger.info("Agent session started")
+                except Exception as e:
+                    logger.error(f"Error starting session: {e}")
+                    raise
+            
+            logger.info("Agent is running... (will exit when session ends or on interrupt)")
+            await shutdown_event.wait()
+            logger.info("Shutdown event received, exiting gracefully...")
+            
+        except KeyboardInterrupt:
+            logger.info("Keyboard interrupt received, shutting down...")
+        except Exception as e:
+            logger.error(f"Unexpected error in run_until_shutdown: {e}")
+            raise
+        finally:
+            if session:
+                try:
+                    await session.close()
+                except Exception as e:
+                    logger.error(f"Error closing session in finally: {e}")
+            
+            try:
+                await self.shutdown()
+            except Exception as e:
+                logger.error(f"Error in ctx.shutdown: {e}")
 
     def get_room_id(self) -> str:
         """
