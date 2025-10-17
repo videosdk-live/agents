@@ -20,7 +20,9 @@ Open-source framework for building real-time multimodal conversational AI agents
 The **VideoSDK AI Agents framework** connects your infrastructure, agent worker, VideoSDK room, and user devices, enabling **real-time, natural voice and multimodal interactions** between users and intelligent agents.
 
 <!-- ![VideoSDK AI Agents High Level Architecture](https://strapi.videosdk.live/uploads/Group_15_1_5610ce9c7e.png) -->
-![VideoSDK AI Agents High Level Architecture](https://cdn.videosdk.live/website-resources/docs-resources/voice_agent_intro.png)
+<!-- ![VideoSDK AI Agents High Level Architecture](https://cdn.videosdk.live/website-resources/docs-resources/voice_agent_intro.png) -->
+
+![VideoSDK AI Agents High Level Architecture](https://assets.videosdk.live/images/agent-architecture.png)
 
 
 ## Overview
