@@ -12,6 +12,7 @@ class ParticipantHandler(ParticipantEventHandler):
         on_stream_enabled: Callable[[Stream], None],
         on_stream_disabled: Callable[[Stream], None],
     ):
+        super().__init__()
         self.participant_id = participant_id
         self.on_stream_enabled = on_stream_enabled
         self.on_stream_disabled = on_stream_disabled
