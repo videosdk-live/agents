@@ -68,7 +68,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self._wait_timer: asyncio.TimerHandle | None = None
         self._transcript_processing_lock = asyncio.Lock()
 
-        # self._eou_timer_task: asyncio.Task | None = None
+        self.min_interruption_words = 1 # 2 
 
     async def start(self) -> None:
         global_event_emitter.on("speech_started", self.on_speech_started_stt)
@@ -127,6 +127,21 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
     async def on_stt_transcript(self, stt_response: STTResponse) -> None:
         """Handle STT transcript events with enhanced EOU logic"""
+            
+        if self._waiting_for_more_speech:
+            await self._handle_continued_speech()
+            
+        text = stt_response.data.text if stt_response.data else ""
+        
+        if self.agent.session:
+            if self.agent.session.agent_state in (AgentState.SPEAKING, AgentState.THINKING): 
+                await self.handle_stt_event(text)
+            else:
+                logger.info(f"STT TRANSCRIPT EVENT: Agent is not SPEAKING, skipping interruption, Agent state: {self.agent.session.agent_state}")
+                
+        if self.agent.session:
+            self.agent.session._emit_user_state(UserState.SPEAKING)
+            
         if stt_response.event_type == SpeechEventType.FINAL:
             user_text = stt_response.data.text
             await self._process_transcript_with_eou(user_text)
@@ -134,6 +149,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
     async def _process_transcript_with_eou(self, new_transcript: str) -> None:
         """Enhanced transcript processing with EOU-based decision making"""
         async with self._transcript_processing_lock:
+            if self.agent.session:
+                self.agent.session._emit_agent_state(AgentState.LISTENING) 
             # Append new transcript to accumulated transcript
             if self._accumulated_transcript:
                 self._accumulated_transcript += " " + new_transcript
@@ -328,11 +345,15 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                             return "".join(response_parts)
 
                         self._partial_response = "".join(response_parts)
-                        await q.put(chunk)
-                        response_parts.append(chunk)
+                        
+                        if not self._is_interrupted:  # Only queue if not interrupted
+                            await q.put(chunk)
+                            response_parts.append(chunk)
 
-                    await q.put(None)
-                    return "".join(response_parts)
+                    if not self._is_interrupted:
+                        await q.put(None)
+                    full_response = "".join(response_parts)
+                    return full_response
                 except asyncio.CancelledError:
                     logger.info("LLM collection cancelled")
                     await q.put(None)
@@ -344,16 +365,22 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                         if self._is_interrupted:
                             break
 
-                        chunk = await q.get()
-                        if chunk is None:
-                            break
-                        yield chunk
+                        try:
+                            chunk = await asyncio.wait_for(q.get(), timeout=0.1)
+                            if chunk is None:
+                                break
+                            yield chunk
+                        except asyncio.TimeoutError:
+                            if self._is_interrupted:
+                                break
+                            continue
 
                 if self.tts:
                     try:
                         await self._synthesize_with_tts(tts_stream_gen())
                     except asyncio.CancelledError:
-                        pass
+                        await self.tts.interrupt()
+
 
             collector_task = asyncio.create_task(collector())
             tts_task = asyncio.create_task(tts_consumer())
@@ -361,7 +388,14 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             self._current_llm_task = collector_task
             self._current_tts_task = tts_task
 
-            await asyncio.gather(collector_task, tts_task, return_exceptions=True)
+            try:
+                await asyncio.gather(collector_task, tts_task, return_exceptions=True)
+            except asyncio.CancelledError:
+                # Ensure proper cleanup on cancellation
+                if not collector_task.done():
+                    collector_task.cancel()
+                if not tts_task.done():
+                    tts_task.cancel()
 
             if not collector_task.cancelled() and not self._is_interrupted:
                 full_response = collector_task.result()
@@ -391,6 +425,10 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
             cascading_metrics_collector.on_llm_start()
             first_chunk_received = False
+            
+            if self.agent.session:
+                self.agent.session._emit_user_state(UserState.IDLE)
+                self.agent.session._emit_agent_state(AgentState.THINKING)
 
             async for llm_chunk_resp in self.llm.chat(
                 self.agent.chat_context,
@@ -509,7 +547,30 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
     def on_speech_stopped_stt(self, event_data: Any) -> None:
         pass
-
+    
+    async def handle_stt_event(self, text: str) -> None:
+        """Handle STT event"""
+        if not text or not text.strip():
+            return
+        
+        word_count = len(text.strip().split())
+        logger.info(f"handle_stt_event: Word count: {word_count}")
+        if word_count >= self.min_interruption_words:
+            await self._trigger_interruption()
+            
+    async def _trigger_interruption(self) -> None:
+        """Trigger interruption once"""
+        logger.info(f"Triggering interruption From STT")
+        if self._is_interrupted:
+            logger.info(f"Already interrupted, skipping")
+            return
+            
+        if self.tts:
+            try:
+                await self._interrupt_tts()
+            except Exception as e:
+                logger.error(f" _trigger_interruption Callback error: {e}")
+    
     async def on_speech_started(self) -> None:       
         cascading_metrics_collector.on_user_speech_start()
 
@@ -524,16 +585,13 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         
         if self.agent.session:
             self.agent.session._emit_user_state(UserState.SPEAKING)
-            self.agent.session._emit_agent_state(AgentState.LISTENING)
 
     async def _interrupt_tts(self) -> None:
-        logger.info("Interrupting TTS and LLM generation")
+        self._is_interrupted = True
 
         if self._background_audio_player:
             await self._background_audio_player.stop()
             self._background_audio_player = None
-
-        self._is_interrupted = True
 
         # Cancel any waiting timers
         if self._wait_timer:
@@ -554,7 +612,14 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             tasks_to_cancel.append(self._current_llm_task)
 
         if tasks_to_cancel:
-            await graceful_cancel(*tasks_to_cancel)
+            # Force cancel tasks to ensure immediate stop
+            for task in tasks_to_cancel:
+                task.cancel()
+            await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
+            
+        # Reset conversation state
+        self._partial_response = ""
+        self._is_interrupted = False
 
         cascading_metrics_collector.on_interrupted()
 
@@ -574,7 +639,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         
         if self.agent.session:
             self.agent.session._emit_user_state(UserState.IDLE)
-            self.agent.session._emit_agent_state(AgentState.THINKING)
 
     async def _synthesize_with_tts(self, response_gen: AsyncIterator[str] | str) -> None:
         """
@@ -621,9 +685,10 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             self.agent.session._reset_wake_up_timer()
             cascading_metrics_collector.on_agent_speech_end()
             
-            if self.agent.session:
-                self.agent.session._emit_agent_state(AgentState.IDLE)
-                self.agent.session._emit_user_state(UserState.IDLE)
+        # TODO: Need to work on IDLE state 
+            # if self.agent.session:
+            #     self.agent.session._emit_agent_state(AgentState.IDLE)
+            #     self.agent.session._emit_user_state(UserState.IDLE)
     
     async def cleanup(self) -> None:
         """Cleanup conversation flow resources"""
