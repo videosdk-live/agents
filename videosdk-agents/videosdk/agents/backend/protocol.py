@@ -70,7 +70,6 @@ class WorkerMessage:
     participant_name: Optional[str] = None
     participant_metadata: Optional[str] = None
     error: Optional[str] = None
-    payload: Optional[Dict[str, Any]] = None
     registry_uuid: Optional[str] = None
     max_capacity: Optional[int] = None
     current_load: Optional[float] = None
@@ -105,7 +104,6 @@ class ServerMessage:
     namespace: Optional[str] = None
     token: Optional[str] = None
     url: Optional[str] = None
-    payload: Optional[Dict[str, Any]] = None
 
     def dict(self) -> Dict[str, Any]:
         """Convert to dictionary, excluding None values."""
@@ -127,7 +125,6 @@ class AvailabilityRequest:
     room_name: str = ""
     agent_name: str = ""
     namespace: str = ""
-    payload: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -162,8 +159,8 @@ class JobAssignment:
     namespace: str = ""
     token: str = ""
     url: str = ""
-    payload: Optional[Dict[str, Any]] = None
     room_options: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None
 
     def dict(self) -> Dict[str, Any]:
         """Convert to dictionary, excluding None values."""
@@ -185,7 +182,6 @@ class JobUpdate:
     participant_identity: Optional[str] = None
     participant_name: Optional[str] = None
     participant_metadata: Optional[str] = None
-    payload: Optional[Dict[str, Any]] = None
 
     def dict(self) -> Dict[str, Any]:
         """Convert to dictionary, excluding None values."""

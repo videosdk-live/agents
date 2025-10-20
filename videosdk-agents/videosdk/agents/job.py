@@ -155,18 +155,22 @@ class WorkerJob:
             signaling_base_url=self.options.signaling_base_url,
             host=self.options.host,
             port=self.options.port,
-            log_level=self.options.log_level
+            log_level=self.options.log_level,
         )
 
         # If register=True, run the worker in backend mode (don't execute entrypoint immediately)
         if self.options.register:
+            default_room_options = None
             if self.jobctx:
                 if callable(self.jobctx):
                     job_context = self.jobctx()
                 else:
                     job_context = self.jobctx
+                default_room_options = job_context.room_options
             # Run the worker normally (for backend registration mode)
-            Worker.run_worker(options=worker_options, default_room_options=job_context.room_options)
+            Worker.run_worker(
+                options=worker_options, default_room_options=default_room_options
+            )
         else:
             # Direct mode - run entrypoint immediately if we have a job context
             if self.jobctx:
@@ -191,9 +195,11 @@ class JobContext:
         self,
         *,
         room_options: RoomOptions,
+        metadata: Optional[dict] = None,
         loop: Optional[asyncio.AbstractEventLoop] = None,
     ) -> None:
         self.room_options = room_options
+        self.metadata = metadata or {}
         self._loop = loop or asyncio.get_event_loop()
         self._pipeline: Optional[Pipeline] = None
         self.videosdk_auth = self.room_options.auth_token or os.getenv(
@@ -202,7 +208,7 @@ class JobContext:
         self.room: Optional[VideoSDKHandler] = None
         self._shutdown_callbacks: list[Callable[[], Coroutine[None, None, None]]] = []
         self._is_shutting_down: bool = False
-        self.want_console = (len(sys.argv) > 1 and sys.argv[1].lower() == "console")
+        self.want_console = len(sys.argv) > 1 and sys.argv[1].lower() == "console"
 
     def _set_pipeline_internal(self, pipeline: Any) -> None:
         """Internal method called by pipeline constructors"""
@@ -239,11 +245,13 @@ class JobContext:
                 custom_microphone_audio_track = avatar.audio_track
                 sinks.append(avatar)
 
-
             if self.want_console:
                 from .console_mode import setup_console_voice_for_ctx
+
                 if not self._pipeline:
-                    raise RuntimeError("Pipeline must be constructed before ctx.connect() in console mode")
+                    raise RuntimeError(
+                        "Pipeline must be constructed before ctx.connect() in console mode"
+                    )
                 cleanup_callback = await setup_console_voice_for_ctx(self)
                 self.add_shutdown_callback(cleanup_callback)
             else:
@@ -260,19 +268,27 @@ class JobContext:
                         custom_camera_video_track=custom_camera_video_track,
                         custom_microphone_audio_track=custom_microphone_audio_track,
                         audio_sinks=sinks,
-                        on_room_error= self.room_options.on_room_error,
+                        on_room_error=self.room_options.on_room_error,
                         auto_end_session=self.room_options.auto_end_session,
                         session_timeout_seconds=self.room_options.session_timeout_seconds,
                         signaling_base_url=self.room_options.signaling_base_url,
                     )
-                if self._pipeline and hasattr(self._pipeline, '_set_loop_and_audio_track'):
-                    self._pipeline._set_loop_and_audio_track(self._loop, self.room.audio_track)
+                if self._pipeline and hasattr(
+                    self._pipeline, "_set_loop_and_audio_track"
+                ):
+                    self._pipeline._set_loop_and_audio_track(
+                        self._loop, self.room.audio_track
+                    )
 
         if self.room and self.room_options.join_meeting:
             self.room.init_meeting()
             await self.room.join()
 
-        if self.room_options.playground and self.room_options.join_meeting and not self.want_console:
+        if (
+            self.room_options.playground
+            and self.room_options.join_meeting
+            and not self.want_console
+        ):
             if self.videosdk_auth:
                 playground_url = f"https://playground.videosdk.live?token={self.videosdk_auth}&meetingId={self.room_options.room_id}"
                 print(f"\033[1;36m" + "Agent started in playground mode" + "\033[0m")
@@ -293,17 +309,17 @@ class JobContext:
                 await callback()
             except Exception as e:
                 logger.error(f"Error in shutdown callback: {e}")
-        
+
         if self._pipeline:
             try:
                 await self._pipeline.cleanup()
             except Exception as e:
                 logger.error(f"Error during pipeline cleanup: {e}")
             self._pipeline = None
-        
+
         if self.room:
             try:
-                if not getattr(self.room, '_left', False):
+                if not getattr(self.room, "_left", False):
                     await self.room.leave()
                 else:
                     logger.info("Room already left, skipping room.leave()")
@@ -315,7 +331,7 @@ class JobContext:
             except Exception as e:
                 logger.error(f"Error during room cleanup: {e}")
             self.room = None
-        
+
         self.room_options = None
         self._loop = None
         self.videosdk_auth = None
@@ -333,7 +349,7 @@ class JobContext:
             return await self.room.wait_for_participant(participant_id)
         else:
             raise ValueError("Room not initialized")
-    
+
     async def run_until_shutdown(
         self,
         session: Any = None,
@@ -341,7 +357,7 @@ class JobContext:
     ) -> None:
         """
         Simplified helper that handles all cleanup boilerplate.
-        
+
         This method:
         1. Connects to the room
         2. Sets up session end callbacks
@@ -349,11 +365,11 @@ class JobContext:
         4. Starts the session
         5. Waits for shutdown signal
         6. Cleans up gracefully
-        
+
         Args:
             session: AgentSession to manage (will call session.start() and session.close())
             wait_for_participant: Whether to wait for a participant before starting
-            
+
         Example:
             ```python
             async def entrypoint(ctx: JobContext):
@@ -362,8 +378,9 @@ class JobContext:
             ```
         """
         shutdown_event = asyncio.Event()
-        
+
         if session:
+
             async def cleanup_session():
                 logger.info("Cleaning up session...")
                 try:
@@ -371,26 +388,27 @@ class JobContext:
                 except Exception as e:
                     logger.error(f"Error closing session in cleanup: {e}")
                 shutdown_event.set()
-            
+
             self.add_shutdown_callback(cleanup_session)
         else:
+
             async def cleanup_no_session():
                 logger.info("Shutdown called, no session to clean up")
                 shutdown_event.set()
-            
+
             self.add_shutdown_callback(cleanup_no_session)
-        
+
         def on_session_end(reason: str):
             logger.info(f"Session ended: {reason}")
             asyncio.create_task(self.shutdown())
-        
+
         try:
             try:
                 await self.connect()
             except Exception as e:
                 logger.error(f"Error connecting to room: {e}")
                 raise
-            
+
             if self.room:
                 try:
                     self.room.setup_session_end_callback(on_session_end)
@@ -398,8 +416,10 @@ class JobContext:
                 except Exception as e:
                     logger.warning(f"Error setting up session end callback: {e}")
             else:
-                logger.warning("Room not available, session end callback not configured")
-            
+                logger.warning(
+                    "Room not available, session end callback not configured"
+                )
+
             if wait_for_participant and self.room:
                 try:
                     logger.info("Waiting for participant...")
@@ -408,7 +428,7 @@ class JobContext:
                 except Exception as e:
                     logger.error(f"Error waiting for participant: {e}")
                     raise
-            
+
             if session:
                 try:
                     await session.start()
@@ -416,11 +436,13 @@ class JobContext:
                 except Exception as e:
                     logger.error(f"Error starting session: {e}")
                     raise
-            
-            logger.info("Agent is running... (will exit when session ends or on interrupt)")
+
+            logger.info(
+                "Agent is running... (will exit when session ends or on interrupt)"
+            )
             await shutdown_event.wait()
             logger.info("Shutdown event received, exiting gracefully...")
-            
+
         except KeyboardInterrupt:
             logger.info("Keyboard interrupt received, shutting down...")
         except Exception as e:
@@ -432,7 +454,7 @@ class JobContext:
                     await session.close()
                 except Exception as e:
                     logger.error(f"Error closing session in finally: {e}")
-            
+
             try:
                 await self.shutdown()
             except Exception as e:
@@ -448,7 +470,7 @@ class JobContext:
         """
         if self.want_console:
             return None
-        
+
         if self.videosdk_auth:
             url = "https://api.videosdk.live/v2/rooms"
             headers = {"Authorization": self.videosdk_auth}
@@ -467,11 +489,12 @@ class JobContext:
             return room_id
         else:
             raise ValueError(
-            "VIDEOSDK_AUTH_TOKEN not found. "
-            "Set it as an environment variable or provide it in room options via auth_token."
+                "VIDEOSDK_AUTH_TOKEN not found. "
+                "Set it as an environment variable or provide it in room options via auth_token."
             )
 
-def get_current_job_context() -> Optional['JobContext']:
+
+def get_current_job_context() -> Optional["JobContext"]:
     """Get the current job context (used by pipeline constructors)"""
     return _current_job_context.get()
 
