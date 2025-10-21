@@ -145,7 +145,6 @@ class JobRequest:
     on_accept: Callable[[JobAcceptArguments], Any]
 
 
-
 class Worker:
     """
     VideoSDK worker that manages job execution and backend registration.
@@ -158,7 +157,9 @@ class Worker:
     Automatically selects the appropriate executor type based on platform.
     """
 
-    def __init__(self, options: WorkerOptions, default_room_options: Optional[RoomOptions] = None):
+    def __init__(
+        self, options: WorkerOptions, default_room_options: Optional[RoomOptions] = None
+    ):
         """Initialize the worker."""
         self.options = options
         self.default_room_options = default_room_options
@@ -265,7 +266,9 @@ class Worker:
             # Cancel the main task
             loop.call_soon_threadsafe(main_future.cancel)
             # Set a timeout for graceful shutdown
-            loop.call_later(3.0, lambda: [task.cancel() for task in asyncio.all_tasks(loop)])
+            loop.call_later(
+                3.0, lambda: [task.cancel() for task in asyncio.all_tasks(loop)]
+            )
 
         try:
             signal.signal(signal.SIGINT, signal_handler)
@@ -284,7 +287,7 @@ class Worker:
                 loop.close()
             except Exception as e:
                 logger.error(f"Error closing event loop: {e}")
-            
+
         if loop.is_closed():
             logger.info("Event loop closed successfully")
 
@@ -625,7 +628,7 @@ class Worker:
 
         # Store original event handler
         original_on_meeting_left = job_context.room.on_meeting_left
-        
+
         # Create wrapper that calls original and then handles cleanup
         def on_meeting_left_wrapper(data=None):
             # Call original handler first
@@ -633,9 +636,10 @@ class Worker:
                 try:
                     # Call as a method with self bound
                     import inspect
+
                     sig = inspect.signature(original_on_meeting_left)
                     # Check if it's a bound method or function
-                    if hasattr(original_on_meeting_left, '__self__'):
+                    if hasattr(original_on_meeting_left, "__self__"):
                         # It's a bound method
                         if len(sig.parameters) > 1:  # self + data
                             original_on_meeting_left(data)
@@ -649,7 +653,7 @@ class Worker:
                             original_on_meeting_left()
                 except Exception as e:
                     logger.warning(f"Error calling original on_meeting_left: {e}")
-            
+
             # Handle meeting end for this specific job
             logger.info(f"Meeting left event - triggering job cleanup for {job_id}")
             asyncio.create_task(self._handle_meeting_end(job_id, "meeting_left"))
@@ -713,14 +717,19 @@ class Worker:
                     room_options.recording = assignment.room_options["recording"]
                     logger.info(f"Set recording: {room_options.recording}")
                 if "agent_participant_id" in assignment.room_options:
-                    room_options.agent_participant_id = assignment.room_options["agent_participant_id"]
-                    logger.info(f"Set agent_participant_id: {room_options.agent_participant_id}")
+                    room_options.agent_participant_id = assignment.room_options[
+                        "agent_participant_id"
+                    ]
+                    logger.info(
+                        f"Set agent_participant_id: {room_options.agent_participant_id}"
+                    )
             else:
                 logger.warning("No room_options received from assignment")
 
             # Create job context
             job_context = JobContext(
                 room_options=room_options,
+                metadata=assignment.metadata,
             )
 
             # Create running job info with correct parameters
@@ -848,14 +857,14 @@ class Worker:
 
         def on_session_end_wrapper(reason: str):
             logger.info(f"Session ended for job {job_id}, reason: {reason}")
-            
+
             # Call original callback if it exists
             if original_on_session_end:
                 try:
                     original_on_session_end(reason)
                 except Exception as e:
                     logger.error(f"Error in original session end callback: {e}")
-            
+
             logger.info(f"Calling _handle_meeting_end for job {job_id}")
             # Handle meeting end asynchronously
             asyncio.create_task(
@@ -1111,7 +1120,7 @@ class Worker:
 
         # Create a copy of jobs to iterate over, as they will be modified
         jobs_to_clean = list(self._current_jobs.items())
-        
+
         for job_id, job_info in jobs_to_clean:
             try:
                 logger.info(f"Terminating job {job_id}...")
@@ -1132,10 +1141,8 @@ class Worker:
                         f"Sent job completion update for job {job_id} during shutdown"
                     )
             except Exception as e:
-                logger.error(
-                    f"Failed to send job completion update for {job_id}: {e}"
-                )
-        
+                logger.error(f"Failed to send job completion update for {job_id}: {e}")
+
         # Clear all jobs from the worker's state
         self._current_jobs.clear()
         logger.info("All jobs cleared from worker")
@@ -1143,7 +1150,7 @@ class Worker:
         # Send a final status update reflecting zero jobs
         if self.backend_connection and self.backend_connection.is_connected:
             await self._send_immediate_status_update()
-            
+
     async def shutdown(self):
         """Shutdown the worker."""
         logger.info("Shutting down VideoSDK worker")
