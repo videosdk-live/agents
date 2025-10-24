@@ -26,14 +26,7 @@ class CartesiaTTS(TTS):
         language: str = "en",
         base_url: str = "https://api.cartesia.ai",
     ) -> None:
-        """Initialize the Cartesia STT plugin
-
-        Args:
-            api_key (str | None, optional): Cartesia API key. Uses CARTESIA_API_KEY environment variable if not provided. Defaults to None.
-            model (str): The model to use for the STT plugin. Defaults to "ink-whisper".
-            language (str): The language to use for the STT plugin, e.g. "en". Defaults to "en".
-            sample_rate (int): The sample rate to use for the STT plugin. Defaults to 48000.
-            base_url (str): The base URL to use for the STT plugin. Defaults to "wss://api.cartesia.ai/stt/websocket".
+        """Initialize the Cartesia TTS plugin.
         """
         super().__init__(sample_rate=CARTESIA_SAMPLE_RATE, num_channels=CARTESIA_CHANNELS)
 
