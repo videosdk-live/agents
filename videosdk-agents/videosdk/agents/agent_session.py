@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import Any, Callable, Optional, Literal
 import asyncio
+import uuid
 
 from .agent import Agent
 from .llm.chat_context import ChatRole
@@ -9,6 +10,7 @@ from .pipeline import Pipeline
 from .metrics import cascading_metrics_collector, realtime_metrics_collector
 from .realtime_pipeline import RealTimePipeline
 from .utils import get_tool_info, UserState, AgentState
+from .utterance_handle import UtteranceHandle 
 import time
 from .job import get_current_job_context
 from .event_emitter import EventEmitter
@@ -53,6 +55,8 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         self._reply_in_progress: bool = False
         self._user_state: UserState = UserState.IDLE
         self._agent_state: AgentState = AgentState.IDLE
+        self.current_utterance: Optional[UtteranceHandle] = None
+
         if hasattr(self.pipeline, 'set_agent'):
             self.pipeline.set_agent(self.agent)
 
@@ -219,27 +223,52 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             self._start_wake_up_timer()
         self._emit_agent_state(AgentState.IDLE)
         
-    async def say(self, message: str) -> None:
+    async def say(self, message: str) -> UtteranceHandle:
         """
-        Send an initial message to the agent.
+        Send an initial message to the agent and return a handle to track it.
         """
+        if self.current_utterance and not self.current_utterance.done():
+            self.current_utterance.interrupt() 
+
+        handle = UtteranceHandle(utterance_id=f"utt_{uuid.uuid4().hex[:8]}")
+        self.current_utterance = handle
+
         if not isinstance(self.pipeline, RealTimePipeline):
             traces_flow_manager = cascading_metrics_collector.traces_flow_manager
             if traces_flow_manager:
                 traces_flow_manager.agent_say_called(message)
+        
         self.agent.chat_context.add_message(role=ChatRole.ASSISTANT, content=message)
-        await self.pipeline.send_message(message)
+        
+        if hasattr(self.pipeline, 'send_message'):
+            await self.pipeline.send_message(message, handle=handle)
+        
+        return handle
     
-    async def reply(self, instructions: str, wait_for_playback: bool = True) -> None:
+    async def reply(self, instructions: str, wait_for_playback: bool = True) -> UtteranceHandle:
         """
         Generate a response from agent using instructions and current chat context.
         Subsequent calls are discarded while the first one is still running.
+        Returns a handle to track the utterance.
         """
         if not instructions:
-            return
+            handle = UtteranceHandle(utterance_id="empty_reply")
+            handle._mark_done()
+            return handle
         
         if self._reply_in_progress:
-            return
+            if self.current_utterance:
+                return self.current_utterance
+            # Create a placeholder that will never resolve to avoid blocking
+            handle = UtteranceHandle(utterance_id="placeholder")
+            handle._mark_done()
+            return handle
+
+        if self.current_utterance and not self.current_utterance.done():
+            self.current_utterance.interrupt()
+
+        handle = UtteranceHandle(utterance_id=f"utt_{uuid.uuid4().hex[:8]}")
+        self.current_utterance = handle
         self._reply_in_progress = True
         
         self._pause_wake_up_timer()
@@ -249,23 +278,28 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
                 traces_flow_manager = cascading_metrics_collector.traces_flow_manager
                 if traces_flow_manager:
                     traces_flow_manager.agent_reply_called(instructions)
-            # Use the pipeline to handle the reply with wait_for_playback logic
+
             if hasattr(self.pipeline, 'reply_with_context'):
-                await self.pipeline.reply_with_context(instructions, wait_for_playback)
+                await self.pipeline.reply_with_context(instructions, wait_for_playback, handle=handle)
             else:
-                # Fallback for other pipeline types (like RealTimePipeline)
                 if hasattr(self.pipeline, 'send_text_message'):
                     await self.pipeline.send_text_message(instructions)
                 else:
                     await self.pipeline.send_message(instructions)
         finally:
             self._reply_in_progress = False
+            
+        return handle
     
     def interrupt(self) -> None:
         """
-        Interrupt the agent.
+        Interrupt the agent's current speech.
         """
-        self.pipeline.interrupt()
+        if self.current_utterance and not self.current_utterance.interrupted:
+            self.current_utterance.interrupt()
+        
+        if hasattr(self.pipeline, 'interrupt'):
+            self.pipeline.interrupt()
 
     async def close(self) -> None:
         """

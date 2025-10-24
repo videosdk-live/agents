@@ -15,6 +15,11 @@ from .mcp.mcp_server import MCPServiceProvider
 import logging
 logger = logging.getLogger(__name__)
 
+if 'AgentSession' not in globals():
+    from typing import TYPE_CHECKING
+    if TYPE_CHECKING:
+        from .agent_session import AgentSession
+
 class Agent(EventEmitter[Literal["agent_started"]], ABC):
     """
     Abstract base class for creating custom agents.
@@ -37,6 +42,7 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
         self._agent_card = None 
         self.id = agent_id or str(uuid.uuid4())
         self.mcp_manager = MCPToolManager()
+        self.session: "AgentSession"
 
     def _register_class_tools(self) -> None:
         """Internal Method: Register all function tools defined in the class"""

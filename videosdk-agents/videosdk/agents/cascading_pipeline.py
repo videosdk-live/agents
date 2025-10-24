@@ -13,6 +13,7 @@ from .eou import EOU
 from .job import get_current_job_context
 from .denoise import Denoise
 from .background_audio import BackgroundAudioConfig
+from .utterance_handle import UtteranceHandle
 import logging
 import asyncio
 
@@ -180,11 +181,12 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         if self.conversation_flow:
             await self.conversation_flow.start()
 
-    async def send_message(self, message: str) -> None:
+    async def send_message(self, message: str, handle: UtteranceHandle) -> None:
         if self.conversation_flow:
-            await self.conversation_flow.say(message)
+            await self.conversation_flow.say(message, handle)
         else:
             logger.warning("No conversation flow found in pipeline")
+            handle._mark_done()
 
     async def send_text_message(self, message: str) -> None:
         """
@@ -359,7 +361,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         cascading_metrics_collector.add_error(source, str(error_data))
         logger.error(f"[{source}] Component error: {error_data}")
 
-    async def reply_with_context(self, instructions: str, wait_for_playback: bool = True) -> None:
+    async def reply_with_context(self, instructions: str, handle: UtteranceHandle, wait_for_playback: bool = True) -> None:
         """
         Generate a reply using instructions and current chat context.
         
@@ -368,6 +370,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
             wait_for_playback: If True, disable VAD and STT interruptions during response and wait for
         """
         if self.conversation_flow:
-            await self.conversation_flow._process_reply_instructions(instructions, wait_for_playback)
+            await self.conversation_flow._process_reply_instructions(instructions, wait_for_playback, handle)
         else:
-            logger.warning("No conversation flow found in pipeline")
+            logger.warning("No conversation flow found in pipeline, marking handle as done.")
+            handle._mark_done()

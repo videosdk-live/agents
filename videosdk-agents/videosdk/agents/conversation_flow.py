@@ -19,8 +19,9 @@ from .eou import EOU
 from .metrics import cascading_metrics_collector
 from .denoise import Denoise
 from .utils import UserState, AgentState
+import uuid
+from .utterance_handle import UtteranceHandle
 import logging
-import wave
 from .background_audio import BackgroundAudio, BackgroundAudioConfig
 
 logger = logging.getLogger(__name__)
@@ -226,16 +227,14 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
     async def _process_final_transcript(self, user_text: str) -> None:
         """Process final transcript with EOU detection and response generation"""
-
-        # Fallback: If VAD is missing, this can start the turn. Otherwise, the collector handles it.
-        if not cascading_metrics_collector.data.current_turn:
-            cascading_metrics_collector.on_user_speech_start()
+        
+        if not cascading_metrics_collector.data.current_turn: 
+            cascading_metrics_collector.start_new_interaction()
 
         cascading_metrics_collector.set_user_transcript(user_text)
         cascading_metrics_collector.on_stt_complete()
 
-        # Fallback: If VAD is present but hasn't called on_user_speech_end yet,
-        if self.vad and cascading_metrics_collector.data.is_user_speaking:
+        if self.vad and cascading_metrics_collector.data.is_user_speaking: 
             cascading_metrics_collector.on_user_speech_end()
         elif not self.vad:
             cascading_metrics_collector.on_user_speech_end()
@@ -245,10 +244,20 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             content=user_text
         )
 
+        if self.agent and self.agent.session:
+            if self.agent.session.current_utterance and not self.agent.session.current_utterance.done():
+                self.agent.session.current_utterance.interrupt()
+            
+            handle = UtteranceHandle(utterance_id=f"utt_{uuid.uuid4().hex[:8]}")
+            self.agent.session.current_utterance = handle
+        else:
+            handle = UtteranceHandle(utterance_id="utt_fallback")
+            handle._mark_done()
+
         await self.on_turn_start(user_text)
 
         # Generate response
-        asyncio.create_task(self._generate_and_synthesize_response(user_text))
+        asyncio.create_task(self._generate_and_synthesize_response(user_text, handle))
 
         # Async helper: waits before generating a response (used if utterance isn't clearly ended)
         # async def generate_response_after_delay(delay: float):
@@ -278,7 +287,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
         await self.on_turn_end()
 
-    async def _process_reply_instructions(self, instructions: str, wait_for_playback: bool = True) -> None:
+    async def _process_reply_instructions(self, instructions: str, wait_for_playback: bool, handle: UtteranceHandle) -> None:
         """Process reply instructions and generate response using existing flow"""
         
         original_vad_handler = None
@@ -302,8 +311,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             )
 
             await self.on_turn_start(instructions)
-            await self._generate_and_synthesize_response(instructions)
-
+            await self._generate_and_synthesize_response(instructions, handle)
             await self.on_turn_end()
             
             if wait_for_playback:
@@ -318,9 +326,12 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 
                 if original_stt_handler is not None:
                     self.on_stt_transcript = original_stt_handler
+            
+            if not handle.done():
+                handle._mark_done()
 
-    async def _generate_and_synthesize_response(self, user_text: str) -> None:
-        """Generate agent response"""
+    async def _generate_and_synthesize_response(self, user_text: str, handle: UtteranceHandle) -> None:
+        """Generate agent response and manage handle lifecycle"""
         self._is_interrupted = False
 
         full_response = ""
@@ -339,18 +350,18 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 response_parts = []
                 try:
                     async for chunk in llm_stream:
-                        if self._is_interrupted:
+                        if handle.interrupted:
                             logger.info("LLM collection interrupted")
                             await q.put(None)
                             return "".join(response_parts)
 
                         self._partial_response = "".join(response_parts)
                         
-                        if not self._is_interrupted:  # Only queue if not interrupted
+                        if not handle.interrupted:
                             await q.put(chunk)
                             response_parts.append(chunk)
 
-                    if not self._is_interrupted:
+                    if not handle.interrupted:
                         await q.put(None)
                     full_response = "".join(response_parts)
                     return full_response
@@ -362,7 +373,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             async def tts_consumer():
                 async def tts_stream_gen():
                     while True:
-                        if self._is_interrupted:
+                        if handle.interrupted:
                             break
 
                         try:
@@ -371,7 +382,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                                 break
                             yield chunk
                         except asyncio.TimeoutError:
-                            if self._is_interrupted:
+                            if handle.interrupted:
                                 break
                             continue
 
@@ -413,6 +424,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             self._current_tts_task = None
             self._current_llm_task = None
             cascading_metrics_collector.complete_current_turn()
+            if not handle.done():
+                handle._mark_done()
 
     async def process_with_llm(self) -> AsyncIterator[str]:
         """
@@ -488,9 +501,9 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                     if llm_chunk_resp.content:
                         yield llm_chunk_resp.content
 
-    async def say(self, message: str) -> None:
+    async def say(self, message: str, handle: UtteranceHandle) -> None:
         """
-        Direct TTS synthesis (used for initial messages)
+        Direct TTS synthesis (used for initial messages) and manage handle lifecycle.
         """
         if self.tts:
             cascading_metrics_collector.start_new_interaction("")
@@ -500,6 +513,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 await self._synthesize_with_tts(message)
             finally:
                 cascading_metrics_collector.complete_current_turn()
+                handle._mark_done()
 
     async def process_text_input(self, text: str) -> None:
         """
@@ -589,6 +603,9 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
     async def _interrupt_tts(self) -> None:
         self._is_interrupted = True
 
+        if self.agent and self.agent.session and self.agent.session.current_utterance:
+            self.agent.session.current_utterance.interrupt()
+
         if self._background_audio_player:
             await self._background_audio_player.stop()
             self._background_audio_player = None
@@ -647,7 +664,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         if not self.tts:
             return
         
-        self.agent.session._pause_wake_up_timer()
+        if self.agent and self.agent.session:
+            self.agent.session._pause_wake_up_timer()
 
         async def on_first_audio_byte():
             if self._background_audio_player:
@@ -681,8 +699,10 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 await self._background_audio_player.stop()
                 self._background_audio_player = None
 
-            self.agent.session._reply_in_progress = False
-            self.agent.session._reset_wake_up_timer()
+            if self.agent and self.agent.session:
+                self.agent.session._reply_in_progress = False
+                self.agent.session._reset_wake_up_timer()
+
             cascading_metrics_collector.on_agent_speech_end()
             
         # TODO: Need to work on IDLE state 
