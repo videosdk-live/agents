@@ -26,7 +26,14 @@ class CartesiaTTS(TTS):
         language: str = "en",
         base_url: str = "https://api.cartesia.ai",
     ) -> None:
-        """Initialize the Cartesia TTS plugin.
+        """Initialize the Cartesia TTS plugin
+        Args:
+            api_key (str | None, optional): Cartesia API key. Uses CARTESIA_API_KEY environment variable if not provided. Defaults to None.
+            model (str): The model to use for the TTS plugin. Defaults to "sonic-2".
+            voice_id (Union[str, List[float]]): The voice ID to use for the TTS plugin. Defaults to "794f9389-aac1-45b6-b726-9d9369183238".
+            api_key (str | None, optional): Cartesia API key. Uses CARTESIA_API_KEY environment variable if not provided. Defaults to None.
+            language (str): The language to use for the TTS plugin. Defaults to "en".
+            base_url (str): The base URL to use for the TTS plugin. Defaults to "https://api.cartesia.ai".
         """
         super().__init__(sample_rate=CARTESIA_SAMPLE_RATE, num_channels=CARTESIA_CHANNELS)
 
