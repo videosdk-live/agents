@@ -59,6 +59,7 @@ from .event_emitter import EventEmitter
 from .job import WorkerJob, JobContext, RoomOptions, Options
 from .worker import Worker, WorkerOptions, WorkerType
 from .background_audio import BackgroundAudioConfig
+from .utterance_handle import UtteranceHandle
 
 # New execution module exports
 from .execution import (
@@ -176,4 +177,5 @@ __all__ = [
     "DedicatedInferenceResource",
     "setup_logging",
     "BackgroundAudioConfig",
+    "UtteranceHandle",
 ]

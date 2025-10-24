@@ -15,6 +15,7 @@ from .denoise import Denoise
 import logging
 from .utils import UserState, AgentState
 from .background_audio import BackgroundAudio, BackgroundAudioConfig
+from .utterance_handle import UtteranceHandle
 
 logger = logging.getLogger(__name__)
 
@@ -47,10 +48,11 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         self.denoise = denoise
         self.background_audio: BackgroundAudioConfig | None = None
         self._background_audio_player: BackgroundAudio | None = None
+        self._current_utterance_handle: UtteranceHandle | None = None
         super().__init__()
         self.model.on("error", self.on_model_error)
         self.model.on("realtime_model_transcription", self.on_realtime_model_transcription)
-
+        self.model.on("agent_speech_ended", self._on_agent_speech_ended)
     
     def set_agent(self, agent: Agent) -> None:
         self.agent = agent
@@ -89,14 +91,19 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         self.model.on("user_speech_started", self.on_user_speech_started)
         self.model.on("user_speech_ended", lambda data: asyncio.create_task(self.on_user_speech_ended(data)))
         self.model.on("agent_speech_started", lambda data: asyncio.create_task(self.on_agent_speech_started(data)))
-        self.model.on("agent_speech_ended",{})
+        self.model.on("agent_speech_ended", self._on_agent_speech_ended)
 
-    async def send_message(self, message: str) -> None:
+    async def send_message(self, message: str, handle: UtteranceHandle) -> None:
         """
-        Send a message through the realtime model.
-        Delegates to the model's send_message implementation.
+        Send a message through the realtime pipeline and track the utterance handle.
         """
-        await self.model.send_message(message)
+        self._current_utterance_handle = handle
+        try:
+            await self.model.send_message(message)
+            logger.info(f"Sent message to model from the pipeline: {message}")
+        except Exception as e:
+            logger.error(f"Error sending message: {e}")
+            handle._mark_done()
 
     async def send_text_message(self, message: str) -> None:
         """
@@ -107,6 +114,16 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
             await self.model.send_text_message(message)
         else:
             await self.model.send_message(message)
+    
+    def _on_agent_speech_ended(self, data: dict) -> None:
+        """
+        Handle agent speech ended event and mark utterance as done, forwarding to agent if handler exists.
+        """
+        logger.info(f"Agent speech ended event received in the realtime_pipeline.py: {data}")
+        if self._current_utterance_handle and not self._current_utterance_handle.done():
+            self._current_utterance_handle._mark_done()
+        if self.agent and hasattr(self.agent, 'on_agent_speech_ended'):
+            self.agent.on_agent_speech_ended(data)
     
     async def on_audio_delta(self, audio_data: bytes):
         """
@@ -141,6 +158,8 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
             asyncio.create_task(self.model.interrupt())
         if self._background_audio_player:
             asyncio.create_task(self._background_audio_player.stop())
+        if self._current_utterance_handle and not self._current_utterance_handle.done():
+            self._current_utterance_handle.interrupt()
 
     async def leave(self) -> None:
         """
@@ -216,6 +235,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         self.denoise = None
         self.background_audio = None
         self._background_audio_player = None
+        self._current_utterance_handle = None
         
         logger.info("Realtime pipeline cleaned up")
         await super().cleanup()
