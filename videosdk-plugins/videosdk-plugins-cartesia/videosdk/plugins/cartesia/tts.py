@@ -26,7 +26,15 @@ class CartesiaTTS(TTS):
         language: str = "en",
         base_url: str = "https://api.cartesia.ai",
     ) -> None:
-        """Initialize the Cartesia TTS plugin"""
+        """Initialize the Cartesia STT plugin
+
+        Args:
+            api_key (str | None, optional): Cartesia API key. Uses CARTESIA_API_KEY environment variable if not provided. Defaults to None.
+            model (str): The model to use for the STT plugin. Defaults to "ink-whisper".
+            language (str): The language to use for the STT plugin, e.g. "en". Defaults to "en".
+            sample_rate (int): The sample rate to use for the STT plugin. Defaults to 48000.
+            base_url (str): The base URL to use for the STT plugin. Defaults to "wss://api.cartesia.ai/stt/websocket".
+        """
         super().__init__(sample_rate=CARTESIA_SAMPLE_RATE, num_channels=CARTESIA_CHANNELS)
 
         self.model = model
@@ -38,7 +46,8 @@ class CartesiaTTS(TTS):
 
         api_key = api_key or os.getenv("CARTESIA_API_KEY")
         if not api_key:
-            raise ValueError("Cartesia API key must be provided")
+            raise ValueError(
+                "Cartesia API key must be provided either through api_key parameter or CARTESIA_API_KEY environment variable")
         self._api_key = api_key
 
         self._ws_session: aiohttp.ClientSession | None = None
@@ -55,7 +64,7 @@ class CartesiaTTS(TTS):
         self, text: AsyncIterator[str] | str, voice_id: Optional[Union[str, List[float]]] = None, **kwargs: Any,
     ) -> None:
         """Synthesize text to speech using Cartesia's streaming WebSocket API."""
-        context_id = ""  # Define context_id in the outer scope
+        context_id = ""
         try:
             if not self.audio_track or not self.loop:
                 self.emit("error", "Audio track or event loop not set")
@@ -130,7 +139,7 @@ class CartesiaTTS(TTS):
                     await self._ws_connection.send_str(json.dumps(final_payload))
 
     async def _receive_loop(self):
-        """The long-running task that handles all incoming messages from the WebSocket."""
+        """A single, long-running task that handles all incoming messages from the WebSocket."""
         try:
             while self._ws_connection and not self._ws_connection.closed:
                 msg = await self._ws_connection.receive()
