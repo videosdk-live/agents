@@ -100,7 +100,6 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         self._current_utterance_handle = handle
         try:
             await self.model.send_message(message)
-            logger.info(f"Sent message to model from the pipeline: {message}")
         except Exception as e:
             logger.error(f"Error sending message: {e}")
             handle._mark_done()
@@ -119,7 +118,6 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         """
         Handle agent speech ended event and mark utterance as done, forwarding to agent if handler exists.
         """
-        logger.info(f"Agent speech ended event received in the realtime_pipeline.py: {data}")
         if self._current_utterance_handle and not self._current_utterance_handle.done():
             self._current_utterance_handle._mark_done()
         if self.agent and hasattr(self.agent, 'on_agent_speech_ended'):
