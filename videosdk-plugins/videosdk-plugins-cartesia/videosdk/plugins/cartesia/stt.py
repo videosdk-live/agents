@@ -7,7 +7,8 @@ from typing import Any, Optional
 from urllib.parse import urlencode
 import aiohttp
 import numpy as np
-from scipy import signal
+import math
+from scipy.signal import resample_poly
 from videosdk.agents import STT as BaseSTT, STTResponse, SpeechEventType, SpeechData, global_event_emitter
 import logging
 
@@ -67,12 +68,15 @@ class CartesiaSTT(BaseSTT):
         try:
 
             audio_data = np.frombuffer(audio_frames, dtype=np.int16)
+
+            if audio_data.ndim == 1 and len(audio_data) % 2 == 0 and self.input_sample_rate == self.sample_rate and self.input_sample_rate != self.target_sample_rate:
+                audio_data = audio_data.reshape(-1, 2).mean(axis=1).astype(np.int16)
+
             if self.input_sample_rate != self.target_sample_rate:
-                audio_data = signal.resample(
-                    audio_data,
-                    int(len(audio_data) * self.target_sample_rate /
-                        self.input_sample_rate)
-                )
+                audio_data = self._resample_audio(audio_data, self.input_sample_rate, self.target_sample_rate)
+                audio_data = np.clip(audio_data, -32768, 32767)
+                audio_data = audio_data.astype(np.int16)
+
             audio_bytes = audio_data.astype(np.int16).tobytes()
             await self._ws.send_bytes(audio_bytes)
 
@@ -207,6 +211,20 @@ class CartesiaSTT(BaseSTT):
             logger.error(f"Error handling WebSocket message: {str(e)}")
 
         return responses
+
+    def _resample_audio(self, audio: np.ndarray, orig_sr: int, target_sr : int) -> np.ndarray :
+        """
+        Use polyphase filtering for resampling, which is more accurate for integer-ratio conversions.
+        Assumes input is np.int16.
+        """
+        if orig_sr == target_sr:
+            return audio
+        
+        gcd = math.gcd(orig_sr, target_sr)
+        up = target_sr // gcd
+        down = orig_sr // gcd
+        
+        return resample_poly(audio, up, down)
 
     async def aclose(self) -> None:
         """Cleanup resources"""
