@@ -54,6 +54,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         self.agent = None
         self.conversation_flow = None
         self.avatar = avatar
+        self.vision = False
 
         if self.stt:
             self.stt.on(
@@ -371,3 +372,11 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
             await self.conversation_flow._process_reply_instructions(instructions, wait_for_playback)
         else:
             logger.warning("No conversation flow found in pipeline")
+            
+    async def on_video_delta(self, video_data: av.VideoFrame):
+        """
+        Handle incoming video data from the user
+        The model's handle_video_input is now expected to handle the av.VideoFrame.
+        """
+        if self.vision and hasattr(self.model, 'handle_video_input'):
+            await self.model.handle_video_input(video_data)
