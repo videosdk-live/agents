@@ -14,7 +14,6 @@ from .metrics import realtime_metrics_collector
 from .denoise import Denoise
 import logging
 from .utils import UserState, AgentState
-from .background_audio import BackgroundAudio, BackgroundAudioConfig
 from .utterance_handle import UtteranceHandle
 
 logger = logging.getLogger(__name__)
@@ -46,9 +45,6 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         self.avatar = avatar
         self.vision = False
         self.denoise = denoise
-        self.background_audio: BackgroundAudioConfig | None = None
-        self._background_audio_player: BackgroundAudio | None = None
-        self._current_utterance_handle: UtteranceHandle | None = None
         super().__init__()
         self.model.on("error", self.on_model_error)
         self.model.on("realtime_model_transcription", self.on_realtime_model_transcription)
@@ -144,6 +140,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         Handle user speech started event
         """
         self._notify_speech_started()
+        self.interrupt()
         if self.agent.session:
             self.agent.session._emit_user_state(UserState.SPEAKING)
             self.agent.session._emit_agent_state(AgentState.LISTENING)
@@ -154,8 +151,8 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         """
         if self.model:
             asyncio.create_task(self.model.interrupt())
-        if self._background_audio_player:
-            asyncio.create_task(self._background_audio_player.stop())
+        if self.agent and self.agent.session:
+            asyncio.create_task(self.agent.session.stop_thinking_audio())
         if self._current_utterance_handle and not self._current_utterance_handle.done():
             self._current_utterance_handle.interrupt()
 
@@ -206,8 +203,9 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
                 logger.error(f"Error while closing model during cleanup: {e}")
             self.model = None
         
-        if self._background_audio_player:
-            await self._stop_background_audio()
+        if self._current_utterance_handle:
+            self._current_utterance_handle.interrupt()
+            self._current_utterance_handle = None
         
         if hasattr(self, 'avatar') and self.avatar is not None:
             try:
@@ -231,29 +229,21 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         self.model = None
         self.avatar = None
         self.denoise = None
-        self.background_audio = None
-        self._background_audio_player = None
         self._current_utterance_handle = None
         
         logger.info("Realtime pipeline cleaned up")
         await super().cleanup()
 
-    async def _stop_background_audio(self):
-        if self._background_audio_player:
-            await self._background_audio_player.stop()
-            self._background_audio_player = None
-
     async def on_user_speech_ended(self, data: dict) -> None:
         """
         Handle agent turn started event
         """
-        if self.background_audio and self.model.audio_track:
-            self._background_audio_player = BackgroundAudio(self.background_audio, self.model.audio_track)
-            await self._background_audio_player.start()
+        if self.agent and self.agent.session:
+            await self.agent.session.start_thinking_audio()
 
     async def on_agent_speech_started(self, data: dict) -> None:
         """
         Handle agent speech started event
         """
-        if self.background_audio:
-            await self._stop_background_audio()
+        if self.agent and self.agent.session:
+            await self.agent.session.stop_thinking_audio()

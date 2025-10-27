@@ -7,6 +7,7 @@ from av import AudioFrame
 import numpy as np
 from videosdk import CustomAudioTrack
 from ..event_bus import global_event_emitter
+
 logger = logging.getLogger(__name__)
 
 
@@ -18,6 +19,10 @@ class MediaStreamError(Exception):
 
 
 class CustomAudioStreamTrack(CustomAudioTrack):
+    """
+    Base audio track implementation using a frame buffer.
+    Audio frames are created as soon as audio data is received.
+    """
     def __init__(self, loop):
         super().__init__()
         self.loop = loop
@@ -116,8 +121,97 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         self.interrupt()
         self.stop()
 
+class MixingCustomAudioStreamTrack(CustomAudioStreamTrack):
+    """
+    Audio track implementation with mixing capabilities.
+    Inherits from CustomAudioStreamTrack and overrides methods to handle mixing.
+    Frames are created just-in-time in the recv method.
+    """
+    def __init__(self, loop):
+        super().__init__(loop)
+        self.background_audio_buffer = bytearray()
 
-class TeeCustomAudioStreamTrack(CustomAudioStreamTrack):
+    def interrupt(self):
+        super().interrupt()
+        self.background_audio_buffer.clear()
+
+    async def add_new_bytes(self, audio_data: bytes):
+        """Overrides base method to buffer bytes instead of creating frames."""
+        global_event_emitter.emit("ON_SPEECH_OUT", {"audio_data": audio_data})
+        self.audio_data_buffer += audio_data
+
+    async def add_background_bytes(self, audio_data: bytes):
+        self.background_audio_buffer += audio_data
+
+    def mix_audio(self, primary_chunk, background_chunk):
+        if not background_chunk:
+            return primary_chunk
+
+        primary_arr = np.frombuffer(primary_chunk, dtype=np.int16)
+        background_arr = np.frombuffer(background_chunk, dtype=np.int16)
+
+        if len(background_arr) < len(primary_arr):
+            background_arr = np.pad(background_arr, (0, len(primary_arr) - len(background_arr)), 'constant')
+        elif len(background_arr) > len(primary_arr):
+            background_arr = background_arr[:len(primary_arr)]
+
+        mixed_arr = np.add(primary_arr, background_arr, dtype=np.int16)
+        return mixed_arr.tobytes()
+
+    async def recv(self) -> AudioFrame:
+        """
+        Overrides base method to perform mixing and just-in-time frame creation.
+        """
+        try:
+            if self.readyState != "live":
+                raise MediaStreamError
+
+            if self._start is None:
+                self._start = time()
+                self._timestamp = 0
+            else:
+                self._timestamp += self.samples
+
+            wait = self._start + (self._timestamp / self.sample_rate) - time()
+            if wait > 0:
+                await asyncio.sleep(wait)
+
+            pts, time_base = self.next_timestamp()
+
+            primary_chunk = b''
+            has_primary = len(self.audio_data_buffer) >= self.chunk_size
+            if has_primary:
+                primary_chunk = self.audio_data_buffer[: self.chunk_size]
+                self.audio_data_buffer = self.audio_data_buffer[self.chunk_size :]
+
+            background_chunk = b''
+            has_background = len(self.background_audio_buffer) >= self.chunk_size
+            if has_background:
+                background_chunk = self.background_audio_buffer[: self.chunk_size]
+                self.background_audio_buffer = self.background_audio_buffer[self.chunk_size :]
+            
+            final_chunk = None
+            if has_primary:
+                final_chunk = self.mix_audio(primary_chunk, background_chunk)
+            elif has_background:
+                final_chunk = background_chunk
+            
+            if final_chunk:
+                frame = self.buildAudioFrames(final_chunk)
+            else:
+                frame = AudioFrame(format="s16", layout="mono", samples=self.samples)
+                for p in frame.planes:
+                    p.update(bytes(p.buffer_size))
+
+            frame.pts = pts
+            frame.time_base = time_base
+            frame.sample_rate = self.sample_rate
+            return frame
+        except Exception as e:
+            traceback.print_exc()
+            logger.error(f"Error while creating tts->rtc frame: {e}")
+
+class TeeCustomAudioStreamTrack(MixingCustomAudioStreamTrack):
     def __init__(self, loop, sinks=None, pipeline=None):
         super().__init__(loop)
         self.sinks = sinks if sinks is not None else []

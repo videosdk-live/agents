@@ -12,10 +12,10 @@ from .agent import Agent
 from .eou import EOU
 from .job import get_current_job_context
 from .denoise import Denoise
-from .background_audio import BackgroundAudioConfig
-from .utterance_handle import UtteranceHandle
 import logging
 import asyncio
+from .background_audio import BackgroundAudio
+from .utterance_handle import UtteranceHandle
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +93,6 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
             )
 
         self.denoise = denoise
-        self.background_audio: BackgroundAudioConfig | None = None
         super().__init__()
 
     def set_agent(self, agent: Agent) -> None:
@@ -137,7 +136,6 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         self.conversation_flow.vad = self.vad
         self.conversation_flow.turn_detector = self.turn_detector
         self.conversation_flow.denoise = self.denoise
-        self.conversation_flow.background_audio = self.background_audio
         self.conversation_flow.user_speech_callback = self.on_user_speech_started
         if self.conversation_flow.stt:
             self.conversation_flow.stt.on_stt_transcript(
@@ -217,7 +215,6 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         if self.conversation_flow:
             asyncio.create_task(self.conversation_flow._interrupt_tts())
     
-
     async def cleanup(self) -> None:
         """Cleanup all pipeline components"""
         logger.info("Cleaning up cascading pipeline")

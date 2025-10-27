@@ -45,8 +45,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self.agent = agent
         self.denoise = denoise
         self._stt_started = False
-        self.background_audio: BackgroundAudioConfig | None = None
-        self._background_audio_player: BackgroundAudio | None = None
         self.stt_lock = asyncio.Lock()
         self.llm_lock = asyncio.Lock()
         self.tts_lock = asyncio.Lock()
@@ -338,9 +336,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self._partial_response = ""
 
         try:
-            if self.background_audio and self.tts and self.tts.audio_track:
-                self._background_audio_player = BackgroundAudio(self.background_audio, self.tts.audio_track)
-                await self._background_audio_player.start()
+            if self.agent.session:
+                await self.agent.session.start_thinking_audio()
 
             llm_stream = self.run(user_text)
 
@@ -606,9 +603,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         if self.agent and self.agent.session and self.agent.session.current_utterance:
             self.agent.session.current_utterance.interrupt()
 
-        if self._background_audio_player:
-            await self._background_audio_player.stop()
-            self._background_audio_player = None
+        if self.agent.session:
+            await self.agent.session.stop_thinking_audio()
 
         # Cancel any waiting timers
         if self._wait_timer:
@@ -663,14 +659,13 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         """
         if not self.tts:
             return
-        
+
         if self.agent and self.agent.session:
             self.agent.session._pause_wake_up_timer()
 
         async def on_first_audio_byte():
-            if self._background_audio_player:
-                await self._background_audio_player.stop()
-                self._background_audio_player = None
+            if self.agent.session:
+                await self.agent.session.stop_thinking_audio()
             cascading_metrics_collector.on_tts_first_byte()
             cascading_metrics_collector.on_agent_speech_start()
             
@@ -695,14 +690,13 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             
 
         finally:
-            if self._background_audio_player:
-                await self._background_audio_player.stop()
-                self._background_audio_player = None
+            if self.agent.session:
+                await self.agent.session.stop_thinking_audio()
 
             if self.agent and self.agent.session:
                 self.agent.session._reply_in_progress = False
                 self.agent.session._reset_wake_up_timer()
-
+            
             cascading_metrics_collector.on_agent_speech_end()
             
         # TODO: Need to work on IDLE state 
@@ -729,10 +723,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 pass
             self._current_llm_task = None
         
-        if self._background_audio_player:
-            await self._background_audio_player.stop()
-            self._background_audio_player = None
-
         if self._eou_timer_task and not self._eou_timer_task.done():
             self._eou_timer_task.cancel()
             try:
@@ -760,6 +750,4 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self._stt_started = False
         self._partial_response = ""
         self._is_interrupted = False
-        self.background_audio = None
-        self._background_audio_player = None
         logger.info("Conversation flow cleaned up")

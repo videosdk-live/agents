@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import List, Literal
+from typing import List, Literal, Optional
 import inspect
 from .event_emitter import EventEmitter
 from .llm.chat_context import ChatContext
@@ -12,7 +12,9 @@ import uuid
 from .llm.chat_context import ChatContext, ChatRole
 from .mcp.mcp_manager import MCPToolManager
 from .mcp.mcp_server import MCPServiceProvider
+from .background_audio import BackgroundAudioConfig
 import logging
+import os
 logger = logging.getLogger(__name__)
 
 if 'AgentSession' not in globals():
@@ -43,6 +45,7 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
         self.id = agent_id or str(uuid.uuid4())
         self.mcp_manager = MCPToolManager()
         self.session: "AgentSession"
+        self._thinking_background_config: Optional[BackgroundAudioConfig] = None
 
     def _register_class_tools(self) -> None:
         """Internal Method: Register all function tools defined in the class"""
@@ -84,6 +87,25 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
     async def hangup(self) -> None:
         """Hang up the agent"""
         await self.session.close()
+    
+    def set_thinking_background(self, file: str = None, volume: float = 0.3):
+        """Set the thinking background for the agent"""
+        if file is None:
+            file = os.path.join(os.path.dirname(__file__), 'resources', 'agent_keyboard.wav')
+        self._thinking_background_config = BackgroundAudioConfig(file_path=file,volume=volume,looping=True,enabled=True)
+
+    async def play_background_audio(self, file: str = None, volume: float = 1.0, looping: bool = False, override_thinking: bool = True) -> None:
+        """Play background audio on demand"""
+        if file is None:
+            file = os.path.join(os.path.dirname(__file__), 'resources', 'classical.wav')
+        
+        config = BackgroundAudioConfig(file_path=file,volume=volume,looping=looping,enabled=True,mode='mixing') 
+        
+        await self.session.play_background_audio(config, override_thinking)
+
+    async def stop_background_audio(self) -> None:
+        """Stop background audio on demand"""
+        await self.session.stop_background_audio()
     
     async def initialize_mcp(self) -> None:
         """Internal Method: Initialize the agent, including any MCP server if provided."""
