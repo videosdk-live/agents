@@ -19,6 +19,7 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 
+
 logger = logging.getLogger(__name__)
 # logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 # logging.getLogger().setLevel(logging.CRITICAL)
