@@ -12,7 +12,7 @@ import uuid
 from .llm.chat_context import ChatContext, ChatRole
 from .mcp.mcp_manager import MCPToolManager
 from .mcp.mcp_server import MCPServiceProvider
-from .background_audio import BackgroundAudioConfig
+from .background_audio import BackgroundAudioHandlerConfig
 import logging
 import os
 logger = logging.getLogger(__name__)
@@ -45,7 +45,7 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
         self.id = agent_id or str(uuid.uuid4())
         self.mcp_manager = MCPToolManager()
         self.session: "AgentSession"
-        self._thinking_background_config: Optional[BackgroundAudioConfig] = None
+        self._thinking_background_config: Optional[BackgroundAudioHandlerConfig] = None
 
     def _register_class_tools(self) -> None:
         """Internal Method: Register all function tools defined in the class"""
@@ -92,14 +92,14 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
         """Set the thinking background for the agent"""
         if file is None:
             file = os.path.join(os.path.dirname(__file__), 'resources', 'agent_keyboard.wav')
-        self._thinking_background_config = BackgroundAudioConfig(file_path=file,volume=volume,looping=True,enabled=True)
+        self._thinking_background_config = BackgroundAudioHandlerConfig(file_path=file,volume=volume,looping=True,enabled=True)
 
     async def play_background_audio(self, file: str = None, volume: float = 1.0, looping: bool = False, override_thinking: bool = True) -> None:
         """Play background audio on demand"""
         if file is None:
             file = os.path.join(os.path.dirname(__file__), 'resources', 'classical.wav')
         
-        config = BackgroundAudioConfig(file_path=file,volume=volume,looping=looping,enabled=True,mode='mixing') 
+        config = BackgroundAudioHandlerConfig(file_path=file,volume=volume,looping=looping,enabled=True,mode='mixing') 
         
         await self.session.play_background_audio(config, override_thinking)
 

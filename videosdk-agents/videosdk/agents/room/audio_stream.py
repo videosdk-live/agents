@@ -211,7 +211,7 @@ class MixingCustomAudioStreamTrack(CustomAudioStreamTrack):
             traceback.print_exc()
             logger.error(f"Error while creating tts->rtc frame: {e}")
 
-class TeeCustomAudioStreamTrack(MixingCustomAudioStreamTrack):
+class TeeCustomAudioStreamTrack(CustomAudioStreamTrack):
     def __init__(self, loop, sinks=None, pipeline=None):
         super().__init__(loop)
         self.sinks = sinks if sinks is not None else []
@@ -228,3 +228,18 @@ class TeeCustomAudioStreamTrack(MixingCustomAudioStreamTrack):
         # DO NOT route agent's own TTS audio back to pipeline
         # The pipeline should only receive audio from other participants
         # This prevents the agent from hearing itself speak
+
+class TeeMixingCustomAudioStreamTrack(MixingCustomAudioStreamTrack):
+    def __init__(self, loop, sinks=None, pipeline=None):
+        super().__init__(loop)
+        self.sinks = sinks if sinks is not None else []
+        self.pipeline = pipeline
+
+    async def add_new_bytes(self, audio_data: bytes):
+        await super().add_new_bytes(audio_data)
+
+        # Route audio to sinks (avatars, etc.)
+        for sink in self.sinks:
+            if hasattr(sink, "handle_audio_input"):
+                await sink.handle_audio_input(audio_data)
+        

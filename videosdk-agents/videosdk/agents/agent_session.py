@@ -15,7 +15,7 @@ import time
 from .job import get_current_job_context
 from .event_emitter import EventEmitter
 from .event_bus import global_event_emitter
-from .background_audio import BackgroundAudioConfig, BackgroundAudio
+from .background_audio import BackgroundAudioHandler,BackgroundAudioHandlerConfig
 import logging
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         pipeline: Pipeline,
         conversation_flow: Optional[ConversationFlow] = None,
         wake_up: Optional[int] = None,
-        background_audio: Optional[BackgroundAudioConfig] = None,
+        background_audio: Optional[BackgroundAudioHandlerConfig] = None,
     ) -> None:
         """
         Initialize an agent session.
@@ -56,16 +56,13 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         self._user_state: UserState = UserState.IDLE
         self._agent_state: AgentState = AgentState.IDLE
         self.current_utterance: Optional[UtteranceHandle] = None
-        self._thinking_audio_player: Optional[BackgroundAudio] = None
-        self._background_audio_player: Optional[BackgroundAudio] = None
+        self._thinking_audio_player: Optional[BackgroundAudioHandler] = None
+        self._background_audio_player: Optional[BackgroundAudioHandler] = None
         self._thinking_was_playing = False
         self.background_audio_config = background_audio
 
         if hasattr(self.pipeline, 'set_agent'):
             self.pipeline.set_agent(self.agent)
-
-        if background_audio and hasattr(self.pipeline, 'background_audio'):
-            self.pipeline.background_audio = background_audio
         
         if (
             hasattr(self.pipeline, "set_conversation_flow")
@@ -249,15 +246,23 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         
         return handle
     
-    async def play_background_audio(self, config: BackgroundAudioConfig, override_thinking: bool) -> None:
+    async def play_background_audio(self, config: BackgroundAudioHandlerConfig, override_thinking: bool) -> None:
         """Play background audio on demand"""
         if override_thinking and self._thinking_audio_player and self._thinking_audio_player.is_playing:
             await self.stop_thinking_audio()
             self._thinking_was_playing = True
 
         audio_track = self._get_audio_track()
+        if not hasattr(audio_track, 'add_background_bytes'):
+            logger.warning(
+                "Cannot play background audio. This feature requires the mixing audio track. "
+                "Enable it by setting `background_audio=True` in RoomOptions."
+            )
+            return
+
         if audio_track:
-            self._background_audio_player = BackgroundAudio(config, audio_track)
+            self._background_audio_player = BackgroundAudioHandler(config, audio_track)
+            
             await self._background_audio_player.start()
 
 
@@ -285,8 +290,15 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             return
 
         audio_track = self._get_audio_track()
+        if not hasattr(audio_track, 'add_background_bytes'):
+            logger.warning(
+                "Cannot play 'thinking' audio. This feature requires the mixing audio track. "
+                "Enable it by setting `background_audio=True` in RoomOptions."
+            )
+            return
+
         if self.agent._thinking_background_config and audio_track:
-            self._thinking_audio_player = BackgroundAudio(self.agent._thinking_background_config, audio_track)
+            self._thinking_audio_player = BackgroundAudioHandler(self.agent._thinking_background_config, audio_track)
             await self._thinking_audio_player.start()
 
     async def stop_thinking_audio(self):

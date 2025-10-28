@@ -14,7 +14,7 @@ from .job import get_current_job_context
 from .denoise import Denoise
 import logging
 import asyncio
-from .background_audio import BackgroundAudio
+from .background_audio import BackgroundAudioHandler
 from .utterance_handle import UtteranceHandle
 
 logger = logging.getLogger(__name__)

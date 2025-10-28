@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import numpy as np
 
 @dataclass
-class BackgroundAudioConfig:
+class BackgroundAudioHandlerConfig:
     file_path: str
     enabled: bool = True
     mode: str = 'playback' # 'playback' or 'mixing'
@@ -15,8 +15,8 @@ class BackgroundAudioConfig:
 
 logger = logging.getLogger(__name__)
 
-class BackgroundAudio:
-    def __init__(self, config: BackgroundAudioConfig, audio_track: Any, chunk_size: int = 320):
+class BackgroundAudioHandler:
+    def __init__(self, config: BackgroundAudioHandlerConfig, audio_track: Any, chunk_size: int = 320):
         self.config = config
         self.audio_track = audio_track
         self.chunk_size = chunk_size

@@ -679,6 +679,7 @@ class Worker:
                 auth_token=auth_token,
                 signaling_base_url=self.options.signaling_base_url,
                 recording=self.default_room_options.recording,
+                background_audio=self.default_room_options.background_audio,
                 agent_participant_id=self.default_room_options.agent_participant_id,
                 join_meeting=self.default_room_options.join_meeting,
                 auto_end_session=self.default_room_options.auto_end_session,
@@ -716,6 +717,9 @@ class Worker:
                 if "recording" in assignment.room_options:
                     room_options.recording = assignment.room_options["recording"]
                     logger.info(f"Set recording: {room_options.recording}")
+                if "background_audio" in assignment.room_options:
+                    room_options.background_audio = assignment.room_options["background_audio"]
+                    logger.info(f"Set background_audio: {room_options.background_audio}")
                 if "agent_participant_id" in assignment.room_options:
                     room_options.agent_participant_id = assignment.room_options[
                         "agent_participant_id"

@@ -22,7 +22,7 @@ from .utils import UserState, AgentState
 import uuid
 from .utterance_handle import UtteranceHandle
 import logging
-from .background_audio import BackgroundAudio, BackgroundAudioConfig
+from .background_audio import BackgroundAudioHandler, BackgroundAudioHandlerConfig
 
 logger = logging.getLogger(__name__)
 
