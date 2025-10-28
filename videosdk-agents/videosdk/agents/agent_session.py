@@ -142,6 +142,12 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
     def agent_state(self) -> AgentState:
         return self._agent_state
 
+    @property
+    def is_background_audio_enabled(self) -> bool:
+        """Check if background audio is enabled in the pipeline"""
+        audio_track = self._get_audio_track()
+        return hasattr(audio_track, 'add_background_bytes')
+
     async def start(self, **kwargs: Any) -> None:
         """
         Start the agent session.

@@ -336,7 +336,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self._partial_response = ""
 
         try:
-            if self.agent.session:
+            if self.agent.session and self.agent.session.is_background_audio_enabled:
                 await self.agent.session.start_thinking_audio()
 
             llm_stream = self.run(user_text)
@@ -603,7 +603,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         if self.agent and self.agent.session and self.agent.session.current_utterance:
             self.agent.session.current_utterance.interrupt()
 
-        if self.agent.session:
+        if self.agent.session and self.agent.session.is_background_audio_enabled:
             await self.agent.session.stop_thinking_audio()
 
         # Cancel any waiting timers
@@ -664,7 +664,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             self.agent.session._pause_wake_up_timer()
 
         async def on_first_audio_byte():
-            if self.agent.session:
+            if self.agent.session and self.agent.session.is_background_audio_enabled:
                 await self.agent.session.stop_thinking_audio()
             cascading_metrics_collector.on_tts_first_byte()
             cascading_metrics_collector.on_agent_speech_start()
@@ -690,7 +690,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             
 
         finally:
-            if self.agent.session:
+            if self.agent.session and self.agent.session.is_background_audio_enabled:
                 await self.agent.session.stop_thinking_audio()
 
             if self.agent and self.agent.session:

@@ -151,7 +151,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         """
         if self.model:
             asyncio.create_task(self.model.interrupt())
-        if self.agent and self.agent.session:
+        if self.agent and self.agent.session and self.agent.session.is_background_audio_enabled:
             asyncio.create_task(self.agent.session.stop_thinking_audio())
         if self._current_utterance_handle and not self._current_utterance_handle.done():
             self._current_utterance_handle.interrupt()
@@ -238,12 +238,12 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         """
         Handle agent turn started event
         """
-        if self.agent and self.agent.session:
+        if self.agent and self.agent.session and self.agent.session.is_background_audio_enabled:
             await self.agent.session.start_thinking_audio()
 
     async def on_agent_speech_started(self, data: dict) -> None:
         """
         Handle agent speech started event
         """
-        if self.agent and self.agent.session:
+        if self.agent and self.agent.session and self.agent.session.is_background_audio_enabled:
             await self.agent.session.stop_thinking_audio()
