@@ -134,12 +134,10 @@ class VideoSDKHandler:
             self.audio_track = custom_microphone_audio_track
             if audio_sinks:
                 if self.background_audio:
-                    print("A011 >> in here for checking background audio..... in room.py if background audio is true")
                     self.agent_audio_track = TeeMixingCustomAudioStreamTrack(
                         loop=self.loop, sinks=audio_sinks, pipeline=pipeline
                     )
                 else:
-                    print("A022 >> in here for checking background audio..... in room.py if background audio is false")
                     self.agent_audio_track = TeeCustomAudioStreamTrack(
                         loop=self.loop, sinks=audio_sinks, pipeline=pipeline
                     )
@@ -147,12 +145,10 @@ class VideoSDKHandler:
                 self.agent_audio_track = None
         else:
             if self.background_audio:
-                print("BBBBB033 >> in here for checking background audio..... in room.py if background audio is true")
                 self.audio_track = TeeMixingCustomAudioStreamTrack(
                     loop=self.loop, sinks=audio_sinks, pipeline=pipeline
                 )
             else:
-                print("BBBBB044 >> in here for checking background audio..... in room.py if background audio is false")
                 self.audio_track = TeeCustomAudioStreamTrack(
                     loop=self.loop, sinks=audio_sinks, pipeline=pipeline
                 )
