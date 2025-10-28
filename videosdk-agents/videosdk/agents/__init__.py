@@ -54,11 +54,11 @@ from .utils import (
     build_nova_sonic_schema,
     segment_text,
 )
-from .room.audio_stream import CustomAudioStreamTrack, TeeCustomAudioStreamTrack
+from .room.audio_stream import CustomAudioStreamTrack, TeeCustomAudioStreamTrack, TeeMixingCustomAudioStreamTrack
 from .event_emitter import EventEmitter
 from .job import WorkerJob, JobContext, RoomOptions, Options
 from .worker import Worker, WorkerOptions, WorkerType
-from .background_audio import BackgroundAudioConfig
+from .utterance_handle import UtteranceHandle
 
 # New execution module exports
 from .execution import (
@@ -115,6 +115,7 @@ __all__ = [
     "FunctionToolInfo",
     "CustomAudioStreamTrack",
     "TeeCustomAudioStreamTrack",
+    "TeeMixingCustomAudioStreamTrack",
     "build_openai_schema",
     "build_gemini_schema",
     "ToolChoice",
@@ -175,5 +176,6 @@ __all__ = [
     "TaskExecutor",
     "DedicatedInferenceResource",
     "setup_logging",
-    "BackgroundAudioConfig",
+    "BackgroundAudioHandlerConfig",
+    "UtteranceHandle",
 ]

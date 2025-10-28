@@ -12,9 +12,10 @@ from .agent import Agent
 from .eou import EOU
 from .job import get_current_job_context
 from .denoise import Denoise
-from .background_audio import BackgroundAudioConfig
 import logging
 import asyncio
+from .background_audio import BackgroundAudioHandler
+from .utterance_handle import UtteranceHandle
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +93,6 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
             )
 
         self.denoise = denoise
-        self.background_audio: BackgroundAudioConfig | None = None
         super().__init__()
 
     def set_agent(self, agent: Agent) -> None:
@@ -136,7 +136,6 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         self.conversation_flow.vad = self.vad
         self.conversation_flow.turn_detector = self.turn_detector
         self.conversation_flow.denoise = self.denoise
-        self.conversation_flow.background_audio = self.background_audio
         self.conversation_flow.user_speech_callback = self.on_user_speech_started
         if self.conversation_flow.stt:
             self.conversation_flow.stt.on_stt_transcript(
@@ -180,11 +179,12 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         if self.conversation_flow:
             await self.conversation_flow.start()
 
-    async def send_message(self, message: str) -> None:
+    async def send_message(self, message: str, handle: UtteranceHandle) -> None:
         if self.conversation_flow:
-            await self.conversation_flow.say(message)
+            await self.conversation_flow.say(message, handle)
         else:
             logger.warning("No conversation flow found in pipeline")
+            handle._mark_done()
 
     async def send_text_message(self, message: str) -> None:
         """
@@ -215,7 +215,6 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         if self.conversation_flow:
             asyncio.create_task(self.conversation_flow._interrupt_tts())
     
-
     async def cleanup(self) -> None:
         """Cleanup all pipeline components"""
         logger.info("Cleaning up cascading pipeline")
@@ -359,7 +358,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         cascading_metrics_collector.add_error(source, str(error_data))
         logger.error(f"[{source}] Component error: {error_data}")
 
-    async def reply_with_context(self, instructions: str, wait_for_playback: bool = True) -> None:
+    async def reply_with_context(self, instructions: str, handle: UtteranceHandle, wait_for_playback: bool = True) -> None:
         """
         Generate a reply using instructions and current chat context.
         
@@ -368,6 +367,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
             wait_for_playback: If True, disable VAD and STT interruptions during response and wait for
         """
         if self.conversation_flow:
-            await self.conversation_flow._process_reply_instructions(instructions, wait_for_playback)
+            await self.conversation_flow._process_reply_instructions(instructions, wait_for_playback, handle)
         else:
-            logger.warning("No conversation flow found in pipeline")
+            logger.warning("No conversation flow found in pipeline, marking handle as done.")
+            handle._mark_done()

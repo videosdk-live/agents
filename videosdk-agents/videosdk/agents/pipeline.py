@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any, Literal, Optional, Callable
 import asyncio
-
+from .utterance_handle import UtteranceHandle # Import the handle
 from .event_emitter import EventEmitter
 from .room.audio_stream import CustomAudioStreamTrack
 import logging
@@ -67,7 +67,7 @@ class Pipeline(EventEmitter[Literal["start"]], ABC):
         pass
     
     @abstractmethod
-    async def send_message(self, message: str) -> None:
+    async def send_message(self, message: str, handle: UtteranceHandle) -> None:
         """
         Send a message to the pipeline.
         """
