@@ -88,7 +88,7 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
         """Hang up the agent"""
         await self.session.close()
     
-    def set_thinking_background(self, file: str = None, volume: float = 0.3):
+    def set_thinking_audio(self, file: str = None, volume: float = 0.3):
         """Set the thinking background for the agent"""
         if file is None:
             file = os.path.join(os.path.dirname(__file__), 'resources', 'agent_keyboard.wav')

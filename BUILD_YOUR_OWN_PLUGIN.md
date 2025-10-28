@@ -51,7 +51,7 @@ license = "Apache-2.0"
 requires-python = ">=3.11"
 authors = [{ "name": "videosdk" }]
 dependencies = [
-    "videosdk-agents>=0.0.40",
+    "videosdk-agents>=0.0.41",
     # Add any other required dependencies here, e.g., "openai>=1.0.0"
 ]
 
