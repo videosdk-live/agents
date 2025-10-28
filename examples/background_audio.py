@@ -13,7 +13,7 @@ class VoiceAgent(Agent):
         super().__init__(
             instructions="You are a helpful voice assistant that can answer questions and help with tasks. If the user asks to play music, use the control_background_music tool with action 'play'. To stop, use the action 'stop'.",
         )
-        self.set_thinking_background()
+        self.set_thinking_audio()
         
     async def on_enter(self) -> None:
         await self.session.say("Hello, how can I help you today?")
