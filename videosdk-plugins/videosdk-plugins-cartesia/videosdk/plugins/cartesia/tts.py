@@ -12,7 +12,7 @@ from videosdk.agents import TTS
 CARTESIA_SAMPLE_RATE = 24000
 CARTESIA_CHANNELS = 1
 DEFAULT_MODEL = "sonic-2"
-DEFAULT_VOICE_ID = "794f9389-aac1-45b6-b726-9d9369183238"
+DEFAULT_VOICE_ID = "f786b574-daa5-4673-aa0c-cbe3e8534c02"
 API_VERSION = "2024-06-10"
 
 
@@ -121,7 +121,7 @@ class CartesiaTTS(TTS):
                 if self._interrupted: break
                 if text_chunk and text_chunk.strip():
                     if not has_sent_transcript:
-                        print(f"AGENT STARTS SPEAKING (INITIAL CHUNK): \"{text_chunk.strip()}...\"")
+                        pass
 
                     payload = {**base_payload, "transcript": text_chunk + " ", "continue": True}
                     if self._ws_connection and not self._ws_connection.closed:
