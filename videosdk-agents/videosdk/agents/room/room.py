@@ -9,7 +9,7 @@ from videosdk import (
 )
 from .meeting_event_handler import MeetingHandler
 from .participant_event_handler import ParticipantHandler
-from .audio_stream import TeeCustomAudioStreamTrack
+from .audio_stream import TeeCustomAudioStreamTrack, TeeMixingCustomAudioStreamTrack
 from videosdk.agents.pipeline import Pipeline
 from dotenv import load_dotenv
 import numpy as np
@@ -55,6 +55,7 @@ class VideoSDKHandler:
         custom_camera_video_track=None,
         custom_microphone_audio_track=None,
         audio_sinks=None,
+        background_audio: bool = False,
         on_room_error: Optional[Callable[[Any], None]] = None,
         # Session management options
         auto_end_session: bool = True,
@@ -78,6 +79,7 @@ class VideoSDKHandler:
             custom_camera_video_track: Custom video track for camera input.
             custom_microphone_audio_track: Custom audio track for microphone input.
             audio_sinks: List of audio sinks for processing.
+            background_audio (bool, optional): Whether to use background audio. Defaults to False.
             on_room_error (Optional[Callable[[Any], None]], optional): Error callback function.
             auto_end_session (bool, optional): Whether to automatically end sessions. Defaults to True.
             session_timeout_seconds (Optional[int], optional): Timeout for session auto-end.
@@ -97,6 +99,7 @@ class VideoSDKHandler:
         self.custom_camera_video_track = custom_camera_video_track
         self.custom_microphone_audio_track = custom_microphone_audio_track
         self.audio_sinks = audio_sinks or []
+        self.background_audio = background_audio
 
         # Session management
         self.auto_end_session = auto_end_session
@@ -134,15 +137,25 @@ class VideoSDKHandler:
         if custom_microphone_audio_track:
             self.audio_track = custom_microphone_audio_track
             if audio_sinks:
-                self.agent_audio_track = TeeCustomAudioStreamTrack(
-                    loop=self.loop, sinks=audio_sinks, pipeline=pipeline
-                )
+                if self.background_audio:
+                    self.agent_audio_track = TeeMixingCustomAudioStreamTrack(
+                        loop=self.loop, sinks=audio_sinks, pipeline=pipeline
+                    )
+                else:
+                    self.agent_audio_track = TeeCustomAudioStreamTrack(
+                        loop=self.loop, sinks=audio_sinks, pipeline=pipeline
+                    )
             else:
                 self.agent_audio_track = None
         else:
-            self.audio_track = TeeCustomAudioStreamTrack(
-                loop=self.loop, sinks=audio_sinks, pipeline=pipeline
-            )
+            if self.background_audio:
+                self.audio_track = TeeMixingCustomAudioStreamTrack(
+                    loop=self.loop, sinks=audio_sinks, pipeline=pipeline
+                )
+            else:
+                self.audio_track = TeeCustomAudioStreamTrack(
+                    loop=self.loop, sinks=audio_sinks, pipeline=pipeline
+                )
             self.agent_audio_track = None
 
         self.auth_token = auth_token or os.getenv("VIDEOSDK_AUTH_TOKEN")
@@ -177,7 +190,7 @@ class VideoSDKHandler:
         self._left: bool = False
         self.sdk_metadata = {
             "sdk": "agents",
-            "sdk_version": "0.0.39"
+            "sdk_version": "0.0.41"
         }
 
         self.meeting = VideoSDK.init_meeting(
