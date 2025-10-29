@@ -358,7 +358,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         cascading_metrics_collector.add_error(source, str(error_data))
         logger.error(f"[{source}] Component error: {error_data}")
 
-    async def reply_with_context(self, instructions: str, handle: UtteranceHandle, wait_for_playback: bool = True) -> None:
+    async def reply_with_context(self, instructions: str, wait_for_playback: bool, handle: UtteranceHandle) -> None:
         """
         Generate a reply using instructions and current chat context.
         
@@ -370,4 +370,3 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
             await self.conversation_flow._process_reply_instructions(instructions, wait_for_playback, handle)
         else:
             logger.warning("No conversation flow found in pipeline, marking handle as done.")
-            handle._mark_done()
