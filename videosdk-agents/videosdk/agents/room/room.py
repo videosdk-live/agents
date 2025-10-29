@@ -25,6 +25,8 @@ import requests
 import time
 import logging
 from ..event_bus import global_event_emitter
+import av
+
 logger = logging.getLogger(__name__)
 
 START_RECORDING_URL = "https://api.videosdk.live/v2/recordings/participant/start"
@@ -516,7 +518,6 @@ class VideoSDKHandler:
                 await asyncio.sleep(0.01)
 
                 frame = await stream.track.recv()
-
                 self._last_video_frame = frame
                 if self.pipeline:
                     await self.pipeline.on_video_delta(frame)
@@ -524,6 +525,12 @@ class VideoSDKHandler:
             except Exception as e:
                 logger.error("Video processing error:", e)
                 break
+
+    def get_last_video_frame(self) -> Optional[av.VideoFrame]:
+        """
+        Returns the most recently received video frame or None if unavailable
+        """
+        return getattr(self, "_last_video_frame", None)
 
     async def wait_for_participant(self, participant_id: str | None = None) -> str:
         """

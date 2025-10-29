@@ -13,6 +13,9 @@ from pydantic.fields import FieldInfo
 from abc import abstractmethod
 import json
 import asyncio
+import base64
+import av
+from .images import ResizeOptions, encode, EncodeOptions
 
 @dataclass
 class FunctionToolInfo:
@@ -452,3 +455,56 @@ async def graceful_cancel(*tasks: asyncio.Task) -> None:
         )
     except asyncio.TimeoutError:
         pass
+
+def frame_to_data_uri(
+        frame: av.VideoFrame, 
+        format: Literal["JPEG", "PNG"] = "JPEG", 
+        quality: int = 90, 
+        width: int = 320, 
+        height: int = 240
+    ) -> Optional[str]:
+    """Convert a videoframe into base64-encoded data URI
+
+    Args:
+        frame: The video frame to convert (typically an `av.VideoFrame`).
+        format: Output image format (e.g., 'JPEG' or 'PNG').
+        quality: Encoding quality (0-100) for JPEG or similar formats.
+        width: Optional width to resize before encoding.
+        height: Optional height to resize before encoding.
+
+    Returns:
+        A base64-encoded data URI
+    """
+    try:
+        # Encoding options
+        encode_options = EncodeOptions(
+            format=format,
+            quality=quality if format == "JPEG" else 100,
+            resize_options=ResizeOptions(width=width, height=height)
+        )
+
+        # Encode the frame to bytes 
+        encoded_bytes = encode(
+            frame=frame,
+            options=encode_options
+        )
+
+        if not encoded_bytes:
+            raise ValueError("Frame encoding returned empty bytes")
+
+        # Convert to base64 string 
+        b64_image = base64.b64encode(encoded_bytes).decode("utf-8")
+        
+        if len(b64_image) < 100:
+            raise ValueError("Encoded image is too small")
+
+        # Constructing data URI
+        data_uri = f"data:image/{format.lower()};base64,{b64_image}"
+        
+        if not data_uri or not data_uri.startswith("data:image/"):
+            raise ValueError("Generated data URI has invalid format")
+
+        return data_uri
+    
+    except Exception as e:
+        return None

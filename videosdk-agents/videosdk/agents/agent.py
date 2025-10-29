@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import List, Literal
+from typing import Any, List, Literal, Dict, Optional
 import inspect
+import av
 from .event_emitter import EventEmitter
 from .llm.chat_context import ChatContext
-from .utils import FunctionTool, is_function_tool
+from .utils import FunctionTool, is_function_tool, frame_to_data_uri
 from .a2a.protocol import A2AProtocol
 from .a2a.card import AgentCard
 import uuid
-from .llm.chat_context import ChatContext, ChatRole
+from .llm.chat_context import ChatContext, ChatRole, ImageContent
 from .mcp.mcp_manager import MCPToolManager
 from .mcp.mcp_server import MCPServiceProvider
+from .job import get_current_job_context
 import logging
 logger = logging.getLogger(__name__)
 
@@ -68,7 +70,7 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
         for tool in self._tools:
             if not is_function_tool(tool):
                 raise ValueError(f"Tool {tool.__name__ if hasattr(tool, '__name__') else tool} is not a valid FunctionTool")
-    
+
     def update_tools(self, tools: List[FunctionTool]) -> None:
         """Update the tools for the agent"""
         self._tools.extend(tools)
@@ -137,3 +139,59 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
     async def on_exit(self) -> None:
         """Called when session ends, to be implemented in your custom agent implementation."""
         pass
+
+    async def capture_and_process_frame(self) -> Dict[str, Any]:
+        """
+        Capture the latest video frame, convert it to a base64 data URI, and append it to the agent's chat context for LLM analysis.
+
+        Returns:
+            Dict[str, Any]: Status of the operation with 'ok' flag and 'detail' or 'reason'.
+        """
+        ctx = get_current_job_context()
+        if ctx is None:
+            return {"ok": False, "reason": "No active job context"}
+
+        room = getattr(ctx, "room", None)
+
+        if room is None:
+            return {"ok": False, "reason": "No active room context"}
+
+        if getattr(room, 'vision', False) is not True:
+            return {"ok": False, "reason": "Vision not enabled in room. Enable vision to use this feature."}
+
+        frame: Optional[av.VideoFrame] = None
+        
+        if hasattr(room, "get_last_video_frame"):
+            frame = room.get_last_video_frame()
+        else:
+            frame = getattr(room, "_last_video_frame", None)
+        if frame is None:
+            return {"ok": False, "reason": "No frame available"}
+
+        try:
+            # encoding the frame to data URI
+            image_data: Optional[str] = frame_to_data_uri(frame)
+
+            if not image_data:
+                return {"ok": False, "reason": "Frame encoding failed"}
+
+            # wrap image in ImageContent for chat context
+            image_part = ImageContent(image=image_data, inference_detail="auto")
+            
+            agent = getattr(getattr(room, "pipeline", None), "agent", self)
+
+            if not hasattr(agent, "chat_context"):
+                return {"ok": False, "reason": "No agent chat context available"}
+
+            # Add frame to chat context
+            agent.chat_context.add_message(
+                role=ChatRole.USER,
+                content=["Latest frame for analysis", image_part]
+            )
+
+            logger.info("Image successfully added to chat context")
+            return {"ok": True, "detail": "Image added to chat context"}
+
+        except Exception as e:
+            logger.error(f"Error processing frame: {e}")
+            return {"ok": False, "reason": str(e)}
