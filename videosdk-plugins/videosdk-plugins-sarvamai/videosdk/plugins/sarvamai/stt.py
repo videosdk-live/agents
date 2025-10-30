@@ -29,7 +29,7 @@ class SarvamAISTT(STT):
         model: str = DEFAULT_MODEL,
         language: str = "en-IN",
         input_sample_rate: int = 48000,
-        target_sample_rate: int = 16000,
+        output_sample_rate: int = 16000,
     ) -> None:
         """Initialize the SarvamAI STT plugin with WebSocket support.
 
@@ -38,7 +38,7 @@ class SarvamAISTT(STT):
             model: The model to use (default: "saarika:v2.5")
             language: The language code (default: "en-IN")
             input_sample_rate: Input sample rate (default: 48000)
-            target_sample_rate: Output sample rate (default: 16000)
+            output_sample_rate: Output sample rate (default: 16000)
         """
         super().__init__()
         if not SCIPY_AVAILABLE:
@@ -46,12 +46,12 @@ class SarvamAISTT(STT):
 
         self.api_key = api_key or os.getenv("SARVAMAI_API_KEY")
         if not self.api_key:
-            raise ValueError("Sarvam AI API key must be provided")
+            raise ValueError("Sarvam AI API key must be provided either through api_key parameter or SARVAMAI_API_KEY environment variable")
 
         self.model = model
         self.language = language
         self.input_sample_rate = input_sample_rate
-        self.target_sample_rate = target_sample_rate
+        self.output_sample_rate = output_sample_rate
 
         # WebSocket related
         self._session: aiohttp.ClientSession | None = None
@@ -97,7 +97,7 @@ class SarvamAISTT(STT):
                 "audio": {
                     "data": base64_audio,
                     "encoding": "audio/wav",
-                    "sample_rate": self.target_sample_rate,
+                    "sample_rate": self.output_sample_rate,
                 }
             }
             
@@ -105,7 +105,7 @@ class SarvamAISTT(STT):
             await ws.send_str(json.dumps(audio_message))
             
         except Exception as e:
-            print(f"[SarvamAISTT] Error processing audio: {e}")
+            logger.error(f"[SarvamAISTT] Error processing audio: {e}")
 
     async def _process_messages(self) -> None:
         """Process incoming WebSocket messages."""
@@ -118,10 +118,10 @@ class SarvamAISTT(STT):
                     data = json.loads(msg.data)
                     await self._handle_message(data)
                 elif msg.type == aiohttp.WSMsgType.ERROR:
-                    print(f"[SarvamAISTT] WebSocket error: {self._ws.exception()}")
+                    logger.error(f"[SarvamAISTT] WebSocket error: {self._ws.exception()}")
                     break
         except Exception as e:
-            print(f"[SarvamAISTT] Error in message processing: {e}")
+            logger.error(f"[SarvamAISTT] Error in message processing: {e}")
 
     async def _handle_message(self, data: dict) -> None:
         """Handle different message types from Sarvam API."""
@@ -162,10 +162,10 @@ class SarvamAISTT(STT):
                     
         elif msg_type == "error":
             error_info = data.get("error", "Unknown error")
-            print(f"[SarvamAISTT] API error: {error_info}")
+            logger.error(f"[SarvamAISTT] API error: {error_info}")
 
     def _resample_audio(self, audio_bytes: bytes) -> bytes:
-        """Resample audio from input sample rate to target sample rate and convert to mono."""
+        """Resample audio from input sample rate to output sample rate and convert to mono."""
         try:
             if not audio_bytes:
                 return b''
@@ -180,9 +180,9 @@ class SarvamAISTT(STT):
             else:
                 mono_audio = raw_audio.astype(np.float32)
 
-            if self.input_sample_rate != self.target_sample_rate:
-                target_length = int(len(mono_audio) * self.target_sample_rate / self.input_sample_rate)
-                resampled_data = signal.resample(mono_audio, target_length)
+            if self.input_sample_rate != self.output_sample_rate:
+                output_length = int(len(mono_audio) * self.output_sample_rate / self.input_sample_rate)
+                resampled_data = signal.resample(mono_audio, output_length)
             else:
                 resampled_data = mono_audio
 
