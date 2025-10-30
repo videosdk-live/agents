@@ -1,20 +1,25 @@
 from __future__ import annotations
-
-from typing import Any, AsyncIterator, Optional, Union
-import os
 import asyncio
 import base64
-import httpx
+import json
+import os
+import re
+import time
+from typing import Any, AsyncIterator, Optional, Union
+import logging
 
-from videosdk.agents import TTS, segment_text
+logger = logging.getLogger(__name__)
+from PIL.Image import logger
+import aiohttp
+from videosdk.agents import TTS
 
-SARVAMAI_SAMPLE_RATE = 22050
-SARVAMAI_CHANNELS = 1
-SARVAMAI_TTS_ENDPOINT = "https://api.sarvam.ai/text-to-speech"
 
+SARVAM_SAMPLE_RATE = 24000
+SARVAM_CHANNELS = 1
 DEFAULT_MODEL = "bulbul:v2"
 DEFAULT_SPEAKER = "anushka"
-DEFAULT_TARGET_LANGUAGE = "en-IN"
+DEFAULT_LANGUAGE = "en-IN"
+SARVAM_TTS_URL = "wss://api.sarvam.ai/text-to-speech/ws"
 
 
 class SarvamAITTS(TTS):
@@ -23,164 +28,230 @@ class SarvamAITTS(TTS):
         *,
         api_key: str | None = None,
         model: str = DEFAULT_MODEL,
+        language: str = DEFAULT_LANGUAGE,
         speaker: str = DEFAULT_SPEAKER,
-        target_language_code: str = DEFAULT_TARGET_LANGUAGE,
-        pitch: float = 0.0,
-        pace: float = 1.0,
-        loudness: float = 1.2,
-        enable_preprocessing: bool = True,
+        sample_rate: int = SARVAM_SAMPLE_RATE,
+        base_url: str = SARVAM_TTS_URL,
+        output_audio_codec: str = "linear16",
+        output_audio_bitrate: str = "64k",
     ) -> None:
-        """Initialize the SarvamAI TTS plugin.
-
-        Args:
-            api_key (Optional[str], optional): SarvamAI API key. Defaults to None.
-            model (str): The model to use for the TTS plugin. Defaults to "bulbul:v2".
-            speaker (str): The speaker to use for the TTS plugin. Defaults to "anushka".
-            target_language_code (str): The target language code to use for the TTS plugin. Defaults to "en-IN".
-            pitch (float): The pitch to use for the TTS plugin. Defaults to 0.0.
-            pace (float): The pace to use for the TTS plugin. Defaults to 1.0.
-            loudness (float): The loudness to use for the TTS plugin. Defaults to 1.2.
-            enable_preprocessing (bool): Whether to enable preprocessing for the TTS plugin. Defaults to True.
-        """
-        super().__init__(
-            sample_rate=SARVAMAI_SAMPLE_RATE, num_channels=SARVAMAI_CHANNELS
-        )
-
-        self.model = model
-        self.speaker = speaker
-        self.target_language_code = target_language_code
-        self.pitch = pitch
-        self.pace = pace
-        self.loudness = loudness
-        self.enable_preprocessing = enable_preprocessing
-        self.audio_track = None
-        self.loop = None
-
-        self._first_chunk_sent = False
+        """Sarvam.ai Text-to-Speech plugin for real-time streaming."""
+        super().__init__(sample_rate=sample_rate, num_channels=SARVAM_CHANNELS)
 
         self.api_key = api_key or os.getenv("SARVAMAI_API_KEY")
-
         if not self.api_key:
             raise ValueError(
-                "Sarvam AI API key required. Provide either:\n"
-                "1. api_key parameter, OR\n"
-                "2. SARVAMAI_API_KEY environment variable"
+                "Sarvam API key must be provided via parameter or SARVAMAI_API_KEY env var."
             )
 
-        self._http_client = httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=15.0, read=30.0,
-                                  write=5.0, pool=5.0),
-            follow_redirects=True,
-        )
+        self.model = model
+        self.language = language
+        self.speaker = speaker
+        self.base_url = base_url
+        self.output_audio_codec = output_audio_codec
+        self.output_audio_bitrate = output_audio_bitrate
+
+        self._ws_session: aiohttp.ClientSession | None = None
+        self._ws_connection: aiohttp.ClientWebSocketResponse | None = None
+        self._connection_lock = asyncio.Lock()
+        self._receive_task: asyncio.Task | None = None
+        self._interrupted = False
+        self._first_chunk_sent = False
+        self._ttfb: Optional[float] = None
 
     def reset_first_audio_tracking(self) -> None:
-        """Reset the first audio tracking state for next TTS task"""
+        """Reset the first audio tracking for the next task."""
         self._first_chunk_sent = False
+        self._ttfb = None
+
+    async def _ensure_ws_connection(self) -> None:
+        """Ensures a persistent WebSocket connection exists."""
+        async with self._connection_lock:
+            if self._ws_connection and not self._ws_connection.closed:
+                return
+
+            if self._receive_task and not self._receive_task.done():
+                self._receive_task.cancel()
+            if self._ws_connection:
+                await self._ws_connection.close()
+            if self._ws_session:
+                await self._ws_session.close()
+
+            try:
+                self._ws_session = aiohttp.ClientSession()
+                headers = {"Api-Subscription-Key": self.api_key}
+                self._ws_connection = await asyncio.wait_for(
+                    self._ws_session.ws_connect(self.base_url, headers=headers, heartbeat=20),
+                    timeout=5.0,
+                )
+                self._receive_task = asyncio.create_task(self._receive_loop())
+                await self._send_initial_config()
+            except Exception as e:
+                self.emit("error", f"Failed to connect to Sarvam TTS: {e}")
+                raise
+
+    async def _send_initial_config(self) -> None:
+        """Sends initial configuration to Sarvam TTS once after connecting."""
+        config_payload = {
+            "type": "config",
+            "data": {
+                "target_language_code": self.language,
+                "speaker": self.speaker,
+                "speech_sample_rate": str(self.sample_rate),
+                "output_audio_codec": self.output_audio_codec,
+                "output_audio_bitrate": self.output_audio_bitrate,
+            },
+        }
+        await self._ws_connection.send_str(json.dumps(config_payload))
 
     async def synthesize(
         self,
         text: AsyncIterator[str] | str,
+        *,
+        language: Optional[str] = None,
+        speaker: Optional[str] = None,
         **kwargs: Any,
     ) -> None:
+        """Stream text-to-speech synthesis using Sarvam TTS WebSocket."""
         try:
             if not self.audio_track or not self.loop:
-                self.emit("error", "Audio track or loop not initialized")
+                self.emit("error", "Audio track or event loop not initialized")
                 return
 
-            if isinstance(text, AsyncIterator):
-                async for segment in segment_text(text):
-                    await self._synthesize_audio(segment)
+            await self._ensure_ws_connection()
+            if not self._ws_connection:
+                raise RuntimeError("WebSocket connection not available")
+
+            self._interrupted = False
+            self.reset_first_audio_tracking()
+
+            if language:
+                self.language = language
+            if speaker:
+                self.speaker = speaker
+
+            # Prepare text iterator
+            if isinstance(text, str):
+                async def _string_iter():
+                    yield text
+                text_iter = _string_iter()
             else:
-                await self._synthesize_audio(text)
+                text_iter = text
+
+            send_task = asyncio.create_task(self._send_text_chunks(text_iter))
+            await send_task
+        except Exception as e:
+            self.emit("error", f"TTS synthesis failed: {e}")
+
+    async def _send_text_chunks(self, text_iterator: AsyncIterator[str]):
+        """Send text chunks to Sarvam TTS WebSocket in grouped batches (4–5 words per chunk)."""
+        try:
+            buffer = []
+            MIN_WORDS = 4        
+            MAX_DELAY = 1.0      
+            last_send_time = asyncio.get_event_loop().time()
+
+            async for text_chunk in text_iterator:
+                if self._interrupted:
+                    break
+
+                if not text_chunk or not text_chunk.strip():
+                    continue
+
+                words = re.findall(r"\b[\w'-]+\b", text_chunk)
+                if not words:
+                    continue
+
+                buffer.extend(words)
+                now = asyncio.get_event_loop().time()
+
+                if len(buffer) >= MIN_WORDS or (now - last_send_time > MAX_DELAY):
+                    combined_text = " ".join(buffer).strip()
+                    payload = {"type": "text", "data": {"text": combined_text}}
+                    await self._ws_connection.send_str(json.dumps(payload))
+                    logger.debug(f"[SarvamTTS] Sent chunk: {combined_text!r}")
+                    buffer.clear()
+                    last_send_time = now
+
+            if buffer and not self._interrupted:
+                combined_text = " ".join(buffer).strip()
+                payload = {"type": "text", "data": {"text": combined_text}}
+                await self._ws_connection.send_str(json.dumps(payload))
+                logger.debug(f"[SarvamTTS] Final flush: {combined_text!r}")
+
+            if not self._interrupted:
+                await self._ws_connection.send_str(json.dumps({"type": "flush"}))
 
         except Exception as e:
-            self.emit("error", f"Sarvam AI TTS synthesis failed: {str(e)}")
+            self.emit("error", f"Failed to send text chunks: {e}")
 
-    async def _synthesize_audio(self, text: str) -> None:
+    async def _receive_loop(self):
+        """Handles all incoming messages from Sarvam TTS."""
         try:
-            payload = {
-                "inputs": [text],
-                "target_language_code": self.target_language_code,
-                "speaker": self.speaker,
-                "pitch": self.pitch,
-                "pace": self.pace,
-                "loudness": self.loudness,
-                "speech_sample_rate": SARVAMAI_SAMPLE_RATE,
-                "enable_preprocessing": self.enable_preprocessing,
-                "model": self.model,
-            }
+            while self._ws_connection and not self._ws_connection.closed:
+                msg = await self._ws_connection.receive()
+                if msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                    break
+                if msg.type != aiohttp.WSMsgType.TEXT:
+                    continue
 
-            headers = {
-                "Accept": "application/json",
-                "Content-Type": "application/json",
-                "api-subscription-key": self.api_key,
-            }
+                data = json.loads(msg.data)
+                msg_type = data.get("type")
 
-            response = await self._http_client.post(
-                SARVAMAI_TTS_ENDPOINT, headers=headers, json=payload
-            )
-            response.raise_for_status()
+                if msg_type == "audio":
+                    await self._handle_audio(data.get("data"))
+                elif msg_type == "event":
+                    if data.get("data", {}).get("event_type") == "final":
+                        self.emit("done", "TTS completed")
+                elif msg_type == "error":
+                    error_msg = data.get("data", {}).get("message", "Unknown error")
+                    self.emit("error", f"Sarvam API error: {error_msg}")
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            self.emit("error", f"Receive loop error: {e}")
 
-            response_data = response.json()
-            if "audios" not in response_data or not response_data["audios"]:
-                self.emit(
-                    "error", "No audio data found in response from Sarvam AI")
+    async def _handle_audio(self, audio_data: Optional[dict[str, Any]]):
+        """Handle audio data from Sarvam WebSocket."""
+        if not audio_data:
+            return
+
+        if self._ttfb is None:
+            self._ttfb = time.time()
+            self.emit("ttfb", self._ttfb)
+
+        audio_b64 = audio_data.get("audio")
+        if not audio_b64:
+            return
+
+        try:
+            audio_bytes = base64.b64decode(audio_b64)
+            if self._interrupted or not self.audio_track:
                 return
 
-            audio_content = response_data["audios"][0]
-            if not audio_content:
-                self.emit("error", "No audio content received from Sarvam AI")
-                return
+            if not self._first_chunk_sent and self._first_audio_callback:
+                self._first_chunk_sent = True
+                await self._first_audio_callback()
 
-            audio_bytes = base64.b64decode(audio_content)
-
-            if not audio_bytes:
-                self.emit("error", "Decoded audio bytes are empty")
-                return
-
-            await self._stream_audio_chunks(audio_bytes)
-
-        except httpx.HTTPStatusError as e:
-            self.emit(
-                "error",
-                f"Sarvam AI TTS HTTP error: {e.response.status_code} - {e.response.text}",
-            )
-            raise
-
-    async def _stream_audio_chunks(self, audio_bytes: bytes) -> None:
-        chunk_size = int(SARVAMAI_SAMPLE_RATE *
-                         SARVAMAI_CHANNELS * 2 * 20 / 1000)
-
-        audio_data = self._remove_wav_header(audio_bytes)
-
-        for i in range(0, len(audio_data), chunk_size):
-            chunk = audio_data[i: i + chunk_size]
-
-            if len(chunk) < chunk_size and len(chunk) > 0:
-                padding_needed = chunk_size - len(chunk)
-                chunk += b"\x00" * padding_needed
-
-            if len(chunk) == chunk_size:
-                if not self._first_chunk_sent and self._first_audio_callback:
-                    self._first_chunk_sent = True
-                    asyncio.create_task(self._first_audio_callback())
-
-                asyncio.create_task(self.audio_track.add_new_bytes(chunk))
-                await asyncio.sleep(0.001)
-
-    def _remove_wav_header(self, audio_bytes: bytes) -> bytes:
-        if audio_bytes.startswith(b"RIFF"):
-            data_pos = audio_bytes.find(b"data")
-            if data_pos != -1:
-                return audio_bytes[data_pos + 8:]
-
-        return audio_bytes
-
-    async def aclose(self) -> None:
-        if self._http_client:
-            await self._http_client.aclose()
-        await super().aclose()
+            await self.audio_track.add_new_bytes(audio_bytes)
+        except Exception as e:
+            self.emit("error", f"Failed to process audio: {e}")
 
     async def interrupt(self) -> None:
+        """Interrupt the ongoing TTS session."""
+        self._interrupted = True
         if self.audio_track:
             self.audio_track.interrupt()
+        if self._ws_connection and not self._ws_connection.closed:
+            await self._ws_connection.close()
+
+    async def aclose(self) -> None:
+        """Gracefully close the TTS connection."""
+        await super().aclose()
+        self._interrupted = True
+        if self._receive_task and not self._receive_task.done():
+            self._receive_task.cancel()
+        if self._ws_connection and not self._ws_connection.closed:
+            await self._ws_connection.close()
+        if self._ws_session and not self._ws_session.closed:
+            await self._ws_session.close()
