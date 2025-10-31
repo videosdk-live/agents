@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 import inspect
 from .event_emitter import EventEmitter
 from .llm.chat_context import ChatContext
@@ -77,7 +77,7 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
         for tool in self._tools:
             if not is_function_tool(tool):
                 raise ValueError(f"Tool {tool.__name__ if hasattr(tool, '__name__') else tool} is not a valid FunctionTool")
-    
+
     def update_tools(self, tools: List[FunctionTool]) -> None:
         """Update the tools for the agent"""
         self._tools.extend(tools)
@@ -165,3 +165,6 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
     async def on_exit(self) -> None:
         """Called when session ends, to be implemented in your custom agent implementation."""
         pass
+
+    async def capture_and_process_frame(self) -> Dict[str, Any]:
+        return await self.session.capture_and_process_frame()

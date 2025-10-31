@@ -5,6 +5,7 @@ from .utterance_handle import UtteranceHandle # Import the handle
 from .event_emitter import EventEmitter
 from .room.audio_stream import CustomAudioStreamTrack
 import logging
+import av
 logger = logging.getLogger(__name__)
 
 class Pipeline(EventEmitter[Literal["start"]], ABC):
@@ -65,7 +66,14 @@ class Pipeline(EventEmitter[Literal["start"]], ABC):
         Handle incoming audio data from the user
         """
         pass
-    
+        
+    @abstractmethod
+    async def on_video_delta(self, video_data: av.VideoFrame) -> None:
+        """
+        Handle incoming video data from the user
+        """
+        pass
+
     @abstractmethod
     async def send_message(self, message: str, handle: UtteranceHandle) -> None:
         """
