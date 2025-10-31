@@ -40,7 +40,7 @@ class SarvamAITTS(TTS):
         speaker: str = DEFAULT_SPEAKER,
         enable_streaming: bool = True,
         sample_rate: int = SARVAM_SAMPLE_RATE,
-        output_audio_codec: str = "wav",
+        output_audio_codec: str = "linear16",
     ) -> None:
         """
         Initializes the SarvamAITTS plugin.
