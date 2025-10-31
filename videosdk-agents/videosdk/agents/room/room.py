@@ -10,7 +10,7 @@ from videosdk import (
 from .meeting_event_handler import MeetingHandler
 from .participant_event_handler import ParticipantHandler
 from .audio_stream import TeeCustomAudioStreamTrack, TeeMixingCustomAudioStreamTrack
-from videosdk.agents.pipeline import Pipeline
+from ..pipeline import Pipeline
 from dotenv import load_dotenv
 import numpy as np
 import asyncio
@@ -25,7 +25,6 @@ import requests
 import time
 import logging
 from ..event_bus import global_event_emitter
-import av
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +131,6 @@ class VideoSDKHandler:
         cascading_metrics_collector.set_traces_flow_manager(
             self.traces_flow_manager)
 
-        self._last_video_frame = None
 
         if custom_microphone_audio_track:
             self.audio_track = custom_microphone_audio_track
@@ -449,7 +447,6 @@ class VideoSDKHandler:
                 if video_task is not None:
                     video_task.cancel()
                     del self.video_listener_tasks[stream.id]
-                self._last_video_frame = None
 
         if participant.id != self.meeting.local_participant.id:
             participant.add_event_listener(
@@ -531,19 +528,12 @@ class VideoSDKHandler:
                 await asyncio.sleep(0.01)
 
                 frame = await stream.track.recv()
-                self._last_video_frame = frame
                 if self.pipeline:
                     await self.pipeline.on_video_delta(frame)
 
             except Exception as e:
                 logger.error("Video processing error:", e)
                 break
-
-    def get_last_video_frame(self) -> Optional[av.VideoFrame]:
-        """
-        Returns the most recently received video frame or None if unavailable
-        """
-        return getattr(self, "_last_video_frame", None)
 
     async def wait_for_participant(self, participant_id: str | None = None) -> str:
         """

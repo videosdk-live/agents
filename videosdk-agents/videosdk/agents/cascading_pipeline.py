@@ -57,6 +57,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         self.conversation_flow = None
         self.avatar = avatar
         self.vision = False
+        self.last_video_frame = None
 
         if self.stt:
             self.stt.on(
@@ -105,6 +106,11 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
             self.tts.loop = self.loop
             logger.info("TTS loop configured")
             job_context = get_current_job_context()
+
+            if job_context and job_context.room:
+                requested_vision = getattr(job_context.room, "vision", False)
+                self.vision = requested_vision
+
             if self.avatar and job_context and job_context.room:
                 self.tts.audio_track = (
                     getattr(job_context.room, "agent_audio_track", None)
@@ -204,6 +210,12 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         """
         await self.conversation_flow.send_audio_delta(audio_data)
 
+    async def on_video_delta(self, video_data: av.VideoFrame) -> None:
+        if self.vision:
+            self.last_video_frame = video_data
+        else:
+            raise ValueError("Vision not enabled")      
+        
     def on_user_speech_started(self) -> None:
         """
         Handle user speech started event
@@ -245,6 +257,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
                 logger.error(f"Error cleaning up conversation flow: {e}")
         
         self.agent = None
+        self.vision = False
         self.conversation_flow = None
         self.avatar = None
         logger.info("Cascading pipeline cleaned up")
@@ -371,14 +384,4 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         if self.conversation_flow:
             await self.conversation_flow._process_reply_instructions(instructions, wait_for_playback, handle)
         else:
-            logger.warning("No conversation flow found in pipeline")
-            
-    async def on_video_delta(self, video_data: av.VideoFrame):
-        """
-        Handle incoming video data from the user
-        The model's handle_video_input is now expected to handle the av.VideoFrame.
-        """
-        if self.vision and hasattr(self.model, 'handle_video_input'):
-            await self.model.handle_video_input(video_data)
-            logger.warning("No conversation flow found in pipeline, marking handle as done.")
-            handle._mark_done()
+            logger.warning("No conversation flow found in pipeline")  

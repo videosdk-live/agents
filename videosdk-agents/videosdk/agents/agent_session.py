@@ -4,7 +4,7 @@ import asyncio
 import uuid
 
 from .agent import Agent
-from .llm.chat_context import ChatRole
+from .llm.chat_context import ChatRole, ImageContent
 from .conversation_flow import ConversationFlow
 from .pipeline import Pipeline
 from .metrics import cascading_metrics_collector, realtime_metrics_collector
@@ -12,11 +12,13 @@ from .realtime_pipeline import RealTimePipeline
 from .utils import get_tool_info, UserState, AgentState
 from .utterance_handle import UtteranceHandle 
 import time
+from .cascading_pipeline import CascadingPipeline
 from .job import get_current_job_context
 from .event_emitter import EventEmitter
 from .event_bus import global_event_emitter
 from .background_audio import BackgroundAudioHandler,BackgroundAudioHandlerConfig
 import logging
+import av
 logger = logging.getLogger(__name__)
 
 class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_changed", "on_speech_in", "on_speech_out"]]):
@@ -289,6 +291,34 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         elif hasattr(self.pipeline, 'model') and self.pipeline.model and self.pipeline.model.audio_track: # Realtime
             return self.pipeline.model.audio_track
         return None
+    
+    async def capture_and_process_frame(self) -> dict[str, Any]:
+        try:
+            frame: Optional[av.VideoFrame] = None
+            if isinstance(self.pipeline, CascadingPipeline) and self.pipeline.vision is True:
+                frame = self.pipeline.last_video_frame
+                
+                if frame is None: 
+                    return {"ok": False, "reason": "Unable to capture frame. Please check your camera"}
+                
+                image_part = ImageContent(image=frame, inference_detail="auto")
+
+                self.agent.chat_context.add_message(
+                    role=ChatRole.USER,
+                    content=["Latest frame for analysis", image_part]
+                )
+
+                self.pipeline.last_video_frame = None
+
+                logger.info("Image successfully added to chat context")
+                return {"ok": True, "detail": "Image added to chat context"}
+            else:
+                logger.error("Vision is not enabled")
+                return {"ok": False, "reason": "Vision is not enabled"}
+
+        except Exception as e:
+            logger.error(f"Error processing frame: {e}")
+            return {"ok": False, "reason": str(e)}
 
     async def start_thinking_audio(self):
         """Start thinking audio"""

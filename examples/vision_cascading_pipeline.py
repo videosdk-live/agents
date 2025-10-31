@@ -7,7 +7,6 @@ from videosdk.plugins.silero import SileroVAD
 from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
 from videosdk.plugins.elevenlabs import ElevenLabsTTS
 from videosdk.plugins.rnnoise import RNNoise
-from videosdk.agents.job import get_current_job_context
 
 pre_download_model()
 
@@ -28,14 +27,10 @@ class VoiceAgent(Agent):
     
     async def on_exit(self) -> None:
         await self.session.say("Goodbye!")
-    
+
     @function_tool
     async def capture_frame(self) -> Dict[str, Any]:
         """Capture and process a frame from the user's camera."""
-
-        ctx = get_current_job_context()
-        if getattr(getattr(ctx, 'room', None), 'vision', False) is not True:
-            return {"ok": False, "reason": "Vision not enabled in room. Set vision=True to use this feature."}
         return await self.capture_and_process_frame()
 
 async def entrypoint(ctx: JobContext):
@@ -61,7 +56,7 @@ async def entrypoint(ctx: JobContext):
 
 def make_context() -> JobContext:
     room_options = RoomOptions(
-        room_id="<room_id>", 
+        room_id="<room_id>",
         name="Sandbox Agent", 
         playground=True,
         vision=True

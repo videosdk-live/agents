@@ -134,7 +134,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         """
         if self.vision and hasattr(self.model, 'handle_video_input'):
             await self.model.handle_video_input(video_data)
-    
+
     def on_user_speech_started(self, data: dict) -> None:
         """
         Handle user speech started event
