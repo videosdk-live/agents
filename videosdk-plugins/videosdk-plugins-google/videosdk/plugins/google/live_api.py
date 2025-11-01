@@ -602,35 +602,6 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
             audio=Blob(data=audio_data, mime_type=f"audio/pcm;rate={AUDIO_SAMPLE_RATE}")
         )
 
-    async def handle_video_input(self, video_data: av.VideoFrame) -> None:
-        """Improved video input handler with error prevention"""
-        if not self._session or self._closing:
-            return
-
-        try:
-            if not video_data or not video_data.planes:
-                return
-
-            now = time.monotonic()
-            if (
-                hasattr(self, "_last_video_frame")
-                and (now - self._last_video_frame) < 0.5
-            ):
-                return
-            self._last_video_frame = now
-
-            processed_jpeg = encode_image(video_data, DEFAULT_IMAGE_ENCODE_OPTIONS)
-
-            if not processed_jpeg or len(processed_jpeg) < 100:
-                logger.warning("Invalid JPEG data generated")
-                return
-
-            await self._session.session.send_realtime_input(
-                video=Blob(data=processed_jpeg, mime_type="image/jpeg")
-            )
-        except Exception as e:
-            self.emit("error", f"Video processing error: {str(e)}")
-
     async def interrupt(self) -> None:
         """Interrupt current response"""
         if not self._session or self._closing:
@@ -698,6 +669,45 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
             )
         except Exception as e:
             self.emit("error", f"Error sending text message: {e}")
+            self._session_should_close.set()
+
+    async def send_message_with_frames(self, message: str, frames: list[av.VideoFrame]) -> None:
+        """Send a text message with video frames for vision-enabled communication"""
+        retry_count = 0
+        max_retries = 5
+        while not self._session or not self._session.session:
+            if retry_count >= max_retries:
+                raise RuntimeError("No active Gemini session after maximum retries")
+            self.emit("error", "No active session, waiting for connection...")
+            await asyncio.sleep(1)
+            retry_count += 1
+
+        try:
+            parts = [Part(text=message)]
+            
+            for frame in frames:
+                try:
+                    processed_jpeg = encode_image(frame, DEFAULT_IMAGE_ENCODE_OPTIONS)
+                    if processed_jpeg and len(processed_jpeg) >= 100:
+                        parts.append(
+                            Part(
+                                inline_data=Blob(
+                                    data=processed_jpeg,
+                                    mime_type="image/jpeg"
+                                )
+                            )
+                        )
+                    else:
+                        logger.warning("Invalid JPEG data generated for frame")
+                except Exception as e:
+                    logger.error(f"Error processing frame for send_message_with_frames: {e}")
+            
+            await self._session.session.send_client_content(
+                turns=Content(parts=parts, role="user"),
+                turn_complete=True,
+            )
+        except Exception as e:
+            self.emit("error", f"Error sending message with frames: {e}")
             self._session_should_close.set()
 
     async def _cleanup_session(self, session: GeminiSession) -> None:

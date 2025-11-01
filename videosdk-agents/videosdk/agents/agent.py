@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 import inspect
 from .event_emitter import EventEmitter
 from .llm.chat_context import ChatContext
@@ -15,6 +15,8 @@ from .mcp.mcp_server import MCPServiceProvider
 from .background_audio import BackgroundAudioHandlerConfig
 import logging
 import os
+import av
+
 logger = logging.getLogger(__name__)
 
 if 'AgentSession' not in globals():
@@ -77,7 +79,7 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
         for tool in self._tools:
             if not is_function_tool(tool):
                 raise ValueError(f"Tool {tool.__name__ if hasattr(tool, '__name__') else tool} is not a valid FunctionTool")
-    
+
     def update_tools(self, tools: List[FunctionTool]) -> None:
         """Update the tools for the agent"""
         self._tools.extend(tools)
@@ -165,3 +167,15 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
     async def on_exit(self) -> None:
         """Called when session ends, to be implemented in your custom agent implementation."""
         pass
+
+    def capture_frames(self, num_of_frames: int = 1) -> list[av.VideoFrame]:
+        """Capture the latest video frames from the pipeline (max 5)."""
+        if num_of_frames > 5:
+            raise ValueError("num_of_frames cannot exceed 5")
+
+        pipeline = getattr(getattr(self, 'session', None), 'pipeline', None)
+        if not pipeline:
+            logger.warning("Pipeline not available")
+            return []
+
+        return pipeline.get_latest_frames(num_of_frames)

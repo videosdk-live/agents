@@ -255,6 +255,7 @@ class AnthropicLLM(LLM):
 
         anthropic_messages = []
         system_content = None
+        pending_tool_results = {} 
 
         for item in messages.items:
             if isinstance(item, ChatMessage):
@@ -285,19 +286,39 @@ class AnthropicLLM(LLM):
                     ]
                 })
             elif isinstance(item, FunctionCallOutput):
-                anthropic_messages.append({
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": item.call_id,
-                            "content": item.output,
-                            "is_error": item.is_error
-                        }
-                    ]
-                })
+                pending_tool_results[item.call_id] = item
 
-        return anthropic_messages, system_content
+        final_messages = []
+        i = 0
+        while i < len(anthropic_messages):
+            msg = anthropic_messages[i]
+            final_messages.append(msg)
+
+            if (isinstance(msg.get("content"), list) and
+                any(part.get("type") == "tool_use" for part in msg["content"])):
+                tool_use_part = next(
+                    part for part in msg["content"] if part.get("type") == "tool_use"
+                )
+                tool_call_id = tool_use_part["id"]
+
+                if tool_call_id in pending_tool_results:
+                    tool_result = pending_tool_results[tool_call_id]
+                    final_messages.append({
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": tool_call_id,
+                                "content": tool_result.output,
+                                "is_error": tool_result.is_error
+                            }
+                        ]
+                    })
+                    del pending_tool_results[tool_call_id]
+
+            i += 1
+
+        return final_messages, system_content
 
     async def aclose(self) -> None:
         """Internal Method: Cleanup resources by closing the HTTP client"""
