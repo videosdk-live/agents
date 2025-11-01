@@ -27,7 +27,7 @@ from azure.ai.voicelive.models import (
     ServerVad,
     AzureStandardVoice,
     Modality,
-    AudioFormat,
+    InputAudioFormat,
     ServerEventType,
 )
 
@@ -61,8 +61,8 @@ class AzureVoiceLiveConfig:
     modalities: List[Modality] = field(
         default_factory=lambda: [Modality.TEXT, Modality.AUDIO]
     )
-    input_audio_format: AudioFormat = AudioFormat.PCM16
-    output_audio_format: AudioFormat = AudioFormat.PCM16
+    input_audio_format: InputAudioFormat = InputAudioFormat.PCM16
+    output_audio_format: InputAudioFormat = InputAudioFormat.PCM16
     turn_detection_threshold: float = 0.5
     turn_detection_prefix_padding_ms: int = 300
     turn_detection_silence_duration_ms: int = 500

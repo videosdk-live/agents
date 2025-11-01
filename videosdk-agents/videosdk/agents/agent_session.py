@@ -333,7 +333,8 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             return handle
 
         if self.current_utterance and not self.current_utterance.done():
-            self.current_utterance.interrupt()
+            old_handle = self.current_utterance
+            old_handle.interrupt()
 
         handle = UtteranceHandle(utterance_id=f"utt_{uuid.uuid4().hex[:8]}")
         self.current_utterance = handle
