@@ -8,7 +8,7 @@ import asyncio
 from .event_emitter import EventEmitter
 from .stt.stt import STT, STTResponse
 from .llm.llm import LLM
-from .llm.chat_context import ChatRole
+from .llm.chat_context import ChatRole, ImageContent
 from .utils import is_function_tool, get_tool_info, graceful_cancel
 from .tts.tts import TTS
 from .stt.stt import SpeechEventType
@@ -22,7 +22,7 @@ from .utils import UserState, AgentState
 import uuid
 from .utterance_handle import UtteranceHandle
 import logging
-from .background_audio import BackgroundAudioHandler, BackgroundAudioHandlerConfig
+import av
 
 logger = logging.getLogger(__name__)
 
@@ -285,7 +285,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
         await self.on_turn_end()
 
-    async def _process_reply_instructions(self, instructions: str, wait_for_playback: bool, handle: UtteranceHandle) -> None:
+    async def _process_reply_instructions(self, instructions: str, wait_for_playback: bool, handle: UtteranceHandle, frames: list[av.VideoFrame] | None = None) -> None:
         """Process reply instructions and generate response using existing flow"""
         
         original_vad_handler = None
@@ -303,9 +303,15 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 self.on_stt_transcript = lambda x: None
         
         try:
+            content_parts = [instructions]
+            if frames:
+                for frame in frames:
+                    image_part = ImageContent(image=frame, inference_detail="auto")
+                    content_parts.append(image_part)
+            
             self.agent.chat_context.add_message(
                 role=ChatRole.USER,
-                content=instructions
+                content=content_parts if len(content_parts) > 1 else instructions
             )
 
             await self.on_turn_start(instructions)

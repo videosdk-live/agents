@@ -15,6 +15,8 @@ from .mcp.mcp_server import MCPServiceProvider
 from .background_audio import BackgroundAudioHandlerConfig
 import logging
 import os
+import av
+
 logger = logging.getLogger(__name__)
 
 if 'AgentSession' not in globals():
@@ -166,5 +168,14 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
         """Called when session ends, to be implemented in your custom agent implementation."""
         pass
 
-    async def capture_and_process_frame(self) -> Dict[str, Any]:
-        return await self.session.capture_and_process_frame()
+    def capture_frames(self, num_of_frames: int = 1) -> list[av.VideoFrame]:
+        """Capture the latest video frames from the pipeline (max 5)."""
+        if num_of_frames > 5:
+            raise ValueError("num_of_frames cannot exceed 5")
+
+        pipeline = getattr(getattr(self, 'session', None), 'pipeline', None)
+        if not pipeline:
+            logger.warning("Pipeline not available")
+            return []
+
+        return pipeline.get_latest_frames(num_of_frames)

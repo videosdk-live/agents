@@ -20,6 +20,8 @@ class Pipeline(EventEmitter[Literal["start"]], ABC):
         self.loop: asyncio.AbstractEventLoop | None = None
         self.audio_track: CustomAudioStreamTrack | None = None
         self._wake_up_callback: Optional[Callable[[], None]] = None
+        self._recent_frames: list[av.VideoFrame] = []
+        self._max_frames_buffer = 5
         self._auto_register()
         
     def _auto_register(self) -> None:
@@ -89,6 +91,7 @@ class Pipeline(EventEmitter[Literal["start"]], ABC):
         self.loop = None
         self.audio_track = None
         self._wake_up_callback = None
+        self._recent_frames = []
         logger.info("Pipeline cleaned up")
     
     async def leave(self) -> None:
@@ -98,3 +101,27 @@ class Pipeline(EventEmitter[Literal["start"]], ABC):
         """
         logger.info("Leaving pipeline")
         await self.cleanup()
+
+    def get_latest_frames(self, num_frames: int = 1) -> list[av.VideoFrame]:
+        """
+        Get the latest video frames from the pipeline.
+        
+        Args:
+            num_frames: Number of frames to retrieve (default: 1, max: 5)
+            
+        Returns:
+            List of VideoFrame objects. Returns empty list if vision is not enabled or no frames available.
+        """
+        if not getattr(self, 'vision', False):
+            logger.warning("Vision is not enabled in pipeline, please enable vision in RoomOptions.")
+            return []
+        
+        if num_frames < 1:
+            num_frames = 1
+        elif num_frames > self._max_frames_buffer:
+            num_frames = self._max_frames_buffer
+            
+        if not self._recent_frames:
+            return []
+        
+        return self._recent_frames[-num_frames:]

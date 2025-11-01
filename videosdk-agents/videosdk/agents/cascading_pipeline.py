@@ -57,7 +57,6 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         self.conversation_flow = None
         self.avatar = avatar
         self.vision = False
-        self.last_video_frame = None
 
         if self.stt:
             self.stt.on(
@@ -211,8 +210,11 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         await self.conversation_flow.send_audio_delta(audio_data)
 
     async def on_video_delta(self, video_data: av.VideoFrame) -> None:
+        """Handle incoming video data from the user"""
         if self.vision:
-            self.last_video_frame = video_data
+            self._recent_frames.append(video_data)
+            if len(self._recent_frames) > self._max_frames_buffer:
+                self._recent_frames.pop(0)
         else:
             raise ValueError("Vision not enabled")      
         
@@ -373,15 +375,17 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         cascading_metrics_collector.add_error(source, str(error_data))
         logger.error(f"[{source}] Component error: {error_data}")
 
-    async def reply_with_context(self, instructions: str, handle: UtteranceHandle, wait_for_playback: bool = True) -> None:
+    async def reply_with_context(self, instructions: str, wait_for_playback: bool, handle: UtteranceHandle, frames: list[av.VideoFrame] | None = None) -> None:
         """
         Generate a reply using instructions and current chat context.
         
         Args:
             instructions: Instructions to add to chat context
             wait_for_playback: If True, disable VAD and STT interruptions during response and wait for
+            handle: UtteranceHandle to track the utterance
+            frames: Optional list of VideoFrame objects to include in the reply
         """
         if self.conversation_flow:
-            await self.conversation_flow._process_reply_instructions(instructions, wait_for_playback, handle)
+            await self.conversation_flow._process_reply_instructions(instructions, wait_for_playback, handle, frames)
         else:
             logger.warning("No conversation flow found in pipeline")  

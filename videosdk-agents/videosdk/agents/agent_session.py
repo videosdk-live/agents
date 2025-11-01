@@ -292,34 +292,6 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             return self.pipeline.model.audio_track
         return None
     
-    async def capture_and_process_frame(self) -> dict[str, Any]:
-        try:
-            frame: Optional[av.VideoFrame] = None
-            if isinstance(self.pipeline, CascadingPipeline) and self.pipeline.vision is True:
-                frame = self.pipeline.last_video_frame
-                
-                if frame is None: 
-                    return {"ok": False, "reason": "Unable to capture frame. Please check your camera"}
-                
-                image_part = ImageContent(image=frame, inference_detail="auto")
-
-                self.agent.chat_context.add_message(
-                    role=ChatRole.USER,
-                    content=["Latest frame for analysis", image_part]
-                )
-
-                self.pipeline.last_video_frame = None
-
-                logger.info("Image successfully added to chat context")
-                return {"ok": True, "detail": "Image added to chat context"}
-            else:
-                logger.error("Vision is not enabled")
-                return {"ok": False, "reason": "Vision is not enabled"}
-
-        except Exception as e:
-            logger.error(f"Error processing frame: {e}")
-            return {"ok": False, "reason": str(e)}
-
     async def start_thinking_audio(self):
         """Start thinking audio"""
         if self._background_audio_player and self._background_audio_player.is_playing:
@@ -343,11 +315,16 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             await self._thinking_audio_player.stop()
             self._thinking_audio_player = None
     
-    async def reply(self, instructions: str, wait_for_playback: bool = True) -> UtteranceHandle:
+    async def reply(self, instructions: str, wait_for_playback: bool = True, frames: list[av.VideoFrame] | None = None) -> UtteranceHandle:
         """
         Generate a response from agent using instructions and current chat context.
         Subsequent calls are discarded while the first one is still running.
         Returns a handle to track the utterance.
+        
+        Args:
+            instructions: Instructions to add to chat context
+            wait_for_playback: If True, wait for playback to complete
+            frames: Optional list of VideoFrame objects to include in the reply
         """
         if not instructions:
             handle = UtteranceHandle(utterance_id="empty_reply")
@@ -378,12 +355,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
                     traces_flow_manager.agent_reply_called(instructions)
 
             if hasattr(self.pipeline, 'reply_with_context'):
-                await self.pipeline.reply_with_context(instructions, wait_for_playback, handle=handle)
-            else:
-                if hasattr(self.pipeline, 'send_text_message'):
-                    await self.pipeline.send_text_message(instructions)
-                else:
-                    await self.pipeline.send_message(instructions)
+                await self.pipeline.reply_with_context(instructions, wait_for_playback, handle=handle, frames=frames)
         finally:
             self._reply_in_progress = False
             
