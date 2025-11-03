@@ -86,6 +86,7 @@ class SarvamAITTS(TTS):
 
         self._interrupted = False
         self._first_chunk_sent = False
+        self.ws_count = 0
 
     def reset_first_audio_tracking(self) -> None:
         """Resets tracking for the first audio chunk latency."""
@@ -159,8 +160,9 @@ class SarvamAITTS(TTS):
         for each synthesis task to guarantee reliability.
         """
         try:
-            await self._close_ws_resources()
+            # await self._close_ws_resources()
             await self._ensure_ws_connection()
+            
 
             if isinstance(text, str):
                 async def _str_iter():
@@ -201,6 +203,8 @@ class SarvamAITTS(TTS):
                 )
                 self._receive_task = asyncio.create_task(self._receive_loop())
                 await self._send_initial_config()
+                self.ws_count = self.ws_count + 1
+                logger.info(f"WS connection numbers: {self.ws_count}")
             except Exception as e:
                 logger.error("error", f"Failed to connect to WebSocket: {e}")
                 raise
@@ -252,6 +256,9 @@ class SarvamAITTS(TTS):
                 if combined_text:
                     payload = {"type": "text", "data": {"text": combined_text}}
                     await self._ws_connection.send_str(json.dumps(payload))
+                    if not self._first_chunk_sent and hasattr(self, '_first_audio_callback') and self._first_audio_callback:
+                        self._first_chunk_sent = True
+                        asyncio.create_task(self._first_audio_callback())
 
             if not self._interrupted:
                 await self._ws_connection.send_str(json.dumps({"type": "flush"}))
@@ -272,9 +279,16 @@ class SarvamAITTS(TTS):
                 msg_type = data.get("type")
 
                 if msg_type == "audio":
+
+                    if not self._first_chunk_sent and hasattr(self, '_first_audio_callback') and self._first_audio_callback:
+                        self._first_chunk_sent = True
+                        asyncio.create_task(self._first_audio_callback())
+                    
                     await self._handle_audio_data(data.get("data"))
+                
                 elif msg_type == "event" and data.get("data", {}).get("event_type") == "final":
                     logger.error("done", "TTS completed")
+                
                 elif msg_type == "error":
                     error_msg = data.get("data", {}).get("message", "Unknown WS error")
                     logger.error("error", f"Sarvam WebSocket error: {error_msg}")
@@ -297,9 +311,6 @@ class SarvamAITTS(TTS):
             if not self.audio_track:
                 return
 
-            if not self._first_chunk_sent and self._first_audio_callback:
-                self._first_chunk_sent = True
-                await self._first_audio_callback()
 
             await self.audio_track.add_new_bytes(audio_bytes)
         except Exception as e:
@@ -333,6 +344,10 @@ class SarvamAITTS(TTS):
                     return
                 audio_b64 = data["audios"][0]
                 audio_bytes = base64.b64decode(audio_b64)
+                if not self._first_chunk_sent and self._first_audio_callback:
+                    self._first_chunk_sent = True
+                    await self._first_audio_callback()
+
                 await self._stream_http_audio(audio_bytes)
                 return
             except httpx.HTTPStatusError as e:
@@ -371,13 +386,9 @@ class SarvamAITTS(TTS):
             if 0 < len(block) < block_size:
                 block += b"\x00" * (block_size - len(block))
 
-            if len(block) == block_size:
-                if not self._first_chunk_sent and self._first_audio_callback:
-                    self._first_chunk_sent = True
-                    await self._first_audio_callback()
                 
-                if self.audio_track:
-                    asyncio.create_task(self.audio_track.add_new_bytes(block))
+            if self.audio_track:
+                asyncio.create_task(self.audio_track.add_new_bytes(block))
 
     def _remove_wav_header(self, audio_bytes: bytes) -> bytes:
         """Removes the WAV header if present."""
@@ -392,9 +403,7 @@ class SarvamAITTS(TTS):
         self._interrupted = True
         if self.audio_track:
             self.audio_track.interrupt()
-        if self._ws_connection and not self._ws_connection.closed:
-            await self._ws_connection.close()
-
+        
     async def _close_ws_resources(self) -> None:
         """Helper to clean up all WebSocket-related resources."""
         if self._receive_task and not self._receive_task.done():
