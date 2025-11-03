@@ -4,10 +4,8 @@ from videosdk import PubSubSubscribeConfig
 from videosdk.agents import Agent, AgentSession, CascadingPipeline,WorkerJob,ConversationFlow,JobContext, RoomOptions
 from videosdk.plugins.deepgram import DeepgramSTT
 from videosdk.plugins.elevenlabs import ElevenLabsTTS
-from videosdk.plugins.anthropic import AnthropicLLM
 from videosdk.plugins.silero import SileroVAD
 from videosdk.plugins.google import GoogleLLM
-from videosdk.plugins.openai import OpenAILLM
 from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
 import logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
@@ -34,7 +32,7 @@ async def entrypoint(ctx: JobContext):
     conversation_flow = ConversationFlow(agent)
 
     pipeline = CascadingPipeline(
-        stt= DeepgramSTT(),
+        stt=DeepgramSTT(),
         llm=GoogleLLM(),
         tts=ElevenLabsTTS(),
         vad=SileroVAD(),
