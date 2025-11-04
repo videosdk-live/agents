@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any, Optional
 import os
 from urllib.parse import urlencode
@@ -16,13 +17,30 @@ class DeepgramSTT(BaseSTT):
         self,
         *,
         api_key: str | None = None,
-        model: str = "flux-general-en",
-        sample_rate: int = 16000,
-        eager_eot_threshold:float=0.6,
-        eot_threshold:float=0.8,
-        eot_timeout_ms:int=7000,
-        base_url: str = "wss://api.deepgram.com/v2/listen",
+        model: str = "nova-2",
+        language: str = "en-US",
+        interim_results: bool = True,
+        punctuate: bool = True,
+        smart_format: bool = True,
+        sample_rate: int = 48000,
+        endpointing: int = 50,
+        filler_words: bool = True,
+        base_url: str = "wss://api.deepgram.com/v1/listen",
     ) -> None:
+        """Initialize the Deepgram STT plugin
+
+        Args:
+            api_key (str | None, optional): Deepgram API key. Uses DEEPGRAM_API_KEY environment variable if not provided. Defaults to None.
+            model (str): The model to use for the STT plugin. Defaults to "nova-2".
+            language (str): The language to use for the STT plugin. Defaults to "en-US".
+            interim_results (bool): Whether to return interim results. Defaults to True.
+            punctuate (bool): Whether to add punctuation. Defaults to True.
+            smart_format (bool): Whether to use smart formatting. Defaults to True.
+            sample_rate (int): Sample rate to use for the STT plugin. Defaults to 48000.
+            endpointing (int): Endpointing threshold. Defaults to 50.
+            filler_words (bool): Whether to include filler words. Defaults to True.
+            base_url (str): The base URL to use for the STT plugin. Defaults to "wss://api.deepgram.com/v1/listen".
+        """
         super().__init__()
 
         self.api_key = api_key or os.getenv("DEEPGRAM_API_KEY")
@@ -31,20 +49,24 @@ class DeepgramSTT(BaseSTT):
                 "Deepgram API key must be provided either through api_key parameter or DEEPGRAM_API_KEY environment variable")
 
         self.model = model
+        self.language = language
         self.sample_rate = sample_rate
-        self.eager_eot_threshold = eager_eot_threshold
-        self.eot_threshold=eot_threshold
-        self.eot_timeout_ms = eot_timeout_ms
+        self.interim_results = interim_results
+        self.punctuate = punctuate
+        self.smart_format = smart_format
+        self.endpointing = endpointing
+        self.filler_words = filler_words
         self.base_url = base_url
-
         self._session: Optional[aiohttp.ClientSession] = None
         self._ws: Optional[aiohttp.ClientWebSocketResponse] = None
         self._ws_task: Optional[asyncio.Task] = None
-        self._last_transcript: str = ""
+        self._last_speech_event_time = 0.0
+        self._previous_speech_event_time = 0.0
 
     async def process_audio(
         self,
         audio_frames: bytes,
+        language: Optional[str] = None,
         **kwargs: Any
     ) -> None:
         """Process audio frames and send to Deepgram's Streaming API"""
@@ -93,26 +115,32 @@ class DeepgramSTT(BaseSTT):
 
     async def _connect_ws(self) -> None:
         """Establish WebSocket connection with Deepgram's Streaming API"""
+
         if not self._session:
             self._session = aiohttp.ClientSession()
 
         query_params = {
             "model": self.model,
+            "language": self.language,
+            "interim_results": str(self.interim_results).lower(),
+            "punctuate": str(self.punctuate).lower(),
+            "smart_format": str(self.smart_format).lower(),
             "encoding": "linear16",
-            "sample_rate": self.sample_rate,
-            "eot_threshold": self.eot_threshold,
-            "eot_timeout_ms": self.eot_timeout_ms,
-            "eager_eot_threshold": self.eager_eot_threshold,
-            # "channels": 1,
-            # "vad_events": "true",
-            # "no_delay": "true",
+            "sample_rate": str(self.sample_rate),
+            "channels": 2,
+            "endpointing": self.endpointing,
+            "filler_words": str(self.filler_words).lower(),
+            "vad_events": "true",
+            "no_delay": "true",
         }
-        headers = {"Authorization": f"Token {self.api_key}"}
+        headers = {
+            "Authorization": f"Token {self.api_key}",
+        }
+
         ws_url = f"{self.base_url}?{urlencode(query_params)}"
 
         try:
             self._ws = await self._session.ws_connect(ws_url, headers=headers)
-            logger.info("Connected to Deepgram Flux WebSocket.")
         except Exception as e:
             logger.error(f"Error connecting to WebSocket: {str(e)}")
             raise
@@ -120,57 +148,42 @@ class DeepgramSTT(BaseSTT):
     def _handle_ws_message(self, msg: dict) -> list[STTResponse]:
         """Handle incoming WebSocket messages and generate STT responses"""
         responses = []
-
         try:
-            if msg.get("type") != "TurnInfo":
-                return responses
+            if msg["type"] == "SpeechStarted":
+                current_time = time.time()
 
-            event = msg.get("event")
-            transcript = msg.get("transcript", "")
-            logger.info(f"{event} and {transcript}")
-            start_time = msg.get("audio_window_start", 0.0)
-            end_time = msg.get("audio_window_end", 0.0)
-            confidence = msg.get("end_of_turn_confidence", 0.0)
+                if self._last_speech_event_time == 0.0:
+                    self._last_speech_event_time = current_time
+                    return responses
 
-            self._last_transcript = transcript
+                if current_time - self._last_speech_event_time < 1.0:
+                    global_event_emitter.emit("speech_started")
 
-            # Emit turn-related events
-            if event == "StartOfTurn":
-                global_event_emitter.emit("speech_started")
-            elif event == "EagerEndOfTurn":
-                global_event_emitter.emit("speech_eager_end")
-            elif event == "EndOfTurn":
-                global_event_emitter.emit("speech_finalized")
-                if transcript and self._transcript_callback:
-                    responses.append(
-                        STTResponse(
-                            event_type=SpeechEventType.FINAL,
-                            data=SpeechData(
-                                text=transcript,
-                                confidence=confidence,
-                                start_time=start_time,
-                                end_time=end_time,
-                            ),
-                            metadata={"model": self.model},
-                        )
-                    )
-            elif event == "TurnResumed":
-                global_event_emitter.emit("speech_resumed")
+                self._previous_speech_event_time = self._last_speech_event_time
+                self._last_speech_event_time = current_time
 
-            # Send interim transcript for ongoing turn
-            if transcript and event not in ("EndOfTurn",):
-                responses.append(
-                    STTResponse(
-                        event_type=SpeechEventType.INTERIM,
+            if msg["type"] == "Results":
+                channel = msg["channel"]
+                alternatives = channel["alternatives"]
+
+                if alternatives and len(alternatives) > 0:
+                    alt = alternatives[0]
+                    is_final = msg["is_final"]
+                    if alt["transcript"] == "":
+                        return responses
+
+                    response = STTResponse(
+                        event_type=SpeechEventType.FINAL if is_final else SpeechEventType.INTERIM,
                         data=SpeechData(
-                            text=transcript,
-                            confidence=confidence,
-                            start_time=start_time,
-                            end_time=end_time,
+                            text=alt["transcript"],
+                            language=self.language,
+                            confidence=alt.get("confidence", 0.0),
+                            start_time=alt["words"][0]["start"] if alt["words"] else 0.0,
+                            end_time=alt["words"][-1]["end"] if alt["words"] else 0.0,
                         ),
-                        metadata={"model": self.model},
+                        metadata={"model": self.model}
                     )
-                )
+                    responses.append(response)
 
         except Exception as e:
             logger.error(f"Error handling WebSocket message: {str(e)}")
