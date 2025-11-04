@@ -40,6 +40,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self.stt = stt
         self.llm = llm
         self.tts = tts
+        self.audio_track = None
         self.vad = vad
         self.turn_detector = turn_detector
         self.agent = agent
@@ -196,7 +197,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             self._speech_wait_timeout,
             lambda: asyncio.create_task(self._on_speech_timeout())
         )
-        
 
     async def _on_speech_timeout(self) -> None:
         """Handle timeout when no additional speech is detected"""
@@ -556,7 +556,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         pass
 
     def on_speech_started_stt(self, event_data: Any) -> None:
-        if self.user_speech_callback:
+        if self.user_speech_callback:   
             self.user_speech_callback()
         
         if self.agent.session:
@@ -669,17 +669,38 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         if self.agent and self.agent.session:
             self.agent.session._pause_wake_up_timer()
 
+        # Ensure audio track exists before callback registration
+        if not self.audio_track:
+            if hasattr(self.agent.session, "pipeline") and hasattr(self.agent.session.pipeline, "audio_track"):
+                self.audio_track = self.agent.session.pipeline.audio_track
+            else:
+                logger.warning("[ConversationFlow] Audio track not found in pipeline — last audio callback will be skipped.")
+
+        # Define first/last audio byte callbacks
         async def on_first_audio_byte():
             if self.agent.session and self.agent.session.is_background_audio_enabled:
                 await self.agent.session.stop_thinking_audio()
             cascading_metrics_collector.on_tts_first_byte()
             cascading_metrics_collector.on_agent_speech_start()
-            
+
             if self.agent.session:
                 self.agent.session._emit_agent_state(AgentState.SPEAKING)
                 self.agent.session._emit_user_state(UserState.LISTENING)
 
+        async def on_last_audio_byte():
+            if self.agent.session:
+                self.agent.session._emit_agent_state(AgentState.IDLE)
+                self.agent.session._emit_user_state(UserState.IDLE)
+            logger.info("[TTS] Last audio byte processed — Agent and User set to IDLE")
+
+        # Register the callbacks
         self.tts.on_first_audio_byte(on_first_audio_byte)
+
+        if self.audio_track:
+            self.audio_track.on_last_audio_byte(on_last_audio_byte)
+        else:
+            logger.warning("[ConversationFlow] Audio track not initialized — skipping last audio callback registration.")
+
         self.tts.reset_first_audio_tracking()
 
         cascading_metrics_collector.on_tts_start()
@@ -693,7 +714,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 response_iterator = response_gen
 
             await self.tts.synthesize(response_iterator)
-            
 
         finally:
             if self.agent.session and self.agent.session.is_background_audio_enabled:
@@ -702,13 +722,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             if self.agent and self.agent.session:
                 self.agent.session._reply_in_progress = False
                 self.agent.session._reset_wake_up_timer()
-            
             cascading_metrics_collector.on_agent_speech_end()
-            
-        # TODO: Need to work on IDLE state 
-            # if self.agent.session:
-            #     self.agent.session._emit_agent_state(AgentState.IDLE)
-            #     self.agent.session._emit_user_state(UserState.IDLE)
     
     async def cleanup(self) -> None:
         """Cleanup conversation flow resources"""
