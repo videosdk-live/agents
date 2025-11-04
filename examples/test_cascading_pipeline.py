@@ -11,8 +11,6 @@ from videosdk.plugins.elevenlabs import ElevenLabsTTS
 
 logging.getLogger().setLevel(logging.CRITICAL)
 pre_download_model()
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
-logger = logging.getLogger(__name__)
 
 @function_tool
 async def get_weather(
@@ -98,7 +96,7 @@ async def entrypoint(ctx: JobContext):
     await ctx.run_until_shutdown(session=session,wait_for_participant=True)
 
 def make_context() -> JobContext:
-    room_options = RoomOptions(room_id="n7cu-4iqc-nw0t", name="Sandbox Agent", playground=True)
+    room_options = RoomOptions(room_id="<room_id>", name="Sandbox Agent", playground=True)
     
     return JobContext(
         room_options=room_options
