@@ -201,7 +201,7 @@ class SarvamAITTS(TTS):
                     ),
                     timeout=10.0,
                 )
-                self._receive_task = asyncio.create_task(self._receive_loop())
+                self._receive_task = asyncio.create_task(self._recv_loop())
                 await self._send_initial_config()
                 self.ws_count = self.ws_count + 1
                 logger.info(f"WS connection numbers: {self.ws_count}")
