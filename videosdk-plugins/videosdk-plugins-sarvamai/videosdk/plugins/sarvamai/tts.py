@@ -265,7 +265,7 @@ class SarvamAITTS(TTS):
         except Exception as e:
             logger.error("error", f"Failed to send text chunks via WebSocket: {e}")
 
-    async def _receive_loop(self):
+    async def _recv_loop(self):
         """Continuously listens for and processes incoming WebSocket messages."""
         try:
             while self._ws_connection and not self._ws_connection.closed:
