@@ -7,12 +7,17 @@ from av import AudioFrame
 import numpy as np
 from videosdk import CustomAudioTrack
 from ..event_bus import global_event_emitter
+from typing import Any, AsyncIterator, Literal, Optional, Callable, Awaitable
+from ..utils import UserState, AgentState
 
 logger = logging.getLogger(__name__)
 
 
 AUDIO_PTIME = 0.02
-
+if 'AgentSession' not in globals():
+    from typing import TYPE_CHECKING
+    if TYPE_CHECKING:
+        from ..agent_session import AgentSession
 
 class MediaStreamError(Exception):
     pass
@@ -37,13 +42,22 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         self.time_base_fraction = Fraction(1, self.sample_rate)
         self.samples = int(AUDIO_PTIME * self.sample_rate)
         self.chunk_size = int(self.samples * self.channels * self.sample_width)
+        self.session: "AgentSession"
+        self._is_speaking = False
 
     def interrupt(self):
         self.frame_buffer.clear()
         self.audio_data_buffer.clear()
+
+    def on_last_audio_byte(self, callback: Callable[[], Awaitable[None]]) -> None:
+        """Set callback for when the final audio byte of synthesis is produced"""
+        logger.info("on last audio callback")
+        self._last_audio_callback = callback
             
     async def add_new_bytes(self, audio_data: bytes):
         global_event_emitter.emit("ON_SPEECH_OUT", {"audio_data": audio_data})
+
+        # self.last_audio_time = time()
         self.audio_data_buffer += audio_data
 
         while len(self.audio_data_buffer) >= self.chunk_size:
@@ -104,7 +118,18 @@ class CustomAudioStreamTrack(CustomAudioTrack):
 
             if len(self.frame_buffer) > 0:
                 frame = self.frame_buffer.pop(0)
+                self._is_speaking = True
+
             else:
+                # No audio data available — silence
+                if getattr(self, "_is_speaking", False):
+                    logger.info("[AudioTrack] Agent finished speaking — triggering last_audio_callback.")
+                    self._is_speaking = False
+
+                    if hasattr(self, "_last_audio_callback") and self._last_audio_callback:
+                        asyncio.create_task(self._last_audio_callback())
+
+                # Produce silence frame
                 frame = AudioFrame(format="s16", layout="mono", samples=self.samples)
                 for p in frame.planes:
                     p.update(bytes(p.buffer_size))
@@ -116,7 +141,7 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         except Exception as e:
             traceback.print_exc()
             logger.error(f"Error while creating tts->rtc frame: {e}")
-
+            
     async def cleanup(self):
         self.interrupt()
         self.stop()
