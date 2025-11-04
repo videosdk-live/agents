@@ -173,7 +173,9 @@ class DeepgramSTTV2(BaseSTT):
             if event == "StartOfTurn":
                 global_event_emitter.emit("speech_started")
             elif event == "EagerEndOfTurn":
-                global_event_emitter.emit("speech_eager_end")
+                # TODO 
+                # global_event_emitter.emit("speech_eager_end")
+                pass
             elif event == "EndOfTurn":
                 global_event_emitter.emit("speech_stopped")
                 if transcript and self._transcript_callback:
@@ -190,7 +192,9 @@ class DeepgramSTTV2(BaseSTT):
                         )
                     )
             elif event == "TurnResumed":
-                global_event_emitter.emit("speech_resumed")
+                # TODO
+                # global_event_emitter.emit("speech_resumed")
+                pass
 
             # Send interim transcript for ongoing turn
             if transcript and event not in ("EndOfTurn",):
