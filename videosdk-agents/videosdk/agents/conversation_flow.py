@@ -688,7 +688,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             if self.agent.session:
                 self.agent.session._emit_agent_state(AgentState.IDLE)
                 self.agent.session._emit_user_state(UserState.IDLE)
-            print("[TTS] Last audio byte processed — Agent and User set to IDLE")
             logger.info("[TTS] Last audio byte processed — Agent and User set to IDLE")
 
         # Register the callbacks
@@ -720,7 +719,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             if self.agent and self.agent.session:
                 self.agent.session._reply_in_progress = False
                 self.agent.session._reset_wake_up_timer()
-
             cascading_metrics_collector.on_agent_speech_end()
     
     async def cleanup(self) -> None:
