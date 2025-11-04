@@ -665,11 +665,10 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
         # Ensure audio track exists before callback registration
         if not self.audio_track:
-            self.audio_track = getattr(self.tts, "audio_track", None)
-            if self.audio_track is None:
-                logger.warning("[ConversationFlow] No audio track found in TTS — creating fallback track.")
-                from videosdk.media.audio_stream import CustomAudioStreamTrack  # adjust to your path
-                self.audio_track = CustomAudioStreamTrack(sample_rate=24000)
+            if hasattr(self.agent.session, "pipeline") and hasattr(self.agent.session.pipeline, "audio_track"):
+                self.audio_track = self.agent.session.pipeline.audio_track
+            else:
+                logger.warning("[ConversationFlow] Audio track not found in pipeline — last audio callback will be skipped.")
 
         # Define first/last audio byte callbacks
         async def on_first_audio_byte():
@@ -683,8 +682,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 self.agent.session._emit_user_state(UserState.LISTENING)
 
         async def on_last_audio_byte():
-            print("Call back received ...... in conversation flow .... 0.5")
-            # cascading_metrics_collector.on_tts_last_byte()
             if self.agent.session:
                 self.agent.session._emit_agent_state(AgentState.IDLE)
                 self.agent.session._emit_user_state(UserState.IDLE)
