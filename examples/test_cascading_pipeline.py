@@ -8,8 +8,10 @@ from videosdk.plugins.deepgram import DeepgramSTT
 from videosdk.plugins.silero import SileroVAD
 from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
 from videosdk.plugins.elevenlabs import ElevenLabsTTS
+from dotenv import load_dotenv
+load_dotenv(override=True)
 
-logging.getLogger().setLevel(logging.CRITICAL)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 pre_download_model()
 
 @function_tool
@@ -78,10 +80,11 @@ class VoiceAgent(Agent):
 async def entrypoint(ctx: JobContext):
     
     agent = VoiceAgent()
-    conversation_flow = ConversationFlow(agent)
+    # Test with different eou_logic cases : default, binary, sliding
+    conversation_flow = ConversationFlow(agent, eou_logic='default')
 
     pipeline = CascadingPipeline(
-        stt= DeepgramSTT(),
+        stt=DeepgramSTT(),
         llm=OpenAILLM(),
         tts=ElevenLabsTTS(),
         vad=SileroVAD(),
