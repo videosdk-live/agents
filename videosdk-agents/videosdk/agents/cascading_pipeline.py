@@ -14,6 +14,7 @@ from .job import get_current_job_context
 from .denoise import Denoise
 import logging
 import asyncio
+import av
 from .background_audio import BackgroundAudioHandler
 from .utterance_handle import UtteranceHandle
 
@@ -55,6 +56,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         self.agent = None
         self.conversation_flow = None
         self.avatar = avatar
+        self.vision = False
 
         if self.stt:
             self.stt.on(
@@ -103,6 +105,11 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
             self.tts.loop = self.loop
             logger.info("TTS loop configured")
             job_context = get_current_job_context()
+
+            if job_context and job_context.room:
+                requested_vision = getattr(job_context.room, "vision", False)
+                self.vision = requested_vision
+
             if self.avatar and job_context and job_context.room:
                 self.tts.audio_track = (
                     getattr(job_context.room, "agent_audio_track", None)
@@ -202,6 +209,15 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         """
         await self.conversation_flow.send_audio_delta(audio_data)
 
+    async def on_video_delta(self, video_data: av.VideoFrame) -> None:
+        """Handle incoming video data from the user"""
+        if self.vision:
+            self._recent_frames.append(video_data)
+            if len(self._recent_frames) > self._max_frames_buffer:
+                self._recent_frames.pop(0)
+        else:
+            raise ValueError("Vision not enabled")      
+        
     def on_user_speech_started(self) -> None:
         """
         Handle user speech started event
@@ -243,6 +259,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
                 logger.error(f"Error cleaning up conversation flow: {e}")
         
         self.agent = None
+        self.vision = False
         self.conversation_flow = None
         self.avatar = None
         logger.info("Cascading pipeline cleaned up")
@@ -358,16 +375,17 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         cascading_metrics_collector.add_error(source, str(error_data))
         logger.error(f"[{source}] Component error: {error_data}")
 
-    async def reply_with_context(self, instructions: str, handle: UtteranceHandle, wait_for_playback: bool = True) -> None:
+    async def reply_with_context(self, instructions: str, wait_for_playback: bool, handle: UtteranceHandle, frames: list[av.VideoFrame] | None = None) -> None:
         """
         Generate a reply using instructions and current chat context.
         
         Args:
             instructions: Instructions to add to chat context
             wait_for_playback: If True, disable VAD and STT interruptions during response and wait for
+            handle: UtteranceHandle to track the utterance
+            frames: Optional list of VideoFrame objects to include in the reply
         """
         if self.conversation_flow:
-            await self.conversation_flow._process_reply_instructions(instructions, wait_for_playback, handle)
+            await self.conversation_flow._process_reply_instructions(instructions, wait_for_playback, handle, frames)
         else:
-            logger.warning("No conversation flow found in pipeline, marking handle as done.")
-            handle._mark_done()
+            logger.warning("No conversation flow found in pipeline")  

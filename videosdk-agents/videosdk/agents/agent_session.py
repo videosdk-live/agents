@@ -4,7 +4,7 @@ import asyncio
 import uuid
 
 from .agent import Agent
-from .llm.chat_context import ChatRole
+from .llm.chat_context import ChatRole, ImageContent
 from .conversation_flow import ConversationFlow
 from .pipeline import Pipeline
 from .metrics import cascading_metrics_collector, realtime_metrics_collector
@@ -12,11 +12,13 @@ from .realtime_pipeline import RealTimePipeline
 from .utils import get_tool_info, UserState, AgentState
 from .utterance_handle import UtteranceHandle 
 import time
+from .cascading_pipeline import CascadingPipeline
 from .job import get_current_job_context
 from .event_emitter import EventEmitter
 from .event_bus import global_event_emitter
 from .background_audio import BackgroundAudioHandler,BackgroundAudioHandlerConfig
 import logging
+import av
 logger = logging.getLogger(__name__)
 
 class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_changed", "on_speech_in", "on_speech_out"]]):
@@ -289,7 +291,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         elif hasattr(self.pipeline, 'model') and self.pipeline.model and self.pipeline.model.audio_track: # Realtime
             return self.pipeline.model.audio_track
         return None
-
+    
     async def start_thinking_audio(self):
         """Start thinking audio"""
         if self._background_audio_player and self._background_audio_player.is_playing:
@@ -313,11 +315,16 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             await self._thinking_audio_player.stop()
             self._thinking_audio_player = None
     
-    async def reply(self, instructions: str, wait_for_playback: bool = True) -> UtteranceHandle:
+    async def reply(self, instructions: str, wait_for_playback: bool = True, frames: list[av.VideoFrame] | None = None) -> UtteranceHandle:
         """
         Generate a response from agent using instructions and current chat context.
         Subsequent calls are discarded while the first one is still running.
         Returns a handle to track the utterance.
+        
+        Args:
+            instructions: Instructions to add to chat context
+            wait_for_playback: If True, wait for playback to complete
+            frames: Optional list of VideoFrame objects to include in the reply
         """
         if not instructions:
             handle = UtteranceHandle(utterance_id="empty_reply")
@@ -333,7 +340,8 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             return handle
 
         if self.current_utterance and not self.current_utterance.done():
-            self.current_utterance.interrupt()
+            old_handle = self.current_utterance
+            old_handle.interrupt()
 
         handle = UtteranceHandle(utterance_id=f"utt_{uuid.uuid4().hex[:8]}")
         self.current_utterance = handle
@@ -348,12 +356,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
                     traces_flow_manager.agent_reply_called(instructions)
 
             if hasattr(self.pipeline, 'reply_with_context'):
-                await self.pipeline.reply_with_context(instructions, wait_for_playback, handle=handle)
-            else:
-                if hasattr(self.pipeline, 'send_text_message'):
-                    await self.pipeline.send_text_message(instructions)
-                else:
-                    await self.pipeline.send_message(instructions)
+                await self.pipeline.reply_with_context(instructions, wait_for_playback, handle=handle, frames=frames)
         finally:
             self._reply_in_progress = False
             

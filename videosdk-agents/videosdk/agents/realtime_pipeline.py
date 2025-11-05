@@ -128,13 +128,12 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         await self.model.handle_audio_input(audio_data)
 
     async def on_video_delta(self, video_data: av.VideoFrame):
-        """
-        Handle incoming video data from the user
-        The model's handle_video_input is now expected to handle the av.VideoFrame.
-        """
-        if self.vision and hasattr(self.model, 'handle_video_input'):
-            await self.model.handle_video_input(video_data)
-    
+        """Handle incoming video data from the user"""
+        if self.vision:
+            self._recent_frames.append(video_data)
+            if len(self._recent_frames) > self._max_frames_buffer:
+                self._recent_frames.pop(0)
+
     def on_user_speech_started(self, data: dict) -> None:
         """
         Handle user speech started event
@@ -247,3 +246,22 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         """
         if self.agent and self.agent.session and self.agent.session.is_background_audio_enabled:
             await self.agent.session.stop_thinking_audio()
+
+    async def reply_with_context(self, instructions: str, wait_for_playback: bool, handle: UtteranceHandle, frames: list[av.VideoFrame] | None = None) -> None:
+        """
+        Generate a reply using instructions and optional frames.
+        
+        Args:
+            instructions: Instructions/text to send to the model
+            wait_for_playback: If True, wait for playback to complete (for realtime, this is handled by the model)
+            handle: UtteranceHandle to track the utterance
+            frames: Optional list of VideoFrame objects to include in the reply
+        """
+        self._current_utterance_handle = handle
+        
+        if frames and hasattr(self.model, 'send_message_with_frames'):
+            await self.model.send_message_with_frames(instructions, frames)
+        elif hasattr(self.model, 'send_text_message'):
+            await self.model.send_text_message(instructions)
+        else:
+            await self.model.send_message(instructions)

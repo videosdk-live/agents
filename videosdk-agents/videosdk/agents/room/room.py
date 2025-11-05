@@ -10,7 +10,7 @@ from videosdk import (
 from .meeting_event_handler import MeetingHandler
 from .participant_event_handler import ParticipantHandler
 from .audio_stream import TeeCustomAudioStreamTrack, TeeMixingCustomAudioStreamTrack
-from videosdk.agents.pipeline import Pipeline
+from ..pipeline import Pipeline
 from dotenv import load_dotenv
 import numpy as np
 import asyncio
@@ -25,6 +25,7 @@ import requests
 import time
 import logging
 from ..event_bus import global_event_emitter
+
 logger = logging.getLogger(__name__)
 
 START_RECORDING_URL = "https://api.videosdk.live/v2/recordings/participant/start"
@@ -130,6 +131,7 @@ class VideoSDKHandler:
         cascading_metrics_collector.set_traces_flow_manager(
             self.traces_flow_manager)
 
+
         if custom_microphone_audio_track:
             self.audio_track = custom_microphone_audio_track
             if audio_sinks:
@@ -186,7 +188,7 @@ class VideoSDKHandler:
         self._left: bool = False
         self.sdk_metadata = {
             "sdk": "agents",
-            "sdk_version": "0.0.41"
+            "sdk_version": "0.0.43"
         }
 
         self.meeting = VideoSDK.init_meeting(
