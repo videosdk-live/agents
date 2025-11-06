@@ -162,7 +162,6 @@ class DeepgramSTTV2(BaseSTT):
 
             event = msg.get("event")
             transcript = msg.get("transcript", "")
-            logger.info(f"{event} and {transcript}")
             start_time = msg.get("audio_window_start", 0.0)
             end_time = msg.get("audio_window_end", 0.0)
             confidence = msg.get("end_of_turn_confidence", 0.0)
