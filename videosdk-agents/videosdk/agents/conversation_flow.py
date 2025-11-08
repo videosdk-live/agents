@@ -697,7 +697,10 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self.tts.on_first_audio_byte(on_first_audio_byte)
 
         if self.audio_track:
-            self.audio_track.on_last_audio_byte(on_last_audio_byte)
+            if hasattr(self.audio_track, "on_last_audio_byte"):
+                self.audio_track.on_last_audio_byte(on_last_audio_byte)
+            else:
+                logger.warning(f"[ConversationFlow] Audio track '{type(self.audio_track).__name__}' does not have 'on_last_audio_byte' method — skipping callback registration.")
         else:
             logger.warning("[ConversationFlow] Audio track not initialized — skipping last audio callback registration.")
 
@@ -742,14 +745,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             except asyncio.CancelledError:
                 pass
             self._current_llm_task = None
-        
-        if self._eou_timer_task and not self._eou_timer_task.done():
-            self._eou_timer_task.cancel()
-            try:
-                await self._eou_timer_task
-            except asyncio.CancelledError:
-                pass
-            self._eou_timer_task = None
         
         if hasattr(self, 'agent') and self.agent and hasattr(self.agent, 'chat_context') and self.agent.chat_context:
             try:
