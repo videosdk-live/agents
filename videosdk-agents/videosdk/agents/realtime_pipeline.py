@@ -160,6 +160,8 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
             asyncio.create_task(self.agent.session.stop_thinking_audio())
         if self._current_utterance_handle and not self._current_utterance_handle.done():
             self._current_utterance_handle.interrupt()
+        if self.avatar and hasattr(self.avatar, 'interrupt'):
+            asyncio.create_task(self.avatar.interrupt())
 
     async def leave(self) -> None:
         """
