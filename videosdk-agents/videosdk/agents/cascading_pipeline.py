@@ -143,6 +143,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         self.conversation_flow.vad = self.vad
         self.conversation_flow.turn_detector = self.turn_detector
         self.conversation_flow.denoise = self.denoise
+        self.conversation_flow.avatar = self.avatar
         self.conversation_flow.user_speech_callback = self.on_user_speech_started
         if self.conversation_flow.stt:
             self.conversation_flow.stt.on_stt_transcript(
@@ -230,6 +231,8 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         """
         if self.conversation_flow:
             asyncio.create_task(self.conversation_flow._interrupt_tts())
+        if self.avatar and hasattr(self.avatar, 'interrupt'):
+            asyncio.create_task(self.avatar.interrupt())
     
     async def cleanup(self) -> None:
         """Cleanup all pipeline components"""

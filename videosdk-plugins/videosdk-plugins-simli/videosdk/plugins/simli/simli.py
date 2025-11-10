@@ -40,6 +40,11 @@ class SimliAudioTrack(CustomAudioTrack):
 
     def interrupt(self):
         asyncio.ensure_future(self.simli_client.clearBuffer())
+        while not self.queue.empty():
+            try:
+                self.queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
 
     async def recv(self) -> AudioFrame:
         """Return next audio frame to VideoSDK."""
@@ -240,6 +245,10 @@ class SimliAvatar:
             logger.error(
                 f"Simli: Cannot send audio - ws available: {self.simli_client is not None}, ready: {self.simli_client.ready.is_set()}"
             )
+
+    async def interrupt(self):
+        if self.audio_track:
+            self.audio_track.interrupt()
 
     async def aclose(self):
         if self._stopping:
