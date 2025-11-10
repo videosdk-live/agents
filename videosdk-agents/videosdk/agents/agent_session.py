@@ -4,7 +4,7 @@ import asyncio
 import uuid
 
 from .agent import Agent
-from .llm.chat_context import ChatRole, ImageContent
+from .llm.chat_context import ChatRole
 from .conversation_flow import ConversationFlow
 from .pipeline import Pipeline
 from .metrics import cascading_metrics_collector, realtime_metrics_collector
@@ -12,7 +12,6 @@ from .realtime_pipeline import RealTimePipeline
 from .utils import get_tool_info, UserState, AgentState
 from .utterance_handle import UtteranceHandle 
 import time
-from .cascading_pipeline import CascadingPipeline
 from .job import get_current_job_context
 from .event_emitter import EventEmitter
 from .event_bus import global_event_emitter
@@ -62,6 +61,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         self._background_audio_player: Optional[BackgroundAudioHandler] = None
         self._thinking_was_playing = False
         self.background_audio_config = background_audio
+        self._is_executing_tool = False
 
         if hasattr(self.pipeline, 'set_agent'):
             self.pipeline.set_agent(self.agent)
@@ -150,7 +150,12 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         audio_track = self._get_audio_track()
         return hasattr(audio_track, 'add_background_bytes')
 
-    async def start(self, **kwargs: Any) -> None:
+    async def start(
+        self,
+        wait_for_participant: bool = False,
+        run_until_shutdown: bool = False,
+        **kwargs: Any
+    ) -> None:
         """
         Start the agent session.
         This will:
@@ -158,10 +163,47 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         2. Call the agent's on_enter hook
         3. Start the pipeline processing
         4. Start wake-up timer if configured (but only if callback is set)
+        5. Optionally handle full lifecycle management (connect, wait, shutdown)
         
         Args:
+            wait_for_participant: If True, wait for a participant to join before starting
+            run_until_shutdown: If True, manage the full lifecycle including connection,
+                               waiting for shutdown signals, and cleanup. This is a convenience
+                               that internally calls ctx.run_until_shutdown() with this session.
             **kwargs: Additional arguments to pass to the pipeline start method
-        """       
+            
+        Examples:
+            Simple start (manual lifecycle management):
+            ```python
+            await session.start()
+            ```
+            
+            Full lifecycle management (recommended):
+            ```python
+            await session.start(wait_for_participant=True, run_until_shutdown=True)
+            ```
+        """
+        if run_until_shutdown:
+            try:
+                ctx = get_current_job_context()
+                if ctx:
+                    logger.info("Starting session with full lifecycle management")
+                    await ctx.run_until_shutdown(
+                        session=self,
+                        wait_for_participant=wait_for_participant
+                    )
+                    return
+                else:
+                    logger.warning(
+                        "run_until_shutdown=True requires a JobContext, "
+                        "falling back to normal start()"
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"Failed to get JobContext for run_until_shutdown: {e}, "
+                    "falling back to normal start()"
+                )
+        
         self._emit_agent_state(AgentState.STARTING)
         await self.agent.initialize_mcp()
 
@@ -318,35 +360,45 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
     async def reply(self, instructions: str, wait_for_playback: bool = True, frames: list[av.VideoFrame] | None = None) -> UtteranceHandle:
         """
         Generate a response from agent using instructions and current chat context.
-        Subsequent calls are discarded while the first one is still running.
-        Returns a handle to track the utterance.
+        
+        This method is safe to call from function tools - it will automatically
+        detect re-entrant calls and schedule them as background tasks.
         
         Args:
             instructions: Instructions to add to chat context
             wait_for_playback: If True, wait for playback to complete
             frames: Optional list of VideoFrame objects to include in the reply
+            
+        Returns:
+            UtteranceHandle: A handle to track the utterance lifecycle
         """
-        if not instructions:
-            handle = UtteranceHandle(utterance_id="empty_reply")
-            handle._mark_done()
-            return handle
-        
         if self._reply_in_progress:
             if self.current_utterance:
                 return self.current_utterance
-            # Create a placeholder that will never resolve to avoid blocking
             handle = UtteranceHandle(utterance_id="placeholder")
             handle._mark_done()
             return handle
-
-        if self.current_utterance and not self.current_utterance.done():
-            old_handle = self.current_utterance
-            old_handle.interrupt()
-
+        
         handle = UtteranceHandle(utterance_id=f"utt_{uuid.uuid4().hex[:8]}")
         self.current_utterance = handle
+
+        if self._is_executing_tool:
+            asyncio.create_task(
+                self._internal_blocking_reply(instructions, wait_for_playback, handle, frames)
+            )
+            return handle
+        else:
+            await self._internal_blocking_reply(instructions, wait_for_playback, handle, frames)
+            return handle
+
+    async def _internal_blocking_reply(self, instructions: str, wait_for_playback: bool, handle: UtteranceHandle, frames: list[av.VideoFrame] | None = None) -> None:
+        """
+        The original, blocking logic of the reply method.
+        """
+        if not instructions:
+            handle._mark_done()
+            return
         self._reply_in_progress = True
-        
         self._pause_wake_up_timer()
         
         try:
@@ -359,9 +411,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
                 await self.pipeline.reply_with_context(instructions, wait_for_playback, handle=handle, frames=frames)
         finally:
             self._reply_in_progress = False
-            
-        return handle
-    
+
     def interrupt(self) -> None:
         """
         Interrupt the agent's current speech.

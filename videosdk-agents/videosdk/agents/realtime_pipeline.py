@@ -44,6 +44,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         self.agent = None
         self.avatar = avatar
         self.vision = False
+        self._vision_lock = asyncio.Lock()
         self.denoise = denoise
         super().__init__()
         self.model.on("error", self.on_model_error)
@@ -129,10 +130,15 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
 
     async def on_video_delta(self, video_data: av.VideoFrame):
         """Handle incoming video data from the user"""
+        if self._vision_lock.locked():
+            logger.info("Vision lock is locked, skipping video data")
+            return
+            
         if self.vision:
             self._recent_frames.append(video_data)
             if len(self._recent_frames) > self._max_frames_buffer:
                 self._recent_frames.pop(0)
+            await self.model.handle_video_input(video_data)
 
     def on_user_speech_started(self, data: dict) -> None:
         """
@@ -260,7 +266,8 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         self._current_utterance_handle = handle
         
         if frames and hasattr(self.model, 'send_message_with_frames'):
-            await self.model.send_message_with_frames(instructions, frames)
+            async with self._vision_lock:
+                await self.model.send_message_with_frames(instructions, frames)
         elif hasattr(self.model, 'send_text_message'):
             await self.model.send_text_message(instructions)
         else:
