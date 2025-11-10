@@ -696,6 +696,35 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
             self.emit("error", f"Error sending text message: {e}")
             self._session_should_close.set()
 
+    async def handle_video_input(self, video_data: av.VideoFrame) -> None:
+            """Improved video input handler with error prevention"""
+            if not self._session or self._closing:
+                return
+
+            try:
+                if not video_data or not video_data.planes:
+                    return
+
+                now = time.monotonic()
+                if (
+                    hasattr(self, "_last_video_frame")
+                    and (now - self._last_video_frame) < 0.5
+                ):
+                    return
+                self._last_video_frame = now
+
+                processed_jpeg = encode_image(video_data, DEFAULT_IMAGE_ENCODE_OPTIONS)
+
+                if not processed_jpeg or len(processed_jpeg) < 100:
+                    logger.warning("Invalid JPEG data generated")
+                    return
+
+                await self._session.session.send_realtime_input(
+                    video=Blob(data=processed_jpeg, mime_type="image/jpeg")
+                )
+            except Exception as e:
+                self.emit("error", f"Video processing error: {str(e)}")
+
     async def send_message_with_frames(self, message: str, frames: list[av.VideoFrame]) -> None:
         """Send a text message with video frames for vision-enabled communication"""
         retry_count = 0

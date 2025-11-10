@@ -93,7 +93,7 @@ async def entrypoint(ctx: JobContext):
         conversation_flow=conversation_flow
     )
 
-    await ctx.run_until_shutdown(session=session,wait_for_participant=True)
+    await session.start(wait_for_participant=True, run_until_shutdown=True)
 
 def make_context() -> JobContext:
     room_options = RoomOptions(room_id="<room_id>", name="Sandbox Agent", playground=True)
