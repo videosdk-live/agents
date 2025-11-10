@@ -482,6 +482,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                         continue
 
                     if tool:
+                        self.agent.session._is_executing_tool = True
                         try:
                             result = await tool(**func_call["arguments"])
                             self.agent.chat_context.add_function_output(
@@ -500,6 +501,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                             logger.error(
                                 f"Error executing function {func_call['name']}: {e}")
                             continue
+                        finally:
+                            self.agent.session._is_executing_tool = False
                 else:
                     if llm_chunk_resp.content:
                         yield llm_chunk_resp.content
