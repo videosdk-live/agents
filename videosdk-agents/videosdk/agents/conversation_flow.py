@@ -32,7 +32,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
     Manages the conversation flow by listening to transcription events.
     """
 
-    def __init__(self, agent: Agent, stt: STT | None = None, llm: LLM | None = None, tts: TTS | None = None, vad: VAD | None = None, turn_detector: EOU | None = None, denoise: Denoise | None = None) -> None:
+    def __init__(self, agent: Agent, stt: STT | None = None, llm: LLM | None = None, tts: TTS | None = None, vad: VAD | None = None, turn_detector: EOU | None = None, denoise: Denoise | None = None, avatar: Any | None = None) -> None:
         """Initialize conversation flow with event emitter capabilities"""
         super().__init__()
         self.transcription_callback: Callable[[
@@ -45,6 +45,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self.turn_detector = turn_detector
         self.agent = agent
         self.denoise = denoise
+        self.avatar = avatar
         self._stt_started = False
         self.stt_lock = asyncio.Lock()
         self.llm_lock = asyncio.Lock()
@@ -623,6 +624,9 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
         if self.tts:
             await self.tts.interrupt()
+
+        if self.avatar and hasattr(self.avatar, 'interrupt'):
+            await self.avatar.interrupt()
 
         if self.llm:
             await self._cancel_llm()
