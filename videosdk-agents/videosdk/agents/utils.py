@@ -86,12 +86,6 @@ def function_tool(func: Optional[Callable] = None, *, name: Optional[str] = None
     
     return create_wrapper(func)
 
-def is_native_audio_model(model_name: str) -> bool:
-    """Check if the model is a native audio model based on its name"""
-    native_audio_indicators = [
-        "gemini-2.5-flash-native-audio-preview-09-2025"
-    ]
-    return any(indicator in model_name for indicator in native_audio_indicators)
 
 def build_pydantic_args_model(func: Callable[..., Any]) -> type[BaseModel]:
     """

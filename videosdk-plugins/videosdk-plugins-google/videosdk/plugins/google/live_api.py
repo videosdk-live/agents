@@ -20,7 +20,6 @@ from videosdk.agents import (
     EncodeOptions,
     ResizeOptions,
     encode as encode_image,
-    is_native_audio_model,
 )
 import av
 import time
@@ -293,7 +292,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
             context_window_compression=self.config.context_window_compression if self.config.context_window_compression else None
         )
 
-        if is_native_audio_model(self.model):
+        if self.is_native_audio_model():
             config = config.model_dump()
             if self.config.thinking_config:
                 config["generation_config"]["thinking_config"] = self.config.thinking_config
@@ -849,3 +848,11 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
             if function_declarations
             else []
         )
+
+
+    def is_native_audio_model(self) -> bool:
+        """Check if the model is a native audio model based on its name"""
+        native_audio_indicators = [
+            "gemini-2.5-flash-native-audio-preview-09-2025"
+        ]
+        return any(indicator in self.model for indicator in native_audio_indicators)
