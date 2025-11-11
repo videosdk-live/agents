@@ -95,10 +95,12 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         Send a message through the realtime pipeline and track the utterance handle.
         """
         self._current_utterance_handle = handle
+        self.model.current_utterance = handle
         try:
             await self.model.send_message(message)
         except Exception as e:
             logger.error(f"Error sending message: {e}")
+            self.model.current_utterance = None
             handle._mark_done()
 
     async def send_text_message(self, message: str) -> None:
@@ -117,6 +119,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         """
         if self._current_utterance_handle and not self._current_utterance_handle.done():
             self._current_utterance_handle._mark_done()
+        self.model.current_utterance = None
         if self.agent and hasattr(self.agent, 'on_agent_speech_ended'):
             self.agent.on_agent_speech_ended(data)
     
@@ -155,7 +158,11 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         Interrupt the realtime pipeline
         """
         if self.model:
-            asyncio.create_task(self.model.interrupt())
+            if self.model.current_utterance and not self.model.current_utterance.is_interruptible:
+                logger.info("Interruption is disabled for the current utterance. Not interrupting realtime pipeline.")
+                return
+            else:
+                asyncio.create_task(self.model.interrupt())
         if self.agent and self.agent.session and self.agent.session.is_background_audio_enabled:
             asyncio.create_task(self.agent.session.stop_thinking_audio())
         if self._current_utterance_handle and not self._current_utterance_handle.done():
@@ -237,6 +244,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         self.avatar = None
         self.denoise = None
         self._current_utterance_handle = None
+        self.model.current_utterance = None
         
         logger.info("Realtime pipeline cleaned up")
         await super().cleanup()
@@ -266,6 +274,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
             frames: Optional list of VideoFrame objects to include in the reply
         """
         self._current_utterance_handle = handle
+        self.model.current_utterance = handle
         
         if frames and hasattr(self.model, 'send_message_with_frames'):
             async with self._vision_lock:
