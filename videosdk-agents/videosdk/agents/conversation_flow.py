@@ -118,14 +118,51 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             self.emit("error", f"Audio processing failed: {str(e)}")
 
     async def on_vad_event(self, vad_response: VADResponse) -> None:
-        """Handle VAD events"""
-        if vad_response.event_type == VADEventType.START_OF_SPEECH:
-            # If we're waiting for more speech and user starts speaking again
-            if self._waiting_for_more_speech:
-                await self._handle_continued_speech()
-            await self.on_speech_started()
-        elif vad_response.event_type == VADEventType.END_OF_SPEECH:
-            self.on_speech_stopped()
+            """Handle VAD events"""
+            print(f" ***** CHEKING FOR AGENT STATE. WHILE RECEVING THE START OF SPEECH EVENT FROM VAD: {self.agent.session.agent_state == AgentState.SPEAKING} ")
+
+            if self.agent and self.agent.session and self.agent.session.agent_state == AgentState.SPEAKING:
+                logger.info(f" ***** CHECKING FOR INTERRUPTION LOGIC. VAD EVENT: Agent is speaking, checking for interruption !!")
+                if vad_response.event_type == VADEventType.START_OF_SPEECH:
+                    if not hasattr(self, '_interruption_check_task') or self._interruption_check_task.done():
+                        logger.info(f"VAD EVENT: User started speaking, recording start time !!")
+                        self._interruption_start_time = time.time()
+                        self._interruption_check_task = asyncio.create_task(self._monitor_interruption_duration())
+                        logger.info(f"VAD EVENT: Created interruption check task !!")
+                elif vad_response.event_type == VADEventType.END_OF_SPEECH:
+                    if hasattr(self, '_interruption_check_task') and not self._interruption_check_task.done():
+                        logger.info(f"VAD EVENT: User stopped speaking, cancelling interruption check task !!")
+                        self._interruption_check_task.cancel()
+                    self._interruption_start_time = 0.0
+
+            if vad_response.event_type == VADEventType.START_OF_SPEECH:
+                print(f" ***** CHECKING FOR TURN-TAKING & ENDPOINTING LOGIC.Start of speech !!")
+                if self._waiting_for_more_speech:
+                    await self._handle_continued_speech()
+                await self.on_speech_started()
+
+            elif vad_response.event_type == VADEventType.END_OF_SPEECH:
+                self.on_speech_stopped()
+
+
+    async def _monitor_interruption_duration(self) -> None:
+            """A background task to check if user speech duration exceeds the interruption threshold."""
+            try:
+                while True:
+                    logger.info(f"VAD EVENT: Monitoring interruption duration !!")
+                    duration = time.time() - self._interruption_start_time
+                    if duration >= self.min_interruption_duration:
+                        logger.info(f"VAD EVENT: User's speech duration exceeded the threshold, triggering interruption !!")
+                        await self._trigger_interruption()
+                        logger.info(f"VAD EVENT: Interruption triggered... calling _trigger_interruption method !!")
+                        break 
+                    await asyncio.sleep(0.05)
+            except asyncio.CancelledError:
+                logger.info(f"VAD EVENT: Interruption check task cancelled !!")
+                pass
+            finally:
+                self._interruption_start_time = 0.0
+                logger.info(f"VAD EVENT: Interruption start time reset !!")
 
     async def _handle_continued_speech(self) -> None:
         """Handle when user continues speaking while we're waiting"""
