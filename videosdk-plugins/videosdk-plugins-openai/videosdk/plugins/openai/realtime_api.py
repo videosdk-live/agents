@@ -64,22 +64,7 @@ DEFAULT_IMAGE_ENCODE_OPTIONS = EncodeOptions(
     quality=75,
     resize_options=ResizeOptions(width=1024, height=1024),
 )
-def image_to_base64_url(image_path: str) -> str:
-    with open(image_path, "rb") as img_file:
-        encoded = base64.b64encode(img_file.read()).decode("utf-8")
 
-    # infer mime type from file extension
-    ext = image_path.split(".")[-1].lower()
-    mime = {
-        "jpg": "image/jpeg",
-        "jpeg": "image/jpeg",
-        "png": "image/png",
-        "gif": "image/gif",
-        "webp": "image/webp",
-        "svg": "image/svg+xml",
-    }.get(ext, "application/octet-stream")
-
-    return f"data:{mime};base64,{encoded}"
 
 @dataclass
 class OpenAIRealtimeConfig:
@@ -248,32 +233,30 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
             self.emit("error", f"Video processing error: {str(e)}")
 
     async def send_message(self, message: str, video_data: Optional[av.VideoFrame] = None) -> None:
-        # if video_data:
-        # Convert video frame to JPEG 
-        processed_jpeg = encode_image(video_data, DEFAULT_IMAGE_ENCODE_OPTIONS)
+        if video_data:
+            processed_jpeg = encode_image(video_data, DEFAULT_IMAGE_ENCODE_OPTIONS)
 
-        if not processed_jpeg or len(processed_jpeg) < 100:
-            logger.warning("Invalid JPEG data generated")
-            return
-        base64_url = self.bytes_to_base64_url(processed_jpeg)
-    # base64_url = image_to_base64_url("sample_images/butterfly.png")
+            if not processed_jpeg or len(processed_jpeg) < 100:
+                logger.warning("Invalid JPEG data generated")
+                return
+            base64_url = self.bytes_to_base64_url(processed_jpeg)
 
-        image_event = {
-            "type": "conversation.item.create",
-            "item": {
-                "type": "message",
-                "role": "user",
-                "content": [
-                    {
-                        "type": "input_image",
-                        "image_url": base64_url,
-                    }
-                ],
-            },
-        }
-        await self.send_event(image_event)
+            image_event = {
+                "type": "conversation.item.create",
+                "item": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_image",
+                            "image_url": base64_url,
+                        }
+                    ],
+                },
+            }
+            await self.send_event(image_event)
 
-        # Now create the text event
+        # # Now create the text event
         multimodal_event = {
             "type": "conversation.item.create",
             "item": {
@@ -603,6 +586,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
     async def send_event(self, event: Dict[str, Any]) -> None:
         """Send an event to the WebSocket"""
         if self._session and not self._closing:
+            print(event)
             await self._session.msg_queue.put(event)
 
     async def aclose(self) -> None:
