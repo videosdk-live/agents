@@ -586,7 +586,6 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
     async def send_event(self, event: Dict[str, Any]) -> None:
         """Send an event to the WebSocket"""
         if self._session and not self._closing:
-            print(event)
             await self._session.msg_queue.put(event)
 
     async def aclose(self) -> None:
