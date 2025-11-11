@@ -217,6 +217,28 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
 
         return OpenAISession(ws=ws, msg_queue=msg_queue, tasks=tasks)
 
+
+    async def send_message(self, message: str) -> None:
+        """Send a message to the OpenAI realtime API"""
+        await self.send_event(
+            {
+                "type": "conversation.item.create",
+                "item": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Repeat the user's exact message back to them:"
+                            + message
+                            + "DO NOT ADD ANYTHING ELSE",
+                        }
+                    ],
+                },
+            }
+        )
+        await self.create_response()
+
     async def handle_video_input(self, video_data: av.VideoFrame) -> None:
         if not self._session or self._closing:
             return
@@ -224,12 +246,12 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         try:
             if not video_data or not video_data.planes:
                 return
-            await self.send_message("Video input frame", video_data=video_data)
+            await self.send_message_with_frames("video input", video_data=video_data)
 
         except Exception as e:
             self.emit("error", f"Video processing error: {str(e)}")
-
-    async def send_message(self, message: str, video_data: Optional[av.VideoFrame] = None) -> None:
+    
+    async def send_message_with_frames(self, message:str , video_data: Optional[av.VideoFrame] = None)-> None:
         # passing video frames as image input
         if video_data:
             processed_jpeg = encode_image(video_data, DEFAULT_IMAGE_ENCODE_OPTIONS)
@@ -239,45 +261,27 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
                 return
             base64_url = self.bytes_to_base64_url(processed_jpeg)
 
-            image_event = {
+            conversation_event = {
                 "type": "conversation.item.create",
                 "item": {
-                    "type": "message",
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_image",
-                            "image_url": base64_url,
-                        }
-                    ],
-                },
-            }
-            await self.send_event(image_event)
-
-        # Now create the text event
-        text_event = {
-            "type": "conversation.item.create",
-            "item": {
                 "type": "message",
-                "role": "assistant",
+                "role": "user",
                 "content": [
                     {
                         "type": "text",
-                        "text": (
-                            "Repeat the user's exact message back to them: "
-                            + message +
-                            " DO NOT ADD ANYTHING ELSE"
-                        ),
+                        "text":message
+                    },
+                    {
+                            "type": "input_image",
+                            "image_url": base64_url,
                     }
                 ],
-            },
-        }
-
-        await self.send_event(text_event)
+                },
+            }
+            await self.send_event(conversation_event)
 
         # Finally ask OpenAI to respond
         await self.create_response()
-
 
     async def create_response(self) -> None:
         """Create a response to the OpenAI realtime API"""
