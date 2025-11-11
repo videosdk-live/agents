@@ -32,7 +32,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
     Manages the conversation flow by listening to transcription events.
     """
 
-    def __init__(self, agent: Agent, stt: STT | None = None, llm: LLM | None = None, tts: TTS | None = None, vad: VAD | None = None, turn_detector: EOU | None = None, denoise: Denoise | None = None, avatar: Any | None = None) -> None:
+    def __init__(self, agent: Agent, stt: STT | None = None, llm: LLM | None = None, tts: TTS | None = None, vad: VAD | None = None, turn_detector: EOU | None = None, denoise: Denoise | None = None, avatar: Any | None = None,min_speech_wait_timeout: float = 0.5,max_speech_wait_timeout: float = 3.0, speech_wait_timeout: float = 0.8, eou_logic: Literal['default', 'binary', 'sliding'] = 'sliding' , min_interruption_duration: float = 0.5, min_interruption_words: int = 1) -> None:
         """Initialize conversation flow with event emitter capabilities"""
         super().__init__()
         self.transcription_callback: Callable[[
@@ -71,6 +71,16 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
         self.min_interruption_words = 1 # 2 
 
+        self.min_speech_wait_timeout = min_speech_wait_timeout
+        self.max_speech_wait_timeout = max_speech_wait_timeout
+        self.speech_wait_timeout = 0.8  
+        self.eou_logic = eou_logic
+        self.eou_certainty_threshold = 0.85 
+
+        self.min_interruption_duration = min_interruption_duration
+        self.min_interruption_words = min_interruption_words
+        self._interruption_start_time = 0.0
+        
     async def start(self) -> None:
         global_event_emitter.on("speech_started", self.on_speech_started_stt)
         global_event_emitter.on("speech_stopped", self.on_speech_stopped_stt)
@@ -135,11 +145,15 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         text = stt_response.data.text if stt_response.data else ""
         
         if self.agent.session:
-            if self.agent.session.agent_state in (AgentState.SPEAKING, AgentState.THINKING): 
-                await self.handle_stt_event(text)
+            utterance = self.agent.session.current_utterance
+            if utterance and utterance.is_interruptible:
+                if self.agent.session.agent_state in (AgentState.SPEAKING, AgentState.THINKING):
+                    await self.handle_stt_event(text)
+                else:
+                    logger.info(f"STT TRANSCRIPT EVENT: Agent is not SPEAKING, skipping interruption, Agent state: {self.agent.session.agent_state}")
             else:
-                logger.info(f"STT TRANSCRIPT EVENT: Agent is not SPEAKING, skipping interruption, Agent state: {self.agent.session.agent_state}")
-                
+                logger.info("Interruption is disabled for the current utterance. Ignoring user speech.")
+
         if self.agent.session:
             self.agent.session._emit_user_state(UserState.SPEAKING)
             
@@ -157,14 +171,46 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 self._accumulated_transcript += " " + new_transcript
             else:
                 self._accumulated_transcript = new_transcript
-            
-            # Check EOU with accumulated transcript
-            is_eou = await self._check_end_of_utterance(self._accumulated_transcript)
-            
-            if is_eou:
-                await self._finalize_transcript_and_respond()
-            else:
-                await self._wait_for_additional_speech()
+
+            if self.eou_logic == 'default':
+                logger.info(f"Default EOU logic, using speech wait timeout seconds {self.speech_wait_timeout}")
+                is_eou = await self._check_end_of_utterance(self._accumulated_transcript)
+
+                if is_eou:
+                    await self._finalize_transcript_and_respond()
+                else:
+                    await self._wait_for_additional_speech(self.speech_wait_timeout)
+
+
+            elif self.eou_logic == 'binary':
+                logger.info(f"Binary EOU logic, using min speech wait timeout seconds {self.min_speech_wait_timeout} and max speech wait timeout seconds {self.max_speech_wait_timeout}")
+                delay = self.min_speech_wait_timeout
+                if self.turn_detector:
+                    logger.info(f"Turn detector is available, getting EOU probability")
+                    eou_probability = self.turn_detector.get_eou_probability(self.agent.chat_context)
+                    logger.info(f"EOU probability: {eou_probability}")
+                    if eou_probability < self.eou_certainty_threshold:
+                        logger.info(f"EOU probability is less than the threshold, using max speech wait timeout")
+                        delay = self.max_speech_wait_timeout
+                logger.info(f"Using delay: {delay} seconds")
+                await self._wait_for_additional_speech(delay)
+
+            elif self.eou_logic == 'sliding':
+                logger.info(f"Sliding EOU logic, using min speech wait timeout seconds {self.min_speech_wait_timeout} and max speech wait timeout seconds {self.max_speech_wait_timeout}")
+                delay = self.min_speech_wait_timeout
+                if self.turn_detector:
+                    logger.info(f"Turn detector is available, getting EOU probability")
+                    eou_probability = self.turn_detector.get_eou_probability(self.agent.chat_context)
+                    logger.info(f"EOU probability: {eou_probability}")
+                    logger.info(f"Calculating delay using sliding scale {self.min_speech_wait_timeout} to {self.max_speech_wait_timeout}")
+                    delay_range = self.max_speech_wait_timeout - self.min_speech_wait_timeout
+                    wait_factor = 1.0 - eou_probability  
+                    logger.info(f"Wait factor: {wait_factor}")
+                    delay = self.min_speech_wait_timeout + (delay_range * wait_factor)
+                    logger.info(f"Calculated delay: {delay}")
+                await self._wait_for_additional_speech(delay)
+
+        
 
     async def _check_end_of_utterance(self, transcript: str) -> bool:
         """Check if the current transcript represents end of utterance"""
@@ -182,8 +228,9 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         
         return is_eou
 
-    async def _wait_for_additional_speech(self) -> None:
+    async def _wait_for_additional_speech(self, delay: float) -> None:
         """Wait for additional speech within the timeout period"""
+        logger.info(f"Called _wait_for_additional_speech method, Waiting for additional speech for {delay} seconds")
 
         if self._waiting_for_more_speech:
             # Already waiting, extend the timer
@@ -195,7 +242,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         # Set timer for speech timeout
         loop = asyncio.get_event_loop()
         self._wait_timer = loop.call_later(
-            self._speech_wait_timeout,
+            delay,
             lambda: asyncio.create_task(self._on_speech_timeout())
         )
 
