@@ -152,7 +152,10 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                     duration = time.time() - self._interruption_start_time
                     if duration >= self.min_interruption_duration:
                         logger.info(f"VAD EVENT: User's speech duration exceeded the threshold, triggering interruption !!")
-                        await self._trigger_interruption()
+                        if self.agent.session and self.agent.session.current_utterance and self.agent.session.current_utterance.is_interruptible:
+                            await self._trigger_interruption()
+                        else:
+                            logger.info("Interruption not allowed for the current utterance.")
                         logger.info(f"VAD EVENT: Interruption triggered... calling _trigger_interruption method !!")
                         break 
                     await asyncio.sleep(0.05)
@@ -622,7 +625,10 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         word_count = len(text.strip().split())
         logger.info(f"handle_stt_event: Word count: {word_count}")
         if word_count >= self.min_interruption_words:
-            await self._trigger_interruption()
+            if self.agent.session and self.agent.session.current_utterance and self.agent.session.current_utterance.is_interruptible:
+                await self._trigger_interruption()
+            else:
+                logger.info("Interruption not allowed for the current utterance.")
             
     async def _trigger_interruption(self) -> None:
         """Trigger interruption once"""
@@ -647,7 +653,11 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             self._stt_started = False
 
         if self.tts:
-            await self._interrupt_tts()
+            utterance = self.agent.session.current_utterance if self.agent and self.agent.session else None
+            if utterance and not utterance.is_interruptible:
+                logger.info("Interruption is disabled for the current utterance. Not interrupting TTS.")
+            else:
+                await self._interrupt_tts()
         
         if self.agent.session:
             self.agent.session._emit_user_state(UserState.SPEAKING)
