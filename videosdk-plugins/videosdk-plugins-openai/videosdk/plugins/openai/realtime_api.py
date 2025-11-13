@@ -260,7 +260,6 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
                 logger.warning("Invalid JPEG data generated")
                 return
             base64_url = self.bytes_to_base64_url(processed_jpeg)
-
             conversation_event = {
                 "type": "conversation.item.create",
                 "item": {
@@ -268,12 +267,8 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
                 "role": "user",
                 "content": [
                     {
-                        "type": "text",
-                        "text":message
-                    },
-                    {
                             "type": "input_image",
-                            "image_url": base64_url,
+                            "image_url": base64_url
                     }
                 ],
                 },
@@ -282,7 +277,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
 
         # Finally ask OpenAI to respond
         await self.create_response()
-
+    
     async def create_response(self) -> None:
         """Create a response to the OpenAI realtime API"""
         if not self._session:
