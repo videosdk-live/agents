@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 from typing import Any, Dict, Optional, Literal, List
 from dataclasses import dataclass, field
@@ -26,6 +27,7 @@ from videosdk.agents import (
 )
 from videosdk.agents import realtime_metrics_collector
 
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 from openai.types.beta.realtime.session import InputAudioTranscription, TurnDetection
@@ -168,6 +170,9 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
     async def handle_audio_input(self, audio_data: bytes) -> None:
         """Handle incoming audio data from the user"""
         if self._session and not self._closing and "audio" in self.config.modalities:
+            if self.current_utterance and not self.current_utterance.is_interruptible:
+                logger.info("Interruption is disabled for the current utterance. Not processing audio input.")
+                return
             audio_data = np.frombuffer(audio_data, dtype=np.int16)
             audio_data = signal.resample(
                 audio_data,
@@ -343,6 +348,10 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         """Handle speech detection start"""
         if "audio" in self.config.modalities:
             self.emit("user_speech_started", {"type": "done"})
+            logger.info("Interrupting on speech start.>>")
+            if self.current_utterance and not self.current_utterance.is_interruptible:
+                logger.info("Interruption is disabled for the current utterance. Not interrupting on speech start.")
+                return
             await self.interrupt()
             if self.audio_track:
                 self.audio_track.interrupt()
@@ -440,6 +449,9 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
     async def interrupt(self) -> None:
         """Interrupt the current response and flush audio"""
         if self._session and not self._closing:
+            if self.current_utterance and not self.current_utterance.is_interruptible:
+                logger.info("Interruption is disabled for the current utterance. Not interrupting OpenAI realtime session.")
+                return
             cancel_event = {"type": "response.cancel", "event_id": str(uuid.uuid4())}
             await self.send_event(cancel_event)
             await realtime_metrics_collector.set_interrupted()
