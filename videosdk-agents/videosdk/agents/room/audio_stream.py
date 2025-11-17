@@ -29,7 +29,7 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         self.loop = loop
         self._start = None
         self._timestamp = 0
-        self.frame_buffer = []
+        self.frame_buffer = asyncio.Queue(maxsize=100)
         self.audio_data_buffer = bytearray()
         self.frame_time = 0
         self.sample_rate = 24000
@@ -39,10 +39,46 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         self.samples = int(AUDIO_PTIME * self.sample_rate)
         self.chunk_size = int(self.samples * self.channels * self.sample_width)
         self._is_speaking = False
+        self._last_audio_callback = None
+        self._accepting_audio = True
+        self._manual_audio_control = False
+        
+        self._playback_enabled = asyncio.Event()
+        self._playback_enabled.set()
+
+    @property
+    def can_pause(self) -> bool:
+        return True
+
+    async def pause(self) -> None:
+        logger.info("Audio track paused.")
+        self._playback_enabled.clear()
+
+    async def resume(self) -> None:
+        logger.info("Audio track resumed.")
+        self._playback_enabled.set()
 
     def interrupt(self):
-        self.frame_buffer.clear()
-        self.audio_data_buffer.clear()
+        logger.info("Audio track interrupted, clearing buffers.")
+        while not self.frame_buffer.empty():
+            try:
+                self.frame_buffer.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        self.audio_data_buffer = bytearray()
+        if self._manual_audio_control:
+            self._accepting_audio = False
+        else:
+            self._accepting_audio = True
+        self._playback_enabled.set()
+
+    def enable_audio_input(self, manual_control: bool = False):
+        """
+        Allow fresh audio data to be buffered. When manual_control is True,
+        future interrupts will pause intake until this method is called again.
+        """
+        self._manual_audio_control = manual_control
+        self._accepting_audio = True
 
     def on_last_audio_byte(self, callback: Callable[[], Awaitable[None]]) -> None:
         """Set callback for when the final audio byte of synthesis is produced"""
@@ -50,6 +86,8 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         self._last_audio_callback = callback
             
     async def add_new_bytes(self, audio_data: bytes):
+        if not self._accepting_audio:
+            return
         global_event_emitter.emit("ON_SPEECH_OUT", {"audio_data": audio_data})
         self.audio_data_buffer += audio_data
 
@@ -57,83 +95,64 @@ class CustomAudioStreamTrack(CustomAudioTrack):
             chunk = self.audio_data_buffer[: self.chunk_size]
             self.audio_data_buffer = self.audio_data_buffer[self.chunk_size :]
             try:
-                audio_frame = self.buildAudioFrames(chunk)
-                self.frame_buffer.append(audio_frame)
-                logger.debug(
-                    f"Added audio frame to buffer, total frames: {len(self.frame_buffer)}"
-                )
+                await self.frame_buffer.put(self.buildAudioFrames(chunk))
             except Exception as e:
                 logger.error(f"Error building audio frame: {e}")
                 break
 
     def buildAudioFrames(self, chunk: bytes) -> AudioFrame:
-        if len(chunk) != self.chunk_size:
-            logger.warning(
-                f"Incorrect chunk size received {len(chunk)}, expected {self.chunk_size}"
-            )
-
-        data = np.frombuffer(chunk, dtype=np.int16)
-        expected_samples = self.samples * self.channels
-        if len(data) != expected_samples:
-            logger.warning(
-                f"Incorrect number of samples in chunk {len(data)}, expected {expected_samples}"
-            )
-
-        data = data.reshape(-1, self.channels)
-        layout = "mono" if self.channels == 1 else "stereo"
-
-        audio_frame = AudioFrame.from_ndarray(data.T, format="s16", layout=layout)
-        return audio_frame
+        data = np.frombuffer(chunk, dtype=np.int16).reshape(-1, self.channels)
+        return AudioFrame.from_ndarray(data.T, format="s16", layout="mono")
 
     def next_timestamp(self):
         pts = int(self.frame_time)
-        time_base = self.time_base_fraction
         self.frame_time += self.samples
-        return pts, time_base
+        return pts, Fraction(1, self.sample_rate)
 
     async def recv(self) -> AudioFrame:
         try:
             if self.readyState != "live":
                 raise MediaStreamError
 
-            if self._start is None:
-                self._start = time()
-                self._timestamp = 0
-            else:
-                self._timestamp += self.samples
-
-            wait = self._start + (self._timestamp / self.sample_rate) - time()
-
-            if wait > 0:
-                await asyncio.sleep(wait)
-
-            pts, time_base = self.next_timestamp()
-
-            if len(self.frame_buffer) > 0:
-                frame = self.frame_buffer.pop(0)
-                self._is_speaking = True
-            else:
-                # No audio data available — silence
-                if getattr(self, "_is_speaking", False):
-                    logger.info("[AudioTrack] Agent finished speaking — triggering last_audio_callback.")
-                    self._is_speaking = False
-
-                    if hasattr(self, "_last_audio_callback") and self._last_audio_callback:
-                        asyncio.create_task(self._last_audio_callback())
-
-                # Produce silence frame
+            frame = None
+            try:
+                await asyncio.wait_for(self._playback_enabled.wait(), timeout=AUDIO_PTIME)
+            except asyncio.TimeoutError:
                 frame = AudioFrame(format="s16", layout="mono", samples=self.samples)
                 for p in frame.planes:
                     p.update(bytes(p.buffer_size))
 
+            if frame is None:
+                try:
+                    frame = self.frame_buffer.get_nowait()
+                    if not self._is_speaking:
+                        self._is_speaking = True
+                except asyncio.QueueEmpty:
+                    if self._is_speaking:
+                        self._is_speaking = False
+                        if self._last_audio_callback:
+                            asyncio.create_task(self._last_audio_callback())
+                    
+                    frame = AudioFrame(format="s16", layout="mono", samples=self.samples)
+                    for p in frame.planes:
+                        p.update(bytes(p.buffer_size))
+
+            if self._start is None:
+                self._start = time()
+
+            wait = (self._start + (self.frame_time / self.sample_rate)) - time()
+            if wait > 0:
+                await asyncio.sleep(wait)
+
+            pts, time_base = self.next_timestamp()
             frame.pts = pts
             frame.time_base = time_base
             frame.sample_rate = self.sample_rate
             return frame
         except Exception as e:
-            traceback.print_exc()
-            logger.error(f"Error while creating tts->rtc frame: {e}")
-
+            logger.error(f"Error in recv: {e}", exc_info=True)
+            return AudioFrame(format="s16", layout="mono", samples=self.samples)
+            
     async def cleanup(self):
         self.interrupt()
         self.stop()

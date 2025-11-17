@@ -1,5 +1,6 @@
 from __future__ import annotations
 from typing import Any, Dict, Literal
+from dataclasses import dataclass
 
 from .pipeline import Pipeline
 from .event_emitter import EventEmitter
@@ -15,10 +16,30 @@ from .denoise import Denoise
 import logging
 import asyncio
 import av
-from .background_audio import BackgroundAudioHandler
 from .utterance_handle import UtteranceHandle
 
 logger = logging.getLogger(__name__)
+
+@dataclass
+class CascadingConfig:
+    """
+    Configuration for the cascading pipeline.
+    Args:
+        eou_logic: Logic for end of utterance detection (default, binary, sliding)
+        min_speech_wait_timeout: Minimum time to wait for additional speech before ending a user turn 
+        max_speech_wait_timeout: Maximum time to wait for additional speech before forcing turn completion
+        min_interruption_duration: Minimum duration of user speech to count as an interruption
+        min_interruption_words: Minimum number of transcribed words to count as an interruption
+        smart_pause_timeout: Timeout for detecting a false/accidental interruption before auto-resuming agent speech
+        resume_smart_pause: Whether the agent should automatically resume speaking after a smart pause
+    """
+    eou_logic: Literal["default", "binary", "sliding"] = "sliding"
+    min_speech_wait_timeout: float = 0.5
+    max_speech_wait_timeout: float = 3.0
+    min_interruption_duration: float = 0.5
+    min_interruption_words: int = 2
+    smart_pause_timeout: float = 2.0
+    resume_smart_pause: bool = True
 
 class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
     """
@@ -35,6 +56,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         turn_detector: EOU | None = None,
         avatar: Any | None = None,
         denoise: Denoise | None = None,
+        cascading_config: CascadingConfig | None = None,
     ) -> None:
         """
         Initialize the cascading pipeline.
@@ -57,6 +79,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         self.conversation_flow = None
         self.avatar = avatar
         self.vision = False
+        self.cascading_config = cascading_config or CascadingConfig()
 
         if self.stt:
             self.stt.on(
@@ -145,6 +168,8 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         self.conversation_flow.denoise = self.denoise
         self.conversation_flow.avatar = self.avatar
         self.conversation_flow.user_speech_callback = self.on_user_speech_started
+        if hasattr(self.conversation_flow, "apply_cascading_config"):
+            self.conversation_flow.apply_cascading_config(self.cascading_config)
         if self.conversation_flow.stt:
             self.conversation_flow.stt.on_stt_transcript(
                 self.conversation_flow.on_stt_transcript
