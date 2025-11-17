@@ -2,7 +2,7 @@
 import asyncio
 import logging
 import aiohttp
-from videosdk.agents import Agent, AgentSession, CascadingPipeline, function_tool, WorkerJob, MCPServerStdio, ConversationFlow, JobContext, RoomOptions
+from videosdk.agents import Agent, AgentSession, CascadingPipeline,CascadingConfig, function_tool, WorkerJob, MCPServerStdio, ConversationFlow, JobContext, RoomOptions
 from videosdk.plugins.openai import OpenAILLM
 from videosdk.plugins.deepgram import DeepgramSTT
 from videosdk.plugins.silero import SileroVAD
@@ -78,14 +78,23 @@ class VoiceAgent(Agent):
 async def entrypoint(ctx: JobContext):
     
     agent = VoiceAgent()
-    conversation_flow = ConversationFlow(agent)
+    conversation_flow = ConversationFlow()
 
     pipeline = CascadingPipeline(
         stt= DeepgramSTT(),
         llm=OpenAILLM(),
         tts=ElevenLabsTTS(),
         vad=SileroVAD(),
-        turn_detector=TurnDetector()
+        turn_detector=TurnDetector(),
+        cascading_config=CascadingConfig(
+            eou_logic='sliding',
+            min_speech_wait_timeout=0.5,
+            max_speech_wait_timeout=3.0,
+            min_interruption_duration=0.5,
+            min_interruption_words=2,
+            smart_pause_timeout=2.0,
+            resume_smart_pause=True
+        )
     )
     session = AgentSession(
         agent=agent, 
