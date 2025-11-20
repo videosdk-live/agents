@@ -19,6 +19,7 @@ class TTS(EventEmitter[Literal["error"]]):
         self._sample_rate = sample_rate
         self._num_channels = num_channels
         self._first_audio_callback: Optional[Callable[[], Awaitable[None]]] = None
+        self.audio_track = None 
 
     @property
     def label(self) -> str:
@@ -43,6 +44,20 @@ class TTS(EventEmitter[Literal["error"]]):
         """Reset the first audio tracking state for next TTS task"""
         # To be overridden by implementations for TTFB metrics
         pass 
+
+    async def pause(self) -> None:
+        if self.audio_track and hasattr(self.audio_track, 'pause'):
+            await self.audio_track.pause()
+        else:
+            await self.interrupt()
+
+    async def resume(self) -> None:
+        if self.audio_track and hasattr(self.audio_track, 'resume'):
+            await self.audio_track.resume()
+
+    @property
+    def can_pause(self) -> bool:
+        return self.audio_track and hasattr(self.audio_track, 'can_pause') and self.audio_track.can_pause
 
     @abstractmethod
     async def synthesize(

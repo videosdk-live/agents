@@ -433,6 +433,10 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                 chunk_number = 0
                                 accumulated_text = ""
                             if server_content.interrupted:
+                                if self.current_utterance and not self.current_utterance.is_interruptible:
+                                    logger.info("Interruption is disabled for the current utterance. Ignoring server interrupt signal.")
+                                    continue
+                                
                                 if active_response_id:
                                     active_response_id = None
                                     accumulated_text = ""
@@ -588,6 +592,10 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         if not self._session or self._closing:
             return
 
+        if self.current_utterance and not self.current_utterance.is_interruptible:
+            logger.info("Interruption is disabled for the current utterance. Not processing audio input.")
+            return
+
         if "AUDIO" not in self.config.response_modalities:
             return
 
@@ -606,7 +614,11 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         """Interrupt current response"""
         if not self._session or self._closing:
             return
-
+        
+        if self.current_utterance and not self.current_utterance.is_interruptible:
+            logger.info("Interruption is disabled for the current utterance. Not interrupting Google Live API.")
+            return
+        
         try:
             await self._session.session.send_client_content(
                 turns=Content(parts=[Part(text="stop")], role="user"),
