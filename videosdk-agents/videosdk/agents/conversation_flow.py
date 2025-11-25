@@ -82,7 +82,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
     async def start(self) -> None:
         global_event_emitter.on("speech_started", self.on_speech_started_stt)
         global_event_emitter.on("speech_stopped", self.on_speech_stopped_stt)
-        global_event_emitter.on("speech_resumed", self.on_speech_resumed)  
 
         if self.agent and self.agent.instructions:
             cascading_metrics_collector.set_system_instructions(
@@ -193,10 +192,21 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 content=self._preemptive_transcript
             )
             
+            if self.agent and self.agent.session:
+                if self.agent.session.current_utterance and not self.agent.session.current_utterance.done():
+                    self.agent.session.current_utterance.interrupt()
+                
+                handle = UtteranceHandle(utterance_id=f"utt_{uuid.uuid4().hex[:8]}")
+                self.agent.session.current_utterance = handle
+            else:
+                handle = UtteranceHandle(utterance_id="utt_fallback")
+                handle._mark_done()
+            
             # Start generation task (reuses existing function!)
             self._preemptive_generation_task = asyncio.create_task(
                 self._generate_and_synthesize_response(
                     self._preemptive_transcript,
+                    handle,
                     wait_for_authorization=True  # NEW parameter
                 )
             )
@@ -722,13 +732,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
     def on_speech_stopped_stt(self, event_data: Any) -> None:
         pass
-
-    def on_speech_resumed(self, event_data: Any) -> None:
-        """Called when user resumes speaking after eager EOT"""
-        logger.info("[STT RESUMED] Speech resumed event received")
-        # await self._cancel_preemptive_generation()
-        # Schedule async cancellation
-        asyncio.create_task(self._cancel_preemptive_generation())
 
     async def handle_stt_event(self, text: str) -> None:
         """Handle STT event"""

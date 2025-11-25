@@ -171,12 +171,10 @@ class DeepgramSTTV2(BaseSTT):
             confidence = msg.get("end_of_turn_confidence", 0.0)
 
             self._last_transcript = transcript
-
             # Emit turn-related events
             if event == "StartOfTurn":
                 global_event_emitter.emit("speech_started")
             elif event == "EagerEndOfTurn":
-                logger.info(f"Preflight Transcript: {transcript} and Confidence: {confidence}")
                 # Handle EagerEndOfTurn for preemptive generation
                 if self.enable_preemptive_generation and transcript and self._transcript_callback:
                     responses.append(
@@ -208,7 +206,6 @@ class DeepgramSTTV2(BaseSTT):
                         )
                     )
             elif event == "TurnResumed":
-                global_event_emitter.emit("speech_resumed")
                 logger.info(f"RESUME Transcript: {transcript} and Confidence: {confidence}")
                 # Send interim to signal user continued speaking
                 responses.append(
@@ -223,21 +220,6 @@ class DeepgramSTTV2(BaseSTT):
                             metadata={"model": self.model, "turn_resumed": True},
                         )
                 )
-            # TODO
-            # Send interim transcript for ongoing turn
-            # if transcript and event not in ("EndOfTurn",):
-            #     responses.append(
-            #         STTResponse(
-            #             event_type=SpeechEventType.INTERIM,
-            #             data=SpeechData(
-            #                 text=transcript,
-            #                 confidence=confidence,
-            #                 start_time=start_time,
-            #                 end_time=end_time,
-            #             ),
-            #             metadata={"model": self.model},
-            #         )
-            #     )
 
         except Exception as e:
             logger.error(f"Error handling WebSocket message: {str(e)}")
