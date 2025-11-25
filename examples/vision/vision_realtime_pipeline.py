@@ -1,21 +1,19 @@
 import asyncio
-from typing import Optional
 from videosdk import PubSubSubscribeConfig
-from videosdk.agents import Agent, AgentSession, CascadingPipeline,WorkerJob,ConversationFlow,JobContext, RoomOptions
-from videosdk.plugins.deepgram import DeepgramSTT
-from videosdk.plugins.elevenlabs import ElevenLabsTTS
-from videosdk.plugins.silero import SileroVAD
-from videosdk.plugins.google import GoogleLLM
-from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
+from typing import Optional
+from videosdk.agents import Agent, AgentSession, WorkerJob,JobContext, RoomOptions, RealTimePipeline
+from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig
+from openai.types.beta.realtime.session import InputAudioTranscription, TurnDetection
+
+
 import logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 
-pre_download_model()
 
 class VisionAgent(Agent):
     def __init__(self, ctx: Optional[JobContext] = None):
         super().__init__(
-            instructions="You are a helpful voice assistant that can answer questions and help with tasks.",
+            instructions="You are a helpful voice assistant with vision capabilities. that can answer questions and help with tasks.",
         )
         self.ctx = ctx
         
@@ -29,19 +27,28 @@ class VisionAgent(Agent):
 async def entrypoint(ctx: JobContext):
     
     agent = VisionAgent(ctx)
-    conversation_flow = ConversationFlow(agent)
 
-    pipeline = CascadingPipeline(
-        stt=DeepgramSTT(),
-        llm=GoogleLLM(),
-        tts=ElevenLabsTTS(),
-        vad=SileroVAD(),
-        turn_detector=TurnDetector()
+    model = OpenAIRealtime(
+        model="gpt-realtime-2025-08-28",
+        config=OpenAIRealtimeConfig(
+            voice="fable",
+            modalities=["text", "audio"],
+            input_audio_transcription=InputAudioTranscription(model="whisper-1"),
+            turn_detection=TurnDetection(
+                type="server_vad",
+                threshold=0.5,
+                prefix_padding_ms=300,
+                silence_duration_ms=200,
+            ),
+            tool_choice="auto",
+        )
     )
+    pipeline = RealTimePipeline(model=model)
+
+
     session = AgentSession(
         agent=agent, 
         pipeline=pipeline,
-        conversation_flow=conversation_flow,
     )
     
     shutdown_event = asyncio.Event()
@@ -51,7 +58,7 @@ async def entrypoint(ctx: JobContext):
         if isinstance(message, dict) and message.get("message") == "capture_frames":
             print("Capturing frame....")
             try:
-                frames = agent.capture_frames(num_of_frames=1)
+                frames = agent.capture_frames(num_of_frames=2)
                 if frames:
                     print(f"Captured {len(frames)} frame(s)")
                     await session.reply(
@@ -98,7 +105,7 @@ async def entrypoint(ctx: JobContext):
         await ctx.shutdown()
 
 def make_context() -> JobContext:
-    room_options = RoomOptions(room_id="<room_id>", name="Vision Agent", playground=True,vision=True)
+    room_options = RoomOptions(room_id="<room_id>", name="Vision Agent",vision=True)
     
     return JobContext(room_options=room_options)
 
