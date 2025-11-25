@@ -67,7 +67,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
                 self.vision = requested_vision
                 
                 model_name = self.model.__class__.__name__
-                if requested_vision and model_name != 'GeminiRealtime':
+                if requested_vision and model_name != 'GeminiRealtime' and model_name != "OpenAIRealtime":
                     logger.warning(f"Vision mode requested but {model_name} doesn't support video input. Only GeminiRealtime supports vision. Disabling vision.")
                     self.vision = False
                 
