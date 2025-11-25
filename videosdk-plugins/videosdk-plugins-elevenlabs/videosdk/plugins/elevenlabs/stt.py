@@ -20,10 +20,6 @@ SUPPORTED_SAMPLE_RATES = {8000, 16000, 22050, 24000, 44100, 48000}
 class ElevenLabsSTT(BaseSTT):
     """
     ElevenLabs Realtime Speech-to-Text (STT) client.
-
-    Provides streaming transcription of audio via the ElevenLabs Realtime STT API.
-    Handles WebSocket connections, audio processing, partial/final transcript events,
-    and VAD (voice activity detection) based commit strategies.
     """
 
     def __init__(
@@ -32,8 +28,7 @@ class ElevenLabsSTT(BaseSTT):
         api_key: str | None = None,
         model_id: str = "scribe_v2_realtime",
         language_code: str = "en",
-        input_sample_rate: int = 48000,
-        target_sample_rate: int = 48000,
+        sample_rate: int = 48000,
         commit_strategy: str = "vad",
         vad_silence_threshold_secs: float = 0.8,
         vad_threshold: float = 0.4,
@@ -48,8 +43,7 @@ class ElevenLabsSTT(BaseSTT):
             api_key: ElevenLabs API key for authentication. Defaults to env variable ELEVENLABS_API_KEY.
             model_id: STT model identifier.
             language_code: Language code for transcription.
-            input_sample_rate: Sample rate of input audio in Hz.
-            target_sample_rate: Sample rate for sending audio to ElevenLabs.
+            sample_rate: Sample rate of input audio in Hz.
             commit_strategy: Strategy for committing transcripts ('vad' is by default).
             vad_silence_threshold_secs: Duration of silence to detect end-of-speech.
             vad_threshold: Threshold for detecting voice activity.
@@ -66,40 +60,25 @@ class ElevenLabsSTT(BaseSTT):
             raise ValueError("ElevenLabs API key must be provided via api_key or ELEVENLABS_API_KEY env var")
 
         self.model_id = model_id
-        self.input_sample_rate = input_sample_rate
         self.language_code = language_code
         self.commit_strategy = commit_strategy
         self.base_url = base_url
+        self.sample_rate = sample_rate
 
-        self.target_sample_rate = target_sample_rate
-        if self.target_sample_rate not in SUPPORTED_SAMPLE_RATES:
-            raise ValueError(f"Unsupported target_sample_rate: {self.target_sample_rate}. Supported rates: {SUPPORTED_SAMPLE_RATES}")
+        if self.sample_rate not in SUPPORTED_SAMPLE_RATES:
+            raise ValueError(f"Unsupported sample_rate: {self.sample_rate}. Supported rates: {SUPPORTED_SAMPLE_RATES}")
         
         self.vad_silence_threshold_secs = vad_silence_threshold_secs
-        if (self.vad_silence_threshold_secs < 0.3 or self.vad_silence_threshold_secs > 3.0):
-            raise ValueError("vad_silence_threshold_secs must be between 0.3 and 3.0 seconds")
-
         self.vad_threshold = vad_threshold
-        if (self.vad_threshold < 0.1 or self.vad_threshold > 0.9):
-            raise ValueError("vad_threshold must be between 0.1 and 0.9")
-
         self.min_speech_duration_ms = min_speech_duration_ms
-        if (self.min_speech_duration_ms < 50 or self.min_speech_duration_ms > 2000):
-            raise ValueError("min_speech_duration_ms must be between 50 and 2000 milliseconds")
-
         self.min_silence_duration_ms = min_silence_duration_ms
 
-        if (self.min_silence_duration_ms < 50 or self.min_silence_duration_ms > 2000):
-            raise ValueError("min_silence_duration_ms must be between 50 and 2000 milliseconds")
-
-        # self._is_speaking = False
         self._last_final_text = ""
         self._last_final_time = 0.0
         self._duplicate_suppression_window = 0.75
-        # self._duplicate_suppression_window = 0.3
-
+        
         self._stream_buffer = bytearray()
-        self._target_chunk_size = int(0.05 * self.target_sample_rate * 2)  # 50ms chunks, 2 bytes per sample
+        self._target_chunk_size = int(0.1 * self.sample_rate * 2) 
 
         self.heartbeat = 15.0
         self._session: Optional[aiohttp.ClientSession] = None
@@ -112,13 +91,8 @@ class ElevenLabsSTT(BaseSTT):
         **kwargs: Any
     ) -> None:
         """
-        Process and send audio frames to ElevenLabs STT.
-
-        Handles connecting/reconnecting WebSocket, resampling audio to mono,
-        sending audio chunks, and restarting the listener if needed.
-
-        Args:
-            audio_frames: Raw audio bytes to send for transcription.
+        Process and send audio frames. 
+        Converts to mono (required by ElevenLabs) and buffers 100ms chunks to reduce overhead.
         """
 
         if not self._ws or self._ws.closed:
@@ -131,18 +105,16 @@ class ElevenLabsSTT(BaseSTT):
             self._ws_task = asyncio.create_task(self._listen_for_responses())
 
         try:
-            resampled_audio = self._convert_to_mono(audio_frames)
-            if not resampled_audio:
+            mono_audio = self._convert_to_mono(audio_frames)
+            if not mono_audio:
                 return
             
-            # self._stream_buffer.extend(resampled_audio)
+            self._stream_buffer.extend(mono_audio)
             
-            # while len(self._stream_buffer) >= self._target_chunk_size:
-            #     chunk = self._stream_buffer[:self._target_chunk_size]
-            #     await self._send_audio(chunk)
-            #     self._stream_buffer = self._stream_buffer[self._target_chunk_size:]
-
-            await self._send_audio(resampled_audio)
+            while len(self._stream_buffer) >= self._target_chunk_size:
+                chunk = self._stream_buffer[:self._target_chunk_size]
+                await self._send_audio(chunk)
+                self._stream_buffer = self._stream_buffer[self._target_chunk_size:]
 
         except Exception as e:
             logger.exception("Error in process_audio: %s", e)
@@ -150,23 +122,15 @@ class ElevenLabsSTT(BaseSTT):
             if self._ws:
                 await self._ws.close()
                 self._ws = None
-                if self._ws_task:
-                    self._ws_task.cancel()
-                    self._ws_task = None
 
     async def _connect_ws(self) -> None:
-        """
-        Establish or re-establish the ElevenLabs Realtime STT WebSocket connection.
-
-        Sets up query parameters, authentication headers, and creates a new session if required.
-        """
         if not self._session:
             self._session = aiohttp.ClientSession()
 
         query_params = {
             "model_id": str(self.model_id),
             "language_code": str(self.language_code),
-            "audio_format": f"pcm_{self.target_sample_rate}",
+            "audio_format": f"pcm_{self.sample_rate}",
             "commit_strategy": str(self.commit_strategy),
             "vad_silence_threshold_secs": self.vad_silence_threshold_secs,
             "vad_threshold": self.vad_threshold,
@@ -185,20 +149,13 @@ class ElevenLabsSTT(BaseSTT):
             raise
 
     async def _send_audio(self, audio_bytes: bytes) -> None:
-        """
-        Send a chunk of audio to the ElevenLabs STT WebSocket.
-
-        Args:
-            audio_bytes: PCM-encoded audio bytes to send.
-        """
         if not self._ws:
-            logger.debug("Cannot send audio chunk: ws is not connected")
             return
 
         payload = {
             "message_type": "input_audio_chunk",
             "audio_base_64": base64.b64encode(audio_bytes).decode(),
-            "sample_rate": self.target_sample_rate,
+            "sample_rate": self.sample_rate,
         }
 
         try:
@@ -208,12 +165,33 @@ class ElevenLabsSTT(BaseSTT):
             self.emit("error", str(e))
             await self.aclose()
 
+    def _convert_to_mono(self, audio_bytes: bytes) -> bytes:
+        """
+        Convert input audio bytes to mono. 
+        """
+        if not audio_bytes:
+            return b""
+        try:
+            raw_audio = np.frombuffer(audio_bytes, dtype=np.int16)
+            if raw_audio.size == 0:
+                return b""
+
+            if raw_audio.size % 2 == 0:
+                try:
+                    stereo = raw_audio.reshape(-1, 2).astype(np.float32)
+                    mono = stereo.mean(axis=1)
+                    return mono.astype(np.int16).tobytes()
+                except ValueError:
+                    pass
+            
+            return audio_bytes
+        except Exception as e:
+            logger.error("Error converting to mono: %s", e)
+            return b""
+            
     async def _listen_for_responses(self) -> None:
         """
         Listen for incoming WebSocket messages from ElevenLabs STT.
-
-        Handles partial and final transcripts, error messages, session events,
-        and invokes the transcript callback if defined.
         """
         if not self._ws:
             return
@@ -292,7 +270,6 @@ class ElevenLabsSTT(BaseSTT):
 
             if clean_text == "":
                 global_event_emitter.emit("speech_stopped")
-                # self._is_speaking = False
                 self._last_final_text = ""
                 self._last_final_time = now
                 return responses
@@ -308,7 +285,6 @@ class ElevenLabsSTT(BaseSTT):
             responses.append(resp)
 
             global_event_emitter.emit("speech_stopped")
-            # self._is_speaking = False
             self._last_final_text = clean_text
             self._last_final_time = now
             return responses
@@ -318,9 +294,7 @@ class ElevenLabsSTT(BaseSTT):
             text = data.get("text", "")
             clean_text = text.strip()
 
-            # duplicate-suppression for repeated partials matching last final
             if (
-                # not self._is_speaking
                 self._last_final_text
                 and clean_text
                 and clean_text == self._last_final_text
@@ -334,16 +308,12 @@ class ElevenLabsSTT(BaseSTT):
                 data=SpeechData(
                     text=text,
                     confidence=float(data.get("confidence", 0.0)),
-                    # start_time=float(data.get("start_time", 0.0)),
-                    # end_time=float(data.get("end_time", 0.0)),
                 ),
                 metadata={"model": self.model_id, "raw_event": data},
             )
             responses.append(resp)
 
-            # if clean_text and not self._is_speaking:
             if clean_text:
-                # self._is_speaking = True
                 global_event_emitter.emit("speech_started")
 
             return responses
@@ -352,41 +322,6 @@ class ElevenLabsSTT(BaseSTT):
 
         logger.debug("Ignoring unrecognized message_type: %s", message_type)
         return responses
-
-    def _convert_to_mono(self, audio_bytes: bytes) -> bytes:
-        """
-        Convert input audio bytes to mono and clip values for STT processing.
-
-        Args:
-            audio_bytes: Raw audio bytes, may be mono or stereo.
-
-        Returns:
-            Mono audio bytes suitable for sending to STT.
-        """
-        if not audio_bytes:
-            return b""
-
-        try:
-            raw_audio = np.frombuffer(audio_bytes, dtype=np.int16)
-            if raw_audio.size == 0:
-                return b""
-
-            mono = raw_audio.astype(np.float32)
-
-            if raw_audio.size % 2 == 0:
-                try:
-                    stereo = raw_audio.reshape(-1, 2).astype(np.float32)
-                    mono = stereo.mean(axis=1)
-                except ValueError:
-                    pass
-
-            mono = np.clip(mono, -32767, 32767)
-            return mono.astype(np.int16).tobytes()
-
-        except Exception as e:
-            logger.exception("Error resampling audio: %s", e)
-            return b""
-        
 
     async def aclose(self) -> None:
         """
@@ -419,4 +354,3 @@ class ElevenLabsSTT(BaseSTT):
                 self._session = None
 
         await super().aclose()
-
