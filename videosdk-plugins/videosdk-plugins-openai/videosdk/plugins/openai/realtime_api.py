@@ -246,36 +246,67 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         try:
             if not video_data or not video_data.planes:
                 return
-            await self.send_message_with_frames("video input", video_data=video_data)
 
-        except Exception as e:
-            self.emit("error", f"Video processing error: {str(e)}")
-    
-    async def send_message_with_frames(self, message:str , video_data: Optional[av.VideoFrame] = None)-> None:
-        # passing video frames as image input
-        if video_data:
             processed_jpeg = encode_image(video_data, DEFAULT_IMAGE_ENCODE_OPTIONS)
 
             if not processed_jpeg or len(processed_jpeg) < 100:
                 logger.warning("Invalid JPEG data generated")
                 return
+
             base64_url = self.bytes_to_base64_url(processed_jpeg)
+
+            content = [{"type": "input_image", "image_url": base64_url}]
+
             conversation_event = {
                 "type": "conversation.item.create",
                 "item": {
-                "type": "message",
-                "role": "user",
-                "content": [
-                    {
-                            "type": "input_image",
-                            "image_url": base64_url
-                    }
-                ],
+                    "type": "message",
+                    "role": "user",
+                    "content": content,
                 },
             }
             await self.send_event(conversation_event)
 
-        # Finally ask OpenAI to respond
+        except Exception as e:
+            self.emit("error", f"Video processing error: {str(e)}")
+
+    async def send_message_with_frames(
+        self, message: Optional[str], frames: list[av.VideoFrame]
+    ) -> None:
+        content = []
+        if message:
+            content.append({"type": "input_text", "text": message})
+
+        for frame in frames:
+            try:
+                processed_jpeg = encode_image(frame, DEFAULT_IMAGE_ENCODE_OPTIONS)
+
+                if not processed_jpeg or len(processed_jpeg) < 100:
+                    logger.warning("Invalid JPEG data generated")
+                    continue
+
+                base64_url = self.bytes_to_base64_url(processed_jpeg)
+                content.append({"type": "input_image", "image_url": base64_url})
+            except Exception as e:
+                logger.error(f"Error processing frame: {e}")
+
+        if not any(
+            item.get("type") == "input_image" or item.get("type") == "input_text"
+            for item in content
+        ):
+            logger.warning("No content to send.")
+            return
+
+        conversation_event = {
+            "type": "conversation.item.create",
+            "item": {
+                "type": "message",
+                "role": "user",
+                "content": content,
+            },
+        }
+        await self.send_event(conversation_event)
+
         await self.create_response()
     
     async def create_response(self) -> None:
