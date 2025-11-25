@@ -62,6 +62,7 @@ class VideoSDKHandler:
         on_session_end: Optional[Callable[[str], None]] = None,
         # VideoSDK connection options
         signaling_base_url: Optional[str] = None,
+        avatar_publish_on_behalf: Optional[dict[str, Optional[str]]] = None,
     ):
         """
         Initialize the VideoSDK handler.
@@ -178,6 +179,7 @@ class VideoSDKHandler:
         self.on_room_error = on_room_error
         self._participant_joined_events: dict[str, asyncio.Event] = {}
         self._left: bool = False
+        self.avatar_publish_on_behalf = avatar_publish_on_behalf or {}
         # Session management
         self.auto_end_session = auto_end_session
 
@@ -283,6 +285,9 @@ class VideoSDKHandler:
         """
         Internal method: Check if a participant is an agent.
         """
+        logger.info(f"Checking if participant is an agent: {participant.id} avatar_publish_on_behalf: {self.avatar_publish_on_behalf}")
+        if participant.id in self.avatar_publish_on_behalf:
+            return True
         # Consider participants with names containing 'agent' or matching our agent name as agents
         participant_name = participant.display_name.lower()
         return (
@@ -396,6 +401,18 @@ class VideoSDKHandler:
             participant (Participant): The participant that joined.
         """
         peer_name = participant.display_name
+        logger.info(f"Participant joined: {participant.id} {peer_name}")
+        logger.info(f"avatar_publish_on_behalf: {self.avatar_publish_on_behalf}")
+        if participant.display_name == "Avatar Runner":
+            logger.info(f"Ignoring Avatar participant in on_participant_joined: {participant.id}")
+            return
+        if participant.id in self.avatar_publish_on_behalf:
+            logger.info(
+                "Ignoring avatar worker participant in on_participant_joined",
+                extra={"participant_id": participant.id},
+            )
+            logger.info(f"Ignoring avatar worker participant in on_participant_joined: {participant.id} avatar_publish_on_behalf: {self.avatar_publish_on_behalf}")
+            return
         self.participants_data[participant.id] = {"name": peer_name}
         logger.info(f"Participant joined: {peer_name}")
 

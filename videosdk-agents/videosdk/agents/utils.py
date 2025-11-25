@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import enum
-from typing import Any, Protocol, runtime_checkable, Callable, Optional, get_type_hints, Annotated, get_origin, get_args, Literal, AsyncIterator
+from typing import Any, Protocol, runtime_checkable, Callable, Optional, get_type_hints, Annotated, get_origin, get_args, Literal, AsyncIterator, Coroutine, List
 from functools import wraps
 import inspect
 from docstring_parser import parse_from_object
@@ -13,6 +13,8 @@ from pydantic.fields import FieldInfo
 from abc import abstractmethod
 import json
 import asyncio
+import numpy as np
+from av import AudioFrame
 
 @dataclass
 class FunctionToolInfo:
@@ -452,3 +454,109 @@ async def graceful_cancel(*tasks: asyncio.Task) -> None:
         )
     except asyncio.TimeoutError:
         pass
+    
+class _AudioUtils:
+    def __init__(self):
+        self.AudioByteStream = AudioByteStream
+
+class AudioByteStream:
+    def __init__(self, sample_rate: int, num_channels: int, samples_per_channel: int):
+        self._sample_rate = sample_rate
+        self._num_channels = num_channels
+        self._samples_per_channel = samples_per_channel
+        self._dtype = np.int16
+        self._sample_width = np.dtype(self._dtype).itemsize
+        self._bytes_per_frame = self._samples_per_channel * self._num_channels * self._sample_width
+        self._buffer = bytearray()
+
+    def push(self, frame_data: bytes) -> List[AudioFrame]:
+        self._buffer.extend(frame_data)
+        frames = []
+        while len(self._buffer) >= self._bytes_per_frame:
+            frame_bytes = self._buffer[:self._bytes_per_frame]
+            del self._buffer[:self._bytes_per_frame]
+            
+            numpy_array = np.frombuffer(frame_bytes, dtype=self._dtype)
+            numpy_array = numpy_array.reshape(self._num_channels, self._samples_per_channel)
+
+            frame = AudioFrame.from_ndarray(
+                numpy_array,
+                format='s16',
+                layout='mono' if self._num_channels == 1 else 'stereo',
+            )
+            frame.sample_rate = self._sample_rate
+            frames.append(frame)
+
+        return frames
+
+    def flush(self) -> List[AudioFrame]:
+        if not self._buffer:
+            return []
+        
+        frame_bytes = bytes(self._buffer)
+        self._buffer.clear()
+
+        missing_bytes = self._bytes_per_frame - len(frame_bytes)
+        if missing_bytes > 0:
+            frame_bytes += bytes(missing_bytes)
+
+        numpy_array = np.frombuffer(frame_bytes, dtype=self._dtype)
+        numpy_array = numpy_array.reshape(self._samples_per_channel, self._num_channels)
+
+        frame = AudioFrame.from_ndarray(
+            numpy_array.T,  
+            format='s16',
+            layout='mono' if self._num_channels == 1 else 'stereo'
+        )
+        frame.sample_rate = self._sample_rate
+        return [frame]
+
+audio = _AudioUtils()
+
+async def cancel_and_wait(task: asyncio.Task | None):
+    if not task or task.done():
+        return
+
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
+import jwt
+import time
+import uuid
+
+def generate_videosdk_token(
+    api_key: str, 
+    secret_key: str, 
+    participant_id: str | None = None, 
+    permissions: list[str] = ["allow_join"],
+    expiration: int = 60 * 60 
+) -> str:
+    """
+    Generates a VideoSDK JWT token.
+    
+    Args:
+        api_key: Your VideoSDK API Key
+        secret_key: Your VideoSDK Secret Key
+        participant_id: Critical for identifying Agents/Avatars. 
+                        If None, VideoSDK assigns a random one.
+    """
+    now = int(time.time())
+    
+    payload = {
+        "apikey": api_key,
+        "permissions": permissions,
+        "version": 2,
+        "iat": now,
+        "exp": now + expiration,
+    }
+
+    if participant_id:
+        payload["participantId"] = participant_id
+
+    token = jwt.encode(payload, secret_key, algorithm="HS256")
+    print(f"Generated token: >>> for avatar {participant_id} <<< {token}")
+    return token

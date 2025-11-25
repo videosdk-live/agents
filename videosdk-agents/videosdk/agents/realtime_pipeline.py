@@ -70,11 +70,16 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
                 if requested_vision and model_name != 'GeminiRealtime':
                     logger.warning(f"Vision mode requested but {model_name} doesn't support video input. Only GeminiRealtime supports vision. Disabling vision.")
                     self.vision = False
-                
-                if self.avatar:
-                    self.model.audio_track = getattr(job_context.room, 'agent_audio_track', None) or job_context.room.audio_track
-                elif self.audio_track:
-                     self.model.audio_track = self.audio_track
+
+                if self.avatar and hasattr(self.avatar, "_set_meeting"):
+                    job_context = get_current_job_context()
+                    if job_context and job_context.room and job_context.room.meeting:
+                        self.avatar._set_meeting(job_context.room.meeting)
+                        logger.info("Avatar meeting object configured")
+
+            if self.audio_track:
+                 self.model.audio_track = self.audio_track
+                 logger.info(f"Audio track assigned to Realtime Model: {type(self.audio_track).__name__}")
 
     async def start(self, **kwargs: Any) -> None:
         """

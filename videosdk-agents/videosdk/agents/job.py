@@ -5,12 +5,20 @@ from typing import Callable, Coroutine, Optional, Any
 import os
 import asyncio
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum, unique
 from typing import TYPE_CHECKING
 import logging
 import requests
 import sys
+import uuid
+
+from .avatar import (
+    AVATAR_PROXY_FOR,
+    DEFAULT_AVATAR_IDENTITY_PREFIX,
+    AvatarAuthCredentials,
+)
+from .utils import generate_videosdk_token
 
 if TYPE_CHECKING:
     from .worker import ExecutorType, WorkerPermissions, _default_executor_type
@@ -45,6 +53,7 @@ class RoomOptions:
     # VideoSDK connection options
     signaling_base_url: Optional[str] = None
     background_audio: bool = False
+    avatar_publish_on_behalf: dict[str, Optional[str]] = field(default_factory=dict)
 
 
 @dataclass
@@ -206,6 +215,8 @@ class JobContext:
         self.videosdk_auth = self.room_options.auth_token or os.getenv(
             "VIDEOSDK_AUTH_TOKEN"
         )
+        self._videosdk_api_key = os.getenv("VIDEOSDK_API_KEY")
+        self._videosdk_secret_key = os.getenv("VIDEOSDK_SECRET_KEY")
         self.room: Optional[VideoSDKHandler] = None
         self._shutdown_callbacks: list[Callable[[], Coroutine[None, None, None]]] = []
         self._is_shutting_down: bool = False
@@ -241,7 +252,17 @@ class JobContext:
                 avatar = self._pipeline.avatar
 
             if avatar:
+                if hasattr(avatar, "set_room_id") and self.room_options.room_id:
+                    try:
+                        avatar.set_room_id(self.room_options.room_id)
+                    except Exception as exc:
+                        logger.warning(f"Failed to set room ID on avatar: {exc}")
                 await avatar.connect()
+                participant_id = getattr(avatar, "participant_id", None)
+                if participant_id:
+                    self._register_avatar_identity(
+                        participant_id, self.room_options.agent_participant_id
+                    )
                 custom_camera_video_track = avatar.video_track
                 custom_microphone_audio_track = avatar.audio_track
                 sinks.append(avatar)
@@ -274,6 +295,7 @@ class JobContext:
                         auto_end_session=self.room_options.auto_end_session,
                         session_timeout_seconds=self.room_options.session_timeout_seconds,
                         signaling_base_url=self.room_options.signaling_base_url,
+                        avatar_publish_on_behalf=self.room_options.avatar_publish_on_behalf,
                     )
                 if self._pipeline and hasattr(
                     self._pipeline, "_set_loop_and_audio_track"
@@ -285,19 +307,102 @@ class JobContext:
         if self.room and self.room_options.join_meeting:
             self.room.init_meeting()
             await self.room.join()
+            
+            # Set the meeting object on the avatar AFTER init_meeting() is called
+            if avatar and hasattr(avatar, "_set_meeting"):
+                avatar._set_meeting(self.room.meeting)
 
-        if (
-            self.room_options.playground
-            and self.room_options.join_meeting
-            and not self.want_console
-        ):
-            if self.videosdk_auth:
-                playground_url = f"https://playground.videosdk.live?token={self.videosdk_auth}&meetingId={self.room_options.room_id}"
-                print(f"\033[1;36m" + "Agent started in playground mode" + "\033[0m")
-                print("\033[1;75m" + "Interact with agent here at:" + "\033[0m")
-                print("\033[1;4;94m" + playground_url + "\033[0m")
+    def create_avatar_credentials(
+        self,
+        *,
+        avatar_identity: Optional[str] = None,
+        identity_prefix: str = DEFAULT_AVATAR_IDENTITY_PREFIX,
+        publish_on_behalf: bool | str = True,
+        permissions: Optional[list[str]] = None,
+        expiration: int = 60 * 60,
+        attributes: Optional[dict[str, str]] = None,
+        api_key: Optional[str] = None,
+        secret_key: Optional[str] = None,
+    ) -> AvatarAuthCredentials:
+        """
+        Allocate a deterministic avatar participant ID and mint a VideoSDK token for it.
+
+        Args:
+            avatar_identity: Explicit participant ID to use. If omitted a random
+                ID with the provided identity_prefix is generated.
+            identity_prefix: Prefix used when generating avatar identities.
+            publish_on_behalf: When True (default) the avatar is marked as publishing
+                on behalf of the current agent. Provide a string to override the target
+                participant ID. When False we still track the avatar identity so that
+                room audio listeners can ignore it.
+            permissions: Optional list of VideoSDK token permissions. Defaults to
+                ["allow_join", "allow_mod"].
+            expiration: Token lifetime in seconds.
+            attributes: Optional custom attributes to associate with the avatar. The
+                ATTRIBUTE_PUBLISH_ON_BEHALF entry is populated automatically when
+                publish_on_behalf is enabled.
+            api_key/secret_key: Override environment provided VideoSDK API keys.
+        """
+        if not self.room_options:
+            raise RuntimeError("Room options are required to mint avatar credentials")
+
+        resolved_api_key = api_key or self._videosdk_api_key or os.getenv("VIDEOSDK_API_KEY")
+        resolved_secret = secret_key or self._videosdk_secret_key or os.getenv("VIDEOSDK_SECRET_KEY")
+        if not resolved_api_key or not resolved_secret:
+            raise ValueError(
+                "VIDEOSDK_API_KEY and VIDEOSDK_SECRET_KEY are required to mint avatar credentials"
+            )
+
+        participant_id = avatar_identity or f"{identity_prefix}_{uuid.uuid4().hex[:8]}"
+        token = generate_videosdk_token(
+            api_key=resolved_api_key,
+            secret_key=resolved_secret,
+            participant_id=participant_id,
+            permissions=permissions or ["allow_join", "allow_mod"],
+            expiration=expiration,
+        )
+
+        attr_map: dict[str, str] = dict(attributes) if attributes else {}
+        publish_identity: Optional[str] = None
+        if publish_on_behalf:
+            if isinstance(publish_on_behalf, str):
+                publish_identity = publish_on_behalf
             else:
-                raise ValueError("VIDEOSDK_AUTH_TOKEN environment variable not found")
+                publish_identity = self.room_options.agent_participant_id
+
+            if publish_identity:
+                attr_map.setdefault(AVATAR_PROXY_FOR, publish_identity)
+            else:
+                logger.warning(
+                    "publish_on_behalf requested but agent_participant_id is not set; "
+                    "the avatar will still be tracked locally but the attribute will be empty."
+                )
+
+        self._register_avatar_identity(participant_id, publish_identity)
+
+        return AvatarAuthCredentials(
+            participant_id=participant_id,
+            token=token,
+            attributes=attr_map or None,
+        )
+
+    def register_avatar_identity(
+        self, participant_id: str, publish_on_behalf_identity: Optional[str] = None
+    ) -> None:
+        """
+        Manually register an avatar participant so room audio listeners can ignore it.
+        """
+        logger.info(f"Registering avatar identity: {participant_id} publish_on_behalf_identity: {publish_on_behalf_identity}")
+        self._register_avatar_identity(participant_id, publish_on_behalf_identity)
+
+    def _register_avatar_identity(
+        self, participant_id: str, publish_on_behalf_identity: Optional[str]
+    ) -> None:
+        if not self.room_options:
+            return
+        logger.info(f"Registering avatar identity: {participant_id} publish_on_behalf_identity: {publish_on_behalf_identity}")
+        if participant_id not in self.room_options.avatar_publish_on_behalf:
+            self.room_options.avatar_publish_on_behalf[participant_id] = publish_on_behalf_identity
 
     async def shutdown(self) -> None:
         """Called by Worker during graceful shutdown"""

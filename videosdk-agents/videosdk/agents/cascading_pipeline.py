@@ -124,6 +124,12 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
                 logger.warning(
                     "No audio track available for TTS configuration")
 
+            if self.avatar and hasattr(self.avatar, "_set_meeting"):
+                job_context = get_current_job_context()
+                if job_context and job_context.room and job_context.room.meeting:
+                    self.avatar._set_meeting(job_context.room.meeting)
+                    logger.info("Avatar meeting object configured")
+
             if self.tts.audio_track:
                 logger.info(
                     f"TTS audio track successfully configured: {type(self.tts.audio_track).__name__}"

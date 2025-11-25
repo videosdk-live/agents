@@ -99,6 +99,9 @@ from .event_bus import global_event_emitter, EventTypes
 from .a2a.card import AgentCard
 from .a2a.protocol import A2AMessage
 from .images import EncodeOptions, ResizeOptions, encode
+from . import avatar
+
+from .version import __version__
 
 __all__ = [
     "Agent",
@@ -178,4 +181,5 @@ __all__ = [
     "setup_logging",
     "BackgroundAudioHandlerConfig",
     "UtteranceHandle",
+    "avatar",
 ]

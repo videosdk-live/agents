@@ -235,16 +235,12 @@ class TeeCustomAudioStreamTrack(CustomAudioStreamTrack):
         self.pipeline = pipeline
 
     async def add_new_bytes(self, audio_data: bytes):
-        await super().add_new_bytes(audio_data)
-
-        # Route audio to sinks (avatars, etc.)
         for sink in self.sinks:
             if hasattr(sink, "handle_audio_input"):
                 await sink.handle_audio_input(audio_data)
 
-        # DO NOT route agent's own TTS audio back to pipeline
-        # The pipeline should only receive audio from other participants
-        # This prevents the agent from hearing itself speak
+        if not self.sinks:
+            await super().add_new_bytes(audio_data)
 
 class TeeMixingCustomAudioStreamTrack(MixingCustomAudioStreamTrack):
     def __init__(self, loop, sinks=None, pipeline=None):
@@ -253,10 +249,10 @@ class TeeMixingCustomAudioStreamTrack(MixingCustomAudioStreamTrack):
         self.pipeline = pipeline
 
     async def add_new_bytes(self, audio_data: bytes):
-        await super().add_new_bytes(audio_data)
-
-        # Route audio to sinks (avatars, etc.)
         for sink in self.sinks:
             if hasattr(sink, "handle_audio_input"):
                 await sink.handle_audio_input(audio_data)
         
+        if not self.sinks:
+            await super().add_new_bytes(audio_data)
+    
