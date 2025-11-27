@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Generic, Literal, TypeVar, Union
+from typing import TYPE_CHECKING, Generic, Literal, TypeVar, Union
 
 from .event_emitter import EventEmitter
+
+if TYPE_CHECKING:
+    from .utterance_handle import UtteranceHandle
 
 BaseEventTypes = Literal[
     "error"
@@ -33,6 +36,7 @@ class RealtimeBaseModel(EventEmitter[Union[BaseEventTypes, TEvent]], Generic[TEv
     def __init__(self) -> None:
         """Initialize the realtime model"""
         super().__init__()
+        self.current_utterance: UtteranceHandle | None = None
 
     @abstractmethod
     async def aclose(self) -> None:

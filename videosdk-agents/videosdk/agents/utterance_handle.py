@@ -3,14 +3,19 @@ from typing import Generator, Any
 
 class UtteranceHandle:
     """Manages the lifecycle of a single agent utterance."""
-    def __init__(self, utterance_id: str):
+    def __init__(self, utterance_id: str, interruptible: bool = True):
         self._id = utterance_id
         self._done_fut = asyncio.Future()
         self._interrupt_fut = asyncio.Future()
+        self._interruptible = interruptible
 
     @property
     def id(self) -> str:
         return self._id
+
+    @property
+    def is_interruptible(self) -> bool: 
+        return self._interruptible
 
     def done(self) -> bool:
         """Returns True if the utterance is complete (played out or interrupted)."""
@@ -21,8 +26,11 @@ class UtteranceHandle:
         """Returns True if the utterance was interrupted."""
         return self._interrupt_fut.done()
 
-    def interrupt(self) -> None:
+    def interrupt(self, *, force: bool = False) -> None: 
         """Marks the utterance as interrupted."""
+        if not force and not self.is_interruptible:
+            raise RuntimeError("This utterance does not allow interruptions.")
+
         if not self._interrupt_fut.done():
             self._interrupt_fut.set_result(None)
         self._mark_done() 
