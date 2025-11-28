@@ -78,7 +78,11 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self._preemptive_generation_task: asyncio.Task | None = None
         self._preemptive_authorized = asyncio.Event()  # Authorization gate
         self._preemptive_cancelled = False
-
+        
+    def _update_preemptive_generation_flag(self) -> None:
+        """Update the preemptive generation flag based on current STT instance"""
+        self._enable_preemptive_generation = getattr(self.stt, 'enable_preemptive_generation', False) if self.stt else False
+        
     async def start(self) -> None:
         global_event_emitter.on("speech_started", self.on_speech_started_stt)
         global_event_emitter.on("speech_stopped", self.on_speech_stopped_stt)
@@ -141,8 +145,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             await self._handle_continued_speech()
             
         text = stt_response.data.text if stt_response.data else ""
-        
-        logger.info(f"STT TRANSCRIPT EVENT: agent state: {self.agent.session.agent_state} preflight Text: {self._preemptive_transcript}")
         if self.agent.session:
             state = self.agent.session.agent_state
             if state == AgentState.SPEAKING:
@@ -150,12 +152,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 await self.handle_stt_event(text)
                 
             elif state == AgentState.THINKING:
-               if not self._preemptive_transcript:
-                 logger.info(f"Agent is THINKING, and no preflight transcript, handling STT event")          
+               if not self._enable_preemptive_generation:
                  await self.handle_stt_event(text)
-
-            # if self.agent.session.agent_state in (AgentState.SPEAKING, AgentState.THINKING): 
-            #         await self.handle_stt_event(text)
 
         if self.agent.session:
             self.agent.session._emit_user_state(UserState.SPEAKING)
@@ -166,11 +164,12 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             
         elif stt_response.event_type == SpeechEventType.FINAL:
             user_text = stt_response.data.text
-            # await self._process_transcript_with_eou(user_text)
-            await self._handle_final_transcript(user_text)
+            if self._enable_preemptive_generation:
+                await self._authorize_or_process_final_transcript(user_text)
+            else:
+                await self._process_transcript_with_eou(user_text)
             
         elif stt_response.event_type == SpeechEventType.INTERIM:
-            print(f"INTERIM transcript received: '{text}'")
             # Check if this is a TurnResumed event
             if stt_response.metadata and stt_response.metadata.get("turn_resumed"):
                 await self._handle_turn_resumed(text)
@@ -183,8 +182,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             self._preemptive_transcript = preflight_text.strip()
             self._preemptive_authorized.clear()  # Not authorized yet
             self._preemptive_cancelled = False
-            
-            logger.info(f"Starting preemptive generation (unauthorized): '{self._preemptive_transcript}'")
             
             # Add preflight transcript to temporary context
             self.agent.chat_context.add_message(
@@ -374,20 +371,19 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             if not handle.done():
                 handle._mark_done()
 
-    async def _handle_final_transcript(self, final_text: str) -> None:
+    async def _authorize_or_process_final_transcript(self, final_text: str) -> None:
         """
         Handle final transcript - authorize preemptive generation or start new.
         """
         async with self._preemptive_lock:
             final_text_normalized = final_text.strip()
-            logger.info(f"final_text_normalized: {final_text_normalized} and preflight_normalized: {self._preemptive_transcript}")
             
             if self._preemptive_transcript:
                 preflight_normalized = self._preemptive_transcript.strip()
                 
                 # Compare transcripts
                 if final_text_normalized == preflight_normalized:
-                    logger.info(f"✅ MATCH! Authorizing preemptive generation")
+                    logger.info(f"MATCH! Authorizing preemptive generation")
                     
                     # Authorize the waiting TTS to play audio
                     self._preemptive_authorized.set()
@@ -404,13 +400,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                             logger.error("Preemptive playback timeout")
                         except Exception as e:
                             logger.error(f"Error in preemptive playback: {e}")
-                        finally:
-                            print("complete_current_turn")
-                            
-                            # cascading_metrics_collector.complete_current_turn()
-                    
                 else:
-                    logger.info(f"❌ MISMATCH! Cancelling and restarting")
+                    logger.info(f"MISMATCH! Cancelling Preemptive Generation")
                     
                     # Cancel preemptive generation
                     await self._cancel_preemptive_generation()
@@ -434,38 +425,37 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
     async def _cancel_preemptive_generation(self) -> None:
         """Cancel preemptive generation"""
         logger.info("Cancelling preemptive generation...")
-        
-        self._preemptive_cancelled = True
-        self._preemptive_authorized.set()  # Unblock to allow cancellation
-        
-        # Cancel the task
-        if self._preemptive_generation_task and not self._preemptive_generation_task.done():
-            self._preemptive_generation_task.cancel()
-            try:
-                await self._preemptive_generation_task
-            except asyncio.CancelledError:
-                logger.info("Preemptive task cancelled successfully")
-            self._preemptive_generation_task = None
-        
-        # Cancel LLM/TTS
-        if self.llm:
-            try:
-                await self.llm.cancel_current_generation()
-            except Exception as e:
-                logger.debug(f"LLM cancellation: {e}")
-        
-        if self.tts:
-            await self.tts.interrupt()
-        
-        self._preemptive_transcript = None
-        logger.info("Preemptive generation cancelled and cleaned up")
+        if  self._enable_preemptive_generation:
+            self._preemptive_cancelled = True
+            self._preemptive_authorized.set()  # Unblock to allow cancellation
+            
+            # Cancel the task
+            if self._preemptive_generation_task and not self._preemptive_generation_task.done():
+                self._preemptive_generation_task.cancel()
+                try:
+                    await self._preemptive_generation_task
+                except asyncio.CancelledError:
+                    logger.info("Preemptive task cancelled successfully")
+                self._preemptive_generation_task = None
+            
+            # Cancel LLM/TTS
+            if self.llm:
+                try:
+                    await self.llm.cancel_current_generation()
+                except Exception as e:
+                    logger.debug(f"LLM cancellation: {e}")
+            
+            if self.tts:
+                await self.tts.interrupt()
+            
+            self._preemptive_transcript = None
+            logger.info("Preemptive generation cancelled and cleaned up")
         
     async def _handle_turn_resumed(self, resumed_text: str) -> None:
         """
         Handle TurnResumed event (user continued speaking).
         Edge case: Cancel preemptive generation immediately.
         """
-        logger.info(f"User resumed speaking with: '{resumed_text}'")
         await self._cancel_preemptive_generation()
         
         # Update accumulated transcript
@@ -518,7 +508,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 
                 # NEW: Wait for authorization if this is preemptive generation
                 if wait_for_authorization:
-                    logger.info("TTS waiting for authorization to play audio...")
                     try:
                         # Wait for authorization or cancellation
                         await asyncio.wait_for(
@@ -530,7 +519,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                             logger.info("Preemptive generation cancelled during authorization wait")
                             return
                         
-                        logger.info("✅ Authorization granted - starting TTS playback")
+                        logger.info("Authorization granted - starting TTS playback")
                     except asyncio.TimeoutError:
                         logger.error("Authorization timeout - cancelling preemptive generation")
                         self._preemptive_cancelled = True
@@ -572,26 +561,23 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                     collector_task.cancel()
                 if not tts_task.done():
                     tts_task.cancel()
-            ## TODO: PLEASE CROSS CHECK THIS LOGIC
-            if not collector_task.cancelled() and not self._is_interrupted and not self._preemptive_cancelled:
+                    
+            if not collector_task.cancelled() and not self._is_interrupted:
                 full_response = collector_task.result()
             else:
                 full_response = self._partial_response
 
-            if full_response and not self._is_interrupted and not self._preemptive_cancelled:
+            if full_response:
                 cascading_metrics_collector.set_agent_response(full_response)
-                # Only add to context if not preemptive or if authorized
-                if not wait_for_authorization or self._preemptive_authorized.is_set():
-                    self.agent.chat_context.add_message(
+                self.agent.chat_context.add_message(
                         role=ChatRole.ASSISTANT,
                         content=full_response
-                    )
+                )
 
         finally:
             self._current_tts_task = None
             self._current_llm_task = None
-            if not wait_for_authorization:  # Only complete for normal flow
-                cascading_metrics_collector.complete_current_turn()
+            cascading_metrics_collector.complete_current_turn()
             if not handle.done():
                 handle._mark_done()
 

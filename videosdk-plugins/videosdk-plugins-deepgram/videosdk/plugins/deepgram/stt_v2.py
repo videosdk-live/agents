@@ -206,20 +206,20 @@ class DeepgramSTTV2(BaseSTT):
                         )
                     )
             elif event == "TurnResumed":
-                logger.info(f"RESUME Transcript: {transcript} and Confidence: {confidence}")
                 # Send interim to signal user continued speaking
-                responses.append(
-                        STTResponse(
-                            event_type=SpeechEventType.INTERIM,
-                            data=SpeechData(
-                                text=transcript,
-                                confidence=confidence,
-                                start_time=start_time,
-                                end_time=end_time,
-                            ),
-                            metadata={"model": self.model, "turn_resumed": True},
-                        )
-                )
+                if self.enable_preemptive_generation and transcript:
+                    responses.append(
+                            STTResponse(
+                                event_type=SpeechEventType.INTERIM,
+                                data=SpeechData(
+                                    text=transcript,
+                                    confidence=confidence,
+                                    start_time=start_time,
+                                    end_time=end_time,
+                                ),
+                                metadata={"model": self.model, "turn_resumed": True},
+                            )
+                    )
 
         except Exception as e:
             logger.error(f"Error handling WebSocket message: {str(e)}")

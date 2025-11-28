@@ -137,6 +137,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         logger.info("Setting conversation flow in pipeline")
         self.conversation_flow = conversation_flow
         self.conversation_flow.stt = self.stt
+        self.conversation_flow._update_preemptive_generation_flag()  
         self.conversation_flow.llm = self.llm
         self.conversation_flow.tts = self.tts
         self.conversation_flow.agent = self.agent
