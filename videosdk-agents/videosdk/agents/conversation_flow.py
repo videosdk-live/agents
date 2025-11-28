@@ -199,12 +199,11 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 handle = UtteranceHandle(utterance_id="utt_fallback")
                 handle._mark_done()
             
-            # Start generation task (reuses existing function!)
             self._preemptive_generation_task = asyncio.create_task(
                 self._generate_and_synthesize_response(
                     self._preemptive_transcript,
                     handle,
-                    wait_for_authorization=True  # NEW parameter
+                    wait_for_authorization=True
                 )
             )
             
@@ -519,7 +518,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                             logger.info("Preemptive generation cancelled during authorization wait")
                             return
                         
-                        logger.info("Authorization granted - starting TTS playback")
                     except asyncio.TimeoutError:
                         logger.error("Authorization timeout - cancelling preemptive generation")
                         self._preemptive_cancelled = True
@@ -561,7 +559,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                     collector_task.cancel()
                 if not tts_task.done():
                     tts_task.cancel()
-                    
+
             if not collector_task.cancelled() and not self._is_interrupted:
                 full_response = collector_task.result()
             else:
