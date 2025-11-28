@@ -186,7 +186,7 @@ class DeepgramSTTV2(BaseSTT):
                                 start_time=start_time,
                                 end_time=end_time,
                             ),
-                            metadata={"model": self.model, "is_eager": True},
+                            metadata={"model": self.model},
                         )
                     )
             elif event == "EndOfTurn":
