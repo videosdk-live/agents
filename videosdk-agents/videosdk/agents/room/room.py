@@ -479,10 +479,7 @@ class VideoSDKHandler:
                 del self.video_listener_tasks[participant.id]
             except Exception as e:
                 logger.error(f"Error cancelling video listener task for participant {participant.id}: {e}")
-        
-        if participant.id in self.participants_data:
-            del self.participants_data[participant.id]
-        
+                    
         global_event_emitter.emit(
             "PARTICIPANT_LEFT", {"participant": participant})
 
@@ -617,6 +614,8 @@ class VideoSDKHandler:
         
         self._cancel_session_end_task()
         
+        self.participants_data.clear()
+
         for task_id, task in list(self.audio_listener_tasks.items()):
             try:
                 if not task.done():
