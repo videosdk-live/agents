@@ -30,7 +30,7 @@ class DeepgramSTTV2(BaseSTT):
         eot_threshold:float=0.8,
         eot_timeout_ms:int=7000,
         base_url: str = "wss://api.deepgram.com/v2/listen",
-        enable_preemptive_generation: bool = True,
+        enable_preemptive_generation: bool = False,
     ) -> None:
         """Initialize the Deepgram STT plugin
 
