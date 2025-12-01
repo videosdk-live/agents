@@ -339,6 +339,15 @@ class VideoSDKHandler:
         # Mark session as ended AFTER leaving
         self._session_ended = True
 
+    async def force_end_session(self, reason: str = "manual_hangup") -> None:
+        """
+        Public helper: forcefully end the session, bypassing participant checks.
+
+        Args:
+            reason: Reason string to propagate to session end callbacks.
+        """
+        await self._end_session(reason)
+
     def setup_session_end_callback(self, callback):
         """
         Set up the session end callback.
