@@ -99,6 +99,7 @@ from .event_bus import global_event_emitter, EventTypes
 from .a2a.card import AgentCard
 from .a2a.protocol import A2AMessage
 from .images import EncodeOptions, ResizeOptions, encode
+from .dtmf_handler import DTMFHandler
 
 __all__ = [
     "Agent",
@@ -159,6 +160,7 @@ __all__ = [
     "Worker",
     "WorkerOptions",
     "WorkerType",
+    "DTMFHandler"
     # New execution module exports
     "ExecutorType",
     "ResourceType",

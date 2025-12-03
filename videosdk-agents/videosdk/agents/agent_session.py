@@ -8,6 +8,7 @@ from .llm.chat_context import ChatRole
 from .conversation_flow import ConversationFlow
 from .pipeline import Pipeline
 from .metrics import cascading_metrics_collector, realtime_metrics_collector
+from .dtmf_handler import DTMFHandler
 from .realtime_pipeline import RealTimePipeline
 from .utils import get_tool_info, UserState, AgentState
 from .utterance_handle import UtteranceHandle 
@@ -32,6 +33,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         conversation_flow: Optional[ConversationFlow] = None,
         wake_up: Optional[int] = None,
         background_audio: Optional[BackgroundAudioHandlerConfig] = None,
+        dtmf_handler: Optional[DTMFHandler] = None,
     ) -> None:
         """
         Initialize an agent session.
@@ -62,6 +64,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         self._thinking_was_playing = False
         self.background_audio_config = background_audio
         self._is_executing_tool = False
+        self.dtmf_handler = dtmf_handler
 
         if hasattr(self.pipeline, 'set_agent'):
             self.pipeline.set_agent(self.agent)
@@ -206,6 +209,9 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         
         self._emit_agent_state(AgentState.STARTING)
         await self.agent.initialize_mcp()
+
+        if self.dtmf_handler:
+            await self.dtmf_handler.start()
 
         if isinstance(self.pipeline, RealTimePipeline):
             await realtime_metrics_collector.start_session(self.agent, self.pipeline)
