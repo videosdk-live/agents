@@ -518,3 +518,24 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
                 logger.error(f"Error forcing room to end session: {exc}")
 
         await self.close()
+     
+    async def call_transfer(self,token: str, transfer_to: str) -> None:
+        """ Transfer the call to a provided Phone number or SIP endpoint.
+        Args:
+            token: VideoSDK auth token.
+            transfer_to: Phone number or SIP endpoint to transfer the call to.
+        """
+        job_ctx = self._job_context
+        if not job_ctx:
+            try:
+                job_ctx = get_current_job_context()
+            except Exception:
+                job_ctx = None
+
+        room = getattr(job_ctx, "room", None) if job_ctx else None
+        if room and hasattr(room, "call_transfer"):
+            try:
+                await room.call_transfer(token, transfer_to)
+                return
+            except Exception as exc:
+                logger.error(f"Error calling call_transfer: {exc}")
