@@ -657,6 +657,47 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                             agent_session._is_executing_tool = True
                         try:
                             result = await tool(**func_call["arguments"])
+
+                            if isinstance(result, Agent):
+                                new_agent = result
+                                current_session = self.agent.session
+                                
+                                logger.info(f"Switching from agent {type(self.agent).__name__} to {type(new_agent).__name__}")
+
+                                if getattr(new_agent, 'inherit_context', True):
+                                    logger.info(f"Inheriting context from {type(self.agent).__name__} to {type(new_agent).__name__}")
+                                    logger.info(f"Chat context: {self.agent.chat_context.items}")
+                                    new_agent.chat_context = self.agent.chat_context
+                                    new_agent.chat_context.add_message(
+                                        role=ChatRole.SYSTEM,
+                                        content=new_agent.instructions,
+                                        replace=True
+                                    )
+
+                                if hasattr(self.agent, 'on_speech_in'):
+                                    current_session.off("on_speech_in", self.agent.on_speech_in)
+                                if hasattr(self.agent, 'on_speech_out'):
+                                    current_session.off("on_speech_out", self.agent.on_speech_out)
+
+                                new_agent.session = current_session
+                                self.agent = new_agent
+                                current_session.agent = new_agent
+
+                                if hasattr(current_session.pipeline, 'set_agent'):
+                                    current_session.pipeline.set_agent(new_agent)
+                                if hasattr(current_session.pipeline, 'set_conversation_flow'):
+                                     current_session.pipeline.set_conversation_flow(self)
+
+                                if hasattr(new_agent, 'on_speech_in'):
+                                    current_session.on("on_speech_in", new_agent.on_speech_in)
+                                if hasattr(new_agent, 'on_speech_out'):
+                                    current_session.on("on_speech_out", new_agent.on_speech_out)
+
+                                if hasattr(new_agent, 'on_enter') and asyncio.iscoroutinefunction(new_agent.on_enter):
+                                    await new_agent.on_enter()
+                                
+                                return
+
                             chat_context = getattr(self.agent, "chat_context", None)
                             if not chat_context:
                                 logger.info("Agent chat context missing after tool execution, stopping LLM processing")

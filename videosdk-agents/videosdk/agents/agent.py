@@ -29,7 +29,7 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
     Abstract base class for creating custom agents.
     Inherits from EventEmitter to handle agent events and state updates.
     """
-    def __init__(self, instructions: str, tools: List[FunctionTool] = None, agent_id: str = None, mcp_servers: List[MCPServiceProvider] = None):
+    def __init__(self, instructions: str, tools: List[FunctionTool] = None, agent_id: str = None, mcp_servers: List[MCPServiceProvider] = None, inherit_context: bool = False):
         super().__init__()
         self._tools = tools
         self._llm = None
@@ -48,6 +48,7 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
         self.mcp_manager = MCPToolManager()
         self.session: "AgentSession"
         self._thinking_background_config: Optional[BackgroundAudioHandlerConfig] = None
+        self.inherit_context = inherit_context
 
     def _register_class_tools(self) -> None:
         """Internal Method: Register all function tools defined in the class"""
