@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Any, Callable, Optional, Literal
+from typing import Any, Callable, Optional, Literal, Awaitable
 import asyncio
 import uuid
 
@@ -17,6 +17,7 @@ from .job import get_current_job_context
 from .event_emitter import EventEmitter
 from .event_bus import global_event_emitter
 from .background_audio import BackgroundAudioHandler,BackgroundAudioHandlerConfig
+from .voice_mail_detector import VoiceMailDetector
 import logging
 import av
 logger = logging.getLogger(__name__)
@@ -34,6 +35,8 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         wake_up: Optional[int] = None,
         background_audio: Optional[BackgroundAudioHandlerConfig] = None,
         dtmf_handler: Optional[DTMFHandler] = None,
+        voice_mail_detector: Optional[VoiceMailDetector] = None,
+        voice_mail_callback: Optional[Callable[[], Awaitable[None]]] = None,
     ) -> None:
         """
         Initialize an agent session.
@@ -65,6 +68,9 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         self.background_audio_config = background_audio
         self._is_executing_tool = False
         self.dtmf_handler = dtmf_handler
+        self.voice_mail_detector = voice_mail_detector
+        self.voice_mail_callback = voice_mail_callback
+        self._is_voice_mail_detected = False
 
         if hasattr(self.pipeline, 'set_agent'):
             self.pipeline.set_agent(self.agent)
@@ -74,6 +80,12 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             and self.conversation_flow is not None
         ):
             self.pipeline.set_conversation_flow(self.conversation_flow)
+            if hasattr(self.conversation_flow, "set_voice_mail_detector"):
+                self.conversation_flow.set_voice_mail_detector(self.voice_mail_detector)
+            
+            # 2. Listen for the result event
+            self.conversation_flow.on("voicemail_result", self._handle_voicemail_result)
+                
         if hasattr(self.pipeline, 'set_wake_up_callback'):
             self.pipeline.set_wake_up_callback(self._reset_wake_up_timer)
 
@@ -86,6 +98,35 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
                 job_ctx.add_shutdown_callback(self.close)
         except Exception:
             pass
+
+    @property
+    def is_voicemail_detected(self) -> bool:
+        """Returns True if voicemail was detected in this session."""
+        return self._is_voicemail_detected
+
+    def _handle_voicemail_result(self, data: dict) -> None:
+        """
+        Handler for the voicemail_result event from ConversationFlow.
+        Updates session state and executes callback if needed.
+        """
+        is_vm = data.get("is_voicemail", False)
+        self._is_voicemail_detected = is_vm
+        
+        # Re-emit for external listeners on the Session
+        self.emit("voicemail_result", data)
+
+        if is_vm:
+            logger.info("AgentSession: Voicemail confirmed. Executing callback.")
+            if self.voice_mail_callback:
+                # Schedule the callback on the loop
+                asyncio.create_task(self._safe_execute_vmd_callback())
+
+    async def _safe_execute_vmd_callback(self) -> None:
+        try:
+            if self.voice_mail_callback:
+                await self.voice_mail_callback()
+        except Exception as e:
+            logger.error(f"Error executing voicemail callback: {e}")
 
     def _on_speech_in(self, data: dict) -> None:
         self.emit("on_speech_in", data)
