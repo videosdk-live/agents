@@ -17,7 +17,10 @@ import asyncio
 import av
 from .background_audio import BackgroundAudioHandler
 from .utterance_handle import UtteranceHandle
-
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from .knowledge_base.base import KnowledgeBase
+    
 logger = logging.getLogger(__name__)
 
 class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
@@ -35,6 +38,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         turn_detector: EOU | None = None,
         avatar: Any | None = None,
         denoise: Denoise | None = None,
+        knowledge_base: KnowledgeBase | None = None, 
     ) -> None:
         """
         Initialize the cascading pipeline.
@@ -47,6 +51,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
             turn_detector: Turn Detector (optional)
             avatar: Avatar (optional)
             denoise: Denoise (optional)
+            knowledge_base: Knowledge Base (optional)
         """
         self.stt = stt
         self.llm = llm
@@ -57,6 +62,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         self.conversation_flow = None
         self.avatar = avatar
         self.vision = False
+        self.knowledge_base = knowledge_base 
 
         if self.stt:
             self.stt.on(
@@ -145,6 +151,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         self.conversation_flow.turn_detector = self.turn_detector
         self.conversation_flow.denoise = self.denoise
         self.conversation_flow.avatar = self.avatar
+        self.conversation_flow.knowledge_base = self.knowledge_base 
         self.conversation_flow.user_speech_callback = self.on_user_speech_started
         if self.conversation_flow.stt:
             self.conversation_flow.stt.on_stt_transcript(
