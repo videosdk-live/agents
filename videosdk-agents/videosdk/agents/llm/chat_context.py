@@ -175,6 +175,7 @@ class ChatContext:
         content: Union[str, List[ChatContent]],
         message_id: Optional[str] = None,
         created_at: Optional[float] = None,
+        replace: bool = False,
     ) -> ChatMessage:
         """
         Add a new message to the context.
@@ -184,10 +185,17 @@ class ChatContext:
             content (Union[str, List[ChatContent]]): The message content as text or content items.
             message_id (Optional[str], optional): Custom message ID. Auto-generated if not provided.
             created_at (Optional[float], optional): Custom creation timestamp. Uses current time if not provided.
+            replace (bool, optional): If True and role is SYSTEM, replaces the existing system message. Defaults to False.
 
         Returns:
             ChatMessage: The newly created and added message.
         """
+        if replace and role == ChatRole.SYSTEM:
+            self._items = [
+                item for item in self._items
+                if not (isinstance(item, ChatMessage) and item.role == ChatRole.SYSTEM)
+            ]
+
         if isinstance(content, str):
             content = [content]
 
