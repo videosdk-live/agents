@@ -154,20 +154,19 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
     async def on_stt_transcript(self, stt_response: STTResponse) -> None:
         """Handle STT transcript events with enhanced EOU logic"""
+        
+
+        if self._waiting_for_more_speech:
+            await self._handle_continued_speech()
+    
         text = stt_response.data.text if stt_response.data else ""
 
-        # --- Voice Mail Logic ---
-        # Only run if configured, not done yet, and we have text
-        # --- Voice Mail Logic ---
+
         if self.voice_mail_detector and not self.voice_mail_detection_done and text.strip():
             self._vmd_buffer += f" {text}"
             if not self._vmd_check_task:
                 logger.info("Starting Voice Mail Detection Timer")
                 self._vmd_check_task = asyncio.create_task(self._run_vmd_check())
-
-        if self._waiting_for_more_speech:
-            await self._handle_continued_speech()
-    
 
         if self.agent.session:
             state = self.agent.session.agent_state

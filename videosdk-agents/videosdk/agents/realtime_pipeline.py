@@ -182,6 +182,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         """
         Handle realtime model transcription event
         """
+        
         try:
             self.emit("realtime_model_transcription", data)
         except Exception:

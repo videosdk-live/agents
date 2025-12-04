@@ -36,7 +36,6 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         background_audio: Optional[BackgroundAudioHandlerConfig] = None,
         dtmf_handler: Optional[DTMFHandler] = None,
         voice_mail_detector: Optional[VoiceMailDetector] = None,
-        voice_mail_callback: Optional[Callable[[], Awaitable[None]]] = None,
     ) -> None:
         """
         Initialize an agent session.
@@ -69,7 +68,6 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         self._is_executing_tool = False
         self.dtmf_handler = dtmf_handler
         self.voice_mail_detector = voice_mail_detector
-        self.voice_mail_callback = voice_mail_callback
         self._is_voice_mail_detected = False
 
         if hasattr(self.pipeline, 'set_agent'):
@@ -117,14 +115,15 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
 
         if is_vm:
             logger.info("AgentSession: Voicemail confirmed. Executing callback.")
-            if self.voice_mail_callback:
+            if self.voice_mail_detector.callback:
                 # Schedule the callback on the loop
                 asyncio.create_task(self._safe_execute_vmd_callback())
 
     async def _safe_execute_vmd_callback(self) -> None:
         try:
-            if self.voice_mail_callback:
-                await self.voice_mail_callback()
+            logger.info("I was called")
+            if self.voice_mail_detector.callback:
+                await self.voice_mail_detector.callback()
         except Exception as e:
             logger.error(f"Error executing voicemail callback: {e}")
 
