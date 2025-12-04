@@ -1,5 +1,5 @@
 import logging
-from videosdk.agents import Agent, AgentSession, CascadingPipeline, function_tool, WorkerJob, MCPServerStdio, ConversationFlow, JobContext, RoomOptions, Options, ChatContext
+from videosdk.agents import Agent, AgentSession, CascadingPipeline, function_tool, WorkerJob,ConversationFlow, JobContext, RoomOptions, Options
 from videosdk.plugins.deepgram import DeepgramSTT
 from videosdk.plugins.google import GoogleLLM
 from videosdk.plugins.cartesia import CartesiaTTS
@@ -36,7 +36,7 @@ async def entrypoint(ctx: JobContext):
     conversation_flow = ConversationFlow(agent)
 
     pipeline = CascadingPipeline(
-        stt= DeepgramSTT(),
+        stt=DeepgramSTT(),
         llm=GoogleLLM(),
         tts=CartesiaTTS(),
         vad=SileroVAD(),
