@@ -81,9 +81,15 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             if hasattr(self.conversation_flow, "set_voice_mail_detector"):
                 self.conversation_flow.set_voice_mail_detector(self.voice_mail_detector)
             
-            # 2. Listen for the result event
+
             self.conversation_flow.on("voicemail_result", self._handle_voicemail_result)
-                
+        elif hasattr(self.pipeline, "set_voice_mail_detector") and self.voice_mail_detector:
+            logger.info("Wiring VoiceMailDetector directly to RealTimePipeline")
+            self.pipeline.set_voice_mail_detector(self.voice_mail_detector)
+            
+            if hasattr(self.pipeline, "on"):
+                self.pipeline.on("voicemail_result", self._handle_voicemail_result)
+
         if hasattr(self.pipeline, 'set_wake_up_callback'):
             self.pipeline.set_wake_up_callback(self._reset_wake_up_timer)
 
