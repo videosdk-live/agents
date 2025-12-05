@@ -13,6 +13,7 @@ class SpeechEventType(str, Enum):
     """Type of speech event"""
     START = "start_of_speech"
     INTERIM = "interim_transcript"
+    PREFLIGHT = "preflight_transcript"
     FINAL = "final_transcript"
     END = "end_of_speech"
 

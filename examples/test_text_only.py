@@ -7,7 +7,7 @@ import sys
 import logging
 
 import aiohttp
-from videosdk.agents import Agent, AgentSession, RealTimePipeline, function_tool, MCPServerStdio, MCPServerHTTP, global_event_emitter, WorkerJob
+from videosdk.agents import Agent, AgentSession, RealTimePipeline, function_tool, MCPServerStdio, MCPServerHTTP, global_event_emitter, WorkerJob, JobContext, RoomOptions
 # from videosdk.plugins.aws import NovaSonicRealtime, NovaSonicConfig
 from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig
 from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig
@@ -103,20 +103,20 @@ async def main(context: dict):
     print("Starting voice agent with MCP support...")
     
 
-    model = OpenAIRealtime(
-            model="gpt-4o-realtime-preview",
-            config=OpenAIRealtimeConfig(
-                modalities=["text"],
-                tool_choice="auto"
-            )
-    )
-
-    # model = GeminiRealtime(
-    #     model="gemini-2.0-flash-live-001",
-    #     config=GeminiLiveConfig(
-    #         response_modalities=["TEXT"]
-    #     )
+    # model = OpenAIRealtime(
+    #         model="gpt-4o-realtime-preview",
+    #         config=OpenAIRealtimeConfig(
+    #             modalities=["text"],
+    #             tool_choice="auto"
+    #         )
     # )
+
+    model = GeminiRealtime(
+        model="gemini-2.5-flash-native-audio-preview-09-2025",
+        config=GeminiLiveConfig(
+            response_modalities=["TEXT"]
+        )
+    )
 
     def handle_text_response(data):
         if data.get("type") == "done":
@@ -126,7 +126,7 @@ async def main(context: dict):
 
     pipeline = RealTimePipeline(model=model)
     agent = MyVoiceAgent()
-    session = AgentSession(agent=agent, pipeline=pipeline, context=context)
+    session = AgentSession(agent=agent, pipeline=pipeline)
 
     try:
         await session.start()
@@ -159,12 +159,17 @@ async def main(context: dict):
         await pipeline.cleanup()
 
 
-def entryPoint(jobctx):
-    asyncio.run(main(context=jobctx))
+async def entryPoint(jobctx):
+    await main(context=jobctx)
+
+def make_context() -> JobContext:
+    room_options = RoomOptions(room_id="<room-id", name="Sandbox Agent", playground=True) 
+    return JobContext(
+        room_options=room_options
+        )
+
 
 if __name__ == "__main__":
-    def make_context():
-        return {"meetingId": "<meeting_id>", "name": "Sandbox Agent", "playground": True}
 
-    job = WorkerJob(job_func=entryPoint, jobctx=make_context)
+    job = WorkerJob(entrypoint=entryPoint, jobctx=make_context)
     job.start()

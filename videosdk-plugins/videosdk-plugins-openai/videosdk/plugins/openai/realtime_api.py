@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import av
 import json
 import logging
 import os
@@ -11,6 +12,7 @@ from dotenv import load_dotenv
 import uuid
 import base64
 import aiohttp
+import logging
 import numpy as np
 from scipy import signal
 import traceback
@@ -24,12 +26,16 @@ from videosdk.agents import (
     RealtimeBaseModel,
     global_event_emitter,
     Agent,
+    encode as encode_image,
+    EncodeOptions,
+    ResizeOptions,
 )
 from videosdk.agents import realtime_metrics_collector
 
 logger = logging.getLogger(__name__)
 
 load_dotenv()
+logger = logging.getLogger(__name__)
 from openai.types.beta.realtime.session import InputAudioTranscription, TurnDetection
 
 OPENAI_BASE_URL = "https://api.openai.com/v1"
@@ -53,6 +59,11 @@ DEFAULT_VOICE = "alloy"
 DEFAULT_INPUT_AUDIO_FORMAT = "pcm16"
 DEFAULT_OUTPUT_AUDIO_FORMAT = "pcm16"
 
+DEFAULT_IMAGE_ENCODE_OPTIONS = EncodeOptions(
+    format="JPEG",
+    quality=75,
+    resize_options=ResizeOptions(width=1024, height=1024),
+)
 
 @dataclass
 class OpenAIRealtimeConfig:
@@ -211,6 +222,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
 
         return OpenAISession(ws=ws, msg_queue=msg_queue, tasks=tasks)
 
+
     async def send_message(self, message: str) -> None:
         """Send a message to the OpenAI realtime API"""
         await self.send_event(
@@ -232,6 +244,76 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         )
         await self.create_response()
 
+    async def handle_video_input(self, video_data: av.VideoFrame) -> None:
+        if not self._session or self._closing:
+            return
+
+        try:
+            if not video_data or not video_data.planes:
+                return
+
+            processed_jpeg = encode_image(video_data, DEFAULT_IMAGE_ENCODE_OPTIONS)
+
+            if not processed_jpeg or len(processed_jpeg) < 100:
+                logger.warning("Invalid JPEG data generated")
+                return
+
+            base64_url = self.bytes_to_base64_url(processed_jpeg)
+
+            content = [{"type": "input_image", "image_url": base64_url}]
+
+            conversation_event = {
+                "type": "conversation.item.create",
+                "item": {
+                    "type": "message",
+                    "role": "user",
+                    "content": content,
+                },
+            }
+            await self.send_event(conversation_event)
+
+        except Exception as e:
+            self.emit("error", f"Video processing error: {str(e)}")
+
+    async def send_message_with_frames(
+        self, message: Optional[str], frames: list[av.VideoFrame]
+    ) -> None:
+        content = []
+        if message:
+            content.append({"type": "input_text", "text": message})
+
+        for frame in frames:
+            try:
+                processed_jpeg = encode_image(frame, DEFAULT_IMAGE_ENCODE_OPTIONS)
+
+                if not processed_jpeg or len(processed_jpeg) < 100:
+                    logger.warning("Invalid JPEG data generated")
+                    continue
+
+                base64_url = self.bytes_to_base64_url(processed_jpeg)
+                content.append({"type": "input_image", "image_url": base64_url})
+            except Exception as e:
+                logger.error(f"Error processing frame: {e}")
+
+        if not any(
+            item.get("type") == "input_image" or item.get("type") == "input_text"
+            for item in content
+        ):
+            logger.warning("No content to send.")
+            return
+
+        conversation_event = {
+            "type": "conversation.item.create",
+            "item": {
+                "type": "message",
+                "role": "user",
+                "content": content,
+            },
+        }
+        await self.send_event(conversation_event)
+
+        await self.create_response()
+    
     async def create_response(self) -> None:
         """Create a response to the OpenAI realtime API"""
         if not self._session:
@@ -675,3 +757,9 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
             }
         )
         await self.create_response()
+
+
+    def bytes_to_base64_url(self, image_bytes: bytes, fmt: str = "jpeg") -> str:
+            mime = f"image/{fmt.lower()}"
+            encoded = base64.b64encode(image_bytes).decode("utf-8")
+            return f"data:{mime};base64,{encoded}"

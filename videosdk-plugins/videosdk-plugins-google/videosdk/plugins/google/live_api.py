@@ -40,6 +40,9 @@ from google.genai.types import (
     Tool,
     GenerationConfig,
     AudioTranscriptionConfig,
+    ThinkingConfig,
+    RealtimeInputConfig,
+    ContextWindowCompressionConfig
 )
 
 load_dotenv()
@@ -75,9 +78,12 @@ class GeminiLiveConfig:
         max_output_tokens: Maximum number of tokens allowed in model responses. Defaults to None
         presence_penalty: Penalizes tokens based on their presence in the text so far. Range -2.0 to 2.0. Defaults to None
         frequency_penalty: Penalizes tokens based on their frequency in the text so far. Range -2.0 to 2.0. Defaults to None
-        response_modalities: List of enabled response types. Options: ["TEXT", "AUDIO"]. Defaults to both
+        response_modalities: List of enabled response types. Options: ["TEXT", "AUDIO"]. Defaults to ["AUDIO"]
         input_audio_transcription: Configuration for audio transcription features. Defaults to None
         output_audio_transcription: Configuration for audio transcription features. Defaults to None
+        thinking_config: Configuration for model's "thinking" behavior. Defaults to None
+        realtime_input_config: Configuration for realtime input handling. Defaults to None
+        context_window_compression: Configuration for context window compression. Defaults to None
     """
 
     voice: Voice | None = "Puck"
@@ -90,7 +96,7 @@ class GeminiLiveConfig:
     presence_penalty: float | None = None
     frequency_penalty: float | None = None
     response_modalities: List[Modality] | None = field(
-        default_factory=lambda: ["TEXT", "AUDIO"]
+        default_factory=lambda: ["AUDIO"]
     )
     input_audio_transcription: AudioTranscriptionConfig | None = field(
         default_factory=dict
@@ -98,6 +104,13 @@ class GeminiLiveConfig:
     output_audio_transcription: AudioTranscriptionConfig | None = field(
         default_factory=dict
     )
+    thinking_config: Optional[ThinkingConfig] | None = field(default_factory=dict)
+    realtime_input_config:Optional[RealtimeInputConfig]| None = field(default_factory=dict)
+    context_window_compression:Optional[ContextWindowCompressionConfig] | None = field(default_factory=dict)
+    # TODO
+    # proactivity: ProactivityConfig | None = field(default_factory=dict)
+    # enable_affective_dialog: bool | None = field(default=None)
+
 
 
 @dataclass
@@ -137,9 +150,11 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                    - max_output_tokens: Maximum tokens allowed in model responses
                    - presence_penalty: Penalizes token presence in text. Range -2.0 to 2.0
                    - frequency_penalty: Penalizes token frequency in text. Range -2.0 to 2.0
-                   - response_modalities: List of enabled response types ["TEXT", "AUDIO"]. Defaults to both
+                   - response_modalities: List of enabled response types ["TEXT", "AUDIO"]. Defaults to ["AUDIO"]
+                   - input_audio_transcription: Configuration for audio transcription features
                    - output_audio_transcription: Configuration for audio transcription features
-
+                   - thinking_config: Configuration for model's "thinking" behavior
+                   - realtime_input_config: Configuration for realtime input handling
         Raises:
             ValueError: If neither api_key nor service_account_path is provided and no GOOGLE_API_KEY in env vars
         """
@@ -272,7 +287,16 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
             tools=self.formatted_tools or None,
             input_audio_transcription=self.config.input_audio_transcription,
             output_audio_transcription=self.config.output_audio_transcription,
+            realtime_input_config=self.config.realtime_input_config if self.config.realtime_input_config else None, 
+            context_window_compression=self.config.context_window_compression if self.config.context_window_compression else None
         )
+
+        if self.is_native_audio_model():
+            config = config.model_dump()
+            if self.config.thinking_config:
+                config["generation_config"]["thinking_config"] = self.config.thinking_config
+                logger.info("Added thinking_config to generation_config")
+
         try:
             session_cm = self.client.aio.live.connect(model=self.model, config=config)
             session = await session_cm.__aenter__()
@@ -836,3 +860,9 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
             if function_declarations
             else []
         )
+    def is_native_audio_model(self) -> bool:
+        """Check if the model is a native audio model based on its name"""
+        native_audio_indicators = [
+            "gemini-2.5-flash-native-audio-preview-09-2025"
+        ]
+        return any(indicator in self.model for indicator in native_audio_indicators)
