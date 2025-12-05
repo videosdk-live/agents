@@ -66,9 +66,11 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         self._thinking_was_playing = False
         self.background_audio_config = background_audio
         self._is_executing_tool = False
+        self._job_context = None
         self.dtmf_handler = dtmf_handler
         self.voice_mail_detector = voice_mail_detector
         self._is_voice_mail_detected = False
+
 
         if hasattr(self.pipeline, 'set_agent'):
             self.pipeline.set_agent(self.agent)
@@ -93,9 +95,10 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         try:
             job_ctx = get_current_job_context()
             if job_ctx:
+                self._job_context = job_ctx
                 job_ctx.add_shutdown_callback(self.close)
         except Exception:
-            pass
+            self._job_context = None
 
     @property
     def is_voicemail_detected(self) -> bool:
@@ -541,3 +544,45 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         """
         self._emit_agent_state(AgentState.CLOSING)
         await self.pipeline.leave()
+
+    async def hangup(self, reason: str = "manual_hangup") -> None:
+        """
+        Hang up the session, leaving the room immediately if possible.
+        """
+        job_ctx = self._job_context
+        if not job_ctx:
+            try:
+                job_ctx = get_current_job_context()
+            except Exception:
+                job_ctx = None
+
+        room = getattr(job_ctx, "room", None) if job_ctx else None
+        if room and hasattr(room, "force_end_session"):
+            try:
+                await room.force_end_session(reason)
+                return
+            except Exception as exc:
+                logger.error(f"Error forcing room to end session: {exc}")
+
+        await self.close()
+     
+    async def call_transfer(self,token: str, transfer_to: str) -> None:
+        """ Transfer the call to a provided Phone number or SIP endpoint.
+        Args:
+            token: VideoSDK auth token.
+            transfer_to: Phone number or SIP endpoint to transfer the call to.
+        """
+        job_ctx = self._job_context
+        if not job_ctx:
+            try:
+                job_ctx = get_current_job_context()
+            except Exception:
+                job_ctx = None
+
+        room = getattr(job_ctx, "room", None) if job_ctx else None
+        if room and hasattr(room, "call_transfer"):
+            try:
+                await room.call_transfer(token, transfer_to)
+                return
+            except Exception as exc:
+                logger.error(f"Error calling call_transfer: {exc}")

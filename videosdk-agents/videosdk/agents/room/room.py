@@ -31,6 +31,8 @@ logger = logging.getLogger(__name__)
 START_RECORDING_URL = "https://api.videosdk.live/v2/recordings/participant/start"
 STOP_RECORDING_URL = "https://api.videosdk.live/v2/recordings/participant/stop"
 MERGE_RECORDINGS_URL = "https://api.videosdk.live/v2/recordings/participant/merge"
+FETCH_CALL_INFO_URL = "https://api.videosdk.live/v2/sip/call"
+TRANSFER_CALL_URL = "https://api.videosdk.live/v2/sip/call/transfer"
 
 load_dotenv()
 
@@ -188,7 +190,7 @@ class VideoSDKHandler:
         self._left: bool = False
         self.sdk_metadata = {
             "sdk": "agents",
-            "sdk_version": "0.0.47"
+            "sdk_version": "0.0.48"
         }
 
         self.meeting = VideoSDK.init_meeting(
@@ -338,6 +340,118 @@ class VideoSDKHandler:
 
         # Mark session as ended AFTER leaving
         self._session_ended = True
+
+    async def force_end_session(self, reason: str = "manual_hangup") -> None:
+        """
+        Public helper: forcefully end the session, bypassing participant checks.
+
+        Args:
+            reason: Reason string to propagate to session end callbacks.
+        """
+        await self._end_session(reason)
+
+    async def call_transfer(self, token: str, transfer_to: str) -> None:
+        """
+        Transfer the call to a provided Phone number or SIP endpoint.
+
+        Args:
+            token: VideoSDK auth token.
+            transfer_to: Phone number or SIP endpoint to transfer the call to.
+        """
+        try:
+            session_id = self._session_id
+            room_id = self.meeting_id
+
+            if not session_id:
+                raise ValueError("Session ID is not set.")
+
+            if not room_id:
+                raise ValueError("Room ID is not set.")
+
+            logger.info(f"[CALL TRANSFER] Fetching SIP call info | roomId={room_id}, sessionId={session_id}")
+
+            sip_call = self.fetch_call_info(token, room_id, session_id)
+
+            if not sip_call:
+                logger.error("[CALL TRANSFER] No active SIP call found for given session ID.")
+                raise RuntimeError("Unable to perform transfer: No active SIP call found.")
+
+            call_id = sip_call["callId"]
+            logger.info(f"[CALL TRANSFER] Found SIP Call ID: {call_id}")
+
+            result = self.transfer_call(
+                token=token,
+                call_id=call_id,
+                transfer_to=transfer_to
+            )
+
+            logger.info(f"[CALL TRANSFER] Transfer successful: {result}")
+
+        except Exception as e:
+            logger.error("[CALL TRANSFER] Error occurred during call transfer", exc_info=True)
+            raise
+
+    def fetch_call_info(self, token: str, room_id: str, session_id: str):
+        """
+        Fetch SIP call information for the given room, then match by sessionId.
+        """
+        try:
+            headers = {"Authorization": token}
+            params = {"roomId": room_id}
+
+            logger.info(f"[FETCH CALL INFO] Requesting call info | roomId={room_id}")
+
+            response = requests.get(FETCH_CALL_INFO_URL, headers=headers, params=params)
+            response.raise_for_status()
+
+            data = response.json()
+            calls = data.get("data", [])
+
+            for call in calls:
+                if call.get("sessionId") == session_id:
+                    logger.info(f"[FETCH CALL INFO] Matching call found: {call.get('callId')}")
+                    return call
+
+            logger.warning("[FETCH CALL INFO] No SIP call matched with sessionId")
+            return None
+
+        except requests.RequestException as e:
+            logger.error("[FETCH CALL INFO] HTTP request failed", exc_info=True)
+            raise
+
+        except Exception as e:
+            logger.error("[FETCH CALL INFO] Unexpected error", exc_info=True)
+            raise
+
+    def transfer_call(self, token: str, call_id: str, transfer_to: str):
+        """
+        Transfer the call to a new number.
+        """
+        try:
+            logger.info(f"[TRANSFER CALL] Initiating transfer | callId={call_id}, transferTo={transfer_to}")
+
+            headers = {
+                "Authorization": token,
+                "Content-Type": "application/json"
+            }
+
+            payload = {
+                "callId": call_id,
+                "transferTo": transfer_to
+            }
+
+            response = requests.post(TRANSFER_CALL_URL, json=payload, headers=headers)
+            response.raise_for_status()
+
+            return response.json()
+
+        except requests.RequestException as e:
+            logger.error("[TRANSFER CALL] HTTP request failed", exc_info=True)
+            raise
+
+        except Exception as e:
+            logger.error("[TRANSFER CALL] Unexpected error", exc_info=True)
+            raise
 
     def setup_session_end_callback(self, callback):
         """
