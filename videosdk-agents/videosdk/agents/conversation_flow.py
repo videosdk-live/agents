@@ -49,7 +49,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self.agent = agent
         self.denoise = denoise
         self.avatar = avatar
-        self.knowledge_base: KnowledgeBase | None = None
         self._stt_started = False
         self.stt_lock = asyncio.Lock()
         self.llm_lock = asyncio.Lock()
@@ -188,8 +187,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             self._preemptive_cancelled = False
             
             user_text = preflight_text.strip()
-            if self.knowledge_base:
-                kb_context = await self.knowledge_base.process_query(user_text)
+            if self.agent.knowledge_base:
+                kb_context = await self.agent.knowledge_base.process_query(user_text)
                 if kb_context:
                     user_text = f"{kb_context}\n\nUser: {user_text}"
             
@@ -309,8 +308,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             cascading_metrics_collector.on_user_speech_end()
 
         final_user_text = user_text
-        if self.knowledge_base:
-            kb_context = await self.knowledge_base.process_query(user_text)
+        if self.agent.knowledge_base:
+            kb_context = await self.agent.knowledge_base.process_query(user_text)
             if kb_context:
                 final_user_text = f"{kb_context}\n\nUser: {user_text}"
 
@@ -356,8 +355,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         
         try:
             final_instructions = instructions
-            if self.knowledge_base:
-                kb_context = await self.knowledge_base.process_query(instructions)
+            if self.agent.knowledge_base:
+                kb_context = await self.agent.knowledge_base.process_query(instructions)
                 if kb_context:
                     final_instructions = f"{kb_context}\n\nUser: {instructions}"
                 

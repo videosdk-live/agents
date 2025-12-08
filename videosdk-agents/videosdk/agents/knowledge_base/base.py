@@ -29,10 +29,8 @@ class KnowledgeBase(ABC):
             config (KnowledgeBaseConfig): Configuration for retrieval settings.
         """
         self.config = config
-        self._api_base_url =  "https://api.videosdk.live/ai/v1"
-        self._auth_token = os.getenv("VIDEOSDK_AUTH_TOKEN")
 
-    async def allow_retrieval(self, transcript: str) -> bool:
+    def allow_retrieval(self, transcript: str) -> bool:
         """
         Decide whether the knowledge base should be used for this message.
 
@@ -44,7 +42,7 @@ class KnowledgeBase(ABC):
         """
         return True
     
-    async def pre_process_query(self, transcript: str) -> str:
+    def pre_process_query(self, transcript: str) -> str:
         """
         Preprocess the user message before searching the knowledge base.
 
@@ -82,14 +80,17 @@ class KnowledgeBase(ABC):
         Returns:
             List[str]: Retrieved document texts.
         """
-        if not self._auth_token:
+        api_base_url =  "https://api.videosdk.live/ai/v1"
+        auth_token = os.getenv("VIDEOSDK_AUTH_TOKEN")
+
+        if not auth_token:
             logger.warning("VIDEOSDK_AUTH_TOKEN not set, skipping KB retrieval")
             return []
         
         try:
-            url = f"{self._api_base_url}/knowledge-bases/{self.config.id}/search"
+            url = f"{api_base_url}/knowledge-bases/{self.config.id}/search"
             headers = {
-                "Authorization": self._auth_token,
+                "Authorization": auth_token,
                 "Content-Type": "application/json"
             }
             payload = {
@@ -137,11 +138,11 @@ class KnowledgeBase(ABC):
         """
 
         # Check if KB should be triggered
-        if not await self.allow_retrieval(transcript):
+        if not self.allow_retrieval(transcript):
             return None
         
         # Transform the query
-        query = await self.pre_process_query(transcript)
+        query = self.pre_process_query(transcript)
         
         # Retrieve documents
         documents = await self.retrieve_documents(query)
