@@ -32,7 +32,7 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
     Abstract base class for creating custom agents.
     Inherits from EventEmitter to handle agent events and state updates.
     """
-    def __init__(self, instructions: str, tools: List[FunctionTool] = None, agent_id: str = None, mcp_servers: List[MCPServiceProvider] = None, knowledge_base: KnowledgeBase | None = None):
+    def __init__(self, instructions: str, tools: List[FunctionTool] = None, agent_id: str = None, mcp_servers: List[MCPServiceProvider] = None, inherit_context: bool = False, knowledge_base: KnowledgeBase | None = None):
         super().__init__()
         self._tools = tools
         self._llm = None
@@ -52,6 +52,7 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
         self.session: "AgentSession"
         self._thinking_background_config: Optional[BackgroundAudioHandlerConfig] = None
         self.knowledge_base = knowledge_base 
+        self.inherit_context = inherit_context
 
     def _register_class_tools(self) -> None:
         """Internal Method: Register all function tools defined in the class"""
@@ -92,7 +93,7 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
     
     async def hangup(self) -> None:
         """Hang up the agent"""
-        await self.session.close()
+        await self.session.hangup("manual_hangup")
     
     def set_thinking_audio(self, file: str = None, volume: float = 0.3):
         """Set the thinking background for the agent"""

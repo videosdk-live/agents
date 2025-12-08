@@ -586,7 +586,11 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             else:
                 full_response = self._partial_response
 
-            if full_response:
+            if (
+                full_response
+                and self.agent
+                and getattr(self.agent, "chat_context", None)
+            ):
                 cascading_metrics_collector.set_agent_response(full_response)
                 self.agent.chat_context.add_message(
                         role=ChatRole.ASSISTANT,
@@ -609,12 +613,17 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             if not self.llm:
                 return
 
+            if not self.agent or not getattr(self.agent, "chat_context", None):
+                logger.info("Agent not available for LLM processing, exiting")
+                return
+
             cascading_metrics_collector.on_llm_start()
             first_chunk_received = False
             
-            if self.agent.session:
-                self.agent.session._emit_user_state(UserState.IDLE)
-                self.agent.session._emit_agent_state(AgentState.THINKING)
+            agent_session = getattr(self.agent, "session", None) if self.agent else None
+            if agent_session:
+                agent_session._emit_user_state(UserState.IDLE)
+                agent_session._emit_agent_state(AgentState.THINKING)
 
             async for llm_chunk_resp in self.llm.chat(
                 self.agent.chat_context,
@@ -624,6 +633,10 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                     logger.info("LLM processing interrupted")
                     break
 
+                if not self.agent or not getattr(self.agent, "chat_context", None):
+                    logger.info("Agent context unavailable, stopping LLM processing")
+                    break
+
                 if not first_chunk_received:
                     first_chunk_received = True
                     cascading_metrics_collector.on_llm_complete()
@@ -631,10 +644,14 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 if llm_chunk_resp.metadata and "function_call" in llm_chunk_resp.metadata:
                     func_call = llm_chunk_resp.metadata["function_call"]
 
-                    cascading_metrics_collector.add_function_tool_call(
-                        func_call["name"])
+                    cascading_metrics_collector.add_function_tool_call(func_call["name"])
 
-                    self.agent.chat_context.add_function_call(
+                    chat_context = getattr(self.agent, "chat_context", None)
+                    if not chat_context:
+                        logger.info("Chat context missing while handling function call, aborting")
+                        return
+
+                    chat_context.add_function_call(
                         name=func_call["name"],
                         arguments=json.dumps(func_call["arguments"]),
                         call_id=func_call.get(
@@ -642,6 +659,10 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                     )
 
                     try:
+                        if not self.agent:
+                            logger.info("Agent cleaned up before selecting tool, aborting")
+                            return
+
                         tool = next(
                             (t for t in self.agent.tools if is_function_tool(
                                 t) and get_tool_info(t).name == func_call["name"]),
@@ -652,17 +673,64 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                         continue
 
                     if tool:
-                        self.agent.session._is_executing_tool = True
+                        agent_session = getattr(self.agent, "session", None) if self.agent else None
+                        if agent_session:
+                            agent_session._is_executing_tool = True
                         try:
                             result = await tool(**func_call["arguments"])
-                            self.agent.chat_context.add_function_output(
+
+                            if isinstance(result, Agent):
+                                new_agent = result
+                                current_session = self.agent.session
+                                
+                                logger.info(f"Switching from agent {type(self.agent).__name__} to {type(new_agent).__name__}")
+
+                                if getattr(new_agent, 'inherit_context', True):
+                                    logger.info(f"Inheriting context from {type(self.agent).__name__} to {type(new_agent).__name__}")
+                                    logger.info(f"Chat context: {self.agent.chat_context.items}")
+                                    new_agent.chat_context = self.agent.chat_context
+                                    new_agent.chat_context.add_message(
+                                        role=ChatRole.SYSTEM,
+                                        content=new_agent.instructions,
+                                        replace=True
+                                    )
+
+                                if hasattr(self.agent, 'on_speech_in'):
+                                    current_session.off("on_speech_in", self.agent.on_speech_in)
+                                if hasattr(self.agent, 'on_speech_out'):
+                                    current_session.off("on_speech_out", self.agent.on_speech_out)
+
+                                new_agent.session = current_session
+                                self.agent = new_agent
+                                current_session.agent = new_agent
+
+                                if hasattr(current_session.pipeline, 'set_agent'):
+                                    current_session.pipeline.set_agent(new_agent)
+                                if hasattr(current_session.pipeline, 'set_conversation_flow'):
+                                     current_session.pipeline.set_conversation_flow(self)
+
+                                if hasattr(new_agent, 'on_speech_in'):
+                                    current_session.on("on_speech_in", new_agent.on_speech_in)
+                                if hasattr(new_agent, 'on_speech_out'):
+                                    current_session.on("on_speech_out", new_agent.on_speech_out)
+
+                                if hasattr(new_agent, 'on_enter') and asyncio.iscoroutinefunction(new_agent.on_enter):
+                                    await new_agent.on_enter()
+                                
+                                return
+
+                            chat_context = getattr(self.agent, "chat_context", None)
+                            if not chat_context:
+                                logger.info("Agent chat context missing after tool execution, stopping LLM processing")
+                                return
+                            chat_context.add_function_output(
                                 name=func_call["name"],
                                 output=json.dumps(result),
                                 call_id=func_call.get(
                                     "call_id", f"call_{int(time.time())}")
                             )
 
-                            async for new_resp in self.llm.chat(self.agent.chat_context):
+                            async for new_resp in self.llm.chat(chat_context):
                                 if self._is_interrupted:
                                     break
                                 if new_resp.content:
@@ -672,7 +740,9 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                                 f"Error executing function {func_call['name']}: {e}")
                             continue
                         finally:
-                            self.agent.session._is_executing_tool = False
+                            agent_session = getattr(self.agent, "session", None) if self.agent else None
+                            if agent_session:
+                                agent_session._is_executing_tool = False
                 else:
                     if llm_chunk_resp.content:
                         yield llm_chunk_resp.content
