@@ -257,11 +257,13 @@ class JobContext:
                 self.add_shutdown_callback(cleanup_callback)
             else:
                 if self.room_options.join_meeting:
+                    agent_id = self._pipeline.agent.id if self._pipeline and hasattr(self._pipeline, 'agent') else None
                     self.room = VideoSDKHandler(
                         meeting_id=self.room_options.room_id,
                         auth_token=self.videosdk_auth,
                         name=self.room_options.name,
                         agent_participant_id=self.room_options.agent_participant_id,
+                        agent_id=agent_id,
                         pipeline=self._pipeline,
                         loop=self._loop,
                         vision=self.room_options.vision,

@@ -35,7 +35,7 @@ class GoogleLLM(LLM):
         self,
         *,
         api_key: str | None = None,
-        model: str = "gemini-2.0-flash-001",
+        model: str = "gemini-2.5-flash-lite",
         temperature: float = 0.7,
         tool_choice: ToolChoice = "auto",
         max_output_tokens: int | None = None,
