@@ -98,7 +98,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self.smart_pause_timeout = config.smart_pause_timeout
         self.resume_smart_pause = config.resume_smart_pause
 
-        self.min_interruption_words = 2 # 2 
         
         # Preemptive generation state
         self._preemptive_transcript: str | None = None
