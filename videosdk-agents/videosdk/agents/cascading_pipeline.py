@@ -39,16 +39,16 @@ class EOUConfig:
 
 @dataclass
 class InterruptionConfig:
-    min_interruption_duration: float = 0.5
-    min_interruption_words: int = 2
+    interrupt_min_duration: float = 0.5
+    interrupt_min_words: int = 2
     smart_pause_timeout: float = 2.0
     resume_smart_pause: bool = True
 
     def __post_init__(self):
-        if self.min_interruption_duration <= 0:
-            raise ValueError("min_interruption_duration must be greater than 0")
-        if self.min_interruption_words <= 0:
-            raise ValueError("min_interruption_words must be greater than 0")
+        if self.interrupt_min_duration <= 0:
+            raise ValueError("interrupt_min_duration must be greater than 0")
+        if self.interrupt_min_words <= 0:
+            raise ValueError("interrupt_min_words must be greater than 0")
         if self.smart_pause_timeout <= 0:
             raise ValueError("smart_pause_timeout must be greater than 0")
 
