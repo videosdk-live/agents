@@ -16,7 +16,10 @@ from .background_audio import BackgroundAudioHandlerConfig
 import logging
 import os
 import av
-
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from .knowledge_base.base import KnowledgeBase
+    
 logger = logging.getLogger(__name__)
 
 if 'AgentSession' not in globals():
@@ -29,7 +32,7 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
     Abstract base class for creating custom agents.
     Inherits from EventEmitter to handle agent events and state updates.
     """
-    def __init__(self, instructions: str, tools: List[FunctionTool] = None, agent_id: str = None, mcp_servers: List[MCPServiceProvider] = None, inherit_context: bool = False):
+    def __init__(self, instructions: str, tools: List[FunctionTool] = None, agent_id: str = None, mcp_servers: List[MCPServiceProvider] = None, inherit_context: bool = False, knowledge_base: KnowledgeBase | None = None):
         super().__init__()
         self._tools = tools
         self._llm = None
@@ -48,6 +51,7 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
         self.mcp_manager = MCPToolManager()
         self.session: "AgentSession"
         self._thinking_background_config: Optional[BackgroundAudioHandlerConfig] = None
+        self.knowledge_base = knowledge_base 
         self.inherit_context = inherit_context
 
     def _register_class_tools(self) -> None:

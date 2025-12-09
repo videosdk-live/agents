@@ -17,7 +17,7 @@ import logging
 import asyncio
 import av
 from .utterance_handle import UtteranceHandle
-
+    
 logger = logging.getLogger(__name__)
 
 @dataclass
