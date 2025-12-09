@@ -2,14 +2,15 @@
 import asyncio
 import logging
 import aiohttp
-from videosdk.agents import Agent, AgentSession, CascadingPipeline,CascadingConfig, function_tool, WorkerJob, MCPServerStdio, ConversationFlow, JobContext, RoomOptions
+from videosdk.agents import Agent, AgentSession, CascadingPipeline, function_tool, WorkerJob, MCPServerStdio, ConversationFlow, JobContext, RoomOptions, EOUConfig, InterruptionConfig
 from videosdk.plugins.openai import OpenAILLM
 from videosdk.plugins.deepgram import DeepgramSTT
 from videosdk.plugins.silero import SileroVAD
 from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
 from videosdk.plugins.elevenlabs import ElevenLabsTTS
+from videosdk.plugins.google import GoogleLLM, GoogleTTS
 
-logging.getLogger().setLevel(logging.CRITICAL)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 pre_download_model()
 
 @function_tool
@@ -82,14 +83,15 @@ async def entrypoint(ctx: JobContext):
 
     pipeline = CascadingPipeline(
         stt= DeepgramSTT(),
-        llm=OpenAILLM(),
-        tts=ElevenLabsTTS(),
+        llm=GoogleLLM(),
+        tts=GoogleTTS(),
         vad=SileroVAD(),
         turn_detector=TurnDetector(),
-        cascading_config=CascadingConfig(
+        eou_config=EOUConfig(
             eou_logic='sliding',
-            min_speech_wait_timeout=0.5,
-            max_speech_wait_timeout=3.0,
+            min_max_speech_wait_timeout=[0.5, 2.0],
+        ),
+        interruption_config=InterruptionConfig(
             min_interruption_duration=0.5,
             min_interruption_words=2,
             smart_pause_timeout=2.0,
