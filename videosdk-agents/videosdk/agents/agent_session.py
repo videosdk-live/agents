@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Any, Callable, Optional, Literal
+from typing import Any, Callable, Optional, Literal, Awaitable
 import asyncio
 import uuid
 
@@ -16,6 +16,8 @@ from .job import get_current_job_context
 from .event_emitter import EventEmitter
 from .event_bus import global_event_emitter
 from .background_audio import BackgroundAudioHandler,BackgroundAudioHandlerConfig
+from .dtmf_handler import DTMFHandler
+from .voice_mail_detector import VoiceMailDetector
 import logging
 import av
 logger = logging.getLogger(__name__)
@@ -32,6 +34,8 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         conversation_flow: Optional[ConversationFlow] = None,
         wake_up: Optional[int] = None,
         background_audio: Optional[BackgroundAudioHandlerConfig] = None,
+        dtmf_handler: Optional[DTMFHandler] = None,
+        voice_mail_detector: Optional[VoiceMailDetector] = None,
     ) -> None:
         """
         Initialize an agent session.
@@ -63,6 +67,10 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         self.background_audio_config = background_audio
         self._is_executing_tool = False
         self._job_context = None
+        self.dtmf_handler = dtmf_handler
+        self.voice_mail_detector = voice_mail_detector
+        self._is_voice_mail_detected = False
+
 
         if hasattr(self.pipeline, 'set_agent'):
             self.pipeline.set_agent(self.agent)
@@ -72,6 +80,17 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             and self.conversation_flow is not None
         ):
             self.pipeline.set_conversation_flow(self.conversation_flow)
+            if hasattr(self.conversation_flow, "set_voice_mail_detector"):
+                self.conversation_flow.set_voice_mail_detector(self.voice_mail_detector)
+            
+
+            self.conversation_flow.on("voicemail_result", self._handle_voicemail_result)
+        elif hasattr(self.pipeline, "set_voice_mail_detector") and self.voice_mail_detector:
+            self.pipeline.set_voice_mail_detector(self.voice_mail_detector)
+            
+            if hasattr(self.pipeline, "on"):
+                self.pipeline.on("voicemail_result", self._handle_voicemail_result)
+
         if hasattr(self.pipeline, 'set_wake_up_callback'):
             self.pipeline.set_wake_up_callback(self._reset_wake_up_timer)
 
@@ -85,6 +104,32 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
                 job_ctx.add_shutdown_callback(self.close)
         except Exception:
             self._job_context = None
+
+    @property
+    def is_voicemail_detected(self) -> bool:
+        """Returns True if voicemail was detected in this session."""
+        return self._is_voicemail_detected
+
+    def _handle_voicemail_result(self, data: dict) -> None:
+        """
+        Handler for the voicemail_result event from ConversationFlow.
+        Updates session state and executes callback if needed.
+        """
+        is_vm = data.get("is_voicemail", False)
+        self._is_voicemail_detected = is_vm
+        
+        if is_vm:
+            logger.info("AgentSession: Voicemail confirmed. Executing callback.")
+            if self.voice_mail_detector.callback:
+                asyncio.create_task(self._safe_execute_vmd_callback())
+
+    async def _safe_execute_vmd_callback(self) -> None:
+        try:
+
+            if self.voice_mail_detector.callback:
+                await self.voice_mail_detector.callback()
+        except Exception as e:
+            logger.error(f"Error executing voicemail callback: {e}")
 
     def _on_speech_in(self, data: dict) -> None:
         self.emit("on_speech_in", data)
@@ -208,6 +253,9 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         
         self._emit_agent_state(AgentState.STARTING)
         await self.agent.initialize_mcp()
+
+        if self.dtmf_handler:
+            await self.dtmf_handler.start()
 
         if isinstance(self.pipeline, RealTimePipeline):
             await realtime_metrics_collector.start_session(self.agent, self.pipeline)
