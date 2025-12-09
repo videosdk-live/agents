@@ -92,8 +92,8 @@ async def entrypoint(ctx: JobContext):
             min_max_speech_wait_timeout=[0.5, 2.0],
         ),
         interruption_config=InterruptionConfig(
-            min_interruption_duration=0.5,
-            min_interruption_words=2,
+            interrupt_min_duration=0.5,
+            interrupt_min_words=2,
             smart_pause_timeout=2.0,
             resume_smart_pause=True
         )
