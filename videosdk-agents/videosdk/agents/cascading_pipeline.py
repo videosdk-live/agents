@@ -1,6 +1,6 @@
 from __future__ import annotations
-from typing import Any, Dict, Literal
-from dataclasses import dataclass
+from typing import Any, Dict, Literal, List, Tuple
+from dataclasses import dataclass, field
 
 from .pipeline import Pipeline
 from .event_emitter import EventEmitter
@@ -20,27 +20,39 @@ from .utterance_handle import UtteranceHandle
     
 logger = logging.getLogger(__name__)
 
+
 @dataclass
-class CascadingConfig:
-    """
-    Configuration for the cascading pipeline.
-    Args:
-        eou_logic: Logic for end of utterance detection (default, binary, sliding)
-        min_speech_wait_timeout: Minimum time to wait for additional speech before ending a user turn 
-        max_speech_wait_timeout: Maximum time to wait for additional speech before forcing turn completion
-        min_interruption_duration: Minimum duration of user speech to count as an interruption
-        min_interruption_words: Minimum number of transcribed words to count as an interruption
-        smart_pause_timeout: Timeout for detecting a false/accidental interruption before auto-resuming agent speech
-        resume_smart_pause: Whether the agent should automatically resume speaking after a smart pause
-    """
+class EOUConfig:
     eou_logic: Literal["default", "binary", "sliding"] = "sliding"
-    min_speech_wait_timeout: float = 0.5
-    max_speech_wait_timeout: float = 3.0
+    min_max_speech_wait_timeout: List[float] | Tuple[float, float] = field(default_factory=lambda: [0.5, 3.0])
+
+    def __post_init__(self):
+        if not (isinstance(self.min_max_speech_wait_timeout, (list, tuple)) and len(self.min_max_speech_wait_timeout) == 2):
+            raise ValueError("min_max_speech_wait_timeout must be a list or tuple of two floats")
+        min_val, max_val = self.min_max_speech_wait_timeout
+        if not (isinstance(min_val, (int, float)) and isinstance(max_val, (int, float))):
+            raise ValueError("min_max_speech_wait_timeout values must be numbers")
+        if min_val <= 0 or max_val <= 0:
+            raise ValueError("min_max_speech_wait_timeout values must be greater than 0")
+        if min_val >= max_val:
+            raise ValueError("min_speech_wait_timeout must be less than max_speech_wait_timeout")
+
+@dataclass
+class InterruptionConfig:
     min_interruption_duration: float = 0.5
     min_interruption_words: int = 2
     smart_pause_timeout: float = 2.0
     resume_smart_pause: bool = True
 
+    def __post_init__(self):
+        if self.min_interruption_duration <= 0:
+            raise ValueError("min_interruption_duration must be greater than 0")
+        if self.min_interruption_words <= 0:
+            raise ValueError("min_interruption_words must be greater than 0")
+        if self.smart_pause_timeout <= 0:
+            raise ValueError("smart_pause_timeout must be greater than 0")
+
+@dataclass
 class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
     """
     Cascading pipeline implementation that processes data in sequence (STT -> LLM -> TTS).
@@ -56,7 +68,8 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         turn_detector: EOU | None = None,
         avatar: Any | None = None,
         denoise: Denoise | None = None,
-        cascading_config: CascadingConfig | None = None,
+        eou_config: EOUConfig | None = None,
+        interruption_config: InterruptionConfig | None = None,
     ) -> None:
         """
         Initialize the cascading pipeline.
@@ -69,6 +82,8 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
             turn_detector: Turn Detector (optional)
             avatar: Avatar (optional)
             denoise: Denoise (optional)
+            eou_config: End of utterance configuration (optional)
+            interruption_config: Interruption configuration (optional)
         """
         self.stt = stt
         self.llm = llm
@@ -79,7 +94,8 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         self.conversation_flow = None
         self.avatar = avatar
         self.vision = False
-        self.cascading_config = cascading_config or CascadingConfig()
+        self.eou_config = eou_config or EOUConfig()
+        self.interruption_config = interruption_config or InterruptionConfig()
 
         if self.stt:
             self.stt.on(
@@ -169,8 +185,11 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         self.conversation_flow.denoise = self.denoise
         self.conversation_flow.avatar = self.avatar
         self.conversation_flow.user_speech_callback = self.on_user_speech_started
-        if hasattr(self.conversation_flow, "apply_cascading_config"):
-            self.conversation_flow.apply_cascading_config(self.cascading_config)
+        if hasattr(self.conversation_flow, "apply_flow_config"):
+            self.conversation_flow.apply_flow_config(
+                eou_config=self.eou_config,
+                interruption_config=self.interruption_config
+            )
         if self.conversation_flow.stt:
             self.conversation_flow.stt.on_stt_transcript(
                 self.conversation_flow.on_stt_transcript

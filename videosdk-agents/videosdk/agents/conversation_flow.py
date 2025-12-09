@@ -26,6 +26,7 @@ import av
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .knowledge_base.base import KnowledgeBase
+    from .cascading_pipeline import EOUConfig, InterruptionConfig
     
 logger = logging.getLogger(__name__)
 
@@ -89,17 +90,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self._smart_paused_speech = False
         self._is_user_speaking_now = False
 
-    def apply_cascading_config(self, config: "CascadingConfig") -> None:
-        """Override default timing/interaction parameters using pipeline config."""
-        self.eou_logic = config.eou_logic
-        self.min_speech_wait_timeout = config.min_speech_wait_timeout
-        self.max_speech_wait_timeout = config.max_speech_wait_timeout
-        self.min_interruption_duration = config.min_interruption_duration
-        self.min_interruption_words = config.min_interruption_words
-        self.smart_pause_timeout = config.smart_pause_timeout
-        self.resume_smart_pause = config.resume_smart_pause
-
-        
         # Preemptive generation state
         self._preemptive_transcript: str | None = None
         self._preemptive_lock = asyncio.Lock()
@@ -107,7 +97,18 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self._preemptive_generation_task: asyncio.Task | None = None
         self._preemptive_authorized = asyncio.Event()  # Authorization gate
         self._preemptive_cancelled = False
-        
+
+    def apply_flow_config(self, eou_config: "EOUConfig", interruption_config: "InterruptionConfig") -> None:
+        """Override default timing/interaction parameters using pipeline config."""
+        self.eou_logic = eou_config.eou_logic
+        self.min_speech_wait_timeout = eou_config.min_max_speech_wait_timeout[0]
+        self.max_speech_wait_timeout = eou_config.min_max_speech_wait_timeout[1]
+        self.min_interruption_duration = interruption_config.min_interruption_duration
+        self.min_interruption_words = interruption_config.min_interruption_words
+        self.smart_pause_timeout = interruption_config.smart_pause_timeout
+        self.resume_smart_pause = interruption_config.resume_smart_pause
+
+
     def _update_preemptive_generation_flag(self) -> None:
         """Update the preemptive generation flag based on current STT instance"""
         self._enable_preemptive_generation = getattr(self.stt, 'enable_preemptive_generation', False) if self.stt else False
