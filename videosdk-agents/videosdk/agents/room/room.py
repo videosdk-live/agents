@@ -49,6 +49,7 @@ class VideoSDKHandler:
         auth_token: str | None = None,
         name: str,
         agent_participant_id: str,
+        agent_id: str,
         pipeline: Pipeline,
         loop: AbstractEventLoop,
         vision: bool = False,
@@ -93,6 +94,7 @@ class VideoSDKHandler:
         self.meeting_id = meeting_id
         self.auth_token = auth_token
         self.name = name
+        self.agent_id = agent_id
         self.agent_participant_id = agent_participant_id
         self.pipeline = pipeline
         self.loop = loop
@@ -192,9 +194,14 @@ class VideoSDKHandler:
             "sdk": "agents",
             "sdk_version": "0.0.48"
         }
-
+        self.videosdk_meeting_meta_data= {
+            "agent_id": self.agent_id,
+            "agent_name": self.name,
+            "is_videosdk_agent": True
+        }
+        
         self.meeting = VideoSDK.init_meeting(
-            **self.meeting_config, sdk_metadata=self.sdk_metadata)
+            **self.meeting_config, sdk_metadata=self.sdk_metadata, meta_data=self.videosdk_meeting_meta_data)
         self.meeting.add_event_listener(
             MeetingHandler(
                 on_meeting_joined=self.on_meeting_joined,
