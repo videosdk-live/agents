@@ -86,7 +86,6 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
 
             self.conversation_flow.on("voicemail_result", self._handle_voicemail_result)
         elif hasattr(self.pipeline, "set_voice_mail_detector") and self.voice_mail_detector:
-            logger.info("Wiring VoiceMailDetector directly to RealTimePipeline")
             self.pipeline.set_voice_mail_detector(self.voice_mail_detector)
             
             if hasattr(self.pipeline, "on"):
@@ -130,7 +129,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
 
     async def _safe_execute_vmd_callback(self) -> None:
         try:
-            logger.info("I was called")
+
             if self.voice_mail_detector.callback:
                 await self.voice_mail_detector.callback()
         except Exception as e:

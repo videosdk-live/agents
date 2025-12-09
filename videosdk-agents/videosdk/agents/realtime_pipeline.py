@@ -198,7 +198,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         """
         Handle realtime model transcription event
         """
-        logger.info(f"on_realtime_model_transcription was called, data is {data}")
+        
         try:
             self.emit("realtime_model_transcription", data)
             if self.voice_mail_detector and not self.voice_mail_detection_done:
@@ -209,7 +209,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
                     self._vmd_buffer += f" {text}"
                     
                     if not self._vmd_check_task:
-                        logger.info(f"[RealTime] Starting Voice Mail Detection Timer (Triggered by: '{text}')")
+                        
                         self._vmd_check_task = asyncio.create_task(self._run_vmd_check())
         except Exception:
             logger.error(f"Realtime model transcription: {data}")

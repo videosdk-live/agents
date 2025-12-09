@@ -215,12 +215,11 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             self.voice_mail_detection_done = True
             
             if is_voicemail:
-                logger.info("Voicemail Detected (True). Interrupting flow and emitting event.")
+
                 # Immediately stop speaking if we were greeting
                 await self._interrupt_tts()
                 await self._cancel_llm()
-            else:
-                logger.info("Voicemail Check Negative (False).")
+
 
             # Emit result to AgentSession
             self.emit("voicemail_result", {"is_voicemail": is_voicemail})
