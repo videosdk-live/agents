@@ -15,9 +15,8 @@ from .denoise import Denoise
 import logging
 import asyncio
 import av
-from .background_audio import BackgroundAudioHandler
 from .utterance_handle import UtteranceHandle
-
+    
 logger = logging.getLogger(__name__)
 
 class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):

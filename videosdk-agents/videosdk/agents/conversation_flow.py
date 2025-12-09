@@ -24,7 +24,10 @@ import uuid
 from .utterance_handle import UtteranceHandle
 import logging
 import av
-
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from .knowledge_base.base import KnowledgeBase
+    
 logger = logging.getLogger(__name__)
 
 
@@ -240,10 +243,16 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             self._preemptive_authorized.clear()  # Not authorized yet
             self._preemptive_cancelled = False
             
+            user_text = preflight_text.strip()
+            if self.agent.knowledge_base:
+                kb_context = await self.agent.knowledge_base.process_query(user_text)
+                if kb_context:
+                    user_text = f"{kb_context}\n\nUser: {user_text}"
+            
             # Add preflight transcript to temporary context
             self.agent.chat_context.add_message(
                 role=ChatRole.USER,
-                content=self._preemptive_transcript
+                content=user_text
             )
             
             if self.agent and self.agent.session:
@@ -258,7 +267,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             
             self._preemptive_generation_task = asyncio.create_task(
                 self._generate_and_synthesize_response(
-                    self._preemptive_transcript,
+                    user_text,
                     handle,
                     wait_for_authorization=True
                 )
@@ -355,9 +364,15 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         elif not self.vad:
             cascading_metrics_collector.on_user_speech_end()
 
+        final_user_text = user_text
+        if self.agent.knowledge_base:
+            kb_context = await self.agent.knowledge_base.process_query(user_text)
+            if kb_context:
+                final_user_text = f"{kb_context}\n\nUser: {user_text}"
+
         self.agent.chat_context.add_message(
             role=ChatRole.USER,
-            content=user_text
+            content=final_user_text
         )
 
         if self.agent and self.agent.session:
@@ -370,10 +385,10 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             handle = UtteranceHandle(utterance_id="utt_fallback")
             handle._mark_done()
 
-        await self.on_turn_start(user_text)
+        await self.on_turn_start(final_user_text)
 
         # Generate response
-        asyncio.create_task(self._generate_and_synthesize_response(user_text, handle))
+        asyncio.create_task(self._generate_and_synthesize_response(final_user_text, handle))
 
 
         await self.on_turn_end()
@@ -396,7 +411,13 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 self.on_stt_transcript = lambda x: None
         
         try:
-            content_parts = [instructions]
+            final_instructions = instructions
+            if self.agent.knowledge_base:
+                kb_context = await self.agent.knowledge_base.process_query(instructions)
+                if kb_context:
+                    final_instructions = f"{kb_context}\n\nUser: {instructions}"
+                
+            content_parts = [final_instructions]
             if frames:
                 for frame in frames:
                     image_part = ImageContent(image=frame, inference_detail="auto")
@@ -404,11 +425,11 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             
             self.agent.chat_context.add_message(
                 role=ChatRole.USER,
-                content=content_parts if len(content_parts) > 1 else instructions
+                content=content_parts if len(content_parts) > 1 else final_instructions
             )
 
-            await self.on_turn_start(instructions)
-            await self._generate_and_synthesize_response(instructions, handle)
+            await self.on_turn_start(final_instructions)
+            await self._generate_and_synthesize_response(final_instructions, handle)
             await self.on_turn_end()
             
             if wait_for_playback:
