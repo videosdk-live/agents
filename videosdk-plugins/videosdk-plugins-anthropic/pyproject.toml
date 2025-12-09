@@ -20,7 +20,7 @@ classifiers = [
     "Topic :: Multimedia :: Video",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-dependencies = ["videosdk-agents>=0.0.48", "anthropic>=0.55.0"]
+dependencies = ["videosdk-agents>=0.0.49", "anthropic>=0.55.0"]
 
 [tool.hatch.version]
 path = "videosdk/plugins/anthropic/version.py"
