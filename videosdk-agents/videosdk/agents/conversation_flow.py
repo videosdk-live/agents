@@ -24,6 +24,7 @@ from .utterance_handle import UtteranceHandle
 import logging
 import av
 from typing import TYPE_CHECKING
+from .voice_mail_detector import VoiceMailDetector
 if TYPE_CHECKING:
     from .knowledge_base.base import KnowledgeBase
     
@@ -82,6 +83,13 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self._preemptive_authorized = asyncio.Event()  # Authorization gate
         self._preemptive_cancelled = False
         
+        # Voice Mail detection state
+        self.voice_mail_detector: VoiceMailDetector | None = None
+        self.voice_mail_detection_done = False
+        self._vmd_buffer = ""
+        self._vmd_check_task: asyncio.Task | None = None
+
+
     def _update_preemptive_generation_flag(self) -> None:
         """Update the preemptive generation flag based on current STT instance"""
         self._enable_preemptive_generation = getattr(self.stt, 'enable_preemptive_generation', False) if self.stt else False
@@ -93,6 +101,12 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         if self.agent and self.agent.instructions:
             cascading_metrics_collector.set_system_instructions(
                 self.agent.instructions)
+
+    def set_voice_mail_detector(self, detector: VoiceMailDetector | None) -> None:
+        """Configures voicemail detection. Called by AgentSession."""
+        self.voice_mail_detector = detector
+        self.voice_mail_detection_done = False
+        self._vmd_buffer = ""
 
     def on_transcription(self, callback: Callable[[str], None]) -> None:
         """
@@ -143,11 +157,17 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
     async def on_stt_transcript(self, stt_response: STTResponse) -> None:
         """Handle STT transcript events with enhanced EOU logic"""
-            
         if self._waiting_for_more_speech:
             await self._handle_continued_speech()
-            
+    
         text = stt_response.data.text if stt_response.data else ""
+
+        if self.voice_mail_detector and not self.voice_mail_detection_done and text.strip():
+            self._vmd_buffer += f" {text}"
+            if not self._vmd_check_task:
+                logger.info("Starting Voice Mail Detection Timer")
+                self._vmd_check_task = asyncio.create_task(self._run_vmd_check())
+
         if self.agent.session:
             state = self.agent.session.agent_state
             if state == AgentState.SPEAKING:
@@ -173,10 +193,34 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 await self._process_transcript_with_eou(user_text)
             
         elif stt_response.event_type == SpeechEventType.INTERIM:
-            # Check if this is a TurnResumed event
             if stt_response.metadata and stt_response.metadata.get("turn_resumed"):
                 await self._handle_turn_resumed(text)
     
+    async def _run_vmd_check(self) -> None:
+        """Internal task to wait and check LLM, then emit result."""
+        try:
+            if not self.voice_mail_detector:
+                return
+            await asyncio.sleep(self.voice_mail_detector.duration)
+            
+            is_voicemail = await self.voice_mail_detector.detect(self._vmd_buffer.strip())
+            
+            self.voice_mail_detection_done = True
+            
+            if is_voicemail:
+                await self._interrupt_tts()
+                await self._cancel_llm()
+
+            self.emit("voicemail_result", {"is_voicemail": is_voicemail})
+                
+        except Exception as e:
+            logger.error(f"Error in VMD check: {e}")
+            self.voice_mail_detection_done = True
+            self.emit("voicemail_result", {"is_voicemail": False})
+        finally:
+            self._vmd_check_task = None
+            self._vmd_buffer = ""
+
     async def _handle_preflight_transcript(self, preflight_text: str) -> None:
         """
         Handle preflight transcript - start generation but wait for authorization.
@@ -991,6 +1035,10 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             except asyncio.CancelledError:
                 pass
             self._current_llm_task = None
+            
+        if self._vmd_check_task and not self._vmd_check_task.done():
+            self._vmd_check_task.cancel()
+        self.voice_mail_detector = None
         
         await self._cancel_preemptive_generation()
         
