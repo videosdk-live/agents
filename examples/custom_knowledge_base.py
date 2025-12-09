@@ -96,7 +96,7 @@ async def entrypoint(ctx: JobContext):
 
 def make_context() -> JobContext:
     room_options = RoomOptions(
-        room_id="<room_id>", name="Sandbox Agent", playground=True
+        room_id="xjld-g28c-rda8", name="Sandbox Agent", playground=True
     )
 
     return JobContext(room_options=room_options)
