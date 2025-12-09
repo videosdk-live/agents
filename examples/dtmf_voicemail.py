@@ -1,4 +1,4 @@
-# This test script is used to test cascading pipeline.
+# This test script is used to test DTMF Event and Voicemailhandling.
 import asyncio
 import logging
 from token import OP
@@ -16,7 +16,7 @@ pre_download_model()
 class VoiceAgent(Agent):
     def __init__(self):
         super().__init__(
-            instructions="You are a helpful voice assistant that can answer questions and help with tasks and help with horoscopes and weather."
+            instructions="You are a helpful voice assistant that can answer questions."
         )
         
     async def on_enter(self) -> None:
