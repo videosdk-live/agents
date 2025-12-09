@@ -118,9 +118,6 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         is_vm = data.get("is_voicemail", False)
         self._is_voicemail_detected = is_vm
         
-        # Re-emit for external listeners on the Session
-        self.emit("voicemail_result", data)
-
         if is_vm:
             logger.info("AgentSession: Voicemail confirmed. Executing callback.")
             if self.voice_mail_detector.callback:
