@@ -8,7 +8,6 @@ from .llm.chat_context import ChatRole
 from .conversation_flow import ConversationFlow
 from .pipeline import Pipeline
 from .metrics import cascading_metrics_collector, realtime_metrics_collector
-from .dtmf_handler import DTMFHandler
 from .realtime_pipeline import RealTimePipeline
 from .utils import get_tool_info, UserState, AgentState
 from .utterance_handle import UtteranceHandle 
@@ -17,6 +16,7 @@ from .job import get_current_job_context
 from .event_emitter import EventEmitter
 from .event_bus import global_event_emitter
 from .background_audio import BackgroundAudioHandler,BackgroundAudioHandlerConfig
+from .dtmf_handler import DTMFHandler
 from .voice_mail_detector import VoiceMailDetector
 import logging
 import av
@@ -121,7 +121,6 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         if is_vm:
             logger.info("AgentSession: Voicemail confirmed. Executing callback.")
             if self.voice_mail_detector.callback:
-                # Schedule the callback on the loop
                 asyncio.create_task(self._safe_execute_vmd_callback())
 
     async def _safe_execute_vmd_callback(self) -> None:

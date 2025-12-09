@@ -11,7 +11,6 @@ from .llm.llm import LLM
 from .llm.chat_context import ChatRole, ImageContent
 from .utils import is_function_tool, get_tool_info, graceful_cancel
 from .tts.tts import TTS
-from .voice_mail_detector import VoiceMailDetector
 from .stt.stt import SpeechEventType
 from .agent import Agent
 from .event_bus import global_event_emitter
@@ -25,6 +24,7 @@ from .utterance_handle import UtteranceHandle
 import logging
 import av
 from typing import TYPE_CHECKING
+from .voice_mail_detector import VoiceMailDetector
 if TYPE_CHECKING:
     from .knowledge_base.base import KnowledgeBase
     
@@ -157,13 +157,10 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
     async def on_stt_transcript(self, stt_response: STTResponse) -> None:
         """Handle STT transcript events with enhanced EOU logic"""
-        
-
         if self._waiting_for_more_speech:
             await self._handle_continued_speech()
     
         text = stt_response.data.text if stt_response.data else ""
-
 
         if self.voice_mail_detector and not self.voice_mail_detection_done and text.strip():
             self._vmd_buffer += f" {text}"
@@ -196,7 +193,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 await self._process_transcript_with_eou(user_text)
             
         elif stt_response.event_type == SpeechEventType.INTERIM:
-            # Check if this is a TurnResumed event
             if stt_response.metadata and stt_response.metadata.get("turn_resumed"):
                 await self._handle_turn_resumed(text)
     
@@ -205,29 +201,21 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         try:
             if not self.voice_mail_detector:
                 return
-
-            # Wait for buffer duration
             await asyncio.sleep(self.voice_mail_detector.duration)
             
-            # Check LLM
             is_voicemail = await self.voice_mail_detector.detect(self._vmd_buffer.strip())
             
             self.voice_mail_detection_done = True
             
             if is_voicemail:
-
-                # Immediately stop speaking if we were greeting
                 await self._interrupt_tts()
                 await self._cancel_llm()
 
-
-            # Emit result to AgentSession
             self.emit("voicemail_result", {"is_voicemail": is_voicemail})
                 
         except Exception as e:
             logger.error(f"Error in VMD check: {e}")
             self.voice_mail_detection_done = True
-            # Fail safe: assume human
             self.emit("voicemail_result", {"is_voicemail": False})
         finally:
             self._vmd_check_task = None
