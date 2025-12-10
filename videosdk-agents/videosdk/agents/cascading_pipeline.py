@@ -39,6 +39,7 @@ class EOUConfig:
 
 @dataclass
 class InterruptionConfig:
+    mode: Literal["VAD_ONLY", "STT_ONLY", "HYBRID"] = "HYBRID"
     interrupt_min_duration: float = 0.5
     interrupt_min_words: int = 2
     false_interrupt_pause_duration: float = 2.0

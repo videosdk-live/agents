@@ -79,6 +79,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self.eou_logic = 'sliding'
         self.eou_certainty_threshold = 0.85 
 
+        self.interrupt_mode: Literal["VAD_ONLY", "STT_ONLY", "HYBRID"] = "HYBRID"
         self.interrupt_min_duration = 0.5
         self.interrupt_min_words = 1
         self._interrupt_start_time = 0.0
@@ -110,6 +111,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self.eou_logic = eou_config.eou_logic
         self.min_speech_wait_timeout = eou_config.min_max_speech_wait_timeout[0]
         self.max_speech_wait_timeout = eou_config.min_max_speech_wait_timeout[1]
+        self.interrupt_mode = interruption_config.mode
         self.interrupt_min_duration = interruption_config.interrupt_min_duration
         self.interrupt_min_words = interruption_config.interrupt_min_words
         self.false_interrupt_pause_duration = interruption_config.false_interrupt_pause_duration
@@ -192,6 +194,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
     async def _monitor_interruption_duration(self) -> None:
             """A background task to check if user speech duration exceeds the interruption threshold."""
+            if self.interrupt_mode not in ("VAD_ONLY", "HYBRID"):
+                return
             try:
                 while True:
                     logger.info(f"VAD EVENT: Monitoring interruption duration !!")
@@ -957,11 +961,12 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             await self._interrupt_tts()
             return
         
-        if word_count >= self.interrupt_min_words:
-            if self.agent.session and self.agent.session.current_utterance and self.agent.session.current_utterance.is_interruptible:
-                await self._trigger_interruption()
-            else:
-                logger.info("Interruption not allowed for the current utterance.")
+        if self.interrupt_mode in ("STT_ONLY", "HYBRID"):
+            if word_count >= self.interrupt_min_words:
+                if self.agent.session and self.agent.session.current_utterance and self.agent.session.current_utterance.is_interruptible:
+                    await self._trigger_interruption()
+                else:
+                    logger.info("Interruption not allowed for the current utterance.")
             
     async def _trigger_interruption(self) -> None:
             """Trigger interruption once, respecting the utterance's interruptible flag."""
