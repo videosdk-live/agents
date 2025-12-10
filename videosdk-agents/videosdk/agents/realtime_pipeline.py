@@ -15,6 +15,7 @@ from .denoise import Denoise
 import logging
 from .utils import UserState, AgentState
 from .utterance_handle import UtteranceHandle
+from .voice_mail_detector import VoiceMailDetector
 
 logger = logging.getLogger(__name__)
 
@@ -46,10 +47,21 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         self.vision = False
         self._vision_lock = asyncio.Lock()
         self.denoise = denoise
+        self.voice_mail_detector: VoiceMailDetector | None = None
+        self.voice_mail_detection_done = False
+        self._vmd_buffer = ""
+        self._vmd_check_task: asyncio.Task | None = None
+
         super().__init__()
         self.model.on("error", self.on_model_error)
         self.model.on("realtime_model_transcription", self.on_realtime_model_transcription)
         self.model.on("agent_speech_ended", self._on_agent_speech_ended)
+
+    def set_voice_mail_detector(self, detector: VoiceMailDetector | None) -> None:
+        """Called by AgentSession to configure VMD"""
+        self.voice_mail_detector = detector
+        self.voice_mail_detection_done = False
+        self._vmd_buffer = ""
     
     def set_agent(self, agent: Agent) -> None:
         self.agent = agent
@@ -170,6 +182,10 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         if self.avatar and hasattr(self.avatar, 'interrupt'):
             asyncio.create_task(self.avatar.interrupt())
 
+        if self._vmd_check_task and not self._vmd_check_task.done():
+            self._vmd_check_task.cancel()
+        self._vmd_buffer = ""
+
     async def leave(self) -> None:
         """
         Leave the realtime pipeline.
@@ -189,10 +205,48 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         """
         Handle realtime model transcription event
         """
+        
         try:
             self.emit("realtime_model_transcription", data)
+            if self.voice_mail_detector and not self.voice_mail_detection_done:
+                text = data.get("text", "")
+                role = data.get("role") 
+                
+                if role == "user" and text and isinstance(text, str) and text.strip():
+                    self._vmd_buffer += f" {text}"
+                    
+                    if not self._vmd_check_task:
+                        
+                        self._vmd_check_task = asyncio.create_task(self._run_vmd_check())
         except Exception:
             logger.error(f"Realtime model transcription: {data}")
+    
+    async def _run_vmd_check(self) -> None:
+        """Waits, detects, emits result"""
+        try:
+            if not self.voice_mail_detector:
+                return
+
+            await asyncio.sleep(self.voice_mail_detector.duration)
+            
+            is_voicemail = await self.voice_mail_detector.detect(self._vmd_buffer.strip())
+            self.voice_mail_detection_done = True
+            
+            if is_voicemail:
+                logger.info("[RealTime] Voicemail Detected! Interrupting.")
+                self.interrupt()
+
+            self.emit("voicemail_result", {
+                "is_voicemail": is_voicemail,
+                "transcript": self._vmd_buffer.strip()
+            })
+            
+        except Exception as e:
+            logger.error(f"Error in VMD check: {e}")
+            self.emit("voicemail_result", {"is_voicemail": False})
+        finally:
+            self._vmd_check_task = None
+            self._vmd_buffer = ""
     
 
     async def cleanup(self):
@@ -245,6 +299,11 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         self.denoise = None
         self._current_utterance_handle = None
         self.model.current_utterance = None
+        if self._vmd_check_task and not self._vmd_check_task.done():
+            self._vmd_check_task.cancel()
+        self.voice_mail_detector = None
+        self._vmd_buffer = ""
+
         
         logger.info("Realtime pipeline cleaned up")
         await super().cleanup()
