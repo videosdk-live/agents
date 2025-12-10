@@ -82,7 +82,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self.interrupt_mode: Literal["VAD_ONLY", "STT_ONLY", "HYBRID"] = "HYBRID"
         self.interrupt_min_duration = 0.5
         self.interrupt_min_words = 1
-        self._interrupt_start_time = 0.0
 
         self.false_interrupt_pause_duration = 2.0
         self.resume_on_false_interrupt = False
@@ -164,57 +163,63 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             self.emit("error", f"Audio processing failed: {str(e)}")
 
     async def on_vad_event(self, vad_response: VADResponse) -> None:
-            """Handle VAD events"""
-            print(f" ***** CHEKING FOR AGENT STATE. WHILE RECEVING THE START OF SPEECH EVENT FROM VAD: {self.agent.session.agent_state == AgentState.SPEAKING} ")
-
-            if self.agent and self.agent.session and self.agent.session.agent_state == AgentState.SPEAKING:
-                logger.info(f" ***** CHECKING FOR INTERRUPTION LOGIC. VAD EVENT: Agent is speaking, checking for interruption !!")
-                if vad_response.event_type == VADEventType.START_OF_SPEECH:
-                    if not hasattr(self, '_interruption_check_task') or self._interruption_check_task.done():
-                        logger.info(f"VAD EVENT: User started speaking, recording start time !!")
-                        self._interrupt_start_time = time.time()
-                        self._interruption_check_task = asyncio.create_task(self._monitor_interruption_duration())
-                        logger.info(f"VAD EVENT: Created interruption check task !!")
-                elif vad_response.event_type == VADEventType.END_OF_SPEECH:
-                    if hasattr(self, '_interruption_check_task') and not self._interruption_check_task.done():
-                        logger.info(f"VAD EVENT: User stopped speaking, cancelling interruption check task !!")
-                        self._interruption_check_task.cancel()
-                    self._interrupt_start_time = 0.0
-
+        """Handle VAD events with interruption logic"""
+        
+        if (self.agent and self.agent.session and self.agent.session.agent_state == AgentState.SPEAKING):
+            
             if vad_response.event_type == VADEventType.START_OF_SPEECH:
-                self._is_user_speaking_now = True
-                if self._waiting_for_more_speech:
-                    await self._handle_continued_speech()
-                await self.on_speech_started()
-
+                if not hasattr(self, '_interruption_check_task') or self._interruption_check_task.done():
+                    logger.info("User started speaking during agent response, initiating interruption monitoring")
+                    self._interruption_check_task = asyncio.create_task(
+                        self._monitor_interruption_duration()
+                    )
+                return
+                
             elif vad_response.event_type == VADEventType.END_OF_SPEECH:
-                self._is_user_speaking_now = False
-                self.on_speech_stopped()
+                if hasattr(self, '_interruption_check_task') and not self._interruption_check_task.done():
+                    logger.info("User stopped speaking, cancelling interruption check")
+                    self._interruption_check_task.cancel()
+                return
+        
+        if vad_response.event_type == VADEventType.START_OF_SPEECH:
+            self._is_user_speaking_now = True
+            logger.info("User speech started")
+            
+            if self._waiting_for_more_speech:
+                logger.debug("User continued speaking, cancelling wait timer")
+                await self._handle_continued_speech()
+                
+            await self.on_speech_started()
+            
+        elif vad_response.event_type == VADEventType.END_OF_SPEECH:
+            self._is_user_speaking_now = False
+            logger.info("User speech ended")
+            self.on_speech_stopped()
 
 
     async def _monitor_interruption_duration(self) -> None:
-            """A background task to check if user speech duration exceeds the interruption threshold."""
-            if self.interrupt_mode not in ("VAD_ONLY", "HYBRID"):
-                return
-            try:
-                while True:
-                    logger.info(f"VAD EVENT: Monitoring interruption duration !!")
-                    duration = time.time() - self._interrupt_start_time
-                    if duration >= self.interrupt_min_duration:
-                        logger.info(f"VAD EVENT: User's speech duration exceeded the threshold, triggering interruption !!")
-                        if self.agent.session and self.agent.session.current_utterance and self.agent.session.current_utterance.is_interruptible:
-                            await self._trigger_interruption()
-                        else:
-                            logger.info("Interruption not allowed for the current utterance.")
-                        logger.info(f"VAD EVENT: Interruption triggered... calling _trigger_interruption method !!")
-                        break 
-                    await asyncio.sleep(0.05)
-            except asyncio.CancelledError:
-                logger.info(f"VAD EVENT: Interruption check task cancelled !!")
-                pass
-            finally:
-                self._interrupt_start_time = 0.0
-                logger.info(f"VAD EVENT: Interruption start time reset !!")
+        """
+        Monitor user speech duration during agent response.
+        Triggers interruption if speech exceeds the configured threshold.
+        """
+        logger.debug(f"Interruption monitoring started (mode={self.interrupt_mode}, threshold={self.interrupt_min_duration}s)")
+        
+        if self.interrupt_mode not in ("VAD_ONLY", "HYBRID"):
+            logger.debug(f"Interruption mode is {self.interrupt_mode}, VAD monitoring not active")
+            return
+        
+        try:
+            await asyncio.sleep(self.interrupt_min_duration)
+            
+            if (self.agent.session and self.agent.session.current_utterance and self.agent.session.current_utterance.is_interruptible):
+                logger.info(f"User speech duration exceeded {self.interrupt_min_duration}s threshold, triggering interruption")
+                await self._trigger_interruption()
+            else:
+                logger.debug("Interruption threshold reached but utterance is not interruptible")
+                
+        except asyncio.CancelledError:
+            logger.debug("Interruption monitoring cancelled (user stopped speaking)")
+
 
     async def _handle_continued_speech(self) -> None:
         """Handle when user continues speaking while we're waiting"""
@@ -952,7 +957,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         word_count = len(text.strip().split())
         logger.info(f"handle_stt_event: Word count: {word_count}")
         
-        if self._is_in_false_interrupt_pause:
+        if self._is_in_false_interrupt_pause and word_count >= self.interrupt_min_words:
             logger.info(f"[FALSE_INTERRUPT] STT transcript received while in paused state: '{text}' ({word_count} words). Confirming real interruption.")
             self._cancel_false_interrupt_timer()
             self._is_in_false_interrupt_pause = False
