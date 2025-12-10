@@ -83,12 +83,12 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self.interrupt_min_words = 1
         self._interrupt_start_time = 0.0
 
-        self.smart_pause_timeout = 2.0
-        self.resume_smart_pause = True
-        self._is_in_smart_pause = False
-        self._smart_pause_timer: asyncio.TimerHandle | None = None
+        self.false_interrupt_pause_duration = 2.0
+        self.resume_on_false_interrupt = False
+        self._is_in_false_interrupt_pause = False
+        self._false_interrupt_timer: asyncio.TimerHandle | None = None
 
-        self._smart_paused_speech = False
+        self._false_interrupt_paused_speech = False
         self._is_user_speaking_now = False
 
         # Preemptive generation state
@@ -112,8 +112,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self.max_speech_wait_timeout = eou_config.min_max_speech_wait_timeout[1]
         self.interrupt_min_duration = interruption_config.interrupt_min_duration
         self.interrupt_min_words = interruption_config.interrupt_min_words
-        self.smart_pause_timeout = interruption_config.smart_pause_timeout
-        self.resume_smart_pause = interruption_config.resume_smart_pause
+        self.false_interrupt_pause_duration = interruption_config.false_interrupt_pause_duration
+        self.resume_on_false_interrupt = interruption_config.resume_on_false_interrupt
         
     def _update_preemptive_generation_flag(self) -> None:
         """Update the preemptive generation flag based on current STT instance"""
@@ -948,12 +948,12 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         word_count = len(text.strip().split())
         logger.info(f"handle_stt_event: Word count: {word_count}")
         
-        if self._is_in_smart_pause:
-            logger.info(f"[SMART_PAUSE] STT transcript received while in paused state: '{text}' ({word_count} words). Confirming real interruption.")
-            self._cancel_smart_pause_timer()
-            self._is_in_smart_pause = False
-            self._smart_paused_speech = False
-            logger.info("[SMART_PAUSE] Clearing audio buffers and finalizing interruption.")
+        if self._is_in_false_interrupt_pause:
+            logger.info(f"[FALSE_INTERRUPT] STT transcript received while in paused state: '{text}' ({word_count} words). Confirming real interruption.")
+            self._cancel_false_interrupt_timer()
+            self._is_in_false_interrupt_pause = False
+            self._false_interrupt_paused_speech = False
+            logger.info("[FALSE_INTERRUPT] Clearing audio buffers and finalizing interruption.")
             await self._interrupt_tts()
             return
         
@@ -977,66 +977,66 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 
             self._is_interrupted = True 
 
-            can_resume = self.resume_smart_pause and self.tts and self.tts.can_pause
+            can_resume = self.resume_on_false_interrupt and self.tts and self.tts.can_pause
             
             if can_resume:
-                logger.info(f"[SMART_PAUSE] Pausing TTS for potential resume. (resume_smart_pause={self.resume_smart_pause}, can_pause={self.tts.can_pause if self.tts else False})")
-                self._smart_paused_speech = True
-                self._is_in_smart_pause = True
+                logger.info(f"[FALSE_INTERRUPT] Pausing TTS for potential resume. (resume_on_false_interrupt={self.resume_on_false_interrupt}, can_pause={self.tts.can_pause if self.tts else False})")
+                self._false_interrupt_paused_speech = True
+                self._is_in_false_interrupt_pause = True
                 await self.tts.pause()
-                self._start_smart_pause_timer()
+                self._start_false_interrupt_timer()
             else:
-                logger.info(f"[SMART_PAUSE] TTS not pausable or resume is disabled, performing full interruption. (resume_smart_pause={self.resume_smart_pause}, tts={self.tts is not None}, can_pause={self.tts.can_pause if self.tts else False})")
+                logger.info(f"[FALSE_INTERRUPT] TTS not pausable or resume is disabled, performing full interruption. (resume_on_false_interrupt={self.resume_on_false_interrupt}, tts={self.tts is not None}, can_pause={self.tts.can_pause if self.tts else False})")
                 await self._interrupt_tts()
 
-    def _start_smart_pause_timer(self):
-        """Starts a timer to detect if an interruption was just a brief smart pause."""
-        if self._smart_pause_timer:
-            logger.info("[SMART_PAUSE] Cancelling existing timer before starting a new one.")
-            self._smart_pause_timer.cancel()
+    def _start_false_interrupt_timer(self):
+        """Starts a timer to detect if an interruption was just a brief false interrupt."""
+        if self._false_interrupt_timer:
+            logger.info("[FALSE_INTERRUPT] Cancelling existing timer before starting a new one.")
+            self._false_interrupt_timer.cancel()
             
-        if self.smart_pause_timeout is None:
-            logger.info("[SMART_PAUSE] Timeout is None, skipping timer.")
+        if self.false_interrupt_pause_duration is None:
+            logger.info("[FALSE_INTERRUPT] Timeout is None, skipping timer.")
             return
 
-        logger.info(f"[SMART_PAUSE] Starting timer for {self.smart_pause_timeout}s. If no STT transcript is received within this time, speech will resume.")
+        logger.info(f"[FALSE_INTERRUPT] Starting timer for {self.false_interrupt_pause_duration}s. If no STT transcript is received within this time, speech will resume.")
         loop = asyncio.get_event_loop()
-        self._smart_pause_timer = loop.call_later(
-            self.smart_pause_timeout,
-            lambda: asyncio.create_task(self._on_smart_pause_timeout())
+        self._false_interrupt_timer = loop.call_later(
+            self.false_interrupt_pause_duration,
+            lambda: asyncio.create_task(self._on_false_interrupt_timeout())
         )
 
-    def _cancel_smart_pause_timer(self):
-        """Cancels the smart-pause timer if it's running."""
-        if self._smart_pause_timer:
-            logger.info("[SMART_PAUSE] Cancelling smart-pause timer - real interruption confirmed.")
-            self._smart_pause_timer.cancel()
-            self._smart_pause_timer = None
+    def _cancel_false_interrupt_timer(self):
+        """Cancels the false-interrupt timer if it's running."""
+        if self._false_interrupt_timer:
+            logger.info("[FALSE_INTERRUPT] Cancelling false-interrupt timer - real interruption confirmed.")
+            self._false_interrupt_timer.cancel()
+            self._false_interrupt_timer = None
 
-    async def _on_smart_pause_timeout(self):
+    async def _on_false_interrupt_timeout(self):
         """Called when the user remains silent after an interruption."""
-        logger.info(f"[SMART_PAUSE] Timeout reached after {self.smart_pause_timeout}s. User did not follow up with speech.")
-        self._smart_pause_timer = None
+        logger.info(f"[FALSE_INTERRUPT] Timeout reached after {self.false_interrupt_pause_duration}s. User did not follow up with speech.")
+        self._false_interrupt_timer = None
 
         if self._is_user_speaking_now:
-            logger.info("[SMART_PAUSE] User is still speaking at timeout. Confirming as a real interruption.")
-            self._is_in_smart_pause = False
-            self._smart_paused_speech = False
+            logger.info("[FALSE_INTERRUPT] User is still speaking at timeout. Confirming as a real interruption.")
+            self._is_in_false_interrupt_pause = False
+            self._false_interrupt_paused_speech = False
             await self._interrupt_tts()
             return
 
-        if self._is_in_smart_pause and self.tts and self.tts.can_pause:
-            logger.info("[SMART_PAUSE] Resuming agent speech from paused position - smart interruption detected.")
+        if self._is_in_false_interrupt_pause and self.tts and self.tts.can_pause:
+            logger.info("[FALSE_INTERRUPT] Resuming agent speech from paused position - false interruption detected.")
             self._is_interrupted = False
-            self._is_in_smart_pause = False
-            self._smart_paused_speech = False
+            self._is_in_false_interrupt_pause = False
+            self._false_interrupt_paused_speech = False
             await self.tts.resume()
         else:
-            if self._is_interrupted or self._smart_paused_speech:
-                logger.info(f"[SMART_PAUSE] Cannot resume (is_in_smart_pause={self._is_in_smart_pause}, can_pause={self.tts.can_pause if self.tts else False}). Finalizing interruption.")
+            if self._is_interrupted or self._false_interrupt_paused_speech:
+                logger.info(f"[FALSE_INTERRUPT] Cannot resume (is_in_false_interrupt_pause={self._is_in_false_interrupt_pause}, can_pause={self.tts.can_pause if self.tts else False}). Finalizing interruption.")
                 await self._interrupt_tts()
             else:
-                logger.info("[SMART_PAUSE] Timeout reached but no paused state found. No action needed.")        
+                logger.info("[FALSE_INTERRUPT] Timeout reached but no paused state found. No action needed.")        
     
     async def on_speech_started(self) -> None:       
             cascading_metrics_collector.on_user_speech_start()
@@ -1054,13 +1054,13 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                     self.agent.session._emit_user_state(UserState.SPEAKING)
                 return
 
-            self._cancel_smart_pause_timer()
+            self._cancel_false_interrupt_timer()
             
-            can_resume = self.resume_smart_pause and self.tts and self.tts.can_pause
+            can_resume = self.resume_on_false_interrupt and self.tts and self.tts.can_pause
 
-            if self._smart_paused_speech:
+            if self._false_interrupt_paused_speech:
                 logger.info("User continued speaking, confirming interruption of paused speech.")
-                self._smart_paused_speech = False 
+                self._false_interrupt_paused_speech = False 
                 await self._interrupt_tts() 
             elif self.agent and self.agent.session and self.agent.session.agent_state == AgentState.SPEAKING:
                 if can_resume:
@@ -1074,9 +1074,9 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
     async def _interrupt_tts(self) -> None:
         self._is_interrupted = True        
-        self._cancel_smart_pause_timer()
-        self._is_in_smart_pause = False
-        self._smart_paused_speech = False
+        self._cancel_false_interrupt_timer()
+        self._is_in_false_interrupt_pause = False
+        self._false_interrupt_paused_speech = False
 
         if self.agent and self.agent.session and self.agent.session.current_utterance:
             self.agent.session.current_utterance.interrupt()

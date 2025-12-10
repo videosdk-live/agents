@@ -41,16 +41,16 @@ class EOUConfig:
 class InterruptionConfig:
     interrupt_min_duration: float = 0.5
     interrupt_min_words: int = 2
-    smart_pause_timeout: float = 2.0
-    resume_smart_pause: bool = True
+    false_interrupt_pause_duration: float = 2.0
+    resume_on_false_interrupt: bool = False
 
     def __post_init__(self):
         if self.interrupt_min_duration <= 0:
             raise ValueError("interrupt_min_duration must be greater than 0")
         if self.interrupt_min_words <= 0:
             raise ValueError("interrupt_min_words must be greater than 0")
-        if self.smart_pause_timeout <= 0:
-            raise ValueError("smart_pause_timeout must be greater than 0")
+        if self.false_interrupt_pause_duration <= 0:
+            raise ValueError("false_interrupt_pause_duration must be greater than 0")
 
 @dataclass
 class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
