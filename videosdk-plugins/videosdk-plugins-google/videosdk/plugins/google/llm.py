@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+from pydantic import BaseModel
 import base64
 import os
 import json
@@ -26,8 +26,9 @@ from videosdk.agents import (
     build_gemini_schema,
     ChatContent,
     ImageContent,
+    ConversationalGraphResponse
 )
-
+    
 
 class GoogleLLM(LLM):
     
@@ -79,6 +80,7 @@ class GoogleLLM(LLM):
         self,
         messages: ChatContext,
         tools: list[FunctionTool] | None = None,
+        conversational_graph:bool|None = None,
         **kwargs: Any
     ) -> AsyncIterator[LLMResponse]:
         """
@@ -103,6 +105,10 @@ class GoogleLLM(LLM):
                 "temperature": self.temperature,
                 **kwargs
             }
+            if conversational_graph:
+                config_params["response_mime_type"] = "application/json"
+                config_params["response_json_schema"] = ConversationalGraphResponse.model_json_schema()
+            
             if system_instruction:
                 config_params["system_instruction"] = [types.Part(text=system_instruction)]
             
@@ -161,6 +167,9 @@ class GoogleLLM(LLM):
             current_content = ""
             current_function_calls = []
 
+            # Accumulate JSON response
+            accumulated_json = ""
+            
             async for response in response_stream:
                 if self._cancelled:
                     break
@@ -191,11 +200,26 @@ class GoogleLLM(LLM):
                             metadata={"function_call": function_call}
                         )
                     elif part.text:
-                        current_content = part.text
-                        yield LLMResponse(
-                            content=current_content,
-                            role=ChatRole.ASSISTANT
-                        )
+                        accumulated_json += part.text
+            
+            # After streaming completes
+            if accumulated_json and not self._cancelled:
+                try:
+                    parsed_json = json.loads(accumulated_json.strip())
+                    response_to_user = parsed_json.get("response_to_user", accumulated_json)
+                    
+                    # Yield final response with content and full JSON in metadata
+                    yield LLMResponse(
+                        content=response_to_user,
+                        role=ChatRole.ASSISTANT,
+                        metadata=parsed_json
+                    )
+                except json.JSONDecodeError:
+                    # Fallback: treat as plain text
+                    yield LLMResponse(
+                        content=accumulated_json,
+                        role=ChatRole.ASSISTANT
+                    )
 
         except (ClientError, ServerError, APIError) as e:
             if not self._cancelled:

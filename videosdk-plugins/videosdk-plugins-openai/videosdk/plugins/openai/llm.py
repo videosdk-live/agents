@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+from pydantic import BaseModel
 import os
 from typing import Any, AsyncIterator, List, Union
 import json
@@ -18,8 +18,33 @@ from videosdk.agents import (
     FunctionTool,
     is_function_tool,
     build_openai_schema,
+    ConversationalGraphResponse
+
 )
 from videosdk.agents.llm.chat_context import ChatContent, ImageContent
+
+
+# Helper function to prepare schema for OpenAI strict mode
+def prepare_strict_schema(schema_dict):
+    if isinstance(schema_dict, dict):
+        if schema_dict.get("type") == "object":
+            schema_dict["additionalProperties"] = False
+            if "properties" in schema_dict:
+                all_props = list(schema_dict["properties"].keys())
+                schema_dict["required"] = all_props
+        
+        # Recursively process nested structures
+        for key, value in schema_dict.items():
+            if isinstance(value, dict):
+                prepare_strict_schema(value)
+            elif isinstance(value, list):
+                for item in value:
+                    if isinstance(item, dict):
+                        prepare_strict_schema(item)
+    return schema_dict
+
+
+conversational_graph_schema = prepare_strict_schema(ConversationalGraphResponse.model_json_schema())
 
 class OpenAILLM(LLM):
     
@@ -144,6 +169,7 @@ class OpenAILLM(LLM):
         self,
         messages: ChatContext,
         tools: list[FunctionTool] | None = None,
+        conversational_graph:bool | None = None,
         **kwargs: Any
     ) -> AsyncIterator[LLMResponse]:
         """
@@ -208,6 +234,17 @@ class OpenAILLM(LLM):
             "stream": True,
             "max_tokens": self.max_completion_tokens,
         }
+        
+        # Add JSON mode if conversational_graph is enabled or JSON is requested
+        if conversational_graph:
+            completion_params["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "conversational_graph_response",
+                    "strict": True,
+                    "schema": conversational_graph_schema
+                }
+            }
         if tools:
             formatted_tools = []
             for tool in tools:
@@ -227,8 +264,11 @@ class OpenAILLM(LLM):
         try:
             response_stream = await self._client.chat.completions.create(**completion_params)
             
-            current_content = ""
+            # Accumulate JSON response
+            accumulated_json = ""
             current_function_call = None
+            in_content = False
+            yielded_content_length = 0
 
             async for chunk in response_stream:
                 if self._cancelled:
@@ -265,11 +305,73 @@ class OpenAILLM(LLM):
                     current_function_call = None
                 
                 elif delta.content is not None:
-                    current_content = delta.content
-                    yield LLMResponse(
-                        content=current_content,
-                        role=ChatRole.ASSISTANT
-                    )
+                    if not conversational_graph:
+                        yield LLMResponse(content=delta.content, role=ChatRole.ASSISTANT)
+                    else:
+                        accumulated_json += delta.content
+                        
+                        if not in_content:
+                            marker = '"response_to_user":'
+                            if marker in accumulated_json:
+                                marker_pos = accumulated_json.find(marker)
+                                quote_pos = accumulated_json.find('"', marker_pos + len(marker))
+                                if quote_pos != -1:
+                                    in_content = True
+                        
+                        if in_content:
+                            # Find start index
+                            marker_pos = accumulated_json.find('"response_to_user":')
+                            quote_pos = accumulated_json.find('"', marker_pos + len('"response_to_user":'))
+                            start_index = quote_pos + 1
+                            
+                            # Extract the full candidate string
+                            candidate = accumulated_json[start_index:]
+                            end_quote_index = -1
+                            idx = 0
+                            while idx < len(candidate):
+                                if candidate[idx] == '\\':
+                                    idx += 2
+                                    continue
+                                if candidate[idx] == '"':
+                                    end_quote_index = idx
+                                    break
+                                idx += 1
+                            
+                            if end_quote_index != -1:
+                                full_valid_content = candidate[:end_quote_index]
+                                
+                                new_part = full_valid_content[yielded_content_length:]
+                                if new_part:
+                                    yield LLMResponse(content=new_part, role=ChatRole.ASSISTANT)
+                                    yielded_content_length += len(new_part)
+                                
+                                in_content = False # Stop yielding content
+                            else:
+                                # No end quote yet, yield everything new
+                                full_valid_content = candidate
+                                new_part = full_valid_content[yielded_content_length:]
+                                if new_part:
+                                    yield LLMResponse(content=new_part, role=ChatRole.ASSISTANT)
+                                    yielded_content_length += len(new_part)
+
+            # After streaming completes
+            if accumulated_json and not self._cancelled:
+                if conversational_graph:
+                    try:
+                        parsed_json = json.loads(accumulated_json.strip())
+                        yield LLMResponse(
+                            content="",
+                            role=ChatRole.ASSISTANT,
+                            metadata=parsed_json
+                        )
+                    except json.JSONDecodeError:
+                        if yielded_content_length == 0:
+                             yield LLMResponse(
+                                content=accumulated_json,
+                                role=ChatRole.ASSISTANT
+                            )
+                else:
+                    pass
 
         except Exception as e:
             if not self._cancelled:

@@ -34,6 +34,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         turn_detector: EOU | None = None,
         avatar: Any | None = None,
         denoise: Denoise | None = None,
+        conversational_graph: Any | None = None,
     ) -> None:
         """
         Initialize the cascading pipeline.
@@ -94,10 +95,13 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
             )
 
         self.denoise = denoise
+        self.conversational_graph= conversational_graph
         super().__init__()
 
     def set_agent(self, agent: Agent) -> None:
         self.agent = agent
+        if self.conversational_graph:
+            self.agent.conversational_graph = self.conversational_graph
 
     def _configure_components(self) -> None:
         if self.loop and self.tts:
@@ -152,6 +156,9 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         if self.conversation_flow.vad:
             self.conversation_flow.vad.on_vad_event(
                 self.conversation_flow.on_vad_event)
+            
+        if self.conversational_graph:
+            self.conversation_flow.conversational_graph = self.conversational_graph
 
     async def change_component(
         self,

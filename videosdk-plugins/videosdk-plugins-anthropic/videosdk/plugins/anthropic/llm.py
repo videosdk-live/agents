@@ -1,11 +1,11 @@
 from __future__ import annotations
+from pydantic import BaseModel
 import os
 import json
 from typing import Any, AsyncIterator, List, Union
 import httpx
 import anthropic
-from videosdk.agents import LLM, LLMResponse, ChatContext, ChatRole, ChatMessage, FunctionCall, FunctionCallOutput, ToolChoice, FunctionTool, is_function_tool, build_openai_schema, ImageContent, ChatContent
-
+from videosdk.agents import LLM, LLMResponse, ChatContext, ChatRole, ChatMessage, FunctionCall, FunctionCallOutput, ToolChoice, FunctionTool, is_function_tool, build_openai_schema, ImageContent, ChatContent,ConversationalGraphResponse
 
 class AnthropicLLM(LLM):
 
@@ -67,6 +67,7 @@ class AnthropicLLM(LLM):
         self,
         messages: ChatContext,
         tools: list[FunctionTool] | None = None,
+        conversational_graph: bool | None = None,
         **kwargs: Any
     ) -> AsyncIterator[LLMResponse]:
         """
@@ -92,6 +93,11 @@ class AnthropicLLM(LLM):
                 "temperature": self.temperature,
                 "stream": True,
             }
+
+            # Enhance system prompt to request JSON output
+            if system_content and conversational_graph:
+                schema_example = json.dumps(ConversationalGraphResponse.model_json_schema(), indent=2)
+                system_content += f"\n\nCRITICAL: You MUST respond with ONLY valid JSON. Do NOT wrap it in ```json code blocks or any markdown. Return raw JSON matching this schema:\n{schema_example}"
 
             if system_content:
                 completion_params["system"] = system_content
@@ -139,12 +145,22 @@ class AnthropicLLM(LLM):
 
             completion_params.update(kwargs)
 
+            if conversational_graph:
+                self._client.default_headers = {
+                    "anthropic-beta": "structured-outputs-2025-11-13"
+                }
+
             response_stream = await self._client.messages.create(**completion_params)
 
-            current_content = ""
+            # Accumulate JSON response
+            accumulated_json = ""
             current_tool_call = None
             current_tool_call_id = None
             current_tool_arguments = ""
+            
+            # State for partial JSON parsing
+            in_content = False
+            yielded_content_length = 0
 
             async for event in response_stream:
                 if self._cancelled:
@@ -162,11 +178,54 @@ class AnthropicLLM(LLM):
                 elif event.type == "content_block_delta":
                     delta = event.delta
                     if delta.type == "text_delta":
-                        current_content = delta.text
-                        yield LLMResponse(
-                            content=current_content,
-                            role=ChatRole.ASSISTANT
-                        )
+                        if not conversational_graph:
+                            # Standard streaming for non-conversational_graph mode
+                            yield LLMResponse(content=delta.text, role=ChatRole.ASSISTANT)
+                        else:
+                            accumulated_json += delta.text
+                            
+                            # Partial streaming logic
+                            if not in_content:
+                                marker = '"response_to_user":'
+                                if marker in accumulated_json:
+                                    marker_pos = accumulated_json.find(marker)
+                                    quote_pos = accumulated_json.find('"', marker_pos + len(marker))
+                                    if quote_pos != -1:
+                                        in_content = True
+                            
+                            if in_content:
+                                marker_pos = accumulated_json.find('"response_to_user":')
+                                quote_pos = accumulated_json.find('"', marker_pos + len('"response_to_user":'))
+                                start_index = quote_pos + 1
+                                
+                                candidate = accumulated_json[start_index:]
+                                
+                                end_quote_index = -1
+                                idx = 0
+                                while idx < len(candidate):
+                                    if candidate[idx] == '\\':
+                                        idx += 2
+                                        continue
+                                    if candidate[idx] == '"':
+                                        end_quote_index = idx
+                                        break
+                                    idx += 1
+                                
+                                if end_quote_index != -1:
+                                    full_valid_content = candidate[:end_quote_index]
+
+                                    new_part = full_valid_content[yielded_content_length:]
+                                    if new_part:
+                                        yield LLMResponse(content=new_part, role=ChatRole.ASSISTANT)
+                                        yielded_content_length += len(new_part)
+                                    
+                                    in_content = False
+                                else:
+                                    full_valid_content = candidate
+                                    new_part = full_valid_content[yielded_content_length:]
+                                    if new_part:
+                                        yield LLMResponse(content=new_part, role=ChatRole.ASSISTANT)
+                                        yielded_content_length += len(new_part)
                     elif delta.type == "input_json_delta":
                         if current_tool_call:
                             current_tool_arguments += delta.partial_json
@@ -195,6 +254,28 @@ class AnthropicLLM(LLM):
                         current_tool_call = None
                         current_tool_call_id = None
                         current_tool_arguments = ""
+            
+            # After streaming completes
+            if accumulated_json and not self._cancelled:
+                if conversational_graph:
+                    try:
+                        clean_response = accumulated_json.strip()
+                        
+                        parsed_json = json.loads(clean_response)
+                        yield LLMResponse(
+                            content="", 
+                            role=ChatRole.ASSISTANT,
+                            metadata=parsed_json
+                        )
+                    except json.JSONDecodeError:
+                        # Fallback: treat as plain text
+                        if yielded_content_length == 0:
+                            yield LLMResponse(
+                                content=accumulated_json,
+                                role=ChatRole.ASSISTANT
+                            )
+                else:
+                    pass
 
         except anthropic.APIError as e:
             if not self._cancelled:

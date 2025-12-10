@@ -70,6 +70,7 @@ class CerebrasLLM(LLM):
         self,
         messages: ChatContext,
         tools: list[FunctionTool] | None = None,
+        conversational_graph: bool = False,
         **kwargs: Any
     ) -> AsyncIterator[LLMResponse]:
         """
