@@ -74,9 +74,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self._transcript_processing_lock = asyncio.Lock()
 
         self.min_speech_wait_timeout = 0.5
-        self.max_speech_wait_timeout = 3.0
-        self.speech_wait_timeout = 0.8  
-        self.eou_logic = 'sliding'
+        self.max_speech_wait_timeout = 0.8
+        self.mode: Literal["ADAPTIVE", "DEFAULT"] = "DEFAULT"
         self.eou_certainty_threshold = 0.85 
 
         self.interrupt_mode: Literal["VAD_ONLY", "STT_ONLY", "HYBRID"] = "HYBRID"
@@ -107,7 +106,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
     def apply_flow_config(self, eou_config: "EOUConfig", interruption_config: "InterruptionConfig") -> None:
         """Override default timing/interaction parameters using pipeline config."""
-        self.eou_logic = eou_config.eou_logic
+        self.mode = eou_config.mode
         self.min_speech_wait_timeout = eou_config.min_max_speech_wait_timeout[0]
         self.max_speech_wait_timeout = eou_config.min_max_speech_wait_timeout[1]
         self.interrupt_mode = interruption_config.mode
@@ -344,18 +343,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             else:
                 self._accumulated_transcript = new_transcript
 
-            if self.eou_logic == 'default':
-                logger.info(f"Default EOU logic, using speech wait timeout seconds {self.speech_wait_timeout}")
-                is_eou = await self._check_end_of_utterance(self._accumulated_transcript)
-
-                if is_eou:
-                    await self._finalize_transcript_and_respond()
-                else:
-                    await self._wait_for_additional_speech(self.speech_wait_timeout)
-
-
-            elif self.eou_logic == 'binary':
-                logger.info(f"Binary EOU logic, using min speech wait timeout seconds {self.min_speech_wait_timeout} and max speech wait timeout seconds {self.max_speech_wait_timeout}")
+            if self.mode == 'DEFAULT':
+                logger.info(f"DEFAULT Mode, using min speech wait timeout seconds {self.min_speech_wait_timeout} and max speech wait timeout seconds {self.max_speech_wait_timeout}")
                 delay = self.min_speech_wait_timeout
                 if self.turn_detector:
                     logger.info(f"Turn detector is available, getting EOU probability")
@@ -367,8 +356,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 logger.info(f"Using delay: {delay} seconds")
                 await self._wait_for_additional_speech(delay)
 
-            elif self.eou_logic == 'sliding':
-                logger.info(f"Sliding EOU logic, using min speech wait timeout seconds {self.min_speech_wait_timeout} and max speech wait timeout seconds {self.max_speech_wait_timeout}")
+            elif self.mode == 'ADAPTIVE':
+                logger.info(f"ADAPTIVE Mode, using min speech wait timeout seconds {self.min_speech_wait_timeout} and max speech wait timeout seconds {self.max_speech_wait_timeout}")
                 delay = self.min_speech_wait_timeout
                 if self.turn_detector:
                     logger.info(f"Turn detector is available, getting EOU probability")
