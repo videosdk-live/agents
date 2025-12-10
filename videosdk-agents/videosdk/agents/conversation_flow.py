@@ -81,7 +81,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
         self.interrupt_min_duration = 0.5
         self.interrupt_min_words = 1
-        self._interruption_start_time = 0.0
+        self._interrupt_start_time = 0.0
 
         self.smart_pause_timeout = 2.0
         self.resume_smart_pause = True
@@ -170,14 +170,14 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 if vad_response.event_type == VADEventType.START_OF_SPEECH:
                     if not hasattr(self, '_interruption_check_task') or self._interruption_check_task.done():
                         logger.info(f"VAD EVENT: User started speaking, recording start time !!")
-                        self._interruption_start_time = time.time()
+                        self._interrupt_start_time = time.time()
                         self._interruption_check_task = asyncio.create_task(self._monitor_interruption_duration())
                         logger.info(f"VAD EVENT: Created interruption check task !!")
                 elif vad_response.event_type == VADEventType.END_OF_SPEECH:
                     if hasattr(self, '_interruption_check_task') and not self._interruption_check_task.done():
                         logger.info(f"VAD EVENT: User stopped speaking, cancelling interruption check task !!")
                         self._interruption_check_task.cancel()
-                    self._interruption_start_time = 0.0
+                    self._interrupt_start_time = 0.0
 
             if vad_response.event_type == VADEventType.START_OF_SPEECH:
                 self._is_user_speaking_now = True
@@ -195,7 +195,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             try:
                 while True:
                     logger.info(f"VAD EVENT: Monitoring interruption duration !!")
-                    duration = time.time() - self._interruption_start_time
+                    duration = time.time() - self._interrupt_start_time
                     if duration >= self.interrupt_min_duration:
                         logger.info(f"VAD EVENT: User's speech duration exceeded the threshold, triggering interruption !!")
                         if self.agent.session and self.agent.session.current_utterance and self.agent.session.current_utterance.is_interruptible:
@@ -209,7 +209,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 logger.info(f"VAD EVENT: Interruption check task cancelled !!")
                 pass
             finally:
-                self._interruption_start_time = 0.0
+                self._interrupt_start_time = 0.0
                 logger.info(f"VAD EVENT: Interruption start time reset !!")
 
     async def _handle_continued_speech(self) -> None:
