@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class EOUConfig:
-    eou_logic: Literal["default", "binary", "sliding"] = "sliding"
+    mode: Literal["ADAPTIVE", "DEFAULT"] = "DEFAULT"
     min_max_speech_wait_timeout: List[float] | Tuple[float, float] = field(default_factory=lambda: [0.5, 3.0])
 
     def __post_init__(self):

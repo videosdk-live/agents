@@ -1,7 +1,7 @@
 # This test script is used to test cascading pipeline.
 import logging
 import aiohttp
-from videosdk.agents import Agent, AgentSession, CascadingPipeline, function_tool, WorkerJob, MCPServerStdio, ConversationFlow, JobContext, RoomOptions, EOUConfig, InterruptionConfig
+from videosdk.agents import Agent, AgentSession, CascadingPipeline, function_tool, WorkerJob,ConversationFlow, JobContext, RoomOptions, EOUConfig, InterruptionConfig
 from videosdk.plugins.deepgram import DeepgramSTT
 from videosdk.plugins.silero import SileroVAD
 from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
@@ -86,8 +86,8 @@ async def entrypoint(ctx: JobContext):
         vad=SileroVAD(),
         turn_detector=TurnDetector(),
         eou_config=EOUConfig(
-            eou_logic='sliding',
-            min_max_speech_wait_timeout=[0.5, 2.0],
+            mode='ADAPTIVE',
+            min_max_speech_wait_timeout=[0.5, 0.8],
         ),
         interruption_config=InterruptionConfig(
             mode="HYBRID",
@@ -106,7 +106,7 @@ async def entrypoint(ctx: JobContext):
     await session.start(wait_for_participant=True, run_until_shutdown=True)
 
 def make_context() -> JobContext:
-    room_options = RoomOptions(room_id="<room_id>", name="Sandbox Agent", playground=True)
+    room_options = RoomOptions(room_id="xjld-g28c-rda8", name="Sandbox Agent", playground=True)
     
     return JobContext(
         room_options=room_options
