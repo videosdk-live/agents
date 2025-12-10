@@ -1,14 +1,12 @@
 # This test script is used to test cascading pipeline.
-import asyncio
 import logging
 import aiohttp
 from videosdk.agents import Agent, AgentSession, CascadingPipeline, function_tool, WorkerJob, MCPServerStdio, ConversationFlow, JobContext, RoomOptions, EOUConfig, InterruptionConfig
-from videosdk.plugins.openai import OpenAILLM
 from videosdk.plugins.deepgram import DeepgramSTT
 from videosdk.plugins.silero import SileroVAD
 from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
-from videosdk.plugins.elevenlabs import ElevenLabsTTS
-from videosdk.plugins.google import GoogleLLM, GoogleTTS
+from videosdk.plugins.google import GoogleLLM
+from videosdk.plugins.cartesia import CartesiaTTS
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 pre_download_model()
@@ -84,7 +82,7 @@ async def entrypoint(ctx: JobContext):
     pipeline = CascadingPipeline(
         stt= DeepgramSTT(),
         llm=GoogleLLM(),
-        tts=GoogleTTS(),
+        tts=CartesiaTTS(),
         vad=SileroVAD(),
         turn_detector=TurnDetector(),
         eou_config=EOUConfig(
@@ -92,10 +90,11 @@ async def entrypoint(ctx: JobContext):
             min_max_speech_wait_timeout=[0.5, 2.0],
         ),
         interruption_config=InterruptionConfig(
-            interrupt_min_duration=0.5,
+            mode="HYBRID",
+            interrupt_min_duration=0.2,
             interrupt_min_words=2,
-            smart_pause_timeout=2.0,
-            resume_smart_pause=True
+            false_interrupt_pause_duration=2.0,
+            resume_on_false_interrupt=True,
         )
     )
     session = AgentSession(
