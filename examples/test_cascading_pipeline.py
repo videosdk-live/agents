@@ -1,14 +1,15 @@
 # This test script is used to test cascading pipeline.
+import asyncio
 import logging
 import aiohttp
-from videosdk.agents import Agent, AgentSession, CascadingPipeline, function_tool, WorkerJob,ConversationFlow, JobContext, RoomOptions, EOUConfig, InterruptionConfig
+from videosdk.agents import Agent, AgentSession, CascadingPipeline, function_tool, WorkerJob, MCPServerStdio, ConversationFlow, JobContext, RoomOptions
+from videosdk.plugins.openai import OpenAILLM
 from videosdk.plugins.deepgram import DeepgramSTT
 from videosdk.plugins.silero import SileroVAD
 from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
-from videosdk.plugins.google import GoogleLLM
-from videosdk.plugins.cartesia import CartesiaTTS
+from videosdk.plugins.elevenlabs import ElevenLabsTTS
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
+logging.getLogger().setLevel(logging.CRITICAL)
 pre_download_model()
 
 @function_tool
@@ -77,25 +78,14 @@ class VoiceAgent(Agent):
 async def entrypoint(ctx: JobContext):
     
     agent = VoiceAgent()
-    conversation_flow = ConversationFlow()
+    conversation_flow = ConversationFlow(agent)
 
     pipeline = CascadingPipeline(
         stt= DeepgramSTT(),
-        llm=GoogleLLM(),
-        tts=CartesiaTTS(),
+        llm=OpenAILLM(),
+        tts=ElevenLabsTTS(),
         vad=SileroVAD(),
-        turn_detector=TurnDetector(),
-        eou_config=EOUConfig(
-            mode='ADAPTIVE',
-            min_max_speech_wait_timeout=[0.5, 0.8],
-        ),
-        interruption_config=InterruptionConfig(
-            mode="HYBRID",
-            interrupt_min_duration=0.2,
-            interrupt_min_words=2,
-            false_interrupt_pause_duration=2.0,
-            resume_on_false_interrupt=True,
-        )
+        turn_detector=TurnDetector()
     )
     session = AgentSession(
         agent=agent, 
@@ -106,7 +96,7 @@ async def entrypoint(ctx: JobContext):
     await session.start(wait_for_participant=True, run_until_shutdown=True)
 
 def make_context() -> JobContext:
-    room_options = RoomOptions(room_id="xjld-g28c-rda8", name="Sandbox Agent", playground=True)
+    room_options = RoomOptions(room_id="<room_id>", name="Sandbox Agent", playground=True)
     
     return JobContext(
         room_options=room_options
