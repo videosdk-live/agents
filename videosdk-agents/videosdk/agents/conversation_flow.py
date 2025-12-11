@@ -69,7 +69,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
         self._accumulated_transcript = ""
         self._waiting_for_more_speech = False
-        self._speech_wait_timeout = 0.8  
         self._wait_timer: asyncio.TimerHandle | None = None
         self._transcript_processing_lock = asyncio.Lock()
 
