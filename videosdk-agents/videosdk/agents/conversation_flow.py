@@ -555,7 +555,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 
                 try:
                     async for chunk in llm_stream:
-                        if handle.interrupted:
+                        if handle.interrupted or (wait_for_authorization and self._preemptive_cancelled):
                             logger.info("LLM collection interrupted")
                             await q.put(None)
                             return "".join(response_parts)
