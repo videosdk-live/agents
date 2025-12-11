@@ -672,13 +672,11 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                     Content(
                         parts=[
                             Part(
-                                text="Repeat the user's exact message back to them [DO NOT ADD ANYTHING ELSE]:"
-                                + message
+                                text="Please start the conversation by saying exactly this, without any additional text: '" + message + "'"
                             )
                         ],
-                        role="model",
+                        role="user",
                     ),
-                    Content(parts=[Part(text=".")], role="user"),
                 ],
                 turn_complete=True,
             )
