@@ -87,7 +87,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self._false_interrupt_timer: asyncio.TimerHandle | None = None
 
         self._false_interrupt_paused_speech = False
-        self._is_user_speaking_now = False
+        self._is_user_speaking = False
 
         # Preemptive generation state
         self._preemptive_transcript: str | None = None
@@ -180,9 +180,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 return
         
         if vad_response.event_type == VADEventType.START_OF_SPEECH:
-            self._is_user_speaking_now = True
-            logger.info("User speech started")
-            
+            self._is_user_speaking = True            
             if self._waiting_for_more_speech:
                 logger.debug("User continued speaking, cancelling wait timer")
                 await self._handle_continued_speech()
@@ -190,8 +188,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             await self.on_speech_started()
             
         elif vad_response.event_type == VADEventType.END_OF_SPEECH:
-            self._is_user_speaking_now = False
-            logger.info("User speech ended")
+            self._is_user_speaking = False
             self.on_speech_stopped()
 
 
@@ -1016,7 +1013,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         logger.info(f"[FALSE_INTERRUPT] Timeout reached after {self.false_interrupt_pause_duration}s. User did not follow up with speech.")
         self._false_interrupt_timer = None
 
-        if self._is_user_speaking_now:
+        if self._is_user_speaking:
             logger.info("[FALSE_INTERRUPT] User is still speaking at timeout. Confirming as a real interruption.")
             self._is_in_false_interrupt_pause = False
             self._false_interrupt_paused_speech = False
