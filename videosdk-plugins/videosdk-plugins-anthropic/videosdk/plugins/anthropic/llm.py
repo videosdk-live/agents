@@ -145,7 +145,7 @@ class AnthropicLLM(LLM):
             completion_params.update(kwargs)
 
             if conversational_graph:
-                self._client.default_headers = {
+                completion_params["extra_headers"] = {
                     "anthropic-beta": "structured-outputs-2025-11-13"
                 }
 

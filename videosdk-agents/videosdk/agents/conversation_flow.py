@@ -578,9 +578,10 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                     if self.conversational_graph and metadata:
                         # Call handle_decision with metadata
                         convo_graph_res = await self.conversational_graph.handle_decision(self.agent, metadata)
-                        return ("".join(response_parts), convo_graph_res)
+                        return "".join(response_parts) + "".join(convo_graph_res)
+
                     else:
-                        return ("".join(response_parts), None)
+                        return "".join(response_parts)
                         
                 except asyncio.CancelledError:
                     logger.info("LLM collection cancelled")
@@ -646,32 +647,23 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                     tts_task.cancel()
 
             # Unpack collector results
-            graph_res = None
         
             if not collector_task.cancelled() and not self._is_interrupted:
                 result = collector_task.result()
-                if isinstance(result, tuple):
-                    full_response, graph_res = result
-                else:
-                    full_response = result
+                full_response = result
             else:
                 full_response = self._partial_response
 
-            if full_response and not self._is_interrupted:
+            if (
+                full_response
+                and self.agent
+                and getattr(self.agent, "chat_context", None)
+            ):
                 cascading_metrics_collector.set_agent_response(full_response)
                 self.agent.chat_context.add_message(
                     role=ChatRole.ASSISTANT,
                     content=full_response
                 )
-            
-            if self.conversational_graph and graph_res and not self._is_interrupted and self.tts:
-                if graph_res != full_response:
-                     if len(graph_res) > len(full_response):
-                         additional = graph_res[len(full_response):]
-                         if additional.strip():
-                             logger.info(f"Synthesizing additional workflow content: {additional}")
-                             await self._synthesize_with_tts(additional)
-
 
         finally:
             self._current_tts_task = None

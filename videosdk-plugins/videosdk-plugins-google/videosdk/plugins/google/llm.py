@@ -246,7 +246,7 @@ class GoogleLLM(LLM):
                                         yield LLMResponse(content=new_part, role=ChatRole.ASSISTANT)
                                         yielded_content_length += len(new_part)
                         else:
-                             yield LLMResponse(content=part.text, role=ChatRole.ASSISTANT)
+                            yield LLMResponse(content=part.text, role=ChatRole.ASSISTANT)
             
             # After streaming completes
             if current_content and not self._cancelled:
