@@ -550,26 +550,26 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             q = asyncio.Queue(maxsize=50)
 
             async def collector():
-                full_content = ""
+                response_parts = []
                 metadata = None
                 
                 try:
-                    async for llm_response in llm_stream:
+                    async for chunk in llm_stream:
                         if handle.interrupted:
                             logger.info("LLM collection interrupted")
                             await q.put(None)
-                            return (full_content,None)
+                            return "".join(response_parts)
 
                         # LLM now returns content directly
-                        if llm_response.content:
-                            full_content += llm_response.content
-                            await q.put(llm_response.content)
+                        if chunk.content:
+                            response_parts.append(chunk.content)
+                            await q.put(chunk.content)
                         
                         # Store metadata for workflow
-                        if llm_response.metadata:
-                            metadata = llm_response.metadata
+                        if chunk.metadata:
+                            metadata = chunk.metadata
                         
-                        self._partial_response = full_content
+                        self._partial_response = "".join(response_parts)
 
                     # End of stream
                     if not handle.interrupted:
@@ -578,14 +578,14 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                     if self.conversational_graph and metadata:
                         # Call handle_decision with metadata
                         convo_graph_res = await self.conversational_graph.handle_decision(self.agent, metadata)
-                        return (full_content, convo_graph_res)
+                        return ("".join(response_parts), convo_graph_res)
                     else:
-                        return (full_content, None)
+                        return ("".join(response_parts), None)
                         
                 except asyncio.CancelledError:
                     logger.info("LLM collection cancelled")
                     await q.put(None)
-                    return (full_content, None)
+                    return ("".join(response_parts), None)
 
             async def tts_consumer():
                 """Consumes LLM chunks and sends to TTS with authorization gate"""
@@ -646,12 +646,12 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                     tts_task.cancel()
 
             # Unpack collector results
-            convo_graph = None
+            graph_res = None
         
             if not collector_task.cancelled() and not self._is_interrupted:
                 result = collector_task.result()
                 if isinstance(result, tuple):
-                    full_response, convo_graph = result
+                    full_response, graph_res = result
                 else:
                     full_response = result
             else:
@@ -664,10 +664,10 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                     content=full_response
                 )
             
-            if self.conversational_graph and convo_graph and not self._is_interrupted and self.tts:
-                if convo_graph != full_response:
-                     if len(convo_graph) > len(full_response):
-                         additional = convo_graph[len(full_response):]
+            if self.conversational_graph and graph_res and not self._is_interrupted and self.tts:
+                if graph_res != full_response:
+                     if len(graph_res) > len(full_response):
+                         additional = graph_res[len(full_response):]
                          if additional.strip():
                              logger.info(f"Synthesizing additional workflow content: {additional}")
                              await self._synthesize_with_tts(additional)

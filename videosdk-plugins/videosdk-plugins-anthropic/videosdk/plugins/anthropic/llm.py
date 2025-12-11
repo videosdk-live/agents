@@ -1,5 +1,4 @@
 from __future__ import annotations
-from pydantic import BaseModel
 import os
 import json
 from typing import Any, AsyncIterator, List, Union
@@ -67,7 +66,7 @@ class AnthropicLLM(LLM):
         self,
         messages: ChatContext,
         tools: list[FunctionTool] | None = None,
-        conversational_graph: bool | None = None,
+        conversational_graph: bool = False,
         **kwargs: Any
     ) -> AsyncIterator[LLMResponse]:
         """
@@ -153,13 +152,14 @@ class AnthropicLLM(LLM):
             response_stream = await self._client.messages.create(**completion_params)
 
             # Accumulate JSON response
-            accumulated_json = ""
+            current_content = ""
             current_tool_call = None
             current_tool_call_id = None
             current_tool_arguments = ""
             
             # State for partial JSON parsing
-            in_content = False
+            in_response = False
+            response_start_index = -1
             yielded_content_length = 0
 
             async for event in response_stream:
@@ -182,33 +182,34 @@ class AnthropicLLM(LLM):
                             # Standard streaming for non-conversational_graph mode
                             yield LLMResponse(content=delta.text, role=ChatRole.ASSISTANT)
                         else:
-                            accumulated_json += delta.text
+                            current_content += delta.text
                             
                             # Partial streaming logic
-                            if not in_content:
+                            if not in_response and response_start_index == -1:
                                 marker = '"response_to_user":'
-                                if marker in accumulated_json:
-                                    marker_pos = accumulated_json.find(marker)
-                                    quote_pos = accumulated_json.find('"', marker_pos + len(marker))
+                                marker_pos = current_content.find(marker)
+                                if marker_pos != -1:
+                                    quote_pos = current_content.find('"', marker_pos + len(marker))
                                     if quote_pos != -1:
-                                        in_content = True
+                                        in_response = True
+                                        response_start_index = quote_pos + 1
                             
-                            if in_content:
-                                marker_pos = accumulated_json.find('"response_to_user":')
-                                quote_pos = accumulated_json.find('"', marker_pos + len('"response_to_user":'))
-                                start_index = quote_pos + 1
-                                
-                                candidate = accumulated_json[start_index:]
+                            if in_response:
+                                candidate = current_content[response_start_index:]
                                 
                                 end_quote_index = -1
-                                idx = 0
+                                idx = yielded_content_length
                                 while idx < len(candidate):
-                                    if candidate[idx] == '\\':
-                                        idx += 2
-                                        continue
                                     if candidate[idx] == '"':
-                                        end_quote_index = idx
-                                        break
+                                        backslashes = 0
+                                        check_idx = idx - 1
+                                        while check_idx >= 0 and candidate[check_idx] == '\\':
+                                            backslashes += 1
+                                            check_idx -= 1
+                                        
+                                        if backslashes % 2 == 0:
+                                            end_quote_index = idx
+                                            break
                                     idx += 1
                                 
                                 if end_quote_index != -1:
@@ -219,7 +220,7 @@ class AnthropicLLM(LLM):
                                         yield LLMResponse(content=new_part, role=ChatRole.ASSISTANT)
                                         yielded_content_length += len(new_part)
                                     
-                                    in_content = False
+                                    in_response = False
                                 else:
                                     full_valid_content = candidate
                                     new_part = full_valid_content[yielded_content_length:]
@@ -256,10 +257,10 @@ class AnthropicLLM(LLM):
                         current_tool_arguments = ""
             
             # After streaming completes
-            if accumulated_json and not self._cancelled:
+            if current_content and not self._cancelled:
                 if conversational_graph:
                     try:
-                        clean_response = accumulated_json.strip()
+                        clean_response = current_content.strip()
                         
                         parsed_json = json.loads(clean_response)
                         yield LLMResponse(
@@ -271,7 +272,7 @@ class AnthropicLLM(LLM):
                         # Fallback: treat as plain text
                         if yielded_content_length == 0:
                             yield LLMResponse(
-                                content=accumulated_json,
+                                content=current_content,
                                 role=ChatRole.ASSISTANT
                             )
                 else:

@@ -1,5 +1,4 @@
 from __future__ import annotations
-from pydantic import BaseModel
 import os
 from typing import Any, AsyncIterator, List, Union
 import json
@@ -169,7 +168,7 @@ class OpenAILLM(LLM):
         self,
         messages: ChatContext,
         tools: list[FunctionTool] | None = None,
-        conversational_graph:bool | None = None,
+        conversational_graph: bool = False,
         **kwargs: Any
     ) -> AsyncIterator[LLMResponse]:
         """
@@ -265,9 +264,10 @@ class OpenAILLM(LLM):
             response_stream = await self._client.chat.completions.create(**completion_params)
             
             # Accumulate JSON response
-            accumulated_json = ""
+            current_content = ""
             current_function_call = None
-            in_content = False
+            in_response = False
+            response_start_index = -1
             yielded_content_length = 0
 
             async for chunk in response_stream:
@@ -308,33 +308,34 @@ class OpenAILLM(LLM):
                     if not conversational_graph:
                         yield LLMResponse(content=delta.content, role=ChatRole.ASSISTANT)
                     else:
-                        accumulated_json += delta.content
+                        current_content += delta.content
                         
-                        if not in_content:
+                        if not in_response and response_start_index == -1:
                             marker = '"response_to_user":'
-                            if marker in accumulated_json:
-                                marker_pos = accumulated_json.find(marker)
-                                quote_pos = accumulated_json.find('"', marker_pos + len(marker))
+                            marker_pos = current_content.find(marker)
+                            if marker_pos != -1:
+                                quote_pos = current_content.find('"', marker_pos + len(marker))
                                 if quote_pos != -1:
-                                    in_content = True
+                                    in_response = True
+                                    response_start_index = quote_pos + 1
                         
-                        if in_content:
-                            # Find start index
-                            marker_pos = accumulated_json.find('"response_to_user":')
-                            quote_pos = accumulated_json.find('"', marker_pos + len('"response_to_user":'))
-                            start_index = quote_pos + 1
+                        if in_response:
+                            candidate = current_content[response_start_index:]
                             
-                            # Extract the full candidate string
-                            candidate = accumulated_json[start_index:]
                             end_quote_index = -1
-                            idx = 0
+                            idx = yielded_content_length
+                            
                             while idx < len(candidate):
-                                if candidate[idx] == '\\':
-                                    idx += 2
-                                    continue
                                 if candidate[idx] == '"':
-                                    end_quote_index = idx
-                                    break
+                                    backslashes = 0
+                                    check_idx = idx - 1
+                                    while check_idx >= 0 and candidate[check_idx] == '\\':
+                                        backslashes += 1
+                                        check_idx -= 1
+                                    
+                                    if backslashes % 2 == 0:
+                                        end_quote_index = idx
+                                        break
                                 idx += 1
                             
                             if end_quote_index != -1:
@@ -345,9 +346,8 @@ class OpenAILLM(LLM):
                                     yield LLMResponse(content=new_part, role=ChatRole.ASSISTANT)
                                     yielded_content_length += len(new_part)
                                 
-                                in_content = False # Stop yielding content
+                                in_response = False
                             else:
-                                # No end quote yet, yield everything new
                                 full_valid_content = candidate
                                 new_part = full_valid_content[yielded_content_length:]
                                 if new_part:
@@ -355,10 +355,10 @@ class OpenAILLM(LLM):
                                     yielded_content_length += len(new_part)
 
             # After streaming completes
-            if accumulated_json and not self._cancelled:
+            if current_content and not self._cancelled:
                 if conversational_graph:
                     try:
-                        parsed_json = json.loads(accumulated_json.strip())
+                        parsed_json = json.loads(current_content.strip())
                         yield LLMResponse(
                             content="",
                             role=ChatRole.ASSISTANT,
@@ -367,7 +367,7 @@ class OpenAILLM(LLM):
                     except json.JSONDecodeError:
                         if yielded_content_length == 0:
                              yield LLMResponse(
-                                content=accumulated_json,
+                                content=current_content,
                                 role=ChatRole.ASSISTANT
                             )
                 else:

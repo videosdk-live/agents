@@ -100,9 +100,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
 
     def set_agent(self, agent: Agent) -> None:
         self.agent = agent
-        if self.conversational_graph:
-            self.agent.conversational_graph = self.conversational_graph
-
+        
     def _configure_components(self) -> None:
         if self.loop and self.tts:
             self.tts.loop = self.loop

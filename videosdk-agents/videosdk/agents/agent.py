@@ -53,7 +53,6 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
         self._thinking_background_config: Optional[BackgroundAudioHandlerConfig] = None
         self.knowledge_base = knowledge_base 
         self.inherit_context = inherit_context
-        self.conversational_graph = None
 
     def _register_class_tools(self) -> None:
         """Internal Method: Register all function tools defined in the class"""

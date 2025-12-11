@@ -1,5 +1,4 @@
 from __future__ import annotations
-from pydantic import BaseModel
 import base64
 import os
 import json
@@ -80,7 +79,7 @@ class GoogleLLM(LLM):
         self,
         messages: ChatContext,
         tools: list[FunctionTool] | None = None,
-        conversational_graph:bool|None = None,
+        conversational_graph: bool = False,
         **kwargs: Any
     ) -> AsyncIterator[LLMResponse]:
         """
@@ -166,9 +165,11 @@ class GoogleLLM(LLM):
 
             current_content = ""
             current_function_calls = []
-
-            # Accumulate JSON response
-            accumulated_json = ""
+            
+            # State for partial JSON parsing
+            in_response = False
+            response_start_index = -1
+            yielded_content_length = 0
             
             async for response in response_stream:
                 if self._cancelled:
@@ -200,26 +201,71 @@ class GoogleLLM(LLM):
                             metadata={"function_call": function_call}
                         )
                     elif part.text:
-                        accumulated_json += part.text
+                        current_content += part.text
+                        
+                        if conversational_graph:
+                            if not in_response and response_start_index == -1:
+                                marker = '"response_to_user":'
+                                marker_pos = current_content.find(marker)
+                                if marker_pos != -1:
+                                    quote_pos = current_content.find('"', marker_pos + len(marker))
+                                    if quote_pos != -1:
+                                        in_response = True
+                                        response_start_index = quote_pos + 1
+                            
+                            if in_response: 
+                                candidate = current_content[response_start_index:]
+                                end_quote_index = -1
+                                idx = yielded_content_length
+                                while idx < len(candidate):
+                                    if candidate[idx] == '"':
+                                        backslashes = 0
+                                        check_idx = idx - 1
+                                        while check_idx >= 0 and candidate[check_idx] == '\\':
+                                            backslashes += 1
+                                            check_idx -= 1
+                                        
+                                        if backslashes % 2 == 0:
+                                            end_quote_index = idx
+                                            break
+                                    idx += 1
+                                
+                                if end_quote_index != -1:
+                                    full_valid_content = candidate[:end_quote_index]
+                                    
+                                    new_part = full_valid_content[yielded_content_length:]
+                                    if new_part:
+                                        yield LLMResponse(content=new_part, role=ChatRole.ASSISTANT)
+                                        yielded_content_length += len(new_part)
+                                    
+                                    in_response = False
+                                else:
+                                    full_valid_content = candidate
+                                    new_part = full_valid_content[yielded_content_length:]
+                                    if new_part:
+                                        yield LLMResponse(content=new_part, role=ChatRole.ASSISTANT)
+                                        yielded_content_length += len(new_part)
+                        else:
+                             yield LLMResponse(content=part.text, role=ChatRole.ASSISTANT)
             
             # After streaming completes
-            if accumulated_json and not self._cancelled:
+            if current_content and not self._cancelled:
                 try:
-                    parsed_json = json.loads(accumulated_json.strip())
-                    response_to_user = parsed_json.get("response_to_user", accumulated_json)
+                    parsed_json = json.loads(current_content.strip())
+                    response_to_user = parsed_json.get("response_to_user", current_content)
                     
                     # Yield final response with content and full JSON in metadata
                     yield LLMResponse(
-                        content=response_to_user,
+                        content="",
                         role=ChatRole.ASSISTANT,
                         metadata=parsed_json
                     )
                 except json.JSONDecodeError:
-                    # Fallback: treat as plain text
-                    yield LLMResponse(
-                        content=accumulated_json,
-                        role=ChatRole.ASSISTANT
-                    )
+                    if yielded_content_length == 0:
+                        yield LLMResponse(
+                            content=current_content,
+                            role=ChatRole.ASSISTANT
+                        )
 
         except (ClientError, ServerError, APIError) as e:
             if not self._cancelled:
