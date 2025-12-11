@@ -92,7 +92,7 @@ from .llm.chat_context import (
 from .stt.stt import STT, STTResponse, SpeechEventType, SpeechData
 from .tts.tts import TTS
 from .vad import VAD, VADResponse, VADEventType
-from .cascading_pipeline import CascadingPipeline, EOUConfig, InterruptionConfig
+from .cascading_pipeline import CascadingPipeline, EOUConfig, InterruptConfig
 from .mcp.mcp_server import MCPServerStdio, MCPServerHTTP
 from .eou import EOU
 from .event_bus import global_event_emitter, EventTypes
@@ -144,7 +144,7 @@ __all__ = [
     "EventTypes",
     "CascadingPipeline",
     "EOUConfig",
-    "InterruptionConfig",
+    "InterruptConfig",
     "build_nova_sonic_schema",
     "MCPServerStdio",
     "MCPServerHTTP",

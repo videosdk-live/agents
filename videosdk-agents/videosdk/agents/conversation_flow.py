@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING
 from .voice_mail_detector import VoiceMailDetector
 if TYPE_CHECKING:
     from .knowledge_base.base import KnowledgeBase
-    from .cascading_pipeline import EOUConfig, InterruptionConfig
+    from .cascading_pipeline import EOUConfig, InterruptConfig
     
 logger = logging.getLogger(__name__)
 
@@ -103,16 +103,16 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self._vmd_buffer = ""
         self._vmd_check_task: asyncio.Task | None = None
 
-    def apply_flow_config(self, eou_config: "EOUConfig", interruption_config: "InterruptionConfig") -> None:
+    def apply_flow_config(self, eou_config: "EOUConfig", interrupt_config: "InterruptConfig") -> None:
         """Override default timing/interaction parameters using pipeline config."""
         self.mode = eou_config.mode
         self.min_speech_wait_timeout = eou_config.min_max_speech_wait_timeout[0]
         self.max_speech_wait_timeout = eou_config.min_max_speech_wait_timeout[1]
-        self.interrupt_mode = interruption_config.mode
-        self.interrupt_min_duration = interruption_config.interrupt_min_duration
-        self.interrupt_min_words = interruption_config.interrupt_min_words
-        self.false_interrupt_pause_duration = interruption_config.false_interrupt_pause_duration
-        self.resume_on_false_interrupt = interruption_config.resume_on_false_interrupt
+        self.interrupt_mode = interrupt_config.mode
+        self.interrupt_min_duration = interrupt_config.interrupt_min_duration
+        self.interrupt_min_words = interrupt_config.interrupt_min_words
+        self.false_interrupt_pause_duration = interrupt_config.false_interrupt_pause_duration
+        self.resume_on_false_interrupt = interrupt_config.resume_on_false_interrupt
         
     def _update_preemptive_generation_flag(self) -> None:
         """Update the preemptive generation flag based on current STT instance"""

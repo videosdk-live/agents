@@ -38,7 +38,7 @@ class EOUConfig:
             raise ValueError("min_speech_wait_timeout must be less than max_speech_wait_timeout")
 
 @dataclass
-class InterruptionConfig:
+class InterruptConfig:
     mode: Literal["VAD_ONLY", "STT_ONLY", "HYBRID"] = "HYBRID"
     interrupt_min_duration: float = 0.5
     interrupt_min_words: int = 2
@@ -70,7 +70,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         avatar: Any | None = None,
         denoise: Denoise | None = None,
         eou_config: EOUConfig | None = None,
-        interruption_config: InterruptionConfig | None = None,
+        interrupt_config: InterruptConfig | None = None,
     ) -> None:
         """
         Initialize the cascading pipeline.
@@ -84,7 +84,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
             avatar: Avatar (optional)
             denoise: Denoise (optional)
             eou_config: End of utterance configuration (optional)
-            interruption_config: Interruption configuration (optional)
+            interrupt_config: Interruption configuration (optional)
         """
         self.stt = stt
         self.llm = llm
@@ -96,7 +96,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         self.avatar = avatar
         self.vision = False
         self.eou_config = eou_config or EOUConfig()
-        self.interruption_config = interruption_config or InterruptionConfig()
+        self.interrupt_config = interrupt_config or InterruptConfig()
 
         if self.stt:
             self.stt.on(
@@ -189,7 +189,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         if hasattr(self.conversation_flow, "apply_flow_config"):
             self.conversation_flow.apply_flow_config(
                 eou_config=self.eou_config,
-                interruption_config=self.interruption_config
+                interrupt_config=self.interrupt_config
             )
         if self.conversation_flow.stt:
             self.conversation_flow.stt.on_stt_transcript(
