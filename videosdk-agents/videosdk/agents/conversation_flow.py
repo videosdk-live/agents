@@ -586,7 +586,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 except asyncio.CancelledError:
                     logger.info("LLM collection cancelled")
                     await q.put(None)
-                    return ("".join(response_parts), None)
+                    return "".join(response_parts)
 
             async def tts_consumer():
                 """Consumes LLM chunks and sends to TTS with authorization gate"""
@@ -649,8 +649,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             # Unpack collector results
         
             if not collector_task.cancelled() and not self._is_interrupted:
-                result = collector_task.result()
-                full_response = result
+                full_response = collector_task.result()
             else:
                 full_response = self._partial_response
 
