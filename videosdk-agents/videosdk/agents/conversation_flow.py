@@ -449,7 +449,10 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
         if self.agent and self.agent.session:
             if self.agent.session.current_utterance and not self.agent.session.current_utterance.done():
-                self.agent.session.current_utterance.interrupt()
+                if self.agent.session.current_utterance.is_interruptible:
+                    self.agent.session.current_utterance.interrupt()
+                else:
+                    logger.info("Current utterance is not interruptible. Skipping interruption in cascading pipeline.")
             
             handle = UtteranceHandle(utterance_id=f"utt_{uuid.uuid4().hex[:8]}")
             self.agent.session.current_utterance = handle
@@ -1074,7 +1077,10 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self._false_interrupt_paused_speech = False
 
         if self.agent and self.agent.session and self.agent.session.current_utterance:
-            self.agent.session.current_utterance.interrupt()
+            if self.agent.session.current_utterance.is_interruptible:
+                self.agent.session.current_utterance.interrupt()
+            else:
+                logger.info("Cannot interrupt non-interruptible utterance in _interrupt_tts")
 
         if self.agent.session and self.agent.session.is_background_audio_enabled:
             await self.agent.session.stop_thinking_audio()

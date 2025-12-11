@@ -178,7 +178,10 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         if self.agent and self.agent.session and self.agent.session.is_background_audio_enabled:
             asyncio.create_task(self.agent.session.stop_thinking_audio())
         if self._current_utterance_handle and not self._current_utterance_handle.done():
-            self._current_utterance_handle.interrupt()
+            if self._current_utterance_handle.is_interruptible:
+                self._current_utterance_handle.interrupt()
+            else:
+                logger.info("Current utterance handle is not interruptible. Skipping handle interrupt.")
         if self.avatar and hasattr(self.avatar, 'interrupt'):
             asyncio.create_task(self.avatar.interrupt())
 
