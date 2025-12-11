@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class EOUConfig:
     mode: Literal["ADAPTIVE", "DEFAULT"] = "DEFAULT"
-    min_max_speech_wait_timeout: List[float] | Tuple[float, float] = field(default_factory=lambda: [0.5, 3.0])
+    min_max_speech_wait_timeout: List[float] | Tuple[float, float] = field(default_factory=lambda: [0.5, 0.8])
 
     def __post_init__(self):
         if not (isinstance(self.min_max_speech_wait_timeout, (list, tuple)) and len(self.min_max_speech_wait_timeout) == 2):
