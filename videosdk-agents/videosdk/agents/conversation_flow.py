@@ -945,7 +945,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         word_count = len(text.strip().split())
         logger.info(f"handle_stt_event: Word count: {word_count}")
         
-        if self._is_in_false_interrupt_pause and word_count >= self.interrupt_min_words:
+        if self.resume_on_false_interrupt and self._is_in_false_interrupt_pause and word_count >= self.interrupt_min_words:
             logger.info(f"[FALSE_INTERRUPT] STT transcript received while in paused state: '{text}' ({word_count} words). Confirming real interruption.")
             self._cancel_false_interrupt_timer()
             self._is_in_false_interrupt_pause = False
@@ -984,7 +984,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 await self.tts.pause()
                 self._start_false_interrupt_timer()
             else:
-                logger.info(f"[FALSE_INTERRUPT] TTS not pausable or resume is disabled, performing full interruption. (resume_on_false_interrupt={self.resume_on_false_interrupt}, tts={self.tts is not None}, can_pause={self.tts.can_pause if self.tts else False})")
+                logger.info("performing full interruption.")
                 await self._interrupt_tts()
 
     def _start_false_interrupt_timer(self):
