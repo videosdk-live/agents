@@ -210,7 +210,7 @@ class GoogleLLM(LLM):
                             yield LLMResponse(content=part.text, role=ChatRole.ASSISTANT)
             
             # After streaming completes
-            if current_content and not cancelled:
+            if current_content and not self._cancelled:
                 if conversational_graph:
                     try:
                         parsed_json = json.loads(current_content.strip())
