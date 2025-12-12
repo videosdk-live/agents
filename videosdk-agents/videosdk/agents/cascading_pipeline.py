@@ -156,6 +156,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
                 self.conversation_flow.on_vad_event)
             
         if self.conversational_graph:
+            self.conversational_graph.compile()
             self.conversation_flow.conversational_graph = self.conversational_graph
 
     async def change_component(
