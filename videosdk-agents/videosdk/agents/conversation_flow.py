@@ -226,6 +226,12 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
     async def on_stt_transcript(self, stt_response: STTResponse) -> None:
         """Handle STT transcript events with enhanced EOU logic"""
+       
+        utterance = self.agent.session.current_utterance if self.agent and self.agent.session else None
+        if utterance and not utterance.is_interruptible and self.agent.session.agent_state == AgentState.SPEAKING:
+            logger.info(f"Agent is playing non-interruptible message. Ignoring user speech until message completes.")
+            return
+
         if self._waiting_for_more_speech:
             await self._handle_continued_speech()
     
