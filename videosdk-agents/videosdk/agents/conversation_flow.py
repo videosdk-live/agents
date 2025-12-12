@@ -646,8 +646,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 if not tts_task.done():
                     tts_task.cancel()
 
-            # Unpack collector results
-        
             if not collector_task.cancelled() and not self._is_interrupted:
                 full_response = collector_task.result()
             else:

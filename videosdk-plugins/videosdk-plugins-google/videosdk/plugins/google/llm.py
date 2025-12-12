@@ -165,9 +165,7 @@ class GoogleLLM(LLM):
 
             current_content = ""
             current_function_calls = []
-            
-            # State for partial JSON parsing
-            # State for partial JSON parsing
+
             streaming_state = {
                 "in_response": False,
                 "response_start_index": -1,
