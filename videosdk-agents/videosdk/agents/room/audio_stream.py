@@ -23,6 +23,9 @@ class CustomAudioStreamTrack(CustomAudioTrack):
     """
     Base audio track implementation using a frame buffer.
     Audio frames are created as soon as audio data is received.
+    
+    Supports optional pause/resume for false-interrupt detection while maintaining
+    compatibility with avatar plugins that need simple audio flow.
     """
     def __init__(self, loop):
         super().__init__()
@@ -39,10 +42,75 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         self.samples = int(AUDIO_PTIME * self.sample_rate)
         self.chunk_size = int(self.samples * self.channels * self.sample_width)
         self._is_speaking = False
+        
+        # Pause/resume support - simple flag-based (no blocking)
+        self._is_paused = False
+        self._paused_frames = []  # Separate buffer for paused content
+        self._accepting_audio = True
+        self._manual_audio_control = False
+
+    @property
+    def can_pause(self) -> bool:
+        """Returns True if this track supports pause/resume operations"""
+        return True
 
     def interrupt(self):
+        """Clear all buffers and reset state"""
+        logger.info("Audio track interrupted, clearing buffers.")
         self.frame_buffer.clear()
         self.audio_data_buffer.clear()
+        self._paused_frames.clear()
+        self._is_paused = False
+        
+        # Handle manual audio control mode
+        if self._manual_audio_control:
+            self._accepting_audio = False
+        else:
+            self._accepting_audio = True
+
+    async def pause(self) -> None:
+        """
+        Pause audio playback. Instead of blocking recv(), we move remaining
+        frames to a separate buffer so they can be resumed later.
+        This approach keeps the audio flow simple for avatars.
+        """
+        if self._is_paused:
+            logger.warning("Audio track already paused")
+            return
+            
+        logger.info("Audio track paused - preserving current buffer state.")
+        self._is_paused = True
+        
+        # Move current frames to paused buffer for later resume
+        self._paused_frames = self.frame_buffer.copy()
+        self.frame_buffer.clear()
+
+    async def resume(self) -> None:
+        """
+        Resume audio playback from paused position.
+        Restores frames that were saved when paused.
+        """
+        if not self._is_paused:
+            logger.warning("Audio track not paused, nothing to resume")
+            return
+            
+        logger.info("Audio track resumed - restoring paused buffer.")
+        self._is_paused = False
+        
+        # Restore frames from paused buffer
+        self.frame_buffer = self._paused_frames.copy()
+        self._paused_frames.clear()
+
+    def enable_audio_input(self, manual_control: bool = False):
+        """
+        Allow fresh audio data to be buffered. When manual_control is True,
+        future interrupts will pause intake until this method is called again.
+        
+        This is useful for preventing old audio from bleeding into new responses.
+        """
+        self._manual_audio_control = manual_control
+        self._accepting_audio = True
+        logger.debug(f"Audio input enabled (manual_control={manual_control})")
 
     def on_last_audio_byte(self, callback: Callable[[], Awaitable[None]]) -> None:
         """Set callback for when the final audio byte of synthesis is produced"""
@@ -50,6 +118,14 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         self._last_audio_callback = callback
             
     async def add_new_bytes(self, audio_data: bytes):
+        """
+        Add new audio bytes to the buffer. Respects _accepting_audio flag
+        for manual audio control mode.
+        """
+        if not self._accepting_audio:
+            logger.debug("Audio input currently disabled, dropping audio data")
+            return
+            
         global_event_emitter.emit("ON_SPEECH_OUT", {"audio_data": audio_data})
         self.audio_data_buffer += audio_data
 
@@ -58,10 +134,16 @@ class CustomAudioStreamTrack(CustomAudioTrack):
             self.audio_data_buffer = self.audio_data_buffer[self.chunk_size :]
             try:
                 audio_frame = self.buildAudioFrames(chunk)
-                self.frame_buffer.append(audio_frame)
-                logger.debug(
-                    f"Added audio frame to buffer, total frames: {len(self.frame_buffer)}"
-                )
+                
+                # If paused, add to paused buffer instead
+                if self._is_paused:
+                    self._paused_frames.append(audio_frame)
+                    logger.debug("Added frame to paused buffer")
+                else:
+                    self.frame_buffer.append(audio_frame)
+                    logger.debug(
+                        f"Added audio frame to buffer, total frames: {len(self.frame_buffer)}"
+                    )
             except Exception as e:
                 logger.error(f"Error building audio frame: {e}")
                 break
@@ -92,6 +174,10 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         return pts, time_base
 
     async def recv(self) -> AudioFrame:
+        """
+        Receive next audio frame. When paused, produces silence frames but keeps
+        timing synchronized. This ensures smooth resume without audio glitches.
+        """
         try:
             if self.readyState != "live":
                 raise MediaStreamError
@@ -109,7 +195,13 @@ class CustomAudioStreamTrack(CustomAudioTrack):
 
             pts, time_base = self.next_timestamp()
 
-            if len(self.frame_buffer) > 0:
+            # When paused, always produce silence but keep timing
+            # This allows smooth resume without timing jumps
+            if self._is_paused:
+                frame = AudioFrame(format="s16", layout="mono", samples=self.samples)
+                for p in frame.planes:
+                    p.update(bytes(p.buffer_size))
+            elif len(self.frame_buffer) > 0:
                 frame = self.frame_buffer.pop(0)
                 self._is_speaking = True
             else:
