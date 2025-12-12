@@ -81,7 +81,10 @@ class DeepgramTTS(TTS):
                 self.emit("error", "Audio track or event loop not set")
                 return
 
-            await self.interrupt()
+            self._should_stop = True
+            if self._send_task and not self._send_task.done():
+                self._send_task.cancel()
+                
             self._should_stop = False
             await self._stream_synthesis(text)
 

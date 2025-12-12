@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC
-from typing import Awaitable, Callable, Literal, AsyncIterator, Any
+from typing import Awaitable, Callable, Literal, AsyncIterator, Any, TYPE_CHECKING
 import time
 import json
 import asyncio
@@ -9,7 +9,7 @@ from .event_emitter import EventEmitter
 from .stt.stt import STT, STTResponse
 from .llm.llm import LLM
 from .llm.chat_context import ChatRole, ImageContent
-from .utils import is_function_tool, get_tool_info, graceful_cancel
+from .utils import is_function_tool, get_tool_info
 from .tts.tts import TTS
 from .stt.stt import SpeechEventType
 from .agent import Agent
@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING
 from .voice_mail_detector import VoiceMailDetector
 if TYPE_CHECKING:
     from .knowledge_base.base import KnowledgeBase
+    from .cascading_pipeline import EOUConfig, InterruptConfig
     
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
     Manages the conversation flow by listening to transcription events.
     """
 
-    def __init__(self, agent: Agent, stt: STT | None = None, llm: LLM | None = None, tts: TTS | None = None, vad: VAD | None = None, turn_detector: EOU | None = None, denoise: Denoise | None = None, avatar: Any | None = None) -> None:
+    def __init__(self, agent: Agent | None = None, stt: STT | None = None, llm: LLM | None = None, tts: TTS | None = None, vad: VAD | None = None, turn_detector: EOU | None = None, denoise: Denoise | None = None, avatar: Any | None = None) -> None:
         """Initialize conversation flow with event emitter capabilities"""
         super().__init__()
         self.transcription_callback: Callable[[
@@ -66,15 +67,28 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self._partial_response = ""
         self._is_interrupted = False
 
-        # Enhanced transcript accumulation system
         self._accumulated_transcript = ""
         self._waiting_for_more_speech = False
-        self._speech_wait_timeout = 0.8  # 800ms timeout
         self._wait_timer: asyncio.TimerHandle | None = None
         self._transcript_processing_lock = asyncio.Lock()
 
-        self.min_interruption_words = 2 # 2 
-        
+        self.min_speech_wait_timeout = 0.5
+        self.max_speech_wait_timeout = 0.8
+        self.mode: Literal["ADAPTIVE", "DEFAULT"] = "DEFAULT"
+        self.eou_certainty_threshold = 0.85 
+
+        self.interrupt_mode: Literal["VAD_ONLY", "STT_ONLY", "HYBRID"] = "HYBRID"
+        self.interrupt_min_duration = 0.5
+        self.interrupt_min_words = 1
+
+        self.false_interrupt_pause_duration = 2.0
+        self.resume_on_false_interrupt = False
+        self._is_in_false_interrupt_pause = False
+        self._false_interrupt_timer: asyncio.TimerHandle | None = None
+
+        self._false_interrupt_paused_speech = False
+        self._is_user_speaking = False
+
         # Preemptive generation state
         self._preemptive_transcript: str | None = None
         self._preemptive_lock = asyncio.Lock()
@@ -89,7 +103,17 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self._vmd_buffer = ""
         self._vmd_check_task: asyncio.Task | None = None
 
-
+    def apply_flow_config(self, eou_config: "EOUConfig", interrupt_config: "InterruptConfig") -> None:
+        """Override default timing/interaction parameters using pipeline config."""
+        self.mode = eou_config.mode
+        self.min_speech_wait_timeout = eou_config.min_max_speech_wait_timeout[0]
+        self.max_speech_wait_timeout = eou_config.min_max_speech_wait_timeout[1]
+        self.interrupt_mode = interrupt_config.mode
+        self.interrupt_min_duration = interrupt_config.interrupt_min_duration
+        self.interrupt_min_words = interrupt_config.interrupt_min_words
+        self.false_interrupt_pause_duration = interrupt_config.false_interrupt_pause_duration
+        self.resume_on_false_interrupt = interrupt_config.resume_on_false_interrupt
+        
     def _update_preemptive_generation_flag(self) -> None:
         """Update the preemptive generation flag based on current STT instance"""
         self._enable_preemptive_generation = getattr(self.stt, 'enable_preemptive_generation', False) if self.stt else False
@@ -137,18 +161,63 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             self.emit("error", f"Audio processing failed: {str(e)}")
 
     async def on_vad_event(self, vad_response: VADResponse) -> None:
-        """Handle VAD events"""
+        """Handle VAD events with interruption logic"""
+        
+        if (self.agent and self.agent.session and self.agent.session.agent_state == AgentState.SPEAKING):
+            
+            if vad_response.event_type == VADEventType.START_OF_SPEECH:
+                if not hasattr(self, '_interruption_check_task') or self._interruption_check_task.done():
+                    logger.info("User started speaking during agent response, initiating interruption monitoring")
+                    self._interruption_check_task = asyncio.create_task(
+                        self._monitor_interruption_duration()
+                    )
+                return
+                
+            elif vad_response.event_type == VADEventType.END_OF_SPEECH:
+                if hasattr(self, '_interruption_check_task') and not self._interruption_check_task.done():
+                    logger.info("User stopped speaking, cancelling interruption check")
+                    self._interruption_check_task.cancel()
+                return
+        
         if vad_response.event_type == VADEventType.START_OF_SPEECH:
-            # If we're waiting for more speech and user starts speaking again
+            self._is_user_speaking = True            
             if self._waiting_for_more_speech:
+                logger.debug("User continued speaking, cancelling wait timer")
                 await self._handle_continued_speech()
+                
             await self.on_speech_started()
+            
         elif vad_response.event_type == VADEventType.END_OF_SPEECH:
+            self._is_user_speaking = False
             self.on_speech_stopped()
+
+
+    async def _monitor_interruption_duration(self) -> None:
+        """
+        Monitor user speech duration during agent response.
+        Triggers interruption if speech exceeds the configured threshold.
+        """
+        logger.debug(f"Interruption monitoring started (mode={self.interrupt_mode}, threshold={self.interrupt_min_duration}s)")
+        
+        if self.interrupt_mode not in ("VAD_ONLY", "HYBRID"):
+            logger.debug(f"Interruption mode is {self.interrupt_mode}, VAD monitoring not active")
+            return
+        
+        try:
+            await asyncio.sleep(self.interrupt_min_duration)
+            
+            if (self.agent.session and self.agent.session.current_utterance and self.agent.session.current_utterance.is_interruptible):
+                logger.info(f"User speech duration exceeded {self.interrupt_min_duration}s threshold, triggering interruption")
+                await self._trigger_interruption()
+            else:
+                logger.debug("Interruption threshold reached but utterance is not interruptible")
+                
+        except asyncio.CancelledError:
+            logger.debug("Interruption monitoring cancelled (user stopped speaking)")
+
 
     async def _handle_continued_speech(self) -> None:
         """Handle when user continues speaking while we're waiting"""
-        # Cancel the wait timer
         if self._wait_timer:
             self._wait_timer.cancel()
             self._wait_timer = None
@@ -157,6 +226,12 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
     async def on_stt_transcript(self, stt_response: STTResponse) -> None:
         """Handle STT transcript events with enhanced EOU logic"""
+       
+        utterance = self.agent.session.current_utterance if self.agent and self.agent.session else None
+        if utterance and not utterance.is_interruptible and self.agent.session.agent_state == AgentState.SPEAKING:
+            logger.info(f"Agent is playing non-interruptible message. Ignoring user speech until message completes.")
+            return
+
         if self._waiting_for_more_speech:
             await self._handle_continued_speech()
     
@@ -265,27 +340,46 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         async with self._transcript_processing_lock:
             if self.agent.session:
                 self.agent.session._emit_agent_state(AgentState.LISTENING) 
-            # Append new transcript to accumulated transcript
             if self._accumulated_transcript:
                 self._accumulated_transcript += " " + new_transcript
             else:
                 self._accumulated_transcript = new_transcript
-            
-            # Check EOU with accumulated transcript
-            is_eou = await self._check_end_of_utterance(self._accumulated_transcript)
-            
-            if is_eou:
-                await self._finalize_transcript_and_respond()
-            else:
-                await self._wait_for_additional_speech()
+
+            if self.mode == 'DEFAULT':
+                logger.info(f"DEFAULT Mode, using min speech wait timeout seconds {self.min_speech_wait_timeout} and max speech wait timeout seconds {self.max_speech_wait_timeout}")
+                delay = self.min_speech_wait_timeout
+                if self.turn_detector:
+                    logger.info(f"Turn detector is available, getting EOU probability")
+                    eou_probability = self.turn_detector.get_eou_probability(self.agent.chat_context)
+                    logger.info(f"EOU probability: {eou_probability}")
+                    if eou_probability < self.eou_certainty_threshold:
+                        logger.info(f"EOU probability is less than the threshold, using max speech wait timeout")
+                        delay = self.max_speech_wait_timeout
+                logger.info(f"Using delay: {delay} seconds")
+                await self._wait_for_additional_speech(delay)
+
+            elif self.mode == 'ADAPTIVE':
+                logger.info(f"ADAPTIVE Mode, using min speech wait timeout seconds {self.min_speech_wait_timeout} and max speech wait timeout seconds {self.max_speech_wait_timeout}")
+                delay = self.min_speech_wait_timeout
+                if self.turn_detector:
+                    logger.info(f"Turn detector is available, getting EOU probability")
+                    eou_probability = self.turn_detector.get_eou_probability(self.agent.chat_context)
+                    logger.info(f"EOU probability: {eou_probability}")
+                    logger.info(f"Calculating delay using sliding scale {self.min_speech_wait_timeout} to {self.max_speech_wait_timeout}")
+                    delay_range = self.max_speech_wait_timeout - self.min_speech_wait_timeout
+                    wait_factor = 1.0 - eou_probability  
+                    logger.info(f"Wait factor: {wait_factor}")
+                    delay = self.min_speech_wait_timeout + (delay_range * wait_factor)
+                    logger.info(f"Calculated delay: {delay}")
+                await self._wait_for_additional_speech(delay)
+
+        
 
     async def _check_end_of_utterance(self, transcript: str) -> bool:
         """Check if the current transcript represents end of utterance"""
         if not self.turn_detector:
-            # If no EOU detector, assume it's always end of utterance
             return True
         
-        # Create temporary chat context for EOU detection
         temp_context = self.agent.chat_context.copy()
         temp_context.add_message(role=ChatRole.USER, content=transcript)
         
@@ -295,20 +389,19 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         
         return is_eou
 
-    async def _wait_for_additional_speech(self) -> None:
+    async def _wait_for_additional_speech(self, delay: float) -> None:
         """Wait for additional speech within the timeout period"""
+        logger.info(f"Called _wait_for_additional_speech method, Waiting for additional speech for {delay} seconds")
 
         if self._waiting_for_more_speech:
-            # Already waiting, extend the timer
             if self._wait_timer:
                 self._wait_timer.cancel()
         
         self._waiting_for_more_speech = True
         
-        # Set timer for speech timeout
         loop = asyncio.get_event_loop()
         self._wait_timer = loop.call_later(
-            self._speech_wait_timeout,
+            delay,
             lambda: asyncio.create_task(self._on_speech_timeout())
         )
 
@@ -316,7 +409,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         """Handle timeout when no additional speech is detected"""
         async with self._transcript_processing_lock:
             if not self._waiting_for_more_speech:
-                return  # Already processed or cancelled
+                return
             
             self._waiting_for_more_speech = False
             self._wait_timer = None
@@ -331,10 +424,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         final_transcript = self._accumulated_transcript.strip()
         logger.info(f"Finalizing transcript: '{final_transcript}'")
         
-        # Reset accumulated transcript
         self._accumulated_transcript = ""
         
-        # Process the final transcript
         await self._process_final_transcript(final_transcript)
 
     async def _process_final_transcript(self, user_text: str) -> None:
@@ -364,7 +455,10 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
         if self.agent and self.agent.session:
             if self.agent.session.current_utterance and not self.agent.session.current_utterance.done():
-                self.agent.session.current_utterance.interrupt()
+                if self.agent.session.current_utterance.is_interruptible:
+                    self.agent.session.current_utterance.interrupt()
+                else:
+                    logger.info("Current utterance is not interruptible. Skipping interruption in cascading pipeline.")
             
             handle = UtteranceHandle(utterance_id=f"utt_{uuid.uuid4().hex[:8]}")
             self.agent.session.current_utterance = handle
@@ -387,12 +481,10 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         original_stt_handler = None
         
         if wait_for_playback:
-            # Temporarily disable VAD events
             if self.vad:
                 original_vad_handler = self.on_vad_event
                 self.on_vad_event = lambda x: None
             
-            # Temporarily disable STT transcript processing
             if self.stt:
                 original_stt_handler = self.on_stt_transcript
                 self.on_stt_transcript = lambda x: None
@@ -619,7 +711,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             try:
                 await asyncio.gather(collector_task, tts_task, return_exceptions=True)
             except asyncio.CancelledError:
-                # Ensure proper cleanup on cancellation
                 if not collector_task.done():
                     collector_task.cancel()
                 if not tts_task.done():
@@ -859,47 +950,147 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         
         word_count = len(text.strip().split())
         logger.info(f"handle_stt_event: Word count: {word_count}")
-        if word_count >= self.min_interruption_words:
-            await self._trigger_interruption()
+        
+        if self.resume_on_false_interrupt and self._is_in_false_interrupt_pause and word_count >= self.interrupt_min_words:
+            logger.info(f"[FALSE_INTERRUPT] STT transcript received while in paused state: '{text}' ({word_count} words). Confirming real interruption.")
+            self._cancel_false_interrupt_timer()
+            self._is_in_false_interrupt_pause = False
+            self._false_interrupt_paused_speech = False
+            logger.info("[FALSE_INTERRUPT] Clearing audio buffers and finalizing interruption.")
+            await self._interrupt_tts()
+            return
+        
+        if self.interrupt_mode in ("STT_ONLY", "HYBRID"):
+            if word_count >= self.interrupt_min_words:
+                if self.agent.session and self.agent.session.current_utterance and self.agent.session.current_utterance.is_interruptible:
+                    await self._trigger_interruption()
+                else:
+                    logger.info("Interruption not allowed for the current utterance.")
             
     async def _trigger_interruption(self) -> None:
-        """Trigger interruption once"""
-        logger.info(f"Triggering interruption From STT")
-        if self._is_interrupted:
-            logger.info(f"Already interrupted, skipping")
-            return
+            """Trigger interruption once, respecting the utterance's interruptible flag."""
+            logger.info("Interruption triggered")
+            if self._is_interrupted:
+                logger.info("Already interrupted, skipping")
+                return
+
+            utterance = self.agent.session.current_utterance if self.agent and self.agent.session else None
+            if utterance and not utterance.is_interruptible:
+                logger.info("Interruption is disabled for the current utterance. Ignoring.")
+                return
+                
+            self._is_interrupted = True 
+
+            can_resume = self.resume_on_false_interrupt and self.tts and self.tts.can_pause
             
-        if self.tts:
-            try:
+            if can_resume:
+                logger.info(f"[FALSE_INTERRUPT] Pausing TTS for potential resume. (resume_on_false_interrupt={self.resume_on_false_interrupt}, can_pause={self.tts.can_pause if self.tts else False})")
+                self._false_interrupt_paused_speech = True
+                self._is_in_false_interrupt_pause = True
+                await self.tts.pause()
+                self._start_false_interrupt_timer()
+            else:
+                logger.info("performing full interruption.")
                 await self._interrupt_tts()
-            except Exception as e:
-                logger.error(f" _trigger_interruption Callback error: {e}")
+
+    def _start_false_interrupt_timer(self):
+        """Starts a timer to detect if an interruption was just a brief false interrupt."""
+        if self._false_interrupt_timer:
+            logger.info("[FALSE_INTERRUPT] Cancelling existing timer before starting a new one.")
+            self._false_interrupt_timer.cancel()
+            
+        if self.false_interrupt_pause_duration is None:
+            logger.info("[FALSE_INTERRUPT] Timeout is None, skipping timer.")
+            return
+
+        logger.info(f"[FALSE_INTERRUPT] Starting timer for {self.false_interrupt_pause_duration}s. If no STT transcript is received within this time, speech will resume.")
+        loop = asyncio.get_event_loop()
+        self._false_interrupt_timer = loop.call_later(
+            self.false_interrupt_pause_duration,
+            lambda: asyncio.create_task(self._on_false_interrupt_timeout())
+        )
+
+    def _cancel_false_interrupt_timer(self):
+        """Cancels the false-interrupt timer if it's running."""
+        if self._false_interrupt_timer:
+            logger.info("[FALSE_INTERRUPT] Cancelling false-interrupt timer - real interruption confirmed.")
+            self._false_interrupt_timer.cancel()
+            self._false_interrupt_timer = None
+
+    async def _on_false_interrupt_timeout(self):
+        """Called when the user remains silent after an interruption."""
+        logger.info(f"[FALSE_INTERRUPT] Timeout reached after {self.false_interrupt_pause_duration}s. User did not follow up with speech.")
+        self._false_interrupt_timer = None
+
+        if self._is_user_speaking:
+            logger.info("[FALSE_INTERRUPT] User is still speaking at timeout. Confirming as a real interruption.")
+            self._is_in_false_interrupt_pause = False
+            self._false_interrupt_paused_speech = False
+            await self._interrupt_tts()
+            return
+
+        if self._is_in_false_interrupt_pause and self.tts and self.tts.can_pause:
+            logger.info("[FALSE_INTERRUPT] Resuming agent speech from paused position - false interruption detected.")
+            self._is_interrupted = False
+            self._is_in_false_interrupt_pause = False
+            self._false_interrupt_paused_speech = False
+            await self.tts.resume()
+        else:
+            if self._is_interrupted or self._false_interrupt_paused_speech:
+                logger.info(f"[FALSE_INTERRUPT] Cannot resume (is_in_false_interrupt_pause={self._is_in_false_interrupt_pause}, can_pause={self.tts.can_pause if self.tts else False}). Finalizing interruption.")
+                await self._interrupt_tts()
+            else:
+                logger.info("[FALSE_INTERRUPT] Timeout reached but no paused state found. No action needed.")        
     
     async def on_speech_started(self) -> None:       
-        cascading_metrics_collector.on_user_speech_start()
+            cascading_metrics_collector.on_user_speech_start()
 
-        if self.user_speech_callback:
-            self.user_speech_callback()
+            if self.user_speech_callback:
+                self.user_speech_callback()
 
-        if self._stt_started:
-            self._stt_started = False
+            if self._stt_started:
+                self._stt_started = False
+            
+            utterance = self.agent.session.current_utterance if self.agent and self.agent.session else None
+            if utterance and not utterance.is_interruptible:
+                logger.info("Interruption is disabled for the current utterance. Not interrupting.")
+                if self.agent.session:
+                    self.agent.session._emit_user_state(UserState.SPEAKING)
+                return
 
-        if self.tts:
-            await self._interrupt_tts()
-        
-        if self.agent.session:
-            self.agent.session._emit_user_state(UserState.SPEAKING)
+            self._cancel_false_interrupt_timer()
+            
+            can_resume = self.resume_on_false_interrupt and self.tts and self.tts.can_pause
+
+            if self._false_interrupt_paused_speech:
+                logger.info("User continued speaking, confirming interruption of paused speech.")
+                self._false_interrupt_paused_speech = False 
+                await self._interrupt_tts() 
+            elif self.agent and self.agent.session and self.agent.session.agent_state == AgentState.SPEAKING:
+                if can_resume:
+                    logger.info("Pausing agent speech for potential hesitation (will resume if user stops quickly).")
+                    await self._trigger_interruption()
+                else:
+                    await self._interrupt_tts()
+            
+            if self.agent.session:
+                self.agent.session._emit_user_state(UserState.SPEAKING)
 
     async def _interrupt_tts(self) -> None:
-        self._is_interrupted = True
+        self._is_interrupted = True        
+        self._cancel_false_interrupt_timer()
+        self._is_in_false_interrupt_pause = False
+        self._false_interrupt_paused_speech = False
 
         if self.agent and self.agent.session and self.agent.session.current_utterance:
-            self.agent.session.current_utterance.interrupt()
+            if self.agent.session.current_utterance.is_interruptible:
+                self.agent.session.current_utterance.interrupt()
+            else:
+                logger.info("Cannot interrupt non-interruptible utterance in _interrupt_tts")
 
         if self.agent.session and self.agent.session.is_background_audio_enabled:
             await self.agent.session.stop_thinking_audio()
 
-        # Cancel any waiting timers
         if self._wait_timer:
             self._wait_timer.cancel()
             self._wait_timer = None
@@ -921,12 +1112,10 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             tasks_to_cancel.append(self._current_llm_task)
 
         if tasks_to_cancel:
-            # Force cancel tasks to ensure immediate stop
             for task in tasks_to_cancel:
                 task.cancel()
             await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
             
-        # Reset conversation state
         self._partial_response = ""
         self._is_interrupted = False
 
@@ -959,14 +1148,16 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         if self.agent and self.agent.session:
             self.agent.session._pause_wake_up_timer()
 
-        # Ensure audio track exists before callback registration
         if not self.audio_track:
             if hasattr(self.agent.session, "pipeline") and hasattr(self.agent.session.pipeline, "audio_track"):
                 self.audio_track = self.agent.session.pipeline.audio_track
             else:
                 logger.warning("[ConversationFlow] Audio track not found in pipeline — last audio callback will be skipped.")
 
-        # Define first/last audio byte callbacks
+        if self.audio_track and hasattr(self.audio_track, "enable_audio_input"):
+            # Require manual re-enable so old audio never bleeds into the next utterance.
+            self.audio_track.enable_audio_input(manual_control=True)
+
         async def on_first_audio_byte():
             if self.agent.session and self.agent.session.is_background_audio_enabled:
                 await self.agent.session.stop_thinking_audio()
@@ -983,7 +1174,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 self.agent.session._emit_user_state(UserState.IDLE)
             logger.info("[TTS] Last audio byte processed — Agent and User set to IDLE")
 
-        # Register the callbacks
         self.tts.on_first_audio_byte(on_first_audio_byte)
 
         if self.audio_track:

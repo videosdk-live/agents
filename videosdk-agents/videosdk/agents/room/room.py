@@ -781,6 +781,7 @@ class VideoSDKHandler:
             except Exception as e:
                 logger.error(f"Error ending traces flow manager: {e}")
             self.traces_flow_manager = None
+            cascading_metrics_collector.set_traces_flow_manager(None)
         
         self.participants_data.clear()
         self._participant_joined_events.clear()

@@ -324,14 +324,13 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             self._start_wake_up_timer()
         self._emit_agent_state(AgentState.IDLE)
         
-    async def say(self, message: str) -> UtteranceHandle:
+    async def say(self, message: str, interruptible: bool = True) -> UtteranceHandle:
         """
         Send an initial message to the agent and return a handle to track it.
         """
         if self.current_utterance and not self.current_utterance.done():
-            self.current_utterance.interrupt() 
-
-        handle = UtteranceHandle(utterance_id=f"utt_{uuid.uuid4().hex[:8]}")
+            self.current_utterance.interrupt()
+        handle = UtteranceHandle(utterance_id=f"utt_{uuid.uuid4().hex[:8]}", interruptible=interruptible)
         self.current_utterance = handle
 
         if not isinstance(self.pipeline, RealTimePipeline):
@@ -407,7 +406,8 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             await self._thinking_audio_player.stop()
             self._thinking_audio_player = None
     
-    async def reply(self, instructions: str, wait_for_playback: bool = True, frames: list[av.VideoFrame] | None = None) -> UtteranceHandle:
+
+    async def reply(self, instructions: str, wait_for_playback: bool = True, frames: list[av.VideoFrame] | None = None, interruptible: bool = True) -> UtteranceHandle:
         """
         Generate a response from agent using instructions and current chat context.
         
@@ -425,11 +425,11 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         if self._reply_in_progress:
             if self.current_utterance:
                 return self.current_utterance
-            handle = UtteranceHandle(utterance_id="placeholder")
+            handle = UtteranceHandle(utterance_id="placeholder", interruptible=interruptible)
             handle._mark_done()
             return handle
         
-        handle = UtteranceHandle(utterance_id=f"utt_{uuid.uuid4().hex[:8]}")
+        handle = UtteranceHandle(utterance_id=f"utt_{uuid.uuid4().hex[:8]}", interruptible=interruptible)
         self.current_utterance = handle
 
         if self._is_executing_tool:
@@ -459,15 +459,25 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
 
             if hasattr(self.pipeline, 'reply_with_context'):
                 await self.pipeline.reply_with_context(instructions, wait_for_playback, handle=handle, frames=frames)
+
+            if wait_for_playback:
+                await handle
+
         finally:
             self._reply_in_progress = False
+            if not handle.done():
+                handle._mark_done() 
 
-    def interrupt(self) -> None:
+    def interrupt(self, *, force: bool = False) -> None:
         """
         Interrupt the agent's current speech.
         """
         if self.current_utterance and not self.current_utterance.interrupted:
-            self.current_utterance.interrupt()
+            try:
+                self.current_utterance.interrupt(force=force) 
+            except RuntimeError as e:
+                logger.warning(f"Could not interrupt utterance: {e}")
+                return
         
         if hasattr(self.pipeline, 'interrupt'):
             self.pipeline.interrupt()
