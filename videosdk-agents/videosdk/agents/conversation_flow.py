@@ -565,7 +565,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                             response_parts.append(chunk.content)
                             await q.put(chunk.content)
                         
-                        # Store metadata for workflow
+                        # Store metadata for conversational graph
                         if chunk.metadata:
                             metadata = chunk.metadata
                         
