@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import Any, AsyncIterator, Literal, Optional,Union,List
+from typing import Any, AsyncIterator, Literal, Optional,Union,List, Any
 from pydantic import BaseModel,Field
 from ..event_emitter import EventEmitter
 from .chat_context import ChatContext, ChatRole
 from ..utils import FunctionTool
 import logging
+import json
 logger = logging.getLogger(__name__)
 
 
@@ -126,3 +127,21 @@ class LLM(EventEmitter[Literal["error"]]):
         Async context manager exit point.
         """
         await self.aclose()
+
+def yield_with_metadata(current_content: str, cancelled:bool=False,conversational_graph: Any  = None):
+    if current_content and not cancelled:
+        if conversational_graph:
+            try:
+                parsed_json = json.loads(current_content.strip())
+                yield LLMResponse(
+                    content="",
+                    role=ChatRole.ASSISTANT,
+                    metadata=parsed_json
+                )
+            except json.JSONDecodeError:
+                yield LLMResponse(
+                    content=current_content,
+                    role=ChatRole.ASSISTANT
+                )
+        else:
+            pass

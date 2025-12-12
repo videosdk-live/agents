@@ -4,7 +4,7 @@ import json
 from typing import Any, AsyncIterator, List, Union
 import httpx
 import anthropic
-from videosdk.agents import LLM, LLMResponse, ChatContext, ChatRole, ChatMessage, FunctionCall, FunctionCallOutput, ToolChoice, FunctionTool, is_function_tool, build_openai_schema, ImageContent, ChatContent,ConversationalGraphResponse
+from videosdk.agents import LLM, LLMResponse, ChatContext, ChatRole, ChatMessage, FunctionCall, FunctionCallOutput, ToolChoice, FunctionTool, is_function_tool, build_openai_schema, ImageContent, ChatContent,ConversationalGraphResponse,yield_with_metadata
 
 class AnthropicLLM(LLM):
 
@@ -66,7 +66,7 @@ class AnthropicLLM(LLM):
         self,
         messages: ChatContext,
         tools: list[FunctionTool] | None = None,
-        conversational_graph: bool = False,
+        conversational_graph: Any | None = None,
         **kwargs: Any
     ) -> AsyncIterator[LLMResponse]:
         """
@@ -158,9 +158,11 @@ class AnthropicLLM(LLM):
             current_tool_arguments = ""
             
             # State for partial JSON parsing
-            in_response = False
-            response_start_index = -1
-            yielded_content_length = 0
+            streaming_state = {
+                "in_response": False,
+                "response_start_index": -1,
+                "yielded_content_length": 0
+            }
 
             async for event in response_stream:
                 if self._cancelled:
@@ -178,55 +180,13 @@ class AnthropicLLM(LLM):
                 elif event.type == "content_block_delta":
                     delta = event.delta
                     if delta.type == "text_delta":
-                        if not conversational_graph:
-                            # Standard streaming for non-conversational_graph mode
-                            yield LLMResponse(content=delta.text, role=ChatRole.ASSISTANT)
+                        current_content += delta.text
+                        if conversational_graph:
+                            for content_chunk in conversational_graph.stream_conversational_graph_response(current_content, streaming_state):
+                                yield LLMResponse(content=content_chunk, role=ChatRole.ASSISTANT)
                         else:
-                            current_content += delta.text
-                            
-                            # Partial streaming logic
-                            if not in_response and response_start_index == -1:
-                                marker = '"response_to_user":'
-                                marker_pos = current_content.find(marker)
-                                if marker_pos != -1:
-                                    quote_pos = current_content.find('"', marker_pos + len(marker))
-                                    if quote_pos != -1:
-                                        in_response = True
-                                        response_start_index = quote_pos + 1
-                            
-                            if in_response:
-                                candidate = current_content[response_start_index:]
-                                
-                                end_quote_index = -1
-                                idx = yielded_content_length
-                                while idx < len(candidate):
-                                    if candidate[idx] == '"':
-                                        backslashes = 0
-                                        check_idx = idx - 1
-                                        while check_idx >= 0 and candidate[check_idx] == '\\':
-                                            backslashes += 1
-                                            check_idx -= 1
-                                        
-                                        if backslashes % 2 == 0:
-                                            end_quote_index = idx
-                                            break
-                                    idx += 1
-                                
-                                if end_quote_index != -1:
-                                    full_valid_content = candidate[:end_quote_index]
+                            yield LLMResponse(content=delta.text, role=ChatRole.ASSISTANT)
 
-                                    new_part = full_valid_content[yielded_content_length:]
-                                    if new_part:
-                                        yield LLMResponse(content=new_part, role=ChatRole.ASSISTANT)
-                                        yielded_content_length += len(new_part)
-                                    
-                                    in_response = False
-                                else:
-                                    full_valid_content = candidate
-                                    new_part = full_valid_content[yielded_content_length:]
-                                    if new_part:
-                                        yield LLMResponse(content=new_part, role=ChatRole.ASSISTANT)
-                                        yielded_content_length += len(new_part)
                     elif delta.type == "input_json_delta":
                         if current_tool_call:
                             current_tool_arguments += delta.partial_json
@@ -257,26 +217,7 @@ class AnthropicLLM(LLM):
                         current_tool_arguments = ""
             
             # After streaming completes
-            if current_content and not self._cancelled:
-                if conversational_graph:
-                    try:
-                        clean_response = current_content.strip()
-                        
-                        parsed_json = json.loads(clean_response)
-                        yield LLMResponse(
-                            content="", 
-                            role=ChatRole.ASSISTANT,
-                            metadata=parsed_json
-                        )
-                    except json.JSONDecodeError:
-                        # Fallback: treat as plain text
-                        if yielded_content_length == 0:
-                            yield LLMResponse(
-                                content=current_content,
-                                role=ChatRole.ASSISTANT
-                            )
-                else:
-                    pass
+            yield_with_metadata(current_content, self._cancelled, conversational_graph)
 
         except anthropic.APIError as e:
             if not self._cancelled:

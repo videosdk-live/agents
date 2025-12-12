@@ -695,7 +695,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             async for llm_chunk_resp in self.llm.chat(
                 self.agent.chat_context,
                 tools=self.agent._tools,
-                conversational_graph=True if self.conversational_graph else False
+                conversational_graph=self.conversational_graph if self.conversational_graph else None
             ):
                 if self._is_interrupted:
                     logger.info("LLM processing interrupted")

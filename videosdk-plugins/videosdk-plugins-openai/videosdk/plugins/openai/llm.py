@@ -17,7 +17,8 @@ from videosdk.agents import (
     FunctionTool,
     is_function_tool,
     build_openai_schema,
-    ConversationalGraphResponse
+    ConversationalGraphResponse,
+    yield_with_metadata,
 
 )
 from videosdk.agents.llm.chat_context import ChatContent, ImageContent
@@ -168,7 +169,7 @@ class OpenAILLM(LLM):
         self,
         messages: ChatContext,
         tools: list[FunctionTool] | None = None,
-        conversational_graph: bool = False,
+        conversational_graph: Any | None = None,
         **kwargs: Any
     ) -> AsyncIterator[LLMResponse]:
         """
@@ -266,9 +267,11 @@ class OpenAILLM(LLM):
             # Accumulate JSON response
             current_content = ""
             current_function_call = None
-            in_response = False
-            response_start_index = -1
-            yielded_content_length = 0
+            streaming_state = {
+                "in_response": False,
+                "response_start_index": -1,
+                "yielded_content_length": 0
+            }
 
             async for chunk in response_stream:
                 if self._cancelled:
@@ -305,73 +308,15 @@ class OpenAILLM(LLM):
                     current_function_call = None
                 
                 elif delta.content is not None:
-                    if not conversational_graph:
-                        yield LLMResponse(content=delta.content, role=ChatRole.ASSISTANT)
+                    current_content += delta.content   
+                    if conversational_graph:                     
+                        for content_chunk in conversational_graph.stream_conversational_graph_response(current_content, streaming_state):
+                            yield LLMResponse(content=content_chunk, role=ChatRole.ASSISTANT)
                     else:
-                        current_content += delta.content
-                        
-                        if not in_response and response_start_index == -1:
-                            marker = '"response_to_user":'
-                            marker_pos = current_content.find(marker)
-                            if marker_pos != -1:
-                                quote_pos = current_content.find('"', marker_pos + len(marker))
-                                if quote_pos != -1:
-                                    in_response = True
-                                    response_start_index = quote_pos + 1
-                        
-                        if in_response:
-                            candidate = current_content[response_start_index:]
-                            
-                            end_quote_index = -1
-                            idx = yielded_content_length
-                            
-                            while idx < len(candidate):
-                                if candidate[idx] == '"':
-                                    backslashes = 0
-                                    check_idx = idx - 1
-                                    while check_idx >= 0 and candidate[check_idx] == '\\':
-                                        backslashes += 1
-                                        check_idx -= 1
-                                    
-                                    if backslashes % 2 == 0:
-                                        end_quote_index = idx
-                                        break
-                                idx += 1
-                            
-                            if end_quote_index != -1:
-                                full_valid_content = candidate[:end_quote_index]
-                                
-                                new_part = full_valid_content[yielded_content_length:]
-                                if new_part:
-                                    yield LLMResponse(content=new_part, role=ChatRole.ASSISTANT)
-                                    yielded_content_length += len(new_part)
-                                
-                                in_response = False
-                            else:
-                                full_valid_content = candidate
-                                new_part = full_valid_content[yielded_content_length:]
-                                if new_part:
-                                    yield LLMResponse(content=new_part, role=ChatRole.ASSISTANT)
-                                    yielded_content_length += len(new_part)
+                        yield LLMResponse(content=delta.content, role=ChatRole.ASSISTANT)
 
             # After streaming completes
-            if current_content and not self._cancelled:
-                if conversational_graph:
-                    try:
-                        parsed_json = json.loads(current_content.strip())
-                        yield LLMResponse(
-                            content="",
-                            role=ChatRole.ASSISTANT,
-                            metadata=parsed_json
-                        )
-                    except json.JSONDecodeError:
-                        if yielded_content_length == 0:
-                             yield LLMResponse(
-                                content=current_content,
-                                role=ChatRole.ASSISTANT
-                            )
-                else:
-                    pass
+            yield_with_metadata(current_content, self._cancelled, conversational_graph)
 
         except Exception as e:
             if not self._cancelled:
