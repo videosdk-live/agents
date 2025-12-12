@@ -17,8 +17,7 @@ from videosdk.agents import (
     FunctionTool,
     is_function_tool,
     build_openai_schema,
-    ConversationalGraphResponse,
-    yield_with_metadata,
+    ConversationalGraphResponse
 
 )
 from videosdk.agents.llm.chat_context import ChatContent, ImageContent
@@ -316,7 +315,22 @@ class OpenAILLM(LLM):
                         yield LLMResponse(content=delta.content, role=ChatRole.ASSISTANT)
 
             # After streaming completes
-            yield_with_metadata(current_content, self._cancelled, conversational_graph)
+            if current_content and not self._cancelled:
+                if conversational_graph:
+                    try:
+                        parsed_json = json.loads(current_content.strip())
+                        yield LLMResponse(
+                            content="",
+                            role=ChatRole.ASSISTANT,
+                            metadata=parsed_json
+                        )
+                    except json.JSONDecodeError:
+                             yield LLMResponse(
+                                content=current_content,
+                                role=ChatRole.ASSISTANT
+                            )
+                else:
+                    pass
 
         except Exception as e:
             if not self._cancelled:

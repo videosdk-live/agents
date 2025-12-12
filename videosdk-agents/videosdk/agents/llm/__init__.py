@@ -1,4 +1,4 @@
-from .llm import LLM, LLMResponse,ConversationalGraphResponse,yield_with_metadata
+from .llm import LLM, LLMResponse,ConversationalGraphResponse
 from .chat_context import (
     ChatContext,
     ChatRole,
@@ -19,6 +19,5 @@ __all__ = [
     "FunctionCall",
     "FunctionCallOutput",
     "ImageContent",
-    "ConversationalGraphResponse",
-    "yield_with_metadata",
+    "ConversationalGraphResponse"
 ] 

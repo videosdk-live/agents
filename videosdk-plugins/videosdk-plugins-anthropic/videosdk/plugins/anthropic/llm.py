@@ -4,7 +4,7 @@ import json
 from typing import Any, AsyncIterator, List, Union
 import httpx
 import anthropic
-from videosdk.agents import LLM, LLMResponse, ChatContext, ChatRole, ChatMessage, FunctionCall, FunctionCallOutput, ToolChoice, FunctionTool, is_function_tool, build_openai_schema, ImageContent, ChatContent,ConversationalGraphResponse,yield_with_metadata
+from videosdk.agents import LLM, LLMResponse, ChatContext, ChatRole, ChatMessage, FunctionCall, FunctionCallOutput, ToolChoice, FunctionTool, is_function_tool, build_openai_schema, ImageContent, ChatContent,ConversationalGraphResponse
 
 class AnthropicLLM(LLM):
 
@@ -217,7 +217,22 @@ class AnthropicLLM(LLM):
                         current_tool_arguments = ""
             
             # After streaming completes
-            yield_with_metadata(current_content, self._cancelled, conversational_graph)
+            if current_content and not self._cancelled:
+                if conversational_graph:
+                    try:
+                        parsed_json = json.loads(current_content.strip())
+                        yield LLMResponse(
+                            content="",
+                            role=ChatRole.ASSISTANT,
+                            metadata=parsed_json
+                        )
+                    except json.JSONDecodeError:
+                             yield LLMResponse(
+                                content=current_content,
+                                role=ChatRole.ASSISTANT
+                            )
+                else:
+                    pass
 
         except anthropic.APIError as e:
             if not self._cancelled:

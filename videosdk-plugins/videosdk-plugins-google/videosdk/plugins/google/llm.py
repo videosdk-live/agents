@@ -25,8 +25,7 @@ from videosdk.agents import (
     build_gemini_schema,
     ChatContent,
     ImageContent,
-    ConversationalGraphResponse,
-    yield_with_metadata,
+    ConversationalGraphResponse
 )
     
 
@@ -213,7 +212,22 @@ class GoogleLLM(LLM):
                             yield LLMResponse(content=part.text, role=ChatRole.ASSISTANT)
             
             # After streaming completes
-            yield_with_metadata(current_content, self._cancelled, conversational_graph)
+            if current_content and not cancelled:
+                if conversational_graph:
+                    try:
+                        parsed_json = json.loads(current_content.strip())
+                        yield LLMResponse(
+                            content="",
+                            role=ChatRole.ASSISTANT,
+                            metadata=parsed_json
+                        )
+                    except json.JSONDecodeError:
+                        yield LLMResponse(
+                            content=current_content,
+                            role=ChatRole.ASSISTANT
+                        )
+                else:
+                    pass
 
         except (ClientError, ServerError, APIError) as e:
             if not self._cancelled:
