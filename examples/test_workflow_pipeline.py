@@ -1,13 +1,13 @@
 
 import logging
-import aiohttp
-from pydantic import BaseModel,Field
+from pydantic import Field
 from videosdk.agents import Agent, AgentSession, CascadingPipeline, WorkerJob, ConversationFlow, JobContext, RoomOptions
-from videosdk.plugins.google import GoogleLLM, GoogleTTS
 from videosdk.plugins.deepgram import DeepgramSTT
+from videosdk.plugins.google import GoogleTTS
+from videosdk.plugins.openai import OpenAILLM
 from videosdk.plugins.silero import SileroVAD
 from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
-from conversational_graph import ConversationGraph,PreDefinedTool
+from conversational_graph import ConversationalGraph,PreDefinedTool,HttpToolRequest,ConversationalDataModel
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 logger = logging.getLogger(__name__)
@@ -15,26 +15,23 @@ logger = logging.getLogger(__name__)
 pre_download_model()
 
 
-
-get_weather = PreDefinedTool().http_tool(
-    name="get_weather",
-    description="Called when the user asks about the weather. This function will return the weather for the given location. When given a location, please estimate the latitude and longitude of the location and do not ask the user for them.\n\nArgs:\n    latitude: The latitude of the location\n    longitude: The longitude of the location",
-    url="https://api.open-meteo.com/v1/forecast?latitude=21.1702&longitude=81.2402&current=temperature_2m",
-    method="GET",
-    auth={"enabled": False, "type": "none"},
-    params={}
+get_weather = PreDefinedTool().http_tool(HttpToolRequest(
+        name="get_weather",
+        description="Called when the user asks about the weather. This function will return the weather for the given location.",
+        url="https://api.open-meteo.com/v1/forecast?latitude=21.1702&longitude=81.2402&current=temperature_2m",
+        method="GET"
+    )
 )
-
-class LoanMemory(BaseModel):
+ 
+class LoanMemory(ConversationalDataModel):
     loan_type: str = Field(None, description="Type of loan: personal, home, car")
     annual_income: int = Field(None, description="Annual income of the applicant in INR")
     credit_score: int = Field(None, description="Credit score of the applicant. Must be between 300 and 850")
     property_value: int = Field(None, description="Value of the property for home loan in INR")
     vehicle_price: int = Field(None, description="Price of the vehicle for car loan in INR")
     loan_amount: int = Field(None, description="Desired loan amount in INR. MUST be greater than ₹11 lakh for approval")
-    location: str = Field(None, description="User's location for weather information")
 
-loan_workflow = ConversationGraph(
+loan_workflow = ConversationalGraph(
         name="Loan Application Workflow",
         DataModel= LoanMemory,
         off_topic_threshold=5
@@ -43,7 +40,7 @@ loan_workflow = ConversationGraph(
 # Start Greeting
 q0 = loan_workflow.state(
     name="Greeting",
-    instruction="Welcome user and start the conversation and ask user's location and the tell weather of that location",
+    instruction="Welcome user and start the conversation and tell the weather",
     tool=get_weather
 )
 
@@ -109,9 +106,7 @@ q_master = loan_workflow.state(
 )
 
 
-# ---------------------------
 # Define Transitions
-# ---------------------------
 
 # Greeting → Loan Type Selection
 loan_workflow.transition(
@@ -206,7 +201,7 @@ async def entrypoint(ctx: JobContext):
 
     pipeline = CascadingPipeline(
         stt= DeepgramSTT(),
-        llm=GoogleLLM(),
+        llm=OpenAILLM(),
         tts=GoogleTTS(),
         vad=SileroVAD(),
         turn_detector=TurnDetector(),

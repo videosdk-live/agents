@@ -577,11 +577,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                     
                     if self.conversational_graph and metadata:
                         # Call handle_decision with metadata
-                        convo_graph_res = await self.conversational_graph.handle_decision(self.agent, metadata)
-                        return "".join(response_parts) + "".join(convo_graph_res)
-
-                    else:
-                        return "".join(response_parts)
+                        _ = await self.conversational_graph.handle_decision(self.agent, metadata)
+                    return "".join(response_parts)
                         
                 except asyncio.CancelledError:
                     logger.info("LLM collection cancelled")
