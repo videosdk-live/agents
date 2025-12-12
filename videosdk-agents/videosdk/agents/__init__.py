@@ -79,7 +79,7 @@ from .execution import (
 )
 from .execution.inference_resource import DedicatedInferenceResource
 
-from .llm.llm import LLM, LLMResponse
+from .llm.llm import LLM, LLMResponse, ConversationalGraphResponse
 from .llm.chat_context import (
     ChatContext,
     ChatRole,
@@ -87,7 +87,8 @@ from .llm.chat_context import (
     ChatContent,
     FunctionCall,
     FunctionCallOutput,
-    ImageContent,
+    ImageContent
+
 )
 from .stt.stt import STT, STTResponse, SpeechEventType, SpeechData
 from .tts.tts import TTS
@@ -131,6 +132,7 @@ __all__ = [
     "FunctionCall",
     "FunctionCallOutput",
     "LLMResponse",
+    "ConversationalGraphResponse"
     "STT",
     "STTResponse",
     "SpeechEventType",
