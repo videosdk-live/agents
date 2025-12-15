@@ -4,8 +4,7 @@ import json
 from typing import Any, AsyncIterator, List, Union
 import httpx
 import anthropic
-from videosdk.agents import LLM, LLMResponse, ChatContext, ChatRole, ChatMessage, FunctionCall, FunctionCallOutput, ToolChoice, FunctionTool, is_function_tool, build_openai_schema, ImageContent, ChatContent
-
+from videosdk.agents import LLM, LLMResponse, ChatContext, ChatRole, ChatMessage, FunctionCall, FunctionCallOutput, ToolChoice, FunctionTool, is_function_tool, build_openai_schema, ImageContent, ChatContent,ConversationalGraphResponse
 
 class AnthropicLLM(LLM):
 
@@ -67,6 +66,7 @@ class AnthropicLLM(LLM):
         self,
         messages: ChatContext,
         tools: list[FunctionTool] | None = None,
+        conversational_graph: Any | None = None,
         **kwargs: Any
     ) -> AsyncIterator[LLMResponse]:
         """
@@ -92,6 +92,11 @@ class AnthropicLLM(LLM):
                 "temperature": self.temperature,
                 "stream": True,
             }
+
+            # Enhance system prompt to request JSON output
+            if system_content and conversational_graph:
+                schema_example = json.dumps(ConversationalGraphResponse.model_json_schema(), indent=2)
+                system_content += f"\n\nCRITICAL: You MUST respond with ONLY valid JSON. Do NOT wrap it in ```json code blocks or any markdown. Return raw JSON matching this schema:\n{schema_example}"
 
             if system_content:
                 completion_params["system"] = system_content
@@ -139,12 +144,25 @@ class AnthropicLLM(LLM):
 
             completion_params.update(kwargs)
 
+            if conversational_graph:
+                completion_params["extra_headers"] = {
+                    "anthropic-beta": "structured-outputs-2025-11-13"
+                }
+
             response_stream = await self._client.messages.create(**completion_params)
 
+            # Accumulate JSON response
             current_content = ""
             current_tool_call = None
             current_tool_call_id = None
             current_tool_arguments = ""
+            
+            # State for partial JSON parsing
+            streaming_state = {
+                "in_response": False,
+                "response_start_index": -1,
+                "yielded_content_length": 0
+            }
 
             async for event in response_stream:
                 if self._cancelled:
@@ -162,11 +180,13 @@ class AnthropicLLM(LLM):
                 elif event.type == "content_block_delta":
                     delta = event.delta
                     if delta.type == "text_delta":
-                        current_content = delta.text
-                        yield LLMResponse(
-                            content=current_content,
-                            role=ChatRole.ASSISTANT
-                        )
+                        current_content += delta.text
+                        if conversational_graph:
+                            for content_chunk in conversational_graph.stream_conversational_graph_response(current_content, streaming_state):
+                                yield LLMResponse(content=content_chunk, role=ChatRole.ASSISTANT)
+                        else:
+                            yield LLMResponse(content=delta.text, role=ChatRole.ASSISTANT)
+
                     elif delta.type == "input_json_delta":
                         if current_tool_call:
                             current_tool_arguments += delta.partial_json
@@ -195,6 +215,22 @@ class AnthropicLLM(LLM):
                         current_tool_call = None
                         current_tool_call_id = None
                         current_tool_arguments = ""
+            if current_content and not self._cancelled:
+                if conversational_graph:
+                    try:
+                        parsed_json = json.loads(current_content.strip())
+                        yield LLMResponse(
+                            content="",
+                            role=ChatRole.ASSISTANT,
+                            metadata=parsed_json
+                        )
+                    except json.JSONDecodeError:
+                             yield LLMResponse(
+                                content=current_content,
+                                role=ChatRole.ASSISTANT
+                            )
+                else:
+                    pass
 
         except anthropic.APIError as e:
             if not self._cancelled:

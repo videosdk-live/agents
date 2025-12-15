@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import base64
 import os
 import json
@@ -26,8 +25,9 @@ from videosdk.agents import (
     build_gemini_schema,
     ChatContent,
     ImageContent,
+    ConversationalGraphResponse
 )
-
+    
 
 class GoogleLLM(LLM):
     
@@ -79,6 +79,7 @@ class GoogleLLM(LLM):
         self,
         messages: ChatContext,
         tools: list[FunctionTool] | None = None,
+        conversational_graph: Any | None = None,
         **kwargs: Any
     ) -> AsyncIterator[LLMResponse]:
         """
@@ -103,6 +104,10 @@ class GoogleLLM(LLM):
                 "temperature": self.temperature,
                 **kwargs
             }
+            if conversational_graph:
+                config_params["response_mime_type"] = "application/json"
+                config_params["response_json_schema"] = ConversationalGraphResponse.model_json_schema()
+            
             if system_instruction:
                 config_params["system_instruction"] = [types.Part(text=system_instruction)]
             
@@ -161,6 +166,12 @@ class GoogleLLM(LLM):
             current_content = ""
             current_function_calls = []
 
+            streaming_state = {
+                "in_response": False,
+                "response_start_index": -1,
+                "yielded_content_length": 0
+            }
+            
             async for response in response_stream:
                 if self._cancelled:
                     break
@@ -191,11 +202,29 @@ class GoogleLLM(LLM):
                             metadata={"function_call": function_call}
                         )
                     elif part.text:
-                        current_content = part.text
+                        current_content += part.text
+                        if conversational_graph:
+                            for content_chunk in conversational_graph.stream_conversational_graph_response(current_content, streaming_state):
+                                yield LLMResponse(content=content_chunk, role=ChatRole.ASSISTANT)
+                        else:
+                            yield LLMResponse(content=part.text, role=ChatRole.ASSISTANT)
+            
+            if current_content and not self._cancelled:
+                if conversational_graph:
+                    try:
+                        parsed_json = json.loads(current_content.strip())
+                        yield LLMResponse(
+                            content="",
+                            role=ChatRole.ASSISTANT,
+                            metadata=parsed_json
+                        )
+                    except json.JSONDecodeError:
                         yield LLMResponse(
                             content=current_content,
                             role=ChatRole.ASSISTANT
                         )
+                else:
+                    pass
 
         except (ClientError, ServerError, APIError) as e:
             if not self._cancelled:

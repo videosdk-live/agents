@@ -102,6 +102,10 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self.voice_mail_detection_done = False
         self._vmd_buffer = ""
         self._vmd_check_task: asyncio.Task | None = None
+          
+        # Conversational Graph
+        self.conversational_graph = None
+
 
     def apply_flow_config(self, eou_config: "EOUConfig", interrupt_config: "InterruptConfig") -> None:
         """Override default timing/interaction parameters using pipeline config."""
@@ -448,6 +452,9 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             if kb_context:
                 final_user_text = f"{kb_context}\n\nUser: {user_text}"
 
+        if self.conversational_graph:
+            final_user_text = self.conversational_graph.handle_input(user_text)
+
         self.agent.chat_context.add_message(
             role=ChatRole.USER,
             content=final_user_text
@@ -637,6 +644,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
             async def collector():
                 response_parts = []
+                metadata = None
+                
                 try:
                     async for chunk in llm_stream:
                         if handle.interrupted or (wait_for_authorization and self._preemptive_cancelled):
@@ -644,16 +653,21 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                             await q.put(None)
                             return "".join(response_parts)
 
-                        self._partial_response = "".join(response_parts)
+                        if chunk.content:
+                            response_parts.append(chunk.content)
+                            await q.put(chunk.content)
+                        if chunk.metadata:
+                            metadata = chunk.metadata
                         
-                        if not handle.interrupted:
-                            await q.put(chunk)
-                            response_parts.append(chunk)
+                        self._partial_response = "".join(response_parts)
 
                     if not handle.interrupted:
                         await q.put(None)
-                    full_response = "".join(response_parts)
-                    return full_response
+                    
+                    if self.conversational_graph and metadata:
+                        _ = await self.conversational_graph.handle_decision(self.agent, metadata)
+                    return "".join(response_parts)
+                        
                 except asyncio.CancelledError:
                     logger.info("LLM collection cancelled")
                     await q.put(None)
@@ -728,8 +742,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             ):
                 cascading_metrics_collector.set_agent_response(full_response)
                 self.agent.chat_context.add_message(
-                        role=ChatRole.ASSISTANT,
-                        content=full_response
+                    role=ChatRole.ASSISTANT,
+                    content=full_response
                 )
 
         finally:
@@ -762,7 +776,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
             async for llm_chunk_resp in self.llm.chat(
                 self.agent.chat_context,
-                tools=self.agent._tools
+                tools=self.agent._tools,
+                conversational_graph=self.conversational_graph if self.conversational_graph else None
             ):
                 if self._is_interrupted:
                     logger.info("LLM processing interrupted")
@@ -868,8 +883,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                             async for new_resp in self.llm.chat(chat_context):
                                 if self._is_interrupted:
                                     break
-                                if new_resp.content:
-                                    yield new_resp.content
+                                if new_resp:
+                                    yield new_resp
                         except Exception as e:
                             logger.error(
                                 f"Error executing function {func_call['name']}: {e}")
@@ -879,8 +894,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                             if agent_session:
                                 agent_session._is_executing_tool = False
                 else:
-                    if llm_chunk_resp.content:
-                        yield llm_chunk_resp.content
+                    if llm_chunk_resp:
+                        yield llm_chunk_resp
 
     async def say(self, message: str, handle: UtteranceHandle) -> None:
         """
