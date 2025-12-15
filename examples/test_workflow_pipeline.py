@@ -75,14 +75,14 @@ q2b = loan_application.state(
 
 # Review & Confirm
 q3 = loan_application.state(
-    name="Review and Confirm",
+    name="Get Confirmation",
     instruction="Review all loan details with the user and get confirmation."
 )
 
 # Completion State
 q4 = loan_application.state(
     name="Complete",
-    instruction="Inform user that the application has been submitted successfully and provide next steps"
+    instruction="Inform user that the application has been submitted successfully."
 )
 
 # Master / Off-topic handler
@@ -163,7 +163,7 @@ loan_application.transition(
 loan_application.transition(
     from_state=q3,
     to_state=q4,
-    condition="User confirms submission of loan application"
+    condition="User confirms the details of loan application"
 )
 
 
