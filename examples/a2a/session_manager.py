@@ -17,7 +17,7 @@ def create_pipeline(agent_type: str):
     if agent_type == "customer":
         return RealTimePipeline(
             model=GeminiRealtime(
-                model="gemini-2.5-flash-native-audio-preview-09-2025",
+                model="gemini-2.5-flash-native-audio-preview-12-2025",
                 config=GeminiLiveConfig(
                     voice="Leda", 
                     response_modalities=["AUDIO"]
@@ -47,7 +47,7 @@ def create_session(agent, pipeline) -> AgentSession:
 # def create_pipeline(agent_type: str) -> RealTimePipeline:
 #     if agent_type == "customer":
 #         model = GeminiRealtime(
-#         model="gemini-2.5-flash-native-audio-preview-09-2025",
+#         model="gemini-2.5-flash-native-audio-preview-12-2025",
 #         config=GeminiLiveConfig(
 #             voice="Leda",
 #             response_modalities=["AUDIO"]
@@ -55,7 +55,7 @@ def create_session(agent, pipeline) -> AgentSession:
 #     )
 #     else:
 #         model = GeminiRealtime(
-#             model="gemini-2.5-flash-native-audio-preview-09-2025",
+#             model="gemini-2.5-flash-native-audio-preview-12-2025",
 #             config=GeminiLiveConfig(response_modalities=["TEXT"])
 #         )
 

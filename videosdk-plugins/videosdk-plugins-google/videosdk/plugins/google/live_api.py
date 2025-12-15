@@ -861,6 +861,6 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
     def is_native_audio_model(self) -> bool:
         """Check if the model is a native audio model based on its name"""
         native_audio_indicators = [
-            "gemini-2.5-flash-native-audio-preview-09-2025"
+            "gemini-2.5-flash-native-audio-preview-12-2025"
         ]
         return any(indicator in self.model for indicator in native_audio_indicators)
