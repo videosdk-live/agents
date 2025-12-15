@@ -7,6 +7,7 @@ EventTypes = Literal[
     "AGENT_STARTED",
     "ON_SPEECH_IN",
     "ON_SPEECH_OUT",
+    "ON_LLM_DECISION"
 ]
 
 T = TypeVar('T')
