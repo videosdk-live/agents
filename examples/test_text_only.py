@@ -112,7 +112,7 @@ async def main(context: dict):
     # )
 
     model = GeminiRealtime(
-        model="gemini-2.5-flash-native-audio-preview-09-2025",
+        model="gemini-2.5-flash-native-audio-preview-12-2025",
         config=GeminiLiveConfig(
             response_modalities=["TEXT"]
         )
