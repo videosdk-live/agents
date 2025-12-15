@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import os
 from typing import Any, AsyncIterator, List, Union
 import json
@@ -18,8 +17,30 @@ from videosdk.agents import (
     FunctionTool,
     is_function_tool,
     build_openai_schema,
+    ConversationalGraphResponse
 )
 from videosdk.agents.llm.chat_context import ChatContent, ImageContent
+
+
+def prepare_strict_schema(schema_dict):
+    if isinstance(schema_dict, dict):
+        if schema_dict.get("type") == "object":
+            schema_dict["additionalProperties"] = False
+            if "properties" in schema_dict:
+                all_props = list(schema_dict["properties"].keys())
+                schema_dict["required"] = all_props
+        
+        for key, value in schema_dict.items():
+            if isinstance(value, dict):
+                prepare_strict_schema(value)
+            elif isinstance(value, list):
+                for item in value:
+                    if isinstance(item, dict):
+                        prepare_strict_schema(item)
+    return schema_dict
+
+
+conversational_graph_schema = prepare_strict_schema(ConversationalGraphResponse.model_json_schema())
 
 class OpenAILLM(LLM):
     
@@ -144,6 +165,7 @@ class OpenAILLM(LLM):
         self,
         messages: ChatContext,
         tools: list[FunctionTool] | None = None,
+        conversational_graph: Any | None = None,
         **kwargs: Any
     ) -> AsyncIterator[LLMResponse]:
         """
@@ -208,6 +230,16 @@ class OpenAILLM(LLM):
             "stream": True,
             "max_tokens": self.max_completion_tokens,
         }
+        
+        if conversational_graph:
+            completion_params["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "conversational_graph_response",
+                    "strict": True,
+                    "schema": conversational_graph_schema
+                }
+            }
         if tools:
             formatted_tools = []
             for tool in tools:
@@ -226,9 +258,13 @@ class OpenAILLM(LLM):
         completion_params.update(kwargs)
         try:
             response_stream = await self._client.chat.completions.create(**completion_params)
-            
             current_content = ""
             current_function_call = None
+            streaming_state = {
+                "in_response": False,
+                "response_start_index": -1,
+                "yielded_content_length": 0
+            }
 
             async for chunk in response_stream:
                 if self._cancelled:
@@ -265,11 +301,29 @@ class OpenAILLM(LLM):
                     current_function_call = None
                 
                 elif delta.content is not None:
-                    current_content = delta.content
-                    yield LLMResponse(
-                        content=current_content,
-                        role=ChatRole.ASSISTANT
-                    )
+                    current_content += delta.content   
+                    if conversational_graph:                     
+                        for content_chunk in conversational_graph.stream_conversational_graph_response(current_content, streaming_state):
+                            yield LLMResponse(content=content_chunk, role=ChatRole.ASSISTANT)
+                    else:
+                        yield LLMResponse(content=delta.content, role=ChatRole.ASSISTANT)
+
+            if current_content and not self._cancelled:
+                if conversational_graph:
+                    try:
+                        parsed_json = json.loads(current_content.strip())
+                        yield LLMResponse(
+                            content="",
+                            role=ChatRole.ASSISTANT,
+                            metadata=parsed_json
+                        )
+                    except json.JSONDecodeError:
+                             yield LLMResponse(
+                                content=current_content,
+                                role=ChatRole.ASSISTANT
+                            )
+                else:
+                    pass
 
         except Exception as e:
             if not self._cancelled:
