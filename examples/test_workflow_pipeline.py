@@ -15,11 +15,11 @@ logger = logging.getLogger(__name__)
 pre_download_model()
 
 
-get_weather = PreDefinedTool().http_tool(HttpToolRequest(
-        name="get_weather",
-        description="Called when the user asks about the weather. This function will return the weather for the given location.",
-        url="https://api.open-meteo.com/v1/forecast?latitude=21.1702&longitude=81.2402&current=temperature_2m",
-        method="GET"
+submit_loan_application = PreDefinedTool().http_tool(HttpToolRequest(
+        name="submit_loan_application",
+        description="Called when loan request is approved and sumitted.",
+        url="https://videosdk.free.beeceptor.com/apply",
+        method="POST"
     )
 )
  
@@ -40,8 +40,7 @@ loan_application = ConversationalGraph(
 # Start Greeting
 q0 = loan_application.state(
     name="Greeting",
-    instruction="Welcome user and start the conversation and tell the weather",
-    tool=get_weather
+    instruction="Welcome user and start the conversation about loan application. Ask if they are ready to apply for a loan.",
 )
 
 # Loan Type Selection
@@ -88,7 +87,8 @@ q2b = loan_application.state(
 # Review & Confirm
 q3 = loan_application.state(
     name="Review and Confirm",
-    instruction="Review all loan details with the user and get confirmation."
+    instruction="Review all loan details with the user and get confirmation.",
+    tool=submit_loan_application
 )
 
 # Completion State

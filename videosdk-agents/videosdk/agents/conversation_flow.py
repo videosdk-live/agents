@@ -653,23 +653,18 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                             await q.put(None)
                             return "".join(response_parts)
 
-                        # LLM now returns content directly
                         if chunk.content:
                             response_parts.append(chunk.content)
                             await q.put(chunk.content)
-                        
-                        # Store metadata for conversational graph
                         if chunk.metadata:
                             metadata = chunk.metadata
                         
                         self._partial_response = "".join(response_parts)
 
-                    # End of stream
                     if not handle.interrupted:
                         await q.put(None)
                     
                     if self.conversational_graph and metadata:
-                        # Call handle_decision with metadata
                         _ = await self.conversational_graph.handle_decision(self.agent, metadata)
                     return "".join(response_parts)
                         

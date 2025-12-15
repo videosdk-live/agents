@@ -22,7 +22,6 @@ from videosdk.agents import (
 from videosdk.agents.llm.chat_context import ChatContent, ImageContent
 
 
-# Helper function to prepare schema for OpenAI strict mode
 def prepare_strict_schema(schema_dict):
     if isinstance(schema_dict, dict):
         if schema_dict.get("type") == "object":
@@ -31,7 +30,6 @@ def prepare_strict_schema(schema_dict):
                 all_props = list(schema_dict["properties"].keys())
                 schema_dict["required"] = all_props
         
-        # Recursively process nested structures
         for key, value in schema_dict.items():
             if isinstance(value, dict):
                 prepare_strict_schema(value)
@@ -233,7 +231,6 @@ class OpenAILLM(LLM):
             "max_tokens": self.max_completion_tokens,
         }
         
-        # Add JSON mode if conversational_graph is enabled or JSON is requested
         if conversational_graph:
             completion_params["response_format"] = {
                 "type": "json_schema",
@@ -261,8 +258,6 @@ class OpenAILLM(LLM):
         completion_params.update(kwargs)
         try:
             response_stream = await self._client.chat.completions.create(**completion_params)
-            
-            # Accumulate JSON response
             current_content = ""
             current_function_call = None
             streaming_state = {
@@ -313,7 +308,6 @@ class OpenAILLM(LLM):
                     else:
                         yield LLMResponse(content=delta.content, role=ChatRole.ASSISTANT)
 
-            # After streaming completes
             if current_content and not self._cancelled:
                 if conversational_graph:
                     try:

@@ -215,8 +215,6 @@ class AnthropicLLM(LLM):
                         current_tool_call = None
                         current_tool_call_id = None
                         current_tool_arguments = ""
-            
-            # After streaming completes
             if current_content and not self._cancelled:
                 if conversational_graph:
                     try:
