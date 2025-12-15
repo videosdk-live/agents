@@ -7,22 +7,11 @@ from videosdk.plugins.google import GoogleTTS
 from videosdk.plugins.openai import OpenAILLM
 from videosdk.plugins.silero import SileroVAD
 from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
-from conversational_graph import ConversationalGraph,PreDefinedTool,HttpToolRequest,ConversationalDataModel
+from conversational_graph import ConversationalGraph,ConversationalDataModel
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
-logger = logging.getLogger(__name__)
-
+logging.getLogger().setLevel(logging.CRITICAL)
 pre_download_model()
 
-
-submit_loan_application = PreDefinedTool().http_tool(HttpToolRequest(
-        name="submit_loan_application",
-        description="Called when loan request is approved and sumitted.",
-        url="https://videosdk.free.beeceptor.com/apply",
-        method="POST"
-    )
-)
- 
 class LoanFlow(ConversationalDataModel):
     loan_type: str = Field(None, description="Type of loan: personal, home, car")
     annual_income: int = Field(None, description="Annual income of the applicant in INR")
@@ -87,8 +76,7 @@ q2b = loan_application.state(
 # Review & Confirm
 q3 = loan_application.state(
     name="Review and Confirm",
-    instruction="Review all loan details with the user and get confirmation.",
-    tool=submit_loan_application
+    instruction="Review all loan details with the user and get confirmation."
 )
 
 # Completion State
