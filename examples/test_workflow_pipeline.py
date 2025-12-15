@@ -92,7 +92,6 @@ q_master = loan_application.state(
     master=True
 )
 
-
 # Define Transitions
 
 # Greeting → Loan Type Selection
@@ -166,17 +165,13 @@ loan_application.transition(
     condition="User confirms the details of loan application"
 )
 
-
-
 class VoiceAgent(Agent):
     def __init__(self):
         super().__init__(
-            instructions="You are a helpful voice assistant that can assist you with your loan applications"
-
-        )
+            instructions="You are a helpful voice assistant that can assist you with your loan applications")
         
     async def on_enter(self) -> None:
-        await self.session.say("Hello, I am here to help with your loan application. How can I help you today?")
+        await self.session.say("Hello, I am here to help with your loan application. How can I help you today?", interruptible=False)
     
     async def on_exit(self) -> None:
         await self.session.say("Goodbye!")
@@ -203,11 +198,9 @@ async def entrypoint(ctx: JobContext):
     await session.start(wait_for_participant=True, run_until_shutdown=True)
 
 def make_context() -> JobContext:
-    room_options = RoomOptions(room_id="<room_id>", name="Sandbox Agent", playground=True)
+    room_options = RoomOptions(room_id="<room_id>", name="Workflow Agent", playground=True)
     
-    return JobContext(
-        room_options=room_options
-        )
+    return JobContext(room_options=room_options)
 
 if __name__ == "__main__":
     job = WorkerJob(entrypoint=entrypoint, jobctx=make_context)
