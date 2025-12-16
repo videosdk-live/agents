@@ -633,6 +633,36 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
             logger.error(f"Error in keep-alive: {e}")
             self._session_should_close.set()
 
+    def _resample_audio(self, audio_bytes: bytes) -> bytes:
+        """Resample audio from input sample rate to output sample rate and convert to mono."""
+        try:
+            if not audio_bytes:
+                return b''
+
+            raw_audio = np.frombuffer(audio_bytes, dtype=np.int16)
+            if raw_audio.size == 0:
+                return b''
+
+            if self.vertexai:
+                stereo_audio = raw_audio.reshape(-1, 2)
+                mono_audio = stereo_audio.astype(np.float32).mean(axis=1)
+            else:
+                mono_audio = raw_audio.astype(np.float32)
+
+            if self.input_sample_rate != self.target_sample_rate:
+                output_length = int(len(mono_audio) * self.target_sample_rate / self.input_sample_rate)
+                resampled_data = signal.resample(mono_audio, output_length)
+            else:
+                resampled_data = mono_audio
+
+            resampled_data = np.clip(resampled_data, -32767, 32767)
+            return resampled_data.astype(np.int16).tobytes()
+
+        except Exception as e:
+            logger.error(f"Error resampling audio: {e}")
+            return b''
+
+
     async def handle_audio_input(self, audio_data: bytes) -> None:
         """Handle incoming audio data from the user"""
         if not self._session or self._closing:
@@ -647,13 +677,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
 
         AUDIO_SAMPLE_RATE = 24000 if self.vertexai else 48000
         self.target_sample_rate = 16000 if self.vertexai else self.target_sample_rate
-        audio_data = np.frombuffer(audio_data, dtype=np.int16)
-        audio_data = signal.resample(
-            audio_data,
-            int(len(audio_data) * self.target_sample_rate / self.input_sample_rate),
-        )
-        audio_data = audio_data.astype(np.int16).tobytes()
-
+        audio_data = self._resample_audio(audio_data)
         await self._session.session.send_realtime_input(
             audio=Blob(data=audio_data, mime_type=f"audio/pcm;rate={AUDIO_SAMPLE_RATE}")
         )
