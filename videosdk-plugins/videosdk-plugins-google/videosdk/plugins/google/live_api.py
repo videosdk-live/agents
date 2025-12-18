@@ -49,9 +49,6 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-AUDIO_SAMPLE_RATE = 48000
-
-
 DEFAULT_IMAGE_ENCODE_OPTIONS = EncodeOptions(
     format="JPEG",
     quality=75,
@@ -62,6 +59,10 @@ GeminiEventTypes = Literal["user_speech_started", "text_response", "error"]
 
 Voice = Literal["Puck", "Charon", "Kore", "Fenrir", "Aoede"]
 
+@dataclass
+class VertexAIConfig:
+    project_id: str| None = None
+    location: str| None = None
 
 @dataclass
 class GeminiLiveConfig:
@@ -132,6 +133,8 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         model: str,
         config: GeminiLiveConfig | None = None,
         service_account_path: str | None = None,
+        vertexai: bool = False,
+        vertexai_config: VertexAIConfig | None = None,
     ) -> None:
         """
         Initialize Gemini realtime model.
@@ -160,6 +163,8 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         """
         super().__init__()
         self.model = model
+        self.vertexai = vertexai
+        self.vertexai_config = vertexai_config
         self._init_client(api_key, service_account_path)
         self._session: Optional[GeminiSession] = None
         self._closing = False
@@ -188,17 +193,34 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         self.formatted_tools = self.tools_formatted
 
     def _init_client(self, api_key: str | None, service_account_path: str | None):
-        if service_account_path:
-            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = service_account_path
-            self.client = genai.Client(http_options={"api_version": "v1beta"})
-        else:
-            self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
-            if not self.api_key:
-                self.emit("error", "GOOGLE_API_KEY or service account required")
-                raise ValueError("GOOGLE_API_KEY or service account required")
+        if self.vertexai:
+            project_id = (self.vertexai_config.project_id if self.vertexai_config else None) or os.getenv("GOOGLE_CLOUD_PROJECT")
+            if project_id is None:
+                service_account_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+                if service_account_path:
+                    from google.oauth2 import service_account
+                    creds = service_account.Credentials.from_service_account_file(service_account_path)
+                    project_id = creds.project_id
+
+            location = (self.vertexai_config.location if self.vertexai_config else None) or os.getenv("GOOGLE_CLOUD_LOCATION") or "us-central1"
+
             self.client = genai.Client(
-                api_key=self.api_key, http_options={"api_version": "v1beta"}
+                vertexai=True,
+                project=project_id,
+                location=location,
             )
+        else:
+            if service_account_path:
+                os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = service_account_path
+                self.client = genai.Client(http_options={"api_version": "v1beta"})
+            else:
+                self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
+                if not self.api_key:
+                    self.emit("error", "GOOGLE_API_KEY or service account required")
+                    raise ValueError("GOOGLE_API_KEY or service account required")
+                self.client = genai.Client(
+                    api_key=self.api_key, http_options={"api_version": "v1beta"}
+                )
 
     async def connect(self) -> None:
         """Connect to the Gemini Live API"""
@@ -611,6 +633,36 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
             logger.error(f"Error in keep-alive: {e}")
             self._session_should_close.set()
 
+    def _resample_audio(self, audio_bytes: bytes) -> bytes:
+        """Resample audio from input sample rate to output sample rate and convert to mono."""
+        try:
+            if not audio_bytes:
+                return b''
+
+            raw_audio = np.frombuffer(audio_bytes, dtype=np.int16)
+            if raw_audio.size == 0:
+                return b''
+
+            if self.vertexai:
+                stereo_audio = raw_audio.reshape(-1, 2)
+                mono_audio = stereo_audio.astype(np.float32).mean(axis=1)
+            else:
+                mono_audio = raw_audio.astype(np.float32)
+
+            if self.input_sample_rate != self.target_sample_rate:
+                output_length = int(len(mono_audio) * self.target_sample_rate / self.input_sample_rate)
+                resampled_data = signal.resample(mono_audio, output_length)
+            else:
+                resampled_data = mono_audio
+
+            resampled_data = np.clip(resampled_data, -32767, 32767)
+            return resampled_data.astype(np.int16).tobytes()
+
+        except Exception as e:
+            logger.error(f"Error resampling audio: {e}")
+            return b''
+
+
     async def handle_audio_input(self, audio_data: bytes) -> None:
         """Handle incoming audio data from the user"""
         if not self._session or self._closing:
@@ -623,13 +675,9 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         if "AUDIO" not in self.config.response_modalities:
             return
 
-        audio_data = np.frombuffer(audio_data, dtype=np.int16)
-        audio_data = signal.resample(
-            audio_data,
-            int(len(audio_data) * self.target_sample_rate / self.input_sample_rate),
-        )
-        audio_data = audio_data.astype(np.int16).tobytes()
-
+        AUDIO_SAMPLE_RATE = 24000 if self.vertexai else 48000
+        self.target_sample_rate = 16000 if self.vertexai else self.target_sample_rate
+        audio_data = self._resample_audio(audio_data)
         await self._session.session.send_realtime_input(
             audio=Blob(data=audio_data, mime_type=f"audio/pcm;rate={AUDIO_SAMPLE_RATE}")
         )
