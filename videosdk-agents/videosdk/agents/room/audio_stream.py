@@ -326,6 +326,15 @@ class TeeCustomAudioStreamTrack(CustomAudioStreamTrack):
         self.sinks = sinks if sinks is not None else []
         self.pipeline = pipeline
 
+    def add_sink(self, sink):
+        """Add a new sink (callback or object)"""
+        if sink not in self.sinks:
+            self.sinks.append(sink)
+
+    def remove_sink(self, sink):
+        if sink in self.sinks:
+            self.sinks.remove(sink)
+
     async def add_new_bytes(self, audio_data: bytes):
         await super().add_new_bytes(audio_data)
 
@@ -333,6 +342,11 @@ class TeeCustomAudioStreamTrack(CustomAudioStreamTrack):
         for sink in self.sinks:
             if hasattr(sink, "handle_audio_input"):
                 await sink.handle_audio_input(audio_data)
+            elif callable(sink):
+                if asyncio.iscoroutinefunction(sink):
+                    await sink(audio_data)
+                else:
+                    sink(audio_data)
 
         # DO NOT route agent's own TTS audio back to pipeline
         # The pipeline should only receive audio from other participants
