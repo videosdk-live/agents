@@ -20,7 +20,7 @@ classifiers = [
     "Topic :: Multimedia :: Video",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-dependencies = ["videosdk-agents>=0.0.52", "smallestai"]
+dependencies = ["videosdk-agents>=0.0.53", "smallestai"]
 
 [tool.hatch.version]
 path = "videosdk/plugins/smallestai/version.py"
