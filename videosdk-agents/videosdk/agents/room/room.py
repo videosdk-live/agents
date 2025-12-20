@@ -25,7 +25,7 @@ import requests
 import time
 import logging
 from ..event_bus import global_event_emitter
-from ..connection.base import BaseConnectionHandler
+from ..connection.base import BaseTransportHandler
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ TRANSFER_CALL_URL = "https://api.videosdk.live/v2/sip/call/transfer"
 load_dotenv()
 
 
-class VideoSDKHandler(BaseConnectionHandler):
+class VideoSDKHandler(BaseTransportHandler):
     """
     Handles VideoSDK meeting operations and participant management.
     """

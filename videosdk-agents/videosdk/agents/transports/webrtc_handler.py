@@ -14,7 +14,7 @@ except ImportError:
     RTCPeerConnection = None
     MediaStreamTrack = object
 
-from .base import BaseConnectionHandler
+from .base import BaseTransportHandler
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +130,7 @@ class WebRTCOutputTrack(MediaStreamTrack):
         return frame
 
 
-class WebRTCConnectionHandler(BaseConnectionHandler):
+class WebRTCConnectionHandler(BaseTransportHandler):
     def __init__(self, loop, pipeline, signaling_url, ice_servers=None):
         super().__init__(loop, pipeline)
         self.signaling_url = signaling_url

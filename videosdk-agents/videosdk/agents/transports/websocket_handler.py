@@ -6,7 +6,7 @@ try:
 except ImportError:
     websockets = None
 
-from .base import BaseConnectionHandler
+from .base import BaseTransportHandler
 from ..room.audio_stream import TeeCustomAudioStreamTrack
 
 logger = logging.getLogger(__name__)
@@ -38,7 +38,7 @@ class WebSocketAudioTrack(TeeCustomAudioStreamTrack):
         self._ignore_packets = False
         super().enable_audio_input(manual_control)
 
-class WebSocketConnectionHandler(BaseConnectionHandler):
+class WebSocketConnectionHandler(BaseTransportHandler):
     def __init__(self, loop, pipeline, port=8080, path="/ws"):
         super().__init__(loop, pipeline)
         self.port = port

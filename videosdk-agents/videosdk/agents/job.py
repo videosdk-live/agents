@@ -5,7 +5,7 @@ from typing import Callable, Coroutine, Optional, Any
 import os
 import asyncio
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum, unique
 from typing import TYPE_CHECKING
 import logging
@@ -14,13 +14,13 @@ import sys
 
 if TYPE_CHECKING:
     from .worker import ExecutorType, WorkerPermissions, _default_executor_type
-    from .connection.base import BaseConnectionHandler
+    from .connection.base import BaseTransportHandler
 else:
     # Import at runtime to avoid circular imports
     ExecutorType = None
     WorkerPermissions = None
     _default_executor_type = None
-    BaseConnectionHandler = object # Fallback if not checking types
+    BaseTransportHandler = object # Fallback if not checking types
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ _current_job_context: ContextVar[Optional["JobContext"]] = ContextVar(
 )
 
 
-class ConnectionMode(Enum):
+class TransportMode(Enum):
     VIDEOSDK = "videosdk"
     WEBSOCKET = "websocket"
     WEBRTC = "webrtc"
@@ -72,7 +72,7 @@ class RoomOptions:
     background_audio: bool = False
 
     # New Configuration Fields
-    mode: ConnectionMode = ConnectionMode.VIDEOSDK
+    _transport_mode: TransportMode = field(default=TransportMode.VIDEOSDK, init=False, repr=False)
 
     # Structured configs
     websocket: Optional[WebSocketConfig] = None
@@ -80,31 +80,34 @@ class RoomOptions:
 
     # Alias properties for easier usage as requested
     @property
-    def connection_mode(self):
-        return self.mode.value if hasattr(self.mode, "value") else self.mode
+    def transport_mode(self):
+        return self._transport_mode.value if hasattr(self._transport_mode, "value") else self._transport_mode
 
-    @connection_mode.setter
-    def connection_mode(self, value):
+    @transport_mode.setter
+    def transport_mode(self, value):
         if isinstance(value, str):
             try:
-                self.mode = ConnectionMode(value.lower())
+                self._transport_mode = TransportMode(value.lower())
             except ValueError:
                 # Fallback for compatibility or custom modes
                 pass
-        elif isinstance(value, ConnectionMode):
-            self.mode = value
+        elif isinstance(value, TransportMode):
+            self._transport_mode = value
 
     def __init__(
         self,
-        connection_mode: Optional[str] = None,
+        transport_mode: Optional[str] = None,
         websocket: Optional[WebSocketConfig] = None,
         webrtc: Optional[WebRTCConfig] = None,
         **kwargs,
     ):
+        # Initialize internal field
+        self._transport_mode = TransportMode.VIDEOSDK
+        
         # Handle connection mode
-        if connection_mode:
+        if transport_mode:
             try:
-                self.mode = ConnectionMode(connection_mode.lower())
+                self._transport_mode = TransportMode(transport_mode.lower())
             except ValueError:
                 pass
 
@@ -276,7 +279,7 @@ class JobContext:
         self.videosdk_auth = self.room_options.auth_token or os.getenv(
             "VIDEOSDK_AUTH_TOKEN"
         )
-        self.room: Optional["BaseConnectionHandler"] = None
+        self.room: Optional["BaseTransportHandler"] = None
         self._shutdown_callbacks: list[Callable[[], Coroutine[None, None, None]]] = []
         self._is_shutting_down: bool = False
         self.want_console = len(sys.argv) > 1 and sys.argv[1].lower() == "console"
@@ -324,7 +327,7 @@ class JobContext:
                 cleanup_callback = await setup_console_voice_for_ctx(self)
                 self.add_shutdown_callback(cleanup_callback)
             else:
-                if self.room_options.mode == ConnectionMode.VIDEOSDK:
+                if self.room_options.transport_mode == TransportMode.VIDEOSDK:
                     if not self.room_options.room_id:
                         self.room_options.room_id = self.get_room_id()
                     if self.room_options.join_meeting:
@@ -355,7 +358,7 @@ class JobContext:
                             self._loop, self.room.audio_track
                         )
 
-                elif self.room_options.mode == ConnectionMode.WEBSOCKET:
+                elif self.room_options.transport_mode == TransportMode.WEBSOCKET:
                     if not self.room_options.websocket:
                         raise ValueError("WebSocket configuration (websocket) is required when mode is WEBSOCKET")
                     
@@ -369,7 +372,7 @@ class JobContext:
                         port=self.room_options.websocket.port,
                         path=self.room_options.websocket.path
                     )
-                elif self.room_options.mode == ConnectionMode.WEBRTC:
+                elif self.room_options.transport_mode == TransportMode.WEBRTC:
                     if not self.room_options.webrtc:
                         raise ValueError("WebRTC configuration (webrtc) is required when mode is WEBRTC")
                     
@@ -387,7 +390,7 @@ class JobContext:
                         ice_servers=self.room_options.webrtc.ice_servers
                     )
                 
-                elif self.room_options.mode == ConnectionMode.VIDEOSDK:
+                elif self.room_options.transport_mode == TransportMode.VIDEOSDK:
                     if self.room_options.websocket and (self.room_options.websocket.port != 8080 or self.room_options.websocket.path != "/ws"):
                          logger.warning("WebSocket configuration provided but connection mode is VIDEOSDK. WebSocket config will be ignored.")
                     if self.room_options.webrtc and (self.room_options.webrtc.signaling_url or self.room_options.webrtc.ice_servers != [{"urls": "stun:stun.l.google.com:19302"}]):
@@ -398,11 +401,11 @@ class JobContext:
 
             # For Non-VideoSDK modes, we still need to ensure audio track is linked if not done inside constructor
             if (
-                self.room_options.mode != ConnectionMode.VIDEOSDK
+                self.room_options.transport_mode != TransportMode.VIDEOSDK
                 and self._pipeline
                 and hasattr(self._pipeline, "_set_loop_and_audio_track")
             ):
-                # BaseConnectionHandler subclasses now initialize self.audio_track
+                # BaseTransportHandler subclasses now initialize self.audio_track
                 if self.room.audio_track:
                     self._pipeline._set_loop_and_audio_track(self._loop, self.room.audio_track)
 
@@ -410,7 +413,7 @@ class JobContext:
             self.room_options.playground
             and self.room_options.join_meeting
             and not self.want_console
-            and self.room_options.mode == ConnectionMode.VIDEOSDK
+            and self.room_options.transport_mode == TransportMode.VIDEOSDK
         ):
             if self.videosdk_auth:
                 playground_url = f"https://playground.videosdk.live?token={self.videosdk_auth}&meetingId={self.room_options.room_id}"

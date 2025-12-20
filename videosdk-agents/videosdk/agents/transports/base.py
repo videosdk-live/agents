@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Optional, Any
 
-class BaseConnectionHandler(ABC):
+class BaseTransportHandler(ABC):
     """
     Abstract base class for all transport layers (VideoSDK, WebSocket, WebRTC).
     """
