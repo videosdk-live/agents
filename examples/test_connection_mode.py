@@ -1,6 +1,5 @@
 import logging
-import aiohttp
-from videosdk.agents import Agent, AgentSession, CascadingPipeline, function_tool, WorkerJob,ConversationFlow, JobContext, RoomOptions
+from videosdk.agents import Agent, AgentSession, CascadingPipeline, function_tool, WorkerJob,ConversationFlow, JobContext, RoomOptions, WebSocketConfig, WebRTCConfig
 from videosdk.plugins.deepgram import DeepgramSTT
 from videosdk.plugins.silero import SileroVAD
 from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
@@ -45,7 +44,7 @@ async def entrypoint(ctx: JobContext):
     conversation_flow = ConversationFlow(agent)
 
     pipeline = CascadingPipeline(
-        stt= DeepgramSTT(),
+        stt=DeepgramSTT(),
         llm=GoogleLLM(),
         tts=CartesiaTTS(),
         vad=SileroVAD(), 
@@ -60,56 +59,41 @@ async def entrypoint(ctx: JobContext):
     await session.start(wait_for_participant=True, run_until_shutdown=True)
 
 def make_context() -> JobContext:
-    # --- Example 1: Default VideoSDK Room (Existing) ---
-    room_options = RoomOptions(
-       room_id="<room_id>", 
-       name="Connection Mode Test Agent", 
-       playground=True
-    )
+    # --- Example 1: Default VideoSDK Room ---
+    # room_options = RoomOptions(
+    #    room_id="<room_id>", 
+    #    name="Connection Mode Test Agent", 
+    #    playground=True,
+    #    mode="videosdk"
+    # )
 
     # --- Example 2: WebRTC Connection (P2P) ---
     # Used with examples/client_examples/webrtc/client.html & signaling_server.js
-    # Ensure you start the signaling server first: `node examples/client_examples/webrtc/signaling_server.js`
-    
-    # Basic configuration (uses default Google STUN server)
-    # room_options = RoomOptions(
-    #    connection_mode="webrtc",
-    #    webrtc_signaling_url="ws://localhost:8081",
-    #    webrtc_signaling_type="websocket",
-    #    webrtc_ice_servers=[
-    #        {"urls": "stun:stun.l.google.com:19302"},
-    #    ],
-    # )
+    # before running this python script, run the signaling_server.js file in the examples/client_examples/webrtc directory 
+    # also open client.html in the browser and click on the connect button. then exacute this python script.
+    room_options = RoomOptions(
+        connection_mode="webrtc",
+        webrtc=WebRTCConfig(
+            signaling_url="ws://localhost:8081",
+            signaling_type="websocket",
+            ice_servers=[
+                {"urls": "stun:stun.l.google.com:19302"},
+            ],
+        )
+    )
 
     # --- Example 3: WebSocket Connection (Raw PCM) ---
-    # Used with examples/client_examples/websocket/client.html
+    # Used with examples/client_examples/websocket/client.html and open it in the browser. 
+    # then run this python script. and then in the browser click on the connect button.
     # room_options = RoomOptions(
     #    connection_mode="websocket",
-    #    websocket_port=8080,
-    #    websocket_path="/ws"
+    #    websocket=WebSocketConfig(
+    #        port=8080,
+    #        path="/ws"
+    #    )
     # )
     
-    # Advanced configuration with custom ICE servers (STUN + TURN)
-    # Uncomment to use custom servers:
-    # room_options = RoomOptions(
-    #    connection_mode="webrtc",
-    #    webrtc_signaling_url="ws://localhost:8081",
-    #    webrtc_signaling_type="websocket",
-    #    webrtc_ice_servers=[
-    #        {"urls": "stun:stun.l.google.com:19302"},
-    #        {"urls": "stun:stun1.l.google.com:19302"},
-    #        {
-    #            "urls": "turn:your-turn-server.com:3478",
-    #            "username": "your-username",
-    #            "credential": "your-password"
-    #        }
-    #    ]
-    # )
-    
-    return JobContext(
-        room_options=room_options
-        )
+    return JobContext(room_options=room_options)
 
 if __name__ == "__main__":
-    job = WorkerJob(entrypoint=entrypoint, jobctx=make_context)
-    job.start()
+    WorkerJob(entrypoint=entrypoint, jobctx=make_context).start()
