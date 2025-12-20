@@ -90,6 +90,7 @@ class DeepgramTTS(TTS):
 
         except Exception as e:
             self.emit("error", f"TTS synthesis failed: {str(e)}")
+            raise
 
     async def _stream_synthesis(self, text: Union[AsyncIterator[str], str]) -> None:
         try:

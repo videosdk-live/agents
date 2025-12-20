@@ -100,6 +100,7 @@ class SmallestAITTS(TTS):
 
         except Exception as e:
             self.emit("error", f"SmallestAI TTS synthesis failed: {str(e)}")
+            raise
 
     async def _synthesize_audio(self, text: str, voice_id: str, **kwargs: Any) -> None:
         """Synthesize text to speech using SmallestAI API"""

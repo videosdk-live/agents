@@ -106,6 +106,7 @@ class SarvamAISTT(STT):
             
         except Exception as e:
             logger.error(f"[SarvamAISTT] Error processing audio: {e}")
+            self.emit("error", str(e))
 
     async def _process_messages(self) -> None:
         """Process incoming WebSocket messages."""
@@ -119,9 +120,11 @@ class SarvamAISTT(STT):
                     await self._handle_message(data)
                 elif msg.type == aiohttp.WSMsgType.ERROR:
                     logger.error(f"[SarvamAISTT] WebSocket error: {self._ws.exception()}")
+                    self.emit("error", f"WebSocket error: {self._ws.exception()}")
                     break
         except Exception as e:
             logger.error(f"[SarvamAISTT] Error in message processing: {e}")
+            self.emit("error", str(e))
 
     async def _handle_message(self, data: dict) -> None:
         """Handle different message types from Sarvam API."""
@@ -163,6 +166,7 @@ class SarvamAISTT(STT):
         elif msg_type == "error":
             error_info = data.get("error", "Unknown error")
             logger.error(f"[SarvamAISTT] API error: {error_info}")
+            self.emit("error", str(error_info))
 
     def _resample_audio(self, audio_bytes: bytes) -> bytes:
         """Resample audio from input sample rate to output sample rate and convert to mono."""

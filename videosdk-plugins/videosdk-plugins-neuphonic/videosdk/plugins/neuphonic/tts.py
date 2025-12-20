@@ -92,6 +92,7 @@ class NeuphonicTTS(TTS):
 
         except Exception as e:
             self.emit("error", f"TTS synthesis failed: {str(e)}")
+            raise 
 
     async def _streaming_websocket_synthesis(self, text: AsyncIterator[str]) -> None:
         """Streaming synthesis with single WebSocket connection for multiple text segments"""
@@ -129,6 +130,7 @@ class NeuphonicTTS(TTS):
             self.emit("error", f"WebSocket connection failed: {str(e)}")
         except Exception as e:
             self.emit("error", f"Streaming synthesis failed: {str(e)}")
+            raise  
 
     async def _listen_to_ws_messages(self, ws) -> None:
         """Listen to WebSocket messages concurrently while sending text"""
@@ -212,6 +214,7 @@ class NeuphonicTTS(TTS):
             self.emit("error", f"WebSocket connection failed: {str(e)}")
         except Exception as e:
             self.emit("error", f"Streaming synthesis failed: {str(e)}")
+            raise 
 
     async def _stream_audio_chunks(self, audio_bytes: bytes) -> None:
         """Stream audio data in chunks for smooth playback"""

@@ -94,6 +94,7 @@ class CartesiaTTS(TTS):
 
         except Exception as e:
             self.emit("error", f"TTS synthesis failed: {str(e)}")
+            raise 
         finally:
             if context_id and context_id in self._context_futures:
                 del self._context_futures[context_id]
