@@ -36,6 +36,23 @@ class ConnectionMode(Enum):
 
 
 @dataclass
+class WebSocketConfig:
+    port: int = 8080
+    path: str = "/ws"
+
+
+@dataclass
+class WebRTCConfig:
+    signaling_url: Optional[str] = None
+    signaling_type: str = "websocket"
+    ice_servers: Optional[list] = None
+
+    def __post_init__(self):
+        if self.ice_servers is None:
+            self.ice_servers = [{"urls": "stun:stun.l.google.com:19302"}]
+
+
+@dataclass
 class RoomOptions:
     room_id: Optional[str] = None
     auth_token: Optional[str] = None
@@ -53,24 +70,19 @@ class RoomOptions:
     # VideoSDK connection options
     signaling_base_url: Optional[str] = None
     background_audio: bool = False
-    
+
     # New Configuration Fields
     mode: ConnectionMode = ConnectionMode.VIDEOSDK
-    
-    # WebSocket Config
-    websocket_port: int = 8080
-    websocket_path: str = "/ws"
-    
-    # WebRTC Config
-    signaling_url: Optional[str] = None  # URL to the user's signaling server
-    signaling_type: str = "websocket"    # "websocket" or "http"
-    ice_servers: Optional[list] = None   # List of ICE servers (STUN/TURN) for WebRTC
-    
+
+    # Structured configs
+    websocket: Optional[WebSocketConfig] = None
+    webrtc: Optional[WebRTCConfig] = None
+
     # Alias properties for easier usage as requested
     @property
     def connection_mode(self):
-        return self.mode.value if hasattr(self.mode, 'value') else self.mode
-        
+        return self.mode.value if hasattr(self.mode, "value") else self.mode
+
     @connection_mode.setter
     def connection_mode(self, value):
         if isinstance(value, str):
@@ -82,69 +94,23 @@ class RoomOptions:
         elif isinstance(value, ConnectionMode):
             self.mode = value
 
-    @property
-    def webrtc_signaling_url(self):
-        return self.signaling_url
-
-    @webrtc_signaling_url.setter
-    def webrtc_signaling_url(self, value):
-        self.signaling_url = value
-        
-    @property
-    def webrtc_signaling_type(self):
-        return self.signaling_type
-
-    @webrtc_signaling_type.setter
-    def webrtc_signaling_type(self, value):
-        self.signaling_type = value
-    
-    @property
-    def webrtc_ice_servers(self):
-        return self.ice_servers
-    
-    @webrtc_ice_servers.setter
-    def webrtc_ice_servers(self, value):
-        self.ice_servers = value
-
     def __init__(
         self,
         connection_mode: Optional[str] = None,
-        websocket_port: Optional[int] = None,
-        websocket_path: Optional[str] = None,
-        webrtc_signaling_url: Optional[str] = None,
-        webrtc_signaling_type: Optional[str] = None,
-        webrtc_ice_servers: Optional[list] = None,
-        ice_servers: Optional[list] = None,
-        **kwargs
+        websocket: Optional[WebSocketConfig] = None,
+        webrtc: Optional[WebRTCConfig] = None,
+        **kwargs,
     ):
-        # Handle new aliases in constructor
+        # Handle connection mode
         if connection_mode:
             try:
                 self.mode = ConnectionMode(connection_mode.lower())
             except ValueError:
                 pass
-        
-        if websocket_port is not None:
-            self.websocket_port = websocket_port
-            
-        if websocket_path is not None:
-            self.websocket_path = websocket_path
-            
-        if webrtc_signaling_url:
-            self.signaling_url = webrtc_signaling_url
-            
-        if webrtc_signaling_type:
-            self.signaling_type = webrtc_signaling_type
-        
-        # Handle ICE servers (support both ice_servers and webrtc_ice_servers)
-        if webrtc_ice_servers:
-            self.ice_servers = webrtc_ice_servers
-        elif ice_servers:
-            self.ice_servers = ice_servers
-        else:
-            # Default to Google's public STUN server if not provided
-            self.ice_servers = [{"urls": "stun:stun.l.google.com:19302"}]
-            
+
+        self.websocket = websocket or WebSocketConfig()
+        self.webrtc = webrtc or WebRTCConfig()
+
         # Handle standard fields
         for key, value in kwargs.items():
             if hasattr(self, key):
@@ -390,21 +356,42 @@ class JobContext:
                         )
 
                 elif self.room_options.mode == ConnectionMode.WEBSOCKET:
+                    if not self.room_options.websocket:
+                        raise ValueError("WebSocket configuration (websocket) is required when mode is WEBSOCKET")
+                    
+                    if self.room_options.webrtc and (self.room_options.webrtc.signaling_url or self.room_options.webrtc.ice_servers != [{"urls": "stun:stun.l.google.com:19302"}]):
+                        logger.warning("WebRTC configuration provided but connection mode is set to WEBSOCKET. WebRTC config will be ignored.")
+
                     from .connection.websocket_handler import WebSocketConnectionHandler
                     self.room = WebSocketConnectionHandler(
                         loop=self._loop,
                         pipeline=self._pipeline,
-                        port=self.room_options.websocket_port,
-                        path=self.room_options.websocket_path
+                        port=self.room_options.websocket.port,
+                        path=self.room_options.websocket.path
                     )
                 elif self.room_options.mode == ConnectionMode.WEBRTC:
+                    if not self.room_options.webrtc:
+                        raise ValueError("WebRTC configuration (webrtc) is required when mode is WEBRTC")
+                    
+                    if not self.room_options.webrtc.signaling_url:
+                        raise ValueError("WebRTC signaling_url is required when mode is WEBRTC")
+
+                    if self.room_options.websocket and (self.room_options.websocket.port != 8080 or self.room_options.websocket.path != "/ws"):
+                        logger.warning("WebSocket configuration provided but connection mode is set to WEBRTC. WebSocket config will be ignored.")
+
                     from .connection.webrtc_handler import WebRTCConnectionHandler
                     self.room = WebRTCConnectionHandler(
                         loop=self._loop,
                         pipeline=self._pipeline,
-                        signaling_url=self.room_options.signaling_url,
-                        ice_servers=self.room_options.ice_servers
+                        signaling_url=self.room_options.webrtc.signaling_url,
+                        ice_servers=self.room_options.webrtc.ice_servers
                     )
+                
+                elif self.room_options.mode == ConnectionMode.VIDEOSDK:
+                    if self.room_options.websocket and (self.room_options.websocket.port != 8080 or self.room_options.websocket.path != "/ws"):
+                         logger.warning("WebSocket configuration provided but connection mode is VIDEOSDK. WebSocket config will be ignored.")
+                    if self.room_options.webrtc and (self.room_options.webrtc.signaling_url or self.room_options.webrtc.ice_servers != [{"urls": "stun:stun.l.google.com:19302"}]):
+                         logger.warning("WebRTC configuration provided but connection mode is VIDEOSDK. WebRTC config will be ignored.")
 
         if self.room:
             await self.room.connect()
