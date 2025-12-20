@@ -7,15 +7,15 @@ logger = logging.getLogger(__name__)
 
 class FallbackBase:
     """Shared logic for switching providers and cleanup."""
-    def __init__(self, providers: List[Any], component_name: str, recovery_cooldown_sec: float = 60.0, max_recovery_attempts: int = 3):
+    def __init__(self, providers: List[Any], component_name: str, temporary_disable_sec: float = 60.0, permanent_disable_after_attempts: int = 3):
         if not providers:
             raise ValueError(f"{component_name} requires at least one provider")
         self.providers = providers
         self._current_index = 0
         self._component_name = component_name
         self._switch_lock = asyncio.Lock()
-        self.recovery_cooldown_sec = recovery_cooldown_sec
-        self.max_recovery_attempts = max_recovery_attempts
+        self.temporary_disable_sec = temporary_disable_sec
+        self.permanent_disable_after_attempts = permanent_disable_after_attempts
         self._failed_providers: dict[int, float] = {} 
         self._recovery_attempts: dict[int, int] = {}
 
@@ -46,7 +46,7 @@ class FallbackBase:
                      current_attempts = self._recovery_attempts.get(failed_idx, 0)
                      self._recovery_attempts[failed_idx] = current_attempts + 1
                      
-                     logger.warning(f"[{self._component_name}] Provider {failed_idx} failed. Recovery attempt {self._recovery_attempts[failed_idx]}/{self.max_recovery_attempts}")
+                     logger.warning(f"[{self._component_name}] Provider {failed_idx} failed. Recovery attempt {self._recovery_attempts[failed_idx]}/{self.permanent_disable_after_attempts}")
 
             except Exception as e:
                 logger.warning(f"[{self._component_name}] Error recording failure timestamp: {e}")
@@ -75,13 +75,13 @@ class FallbackBase:
         
         for i in range(self._current_index):
             attempts = self._recovery_attempts.get(i, 0)
-            if attempts >= self.max_recovery_attempts:
+            if attempts >= self.permanent_disable_after_attempts:
                 continue
 
             if i in self._failed_providers:
                 elapsed = now - self._failed_providers[i]
-                if elapsed > self.recovery_cooldown_sec:
-                    logger.info(f"[{self._component_name}] Provider {i} (Label: {self.providers[i].label}) cooldown expired ({elapsed:.1f}s > {self.recovery_cooldown_sec}s). Attempting recovery.")
+                if elapsed > self.temporary_disable_sec:
+                    logger.info(f"[{self._component_name}] Provider {i} (Label: {self.providers[i].label}) cooldown expired ({elapsed:.1f}s > {self.temporary_disable_sec}s). Attempting recovery.")
                     del self._failed_providers[i]
                     best_ready_index = i
                     break

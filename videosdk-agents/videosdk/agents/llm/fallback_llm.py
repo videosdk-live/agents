@@ -5,9 +5,9 @@ from .chat_context import ChatContext
 from ..fallback_base import FallbackBase
 
 class FallbackLLM(LLM, FallbackBase):
-    def __init__(self, providers: List[LLM], recovery_cooldown_sec: float = 60.0, max_recovery_attempts: int = 3):
+    def __init__(self, providers: List[LLM], temporary_disable_sec: float = 60.0, permanent_disable_after_attempts: int = 3):
         LLM.__init__(self)
-        FallbackBase.__init__(self, providers, "LLM", recovery_cooldown_sec=recovery_cooldown_sec, max_recovery_attempts=max_recovery_attempts)
+        FallbackBase.__init__(self, providers, "LLM", temporary_disable_sec=temporary_disable_sec, permanent_disable_after_attempts=permanent_disable_after_attempts)
         self._setup_event_listeners()
 
     def _setup_event_listeners(self):

@@ -7,13 +7,13 @@ from ..fallback_base import FallbackBase
 logger = logging.getLogger(__name__)
 
 class FallbackTTS(TTS, FallbackBase):
-    def __init__(self, providers: List[TTS], recovery_cooldown_sec: float = 60.0, max_recovery_attempts: int = 3):
+    def __init__(self, providers: List[TTS], temporary_disable_sec: float = 60.0, permanent_disable_after_attempts: int = 3):
         TTS.__init__(
             self,
             sample_rate=providers[0].sample_rate, 
             num_channels=providers[0].num_channels
         )
-        FallbackBase.__init__(self, providers, "TTS", recovery_cooldown_sec=recovery_cooldown_sec, max_recovery_attempts=max_recovery_attempts)
+        FallbackBase.__init__(self, providers, "TTS", temporary_disable_sec=temporary_disable_sec, permanent_disable_after_attempts=permanent_disable_after_attempts)
         self._initializing = False
         self._setup_event_listeners()
 

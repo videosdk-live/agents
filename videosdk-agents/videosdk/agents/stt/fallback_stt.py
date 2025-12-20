@@ -4,9 +4,9 @@ from .stt import STT
 from ..fallback_base import FallbackBase
 
 class FallbackSTT(STT, FallbackBase):
-    def __init__(self, providers: List[STT], recovery_cooldown_sec: float = 60.0, max_recovery_attempts: int = 3):
+    def __init__(self, providers: List[STT], temporary_disable_sec: float = 60.0, permanent_disable_after_attempts: int = 3):
         STT.__init__(self)
-        FallbackBase.__init__(self, providers, "STT", recovery_cooldown_sec=recovery_cooldown_sec, max_recovery_attempts=max_recovery_attempts)
+        FallbackBase.__init__(self, providers, "STT", temporary_disable_sec=temporary_disable_sec, permanent_disable_after_attempts=permanent_disable_after_attempts)
         
         self._transcript_callback = None
         self._setup_event_listeners()
