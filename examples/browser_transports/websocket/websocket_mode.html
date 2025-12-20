@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket Audio Client</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; }
+        button { padding: 10px 20px; margin: 5px; font-size: 16px; cursor: pointer; }
+        #status { margin-bottom: 20px; padding: 10px; background: #f0f0f0; border-radius: 4px; }
+        .active { background: #d4edda; }
+        .error { background: #f8d7da; }
+        .info { font-size: 0.9em; color: #555; margin-top: 5px; }
+    </style>
+</head>
+<body>
+    <h1>WebSocket Audio Client</h1>
+    <div id="status">Status: Disconnected</div>
+    
+    <div>
+        <label for="wsUrl">WebSocket URL:</label>
+        <input type="text" id="wsUrl" value="ws://localhost:8080/ws" style="width: 300px; padding: 5px;">
+    </div>
+    <br>
+
+    <button id="connectBtn" onclick="connect()">Connect</button>
+    <button id="disconnectBtn" onclick="disconnect()" disabled>Disconnect</button>
+    <br><br>
+    
+    <div style="border: 1px solid #ccc; padding: 15px; border-radius: 5px;">
+        <h3>Audio Controls</h3>
+        <p>Make sure to allow microphone access when prompted.</p>
+        <div id="audioInfo">Not sending audio</div>
+    </div>
+
+    <script>
+        let ws;
+        let audioContext;
+        let microphone;
+        let processor;
+        let isConnected = false;
+        let activeSources = [];
+        
+        const INPUT_SAMPLE_RATE = 48000;  
+        const OUTPUT_SAMPLE_RATE = 24000; 
+    
+        const BUFFER_SIZE = 1024; 
+
+        function updateStatus(msg, type) {
+            const el = document.getElementById('status');
+            el.textContent = 'Status: ' + msg;
+            el.className = type || '';
+        }
+
+        async function connect() {
+            const url = document.getElementById('wsUrl').value;
+            try {
+                ws = new WebSocket(url);
+                ws.binaryType = 'arraybuffer';
+                
+                ws.onopen = async () => {
+                    isConnected = true;
+                    updateStatus('Connected', 'active');
+                    document.getElementById('connectBtn').disabled = true;
+                    document.getElementById('disconnectBtn').disabled = false;
+                    
+                    await startAudio();
+                };
+
+                ws.onclose = () => {
+                    cleanup();
+                    updateStatus('Disconnected');
+                };
+
+                ws.onerror = (err) => {
+                    console.error('WebSocket Error:', err);
+                    updateStatus('Error connecting', 'error');
+                };
+
+                ws.onmessage = async (event) => {
+                    if (event.data instanceof ArrayBuffer) {
+                        playPcmAudio(event.data);
+                    } else if (typeof event.data === 'string') {
+                        try {
+                            const msg = JSON.parse(event.data);
+                            if (msg.type === 'interrupt') {
+                                interruptAudio();
+                            }
+                        } catch (e) {
+                            console.error("Error parsing JSON message:", e);
+                        }
+                    }
+                };
+
+            } catch (e) {
+                console.error(e);
+                updateStatus('Connection failed: ' + e.message, 'error');
+            }
+        }
+
+        function disconnect() {
+            if (ws) ws.close();
+            cleanup();
+        }
+
+        function cleanup() {
+            isConnected = false;
+            document.getElementById('connectBtn').disabled = false;
+            document.getElementById('disconnectBtn').disabled = true;
+            
+            interruptAudio();
+            
+            if (processor) {
+                processor.disconnect();
+                processor = null;
+            }
+            if (microphone) {
+                microphone.disconnect();
+                microphone = null;
+            }
+            if (audioContext) {
+                audioContext.close();
+                audioContext = null;
+            }
+            document.getElementById('audioInfo').textContent = "Not sending audio";
+        }
+
+        async function startAudio() {
+            try {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                    sampleRate: INPUT_SAMPLE_RATE,
+                });
+
+                if (audioContext.state === 'suspended') {
+                    await audioContext.resume();
+                }
+
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: { 
+                        channelCount: 1, 
+                        sampleRate: INPUT_SAMPLE_RATE,
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    } 
+                });
+
+                microphone = audioContext.createMediaStreamSource(stream);
+                
+                processor = audioContext.createScriptProcessor(BUFFER_SIZE, 1, 1);
+
+                processor.onaudioprocess = (e) => {
+                    if (!isConnected || ws.readyState !== WebSocket.OPEN) return;
+
+                    const inputData = e.inputBuffer.getChannelData(0);
+                    
+                    const pcmData = floatTo16BitStereo(inputData);
+                    
+                    ws.send(pcmData);
+                    
+                    document.getElementById('audioInfo').textContent = "Sending audio...";
+                };
+
+                microphone.connect(processor);
+                processor.connect(audioContext.destination);
+                
+            } catch (e) {
+                console.error('Audio Error:', e);
+                updateStatus('Audio Error: ' + e.message, 'error');
+            }
+        }
+        
+        let nextStartTime = 0;
+        
+        function playPcmAudio(arrayBuffer) {
+            if (!audioContext) return;
+
+            const int16Array = new Int16Array(arrayBuffer);
+            const float32Array = new Float32Array(int16Array.length);
+
+            for (let i = 0; i < int16Array.length; i++) {
+                float32Array[i] = int16Array[i] / 32768;
+            }
+
+            const audioBuffer = audioContext.createBuffer(1, float32Array.length, OUTPUT_SAMPLE_RATE);
+            audioBuffer.getChannelData(0).set(float32Array);
+
+            const source = audioContext.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(audioContext.destination);
+
+            source.onended = () => {
+                activeSources = activeSources.filter(s => s !== source);
+            };
+            activeSources.push(source);
+
+            const currentTime = audioContext.currentTime;
+            if (nextStartTime < currentTime) {
+                nextStartTime = currentTime;
+            }
+            source.start(nextStartTime);
+            nextStartTime += audioBuffer.duration;
+        }
+
+        function interruptAudio() {
+            console.log("Interruption received - clearing audio buffers");
+            activeSources.forEach(source => {
+                try {
+                    source.stop();
+                } catch (e) {
+                }
+            });
+            activeSources = [];
+            nextStartTime = 0;
+        }
+
+        function floatTo16BitStereo(input) {
+            const output = new Int16Array(input.length * 2);
+            for (let i = 0; i < input.length; i++) {
+                const s = Math.max(-1, Math.min(1, input[i]));
+                const pcm = s < 0 ? s * 0x8000 : s * 0x7FFF;                
+                output[i * 2] = pcm;
+                output[i * 2 + 1] = pcm;
+            }
+            return output.buffer;
+        }
+    </script>
+</body>
+</html>

@@ -56,7 +56,7 @@ from .utils import (
 )
 from .room.audio_stream import CustomAudioStreamTrack, TeeCustomAudioStreamTrack, TeeMixingCustomAudioStreamTrack
 from .event_emitter import EventEmitter
-from .job import WorkerJob, JobContext, RoomOptions, Options
+from .job import WorkerJob, JobContext, RoomOptions, Options, WebSocketConfig, WebRTCConfig
 from .worker import Worker, WorkerOptions, WorkerType
 from .utterance_handle import UtteranceHandle
 
@@ -163,6 +163,8 @@ __all__ = [
     "JobContext",
     "RoomOptions",
     "Options",
+    "WebSocketConfig",
+    "WebRTCConfig",
     "realtime_metrics_collector",
     "ImageContent",
     "segment_text",
