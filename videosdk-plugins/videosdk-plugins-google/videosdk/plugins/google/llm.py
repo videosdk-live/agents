@@ -27,7 +27,12 @@ from videosdk.agents import (
     ImageContent,
     ConversationalGraphResponse
 )
-    
+from dataclasses import dataclass
+
+@dataclass
+class VertexAIConfig:
+    project_id: str| None = None
+    location: str| None = None
 
 class GoogleLLM(LLM):
     
@@ -43,6 +48,8 @@ class GoogleLLM(LLM):
         top_k: int | None = None,
         presence_penalty: float | None = None,
         frequency_penalty: float | None = None,
+        vertexai: bool = False,
+        vertexai_config: VertexAIConfig| None = None,
     ) -> None:
         """Initialize the Google LLM plugin
         
@@ -56,13 +63,18 @@ class GoogleLLM(LLM):
             top_k (int): The top K to use for the LLM plugin
             presence_penalty (float): The presence penalty to use for the LLM plugin
             frequency_penalty (float): The frequency penalty to use for the LLM plugin
+            vertexai (bool): Whether to use Vertex AI
+            vertexai_config (VertexAIConfig): The Vertex AI config if custom otherwise from env
         """
         super().__init__()
         
         self.api_key = api_key or os.getenv("GOOGLE_API_KEY")
-        if not self.api_key:
-            raise ValueError("Google API key must be provided either through api_key parameter or GOOGLE_API_KEY environment variable")
-        
+        self.vertexai = vertexai
+        self.vertexai_config = vertexai_config
+        if not self.vertexai and not self.api_key:
+            raise ValueError("For VertexAI: Set the `GOOGLE_APPLICATION_CREDENTIALS` environment variable to the path of the service account key file"\
+                            "The Google Cloud project and location can be set via VertexAIConfig or the environment variables `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION`. location defaults to `us-central1`"\
+                            "For Google Gemini API: Set the `api_key` argument or the `GOOGLE_API_KEY` environment variable.")
         self.model = model
         self.temperature = temperature
         self.tool_choice = tool_choice
@@ -72,8 +84,25 @@ class GoogleLLM(LLM):
         self.presence_penalty = presence_penalty
         self.frequency_penalty = frequency_penalty
         self._cancelled = False
-        
-        self._client = Client(api_key=self.api_key)
+        if self.vertexai:
+            project_id = (self.vertexai_config.project_id if self.vertexai_config else None) or os.getenv("GOOGLE_CLOUD_PROJECT")
+            if project_id is None:
+                service_account_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+                if service_account_path:
+                    from google.oauth2 import service_account
+                    creds = service_account.Credentials.from_service_account_file(service_account_path)
+                    project_id = creds.project_id
+
+            location = (self.vertexai_config.location if self.vertexai_config else None) or os.getenv("GOOGLE_CLOUD_LOCATION") or "us-central1"
+            self._client = Client(
+                vertexai=True,
+                project=project_id,
+                location=location,
+            )
+        else:
+            if not self.api_key:
+                raise ValueError("GOOGLE_API_KEY required")
+            self._client = Client(api_key=self.api_key)
 
     async def chat(
         self,
