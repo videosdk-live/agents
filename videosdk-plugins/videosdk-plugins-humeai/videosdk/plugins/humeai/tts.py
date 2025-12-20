@@ -81,6 +81,7 @@ class HumeAITTS(TTS):
 
         except Exception as e:
             self.emit("error", f"Synthesis failed: {str(e)}")
+            raise
 
     async def _synthesize_audio(self, text: str, voice_id: Optional[str] = None, **kwargs: Any) -> None:
         """Synthesize a single text segment"""
@@ -151,6 +152,7 @@ class HumeAITTS(TTS):
 
         except Exception as e:
             self.emit("error", f"Streaming failed: {str(e)}")
+            raise
 
     async def _stream_audio_chunks(self, audio_bytes: bytes) -> None:
         """Stream audio with 48kHz->24kHz resampling"""

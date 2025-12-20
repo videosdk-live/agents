@@ -168,7 +168,7 @@ class OpenAITTS(TTS):
         try:
             if not self.audio_track or not self.loop:
                 self.emit("error", "Audio track or event loop not set")
-                return
+                raise RuntimeError("Audio track or event loop not set")
 
             self._interrupted = False
 
@@ -183,6 +183,7 @@ class OpenAITTS(TTS):
 
         except Exception as e:
             self.emit("error", f"TTS synthesis failed: {str(e)}")
+            raise 
 
     async def _synthesize_segment(self, text: str, voice_id: Optional[str] = None, **kwargs: Any) -> None:
         """Synthesize a single text segment"""
@@ -211,6 +212,7 @@ class OpenAITTS(TTS):
         except Exception as e:
             if not self._interrupted:
                 self.emit("error", f"Segment synthesis failed: {str(e)}")
+                raise
 
     async def _stream_audio_chunks(self, audio_bytes: bytes) -> None:
         """Stream audio data in chunks for smooth playback"""

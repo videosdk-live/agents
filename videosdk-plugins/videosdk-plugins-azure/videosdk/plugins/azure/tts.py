@@ -206,6 +206,7 @@ class AzureTTS(TTS):
         except Exception as e:
             logger.error("Azure TTS synthesis failed: %s", str(e), exc_info=True)
             self.emit("error", f"Azure TTS synthesis failed: {str(e)}")
+            raise
 
     async def _synthesize_segment(
         self, text: str, voice_id: Optional[str] = None, **kwargs: Any
@@ -255,6 +256,7 @@ class AzureTTS(TTS):
             if not self._interrupted:
                 logger.error("Azure TTS synthesis failed: %s", str(e), exc_info=True)
                 self.emit("error", f"Azure TTS synthesis failed: {str(e)}")
+                raise
 
     def _build_ssml(self, text: str, voice: str) -> str:
         lang = self.language or "en-US"

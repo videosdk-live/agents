@@ -125,6 +125,7 @@ class ElevenLabsTTS(TTS):
 
         except Exception as e:
             self.emit("error", f"TTS synthesis failed: {str(e)}")
+            raise 
 
     async def _chunked_synthesis(self, text: str, voice_id: str) -> None:
         """Non-streaming synthesis using the standard API"""
@@ -169,8 +170,10 @@ class ElevenLabsTTS(TTS):
         except httpx.HTTPStatusError as e:
             self.emit(
                 "error", f"HTTP error {e.response.status_code}: {e.response.text}")
+            raise 
         except Exception as e:
             self.emit("error", f"Chunked synthesis failed: {str(e)}")
+            raise
 
     async def _stream_synthesis(self, text: Union[AsyncIterator[str], str], voice_id: str) -> None:
         """WebSocket-based streaming synthesis using multi-context connection"""
@@ -218,13 +221,7 @@ class ElevenLabsTTS(TTS):
         except Exception as e:
             self.emit("error", f"Streaming synthesis failed: {str(e)}")
 
-            if isinstance(text, str):
-                await self._chunked_synthesis(text, voice_id)
-            else:
-                async for segment in segment_text(text):
-                    if self._should_stop:
-                        break
-                    await self._chunked_synthesis(segment, voice_id)
+            raise
 
     def _voice_settings_dict(self) -> dict[str, Any]:
         return {

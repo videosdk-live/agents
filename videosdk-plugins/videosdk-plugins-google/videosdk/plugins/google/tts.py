@@ -86,6 +86,7 @@ class GoogleTTS(TTS):
 
         except Exception as e:
             self.emit("error", f"Google TTS synthesis failed: {str(e)}")
+            raise
 
     async def _synthesize_audio(self, text: str) -> None:
         """Synthesize text to speech using Google TTS REST API"""
