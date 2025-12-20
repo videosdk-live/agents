@@ -3,6 +3,8 @@ from videosdk.plugins.openai import OpenAILLM,OpenAITTS
 from videosdk.plugins.deepgram import DeepgramSTT
 from videosdk.plugins.silero import SileroVAD
 from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
+from videosdk.plugins.google import GoogleLLM
+from videosdk.plugins.cartesia import CartesiaTTS
 import logging
 logging.basicConfig(level=logging.INFO)
 
@@ -28,7 +30,7 @@ class VoiceAgent(Agent):
         :param action: 'play' to start the music, 'stop' to end it.
         """
         if action.lower() == "play":
-            await self.play_background_audio(override_thinking=True, looping=True)
+            await self.play_background_audio(override_thinking=False,looping=True)
             return "Background music started."
         elif action.lower() == "stop":
             await self.stop_background_audio()
@@ -43,8 +45,10 @@ async def entrypoint(ctx: JobContext):
 
     pipeline = CascadingPipeline(
         stt=DeepgramSTT(),
-        llm=OpenAILLM(),
-        tts=OpenAITTS(),
+        # llm=OpenAILLM(),
+        # tts=OpenAITTS(),
+        llm=GoogleLLM(),
+        tts=CartesiaTTS(),
         vad=SileroVAD(),
         turn_detector=TurnDetector()
     )
@@ -58,7 +62,7 @@ async def entrypoint(ctx: JobContext):
     await session.start(wait_for_participant=True, run_until_shutdown=True)
 
 def make_context() -> JobContext:
-    room_options = RoomOptions(room_id="<room_id>",name="Background Audio Agent", playground=True, background_audio=True)
+    room_options = RoomOptions(room_id="xjld-g28c-rda8",name="Background Audio Agent", playground=True, background_audio=True)
     
     return JobContext(
         room_options=room_options

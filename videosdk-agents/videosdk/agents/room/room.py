@@ -25,6 +25,7 @@ import requests
 import time
 import logging
 from ..event_bus import global_event_emitter
+from ..transports.base import BaseTransportHandler
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,7 @@ TRANSFER_CALL_URL = "https://api.videosdk.live/v2/sip/call/transfer"
 load_dotenv()
 
 
-class VideoSDKHandler:
+class VideoSDKHandler(BaseTransportHandler):
     """
     Handles VideoSDK meeting operations and participant management.
     """
@@ -114,6 +115,8 @@ class VideoSDKHandler:
         # VideoSDK connection
         self.signaling_base_url = signaling_base_url
 
+        super().__init__(loop, pipeline)
+
         # Participant tracking
         self._non_agent_participant_count = 0
         self._first_participant_event = asyncio.Event()
@@ -184,6 +187,19 @@ class VideoSDKHandler:
         self._left: bool = False
         # Session management
         self.auto_end_session = auto_end_session
+
+    async def connect(self):
+        """
+        Connect to the VideoSDK meeting.
+        """
+        self.init_meeting()
+        await self.join()
+
+    async def disconnect(self):
+        """
+        Disconnect from the VideoSDK meeting.
+        """
+        await self.leave()
 
     def init_meeting(self):
         """
