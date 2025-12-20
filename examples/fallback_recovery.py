@@ -27,12 +27,12 @@ async def entrypoint(ctx: JobContext):
 
     # Fallback configuration:
     # 1. Define a list of providers (in priority order).
-    # 2. recovery_cooldown_sec: Time to wait before retrying a failed primary provider.
-    # 3. max_recovery_attempts: Disable a provider permanently after N failed recovery attempts.
+    # 2. temporary_disable_sec: Time to wait before retrying a failed primary provider.
+    # 3. permanent_disable_after_attempts: Disable a provider permanently after N failed recovery attempts.
 
-    stt_provider = FallbackSTT([OpenAISTT(),DeepgramSTT()],recovery_cooldown_sec=30.0, max_recovery_attempts=3)
-    llm_provider = FallbackLLM([OpenAILLM(model="gpt-4o-mini"),CerebrasLLM()],recovery_cooldown_sec=30.0, max_recovery_attempts=3)
-    tts_provider = FallbackTTS([OpenAITTS(voice="alloy"),CartesiaTTS()],recovery_cooldown_sec=30.0, max_recovery_attempts=3)
+    stt_provider = FallbackSTT([OpenAISTT(),DeepgramSTT()],temporary_disable_sec=30.0, permanent_disable_after_attempts=3)
+    llm_provider = FallbackLLM([OpenAILLM(model="gpt-4o-mini"),CerebrasLLM()],temporary_disable_sec=30.0, permanent_disable_after_attempts=3)
+    tts_provider = FallbackTTS([OpenAITTS(voice="alloy"),CartesiaTTS()],temporary_disable_sec=30.0, permanent_disable_after_attempts=3)
 
 
     pipeline = CascadingPipeline(
