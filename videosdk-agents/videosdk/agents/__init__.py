@@ -103,6 +103,9 @@ from .images import EncodeOptions, ResizeOptions, encode
 from .knowledge_base import KnowledgeBaseConfig, KnowledgeBase
 from .dtmf_handler import DTMFHandler
 from .voice_mail_detector import VoiceMailDetector
+from .stt import FallbackSTT
+from .llm import FallbackLLM
+from .tts import FallbackTTS
 
 __all__ = [
     "Agent",
@@ -190,4 +193,7 @@ __all__ = [
     "KnowledgeBase",
     "DTMFHandler",
     "VoiceMailDetector",
+    "FallbackSTT",
+    "FallbackLLM",
+    "FallbackTTS",
 ]

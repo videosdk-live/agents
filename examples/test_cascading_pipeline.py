@@ -1,5 +1,4 @@
 # This test script is used to test cascading pipeline.
-import asyncio
 import logging
 import aiohttp
 from videosdk.agents import Agent, AgentSession, CascadingPipeline, function_tool, WorkerJob, MCPServerStdio, ConversationFlow, JobContext, RoomOptions
@@ -97,10 +96,7 @@ async def entrypoint(ctx: JobContext):
 
 def make_context() -> JobContext:
     room_options = RoomOptions(room_id="<room_id>", name="Sandbox Agent", playground=True)
-    
-    return JobContext(
-        room_options=room_options
-        )
+    return JobContext(room_options=room_options)
 
 if __name__ == "__main__":
     job = WorkerJob(entrypoint=entrypoint, jobctx=make_context)

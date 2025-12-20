@@ -1,4 +1,5 @@
 from .llm import LLM, LLMResponse,ConversationalGraphResponse
+from .fallback_llm import FallbackLLM
 from .chat_context import (
     ChatContext,
     ChatRole,
@@ -12,6 +13,7 @@ from .chat_context import (
 __all__ = [
     "LLM",
     "LLMResponse",
+    "FallbackLLM",
     "ChatContext",
     "ChatRole",
     "ChatMessage",
