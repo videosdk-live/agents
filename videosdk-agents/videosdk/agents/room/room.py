@@ -25,7 +25,7 @@ import requests
 import time
 import logging
 from ..event_bus import global_event_emitter
-from ..connection.base import BaseTransportHandler
+from ..transports.base import BaseTransportHandler
 
 logger = logging.getLogger(__name__)
 

@@ -130,7 +130,7 @@ class WebRTCOutputTrack(MediaStreamTrack):
         return frame
 
 
-class WebRTCConnectionHandler(BaseTransportHandler):
+class WebRTCTransportHandler(BaseTransportHandler):
     def __init__(self, loop, pipeline, signaling_url, ice_servers=None):
         super().__init__(loop, pipeline)
         self.signaling_url = signaling_url

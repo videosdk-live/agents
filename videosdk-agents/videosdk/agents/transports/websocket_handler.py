@@ -38,7 +38,7 @@ class WebSocketAudioTrack(TeeCustomAudioStreamTrack):
         self._ignore_packets = False
         super().enable_audio_input(manual_control)
 
-class WebSocketConnectionHandler(BaseTransportHandler):
+class WebSocketTransportHandler(BaseTransportHandler):
     def __init__(self, loop, pipeline, port=8080, path="/ws"):
         super().__init__(loop, pipeline)
         self.port = port

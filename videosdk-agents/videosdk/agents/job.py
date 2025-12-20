@@ -14,7 +14,7 @@ import sys
 
 if TYPE_CHECKING:
     from .worker import ExecutorType, WorkerPermissions, _default_executor_type
-    from .connection.base import BaseTransportHandler
+    from .transports.base import BaseTransportHandler
 else:
     # Import at runtime to avoid circular imports
     ExecutorType = None
@@ -80,8 +80,8 @@ class RoomOptions:
 
     # Alias properties for easier usage as requested
     @property
-    def transport_mode(self):
-        return self._transport_mode.value if hasattr(self._transport_mode, "value") else self._transport_mode
+    def transport_mode(self) -> TransportMode:
+        return self._transport_mode
 
     @transport_mode.setter
     def transport_mode(self, value):
@@ -96,7 +96,7 @@ class RoomOptions:
 
     def __init__(
         self,
-        transport_mode: Optional[str] = None,
+        transport_mode: Optional[str | TransportMode] = None,
         websocket: Optional[WebSocketConfig] = None,
         webrtc: Optional[WebRTCConfig] = None,
         **kwargs,
@@ -106,10 +106,13 @@ class RoomOptions:
         
         # Handle connection mode
         if transport_mode:
-            try:
-                self._transport_mode = TransportMode(transport_mode.lower())
-            except ValueError:
-                pass
+            if isinstance(transport_mode, str):
+                try:
+                    self._transport_mode = TransportMode(transport_mode.lower())
+                except ValueError:
+                    pass
+            elif isinstance(transport_mode, TransportMode):
+                self._transport_mode = transport_mode
 
         self.websocket = websocket or WebSocketConfig()
         self.webrtc = webrtc or WebRTCConfig()
@@ -363,10 +366,10 @@ class JobContext:
                         raise ValueError("WebSocket configuration (websocket) is required when mode is WEBSOCKET")
                     
                     if self.room_options.webrtc and (self.room_options.webrtc.signaling_url or self.room_options.webrtc.ice_servers != [{"urls": "stun:stun.l.google.com:19302"}]):
-                        logger.warning("WebRTC configuration provided but connection mode is set to WEBSOCKET. WebRTC config will be ignored.")
+                        logger.warning("WebRTC configuration provided but transport mode is set to WEBSOCKET. WebRTC config will be ignored.")
 
-                    from .connection.websocket_handler import WebSocketConnectionHandler
-                    self.room = WebSocketConnectionHandler(
+                    from .transports.websocket_handler import WebSocketTransportHandler
+                    self.room = WebSocketTransportHandler(
                         loop=self._loop,
                         pipeline=self._pipeline,
                         port=self.room_options.websocket.port,
@@ -382,8 +385,8 @@ class JobContext:
                     if self.room_options.websocket and (self.room_options.websocket.port != 8080 or self.room_options.websocket.path != "/ws"):
                         logger.warning("WebSocket configuration provided but connection mode is set to WEBRTC. WebSocket config will be ignored.")
 
-                    from .connection.webrtc_handler import WebRTCConnectionHandler
-                    self.room = WebRTCConnectionHandler(
+                    from .transports.webrtc_handler import WebRTCTransportHandler
+                    self.room = WebRTCTransportHandler(
                         loop=self._loop,
                         pipeline=self._pipeline,
                         signaling_url=self.room_options.webrtc.signaling_url,
@@ -392,9 +395,9 @@ class JobContext:
                 
                 elif self.room_options.transport_mode == TransportMode.VIDEOSDK:
                     if self.room_options.websocket and (self.room_options.websocket.port != 8080 or self.room_options.websocket.path != "/ws"):
-                         logger.warning("WebSocket configuration provided but connection mode is VIDEOSDK. WebSocket config will be ignored.")
+                         logger.warning("WebSocket configuration provided but transport mode is VIDEOSDK. WebSocket config will be ignored.")
                     if self.room_options.webrtc and (self.room_options.webrtc.signaling_url or self.room_options.webrtc.ice_servers != [{"urls": "stun:stun.l.google.com:19302"}]):
-                         logger.warning("WebRTC configuration provided but connection mode is VIDEOSDK. WebRTC config will be ignored.")
+                         logger.warning("WebRTC configuration provided but transport mode is VIDEOSDK. WebRTC config will be ignored.")
 
         if self.room:
             await self.room.connect()
