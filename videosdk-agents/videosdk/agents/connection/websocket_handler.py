@@ -11,6 +11,33 @@ from ..room.audio_stream import TeeCustomAudioStreamTrack
 
 logger = logging.getLogger(__name__)
 
+class WebSocketAudioTrack(TeeCustomAudioStreamTrack):
+    def __init__(self, loop, websocket_handler, sinks=None, pipeline=None):
+        super().__init__(loop, sinks, pipeline)
+        self.websocket_handler = websocket_handler
+        self._ignore_packets = False
+
+    def interrupt(self):
+        self._ignore_packets = True
+        super().interrupt()
+        if self.websocket_handler and self.websocket_handler.active_connection:
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    self.websocket_handler.active_connection.send(json.dumps({"type": "interrupt"})),
+                    self.loop
+                )
+            except Exception as e:
+                logger.error(f"Error sending interruption signal: {e}")
+
+    async def add_new_bytes(self, audio_data: bytes):
+        if self._ignore_packets:
+            return
+        await super().add_new_bytes(audio_data)
+
+    def enable_audio_input(self, manual_control: bool = False):
+        self._ignore_packets = False
+        super().enable_audio_input(manual_control)
+
 class WebSocketConnectionHandler(BaseConnectionHandler):
     def __init__(self, loop, pipeline, port=8080, path="/ws"):
         super().__init__(loop, pipeline)
@@ -20,7 +47,7 @@ class WebSocketConnectionHandler(BaseConnectionHandler):
         self.active_connection = None
         self._participant_joined_event = asyncio.Event()
         self._stop_event = asyncio.Event()        
-        self.audio_track = TeeCustomAudioStreamTrack(loop=loop, pipeline=pipeline)
+        self.audio_track = WebSocketAudioTrack(loop=loop, websocket_handler=self, pipeline=pipeline)
         self._on_session_end = None
 
     async def connect(self):

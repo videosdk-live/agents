@@ -10,6 +10,7 @@
         #status { margin-bottom: 20px; padding: 10px; background: #f0f0f0; border-radius: 4px; }
         .active { background: #d4edda; }
         .error { background: #f8d7da; }
+        .info { font-size: 0.9em; color: #555; margin-top: 5px; }
     </style>
 </head>
 <body>
@@ -38,9 +39,12 @@
         let microphone;
         let processor;
         let isConnected = false;
+        let activeSources = [];
         
-        const SAMPLE_RATE = 24000; 
-        const BUFFER_SIZE = 2048; 
+        const INPUT_SAMPLE_RATE = 48000;  
+        const OUTPUT_SAMPLE_RATE = 24000; 
+    
+        const BUFFER_SIZE = 1024; 
 
         function updateStatus(msg, type) {
             const el = document.getElementById('status');
@@ -76,6 +80,15 @@
                 ws.onmessage = async (event) => {
                     if (event.data instanceof ArrayBuffer) {
                         playPcmAudio(event.data);
+                    } else if (typeof event.data === 'string') {
+                        try {
+                            const msg = JSON.parse(event.data);
+                            if (msg.type === 'interrupt') {
+                                interruptAudio();
+                            }
+                        } catch (e) {
+                            console.error("Error parsing JSON message:", e);
+                        }
                     }
                 };
 
@@ -94,6 +107,17 @@
             isConnected = false;
             document.getElementById('connectBtn').disabled = false;
             document.getElementById('disconnectBtn').disabled = true;
+            
+            interruptAudio();
+            
+            if (processor) {
+                processor.disconnect();
+                processor = null;
+            }
+            if (microphone) {
+                microphone.disconnect();
+                microphone = null;
+            }
             if (audioContext) {
                 audioContext.close();
                 audioContext = null;
@@ -104,13 +128,17 @@
         async function startAudio() {
             try {
                 audioContext = new (window.AudioContext || window.webkitAudioContext)({
-                    sampleRate: SAMPLE_RATE,
+                    sampleRate: INPUT_SAMPLE_RATE,
                 });
+
+                if (audioContext.state === 'suspended') {
+                    await audioContext.resume();
+                }
 
                 const stream = await navigator.mediaDevices.getUserMedia({ 
                     audio: { 
                         channelCount: 1, 
-                        sampleRate: SAMPLE_RATE,
+                        sampleRate: INPUT_SAMPLE_RATE,
                         echoCancellation: true,
                         noiseSuppression: true,
                         autoGainControl: true
@@ -126,7 +154,7 @@
 
                     const inputData = e.inputBuffer.getChannelData(0);
                     
-                    const pcmData = floatTo16BitPCM(inputData);
+                    const pcmData = floatTo16BitStereo(inputData);
                     
                     ws.send(pcmData);
                     
@@ -154,12 +182,17 @@
                 float32Array[i] = int16Array[i] / 32768;
             }
 
-            const audioBuffer = audioContext.createBuffer(1, float32Array.length, SAMPLE_RATE);
+            const audioBuffer = audioContext.createBuffer(1, float32Array.length, OUTPUT_SAMPLE_RATE);
             audioBuffer.getChannelData(0).set(float32Array);
 
             const source = audioContext.createBufferSource();
             source.buffer = audioBuffer;
             source.connect(audioContext.destination);
+
+            source.onended = () => {
+                activeSources = activeSources.filter(s => s !== source);
+            };
+            activeSources.push(source);
 
             const currentTime = audioContext.currentTime;
             if (nextStartTime < currentTime) {
@@ -169,15 +202,28 @@
             nextStartTime += audioBuffer.duration;
         }
 
-        function floatTo16BitPCM(input) {
-            const output = new Int16Array(input.length);
+        function interruptAudio() {
+            console.log("Interruption received - clearing audio buffers");
+            activeSources.forEach(source => {
+                try {
+                    source.stop();
+                } catch (e) {
+                }
+            });
+            activeSources = [];
+            nextStartTime = 0;
+        }
+
+        function floatTo16BitStereo(input) {
+            const output = new Int16Array(input.length * 2);
             for (let i = 0; i < input.length; i++) {
                 const s = Math.max(-1, Math.min(1, input[i]));
-                output[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                const pcm = s < 0 ? s * 0x8000 : s * 0x7FFF;                
+                output[i * 2] = pcm;
+                output[i * 2 + 1] = pcm;
             }
             return output.buffer;
         }
     </script>
 </body>
 </html>
-
