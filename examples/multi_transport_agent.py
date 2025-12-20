@@ -9,18 +9,18 @@ from videosdk.plugins.cartesia import CartesiaTTS
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 pre_download_model()
 
-class VoiceAgent(Agent):
+class MultiTransportAgent(Agent):
     def __init__(self):
         super().__init__(
             instructions="You are a helpful voice assistant that can answer questions and help with tasks and help with horoscopes.",
         )
-        
+    
     async def on_enter(self) -> None:
         await self.session.say("Hello, how can I help you today?")
     
     async def on_exit(self) -> None:
         await self.session.say("Goodbye!")
-        
+    
     @function_tool
     async def get_horoscope(self, sign: str) -> dict:
         """Get today's horoscope for a given zodiac sign.
@@ -40,7 +40,7 @@ class VoiceAgent(Agent):
 
 async def entrypoint(ctx: JobContext):
     
-    agent = VoiceAgent()
+    agent = MultiTransportAgent()
     conversation_flow = ConversationFlow(agent)
 
     pipeline = CascadingPipeline(
@@ -62,17 +62,17 @@ def make_context() -> JobContext:
     # --- Example 1: Default VideoSDK Room ---
     # room_options = RoomOptions(
     #    room_id="<room_id>", 
-    #    name="Connection Mode Test Agent", 
+    #    name="Multi-Transport Demo Agent", 
     #    playground=True,
-    #    mode="videosdk"
     # )
 
-    # --- Example 2: WebRTC Connection (P2P) ---
-    # Used with examples/client_examples/webrtc/client.html & signaling_server.js
-    # before running this python script, run the signaling_server.js file in the examples/client_examples/webrtc directory 
-    # also open client.html in the browser and click on the connect button. then exacute this python script.
+    # --- Example 2: WebRTC Transport (P2P) ---
+    # Used with examples/browser_transports/webrtc/webrtc_mode.html
+    # 1. Start the signaling server (e.g., node signaling_server.js)
+    # 2. Open webrtc_mode.html in your browser and click "Connect"
+    # 3. Run this Python script
     room_options = RoomOptions(
-        connection_mode="webrtc",
+        transport_mode="webrtc",
         webrtc=WebRTCConfig(
             signaling_url="ws://localhost:8081",
             signaling_type="websocket",
@@ -82,11 +82,13 @@ def make_context() -> JobContext:
         )
     )
 
-    # --- Example 3: WebSocket Connection (Raw PCM) ---
-    # Used with examples/client_examples/websocket/client.html and open it in the browser. 
-    # then run this python script. and then in the browser click on the connect button.
+    # --- Example 3: WebSocket Transport (Raw PCM) ---
+    # Used with examples/browser_transports/websocket/websocket_mode.html
+    # 1. Open websocket_mode.html in your browser
+    # 2. Run this Python script
+    # 3. Click "Connect" in the browser
     # room_options = RoomOptions(
-    #    connection_mode="websocket",
+    #    transport_mode="websocket",
     #    websocket=WebSocketConfig(
     #        port=8080,
     #        path="/ws"
