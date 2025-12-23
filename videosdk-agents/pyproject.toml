@@ -48,7 +48,6 @@ dependencies = [
     "protobuf>=5.29,<6.0",
     "aec-audio-processing>=1.0.1",
     "sounddevice",
-    "videosdk-conversational-graph==0.0.1"
 ]
 
 
@@ -83,6 +82,7 @@ simli = ["videosdk-plugins-simli>=0.0.53"]
 smallestai = ["videosdk-plugins-smallestai>=0.0.53"]
 speechify = ["videosdk-plugins-speechify>=0.0.53"]
 turn-detector = ["videosdk-plugins-turn-detector>=0.0.53"]
+videosdk-conversational-graph = ["videosdk-conversational-graph>=0.0.1"]
 
 [tool.hatch.version]
 path = "videosdk/agents/version.py"
