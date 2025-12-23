@@ -36,7 +36,7 @@ jobs:
 
       - name: Install agents package
         run: |
-          pip install --no-deps -e ./videosdk-agents
+          pip install -e ./videosdk-agents
 
       - name: Install all plugins
         run: |

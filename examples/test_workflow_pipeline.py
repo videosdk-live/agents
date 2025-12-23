@@ -7,7 +7,14 @@ from videosdk.plugins.google import GoogleTTS
 from videosdk.plugins.openai import OpenAILLM
 from videosdk.plugins.silero import SileroVAD
 from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
-from conversational_graph import ConversationalGraph,ConversationalDataModel
+
+try:
+    from conversational_graph import ConversationalGraph, ConversationalDataModel
+except ImportError:
+    raise ImportError(
+        "Missing dependency: videosdk-conversational-graph\n"
+        "Please install it using: pip install videosdk-conversational-graph"
+    )
 
 logging.getLogger().setLevel(logging.CRITICAL)
 pre_download_model()
