@@ -17,19 +17,45 @@ class CascadingTurnData:
     """Data structure for a single user-agent turn"""
     user_speech_start_time: Optional[float] = None
     user_speech_end_time: Optional[float] = None
+    user_speech_duration: Optional[float] = None
+    user_speech: Optional[str] = None
+
+    agent_speech_start_time: Optional[float] = None
+    agent_speech_end_time: Optional[float] = None
+    agent_speech_duration: Optional[float] = None
+    agent_speech: Optional[str] = None
     
     stt_start_time: Optional[float] = None
     stt_end_time: Optional[float] = None
     stt_latency: Optional[float] = None
+    stt_duration: Optional[float] = None
+    stt_preflight_start_time: Optional[float] = None
+    stt_preflight_end_time: Optional[float] = None
+    stt_preflight_latency: Optional[float] = None
+    stt_interim_start_time: Optional[float] = None
+    stt_interim_end_time: Optional[float] = None
+    stt_interim_latency: Optional[float] = None
+    stt_final_start_time: Optional[float] = None
+    stt_final_end_time: Optional[float] = None
+    stt_final_latency: Optional[float] = None
+
     
     llm_start_time: Optional[float] = None
     llm_end_time: Optional[float] = None
     llm_latency: Optional[float] = None
-    
+    llm_duration: Optional[float] = None
+    prompt_tokens: Optional[int] = None
+    completion_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
+    prompt_cached_tokens: Optional[int] = None
+    tokens_per_second: Optional[float] = None
+
     tts_start_time: Optional[float] = None
     tts_end_time: Optional[float] = None
     tts_latency: Optional[float] = None 
     ttfb: Optional[float] = None
+    tts_duration: Optional[float] = None
+    tts_characters: Optional[int] = None
     
     eou_start_time: Optional[float] = None
     eou_end_time: Optional[float] = None
@@ -71,6 +97,7 @@ class CascadingMetricsData:
     current_turn: Optional[CascadingTurnData] = None
     user_speech_end_time: Optional[float] = None
     agent_speech_start_time: Optional[float] = None
+    agent_speech_end_time: Optional[float] = None
     stt_start_time: Optional[float] = None
     llm_start_time: Optional[float] = None
     tts_start_time: Optional[float] = None

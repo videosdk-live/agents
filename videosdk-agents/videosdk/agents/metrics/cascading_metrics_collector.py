@@ -339,14 +339,15 @@ class CascadingMetricsCollector:
         
         if self.data.current_turn:
             self.data.current_turn.user_speech_end_time = self.data.user_speech_end_time
+            self.data.current_turn.user_speech_duration = self._round_latency(self.data.current_turn.user_speech_end_time - self.data.current_turn.user_speech_start_time)
             self._end_timeline_event("user_speech", self.data.user_speech_end_time)
     
     def on_agent_speech_start(self):
         """Called when agent starts speaking (actual audio output)"""
         self.data.is_agent_speaking = True
         self.data.agent_speech_start_time = time.perf_counter()
-        
         if self.data.current_turn:
+            self.data.current_turn.agent_speech_start_time = self.data.agent_speech_start_time
             if not any(event.event_type == "agent_speech" and event.end_time is None for event in self.data.current_turn.timeline):
                 self._start_timeline_event("agent_speech", self.data.agent_speech_start_time)
     
@@ -357,7 +358,8 @@ class CascadingMetricsCollector:
         
         if self.data.current_turn:
             self._end_timeline_event("agent_speech", agent_speech_end_time)
-                
+            self.data.current_turn.agent_speech_end_time = agent_speech_end_time
+
         if self.data.tts_start_time and self.data.tts_first_byte_time:
             total_tts_latency = self.data.tts_first_byte_time - self.data.tts_start_time
             if self.data.current_turn:
@@ -461,6 +463,7 @@ class CascadingMetricsCollector:
     def set_agent_response(self, response: str):
         """Set the agent response for the current turn and update timeline"""
         if self.data.current_turn:
+            self.data.current_turn.agent_speech = response
             logger.info(f"agent output speech: {response}")
             if not any(event.event_type == "agent_speech" for event in self.data.current_turn.timeline):
                 current_time = time.perf_counter()
@@ -493,3 +496,26 @@ class CascadingMetricsCollector:
         if self.data.current_turn:
             self.data.current_turn.is_a2a_enabled = True
             self.data.current_turn.handoff_occurred = True
+    
+    def set_llm_usage(self, usage: Dict[str, int]):
+        """Set token usage and calculate TPS"""
+        if not self.data.current_turn or not usage:
+            return
+
+        if self.data.current_turn:
+            self.data.current_turn.prompt_tokens = usage.get("prompt_tokens")
+            self.data.current_turn.completion_tokens = usage.get("completion_tokens")
+            self.data.current_turn.total_tokens = usage.get("total_tokens")
+            self.data.current_turn.prompt_cached_tokens = usage.get("prompt_cached_tokens")
+
+        if self.data.current_turn and self.data.current_turn.llm_latency and self.data.current_turn.llm_latency > 0 and self.data.current_turn.completion_tokens > 0:
+            latency_seconds = self.data.current_turn.llm_latency / 1000
+            self.data.current_turn.tokens_per_second = round(self.data.current_turn.completion_tokens / latency_seconds, 2)
+    
+    def add_tts_characters(self, count: int):
+        """Add to the total character count for the current turn"""
+        if self.data.current_turn:
+            if self.data.current_turn.tts_characters:
+                self.data.current_turn.tts_characters += count
+            else:
+                self.data.current_turn.tts_characters = count

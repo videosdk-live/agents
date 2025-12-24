@@ -262,18 +262,41 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
         # Handle different event types
         if stt_response.event_type == SpeechEventType.PREFLIGHT:
+            if cascading_metrics_collector.data.current_turn:
+                cascading_metrics_collector.data.current_turn.stt_preflight_start_time = time.perf_counter()
             await self._handle_preflight_transcript(text)
-            
+            if cascading_metrics_collector.data.current_turn:
+                cascading_metrics_collector.data.current_turn.stt_preflight_end_time = time.perf_counter()
+                cascading_metrics_collector.data.current_turn.stt_preflight_latency = cascading_metrics_collector._round_latency(cascading_metrics_collector.data.current_turn.stt_preflight_end_time - cascading_metrics_collector.data.current_turn.stt_preflight_start_time)
+        
         elif stt_response.event_type == SpeechEventType.FINAL:
+            
+            if cascading_metrics_collector.data.current_turn:
+                cascading_metrics_collector.data.current_turn.stt_final_start_time = time.perf_counter()
             user_text = stt_response.data.text
+            
             if self._enable_preemptive_generation:
                 await self._authorize_or_process_final_transcript(user_text)
+                if cascading_metrics_collector.data.current_turn:
+                    cascading_metrics_collector.data.current_turn.stt_final_end_time = time.perf_counter()
+                    cascading_metrics_collector.data.current_turn.stt_final_latency = cascading_metrics_collector._round_latency(cascading_metrics_collector.data.current_turn.stt_final_end_time - cascading_metrics_collector.data.current_turn.stt_final_start_time) 
+            
             else:
                 await self._process_transcript_with_eou(user_text)
+                if cascading_metrics_collector.data.current_turn:
+                    cascading_metrics_collector.data.current_turn.stt_final_end_time = time.perf_counter()
+                    cascading_metrics_collector.data.current_turn.stt_final_latency = cascading_metrics_collector._round_latency(cascading_metrics_collector.data.current_turn.stt_final_end_time - cascading_metrics_collector.data.current_turn.stt_final_start_time) 
             
         elif stt_response.event_type == SpeechEventType.INTERIM:
+            if cascading_metrics_collector.data.current_turn:
+                cascading_metrics_collector.data.current_turn.stt_interim_start_time = time.perf_counter()
+
             if stt_response.metadata and stt_response.metadata.get("turn_resumed"):
                 await self._handle_turn_resumed(text)
+
+            if cascading_metrics_collector.data.current_turn:
+                cascading_metrics_collector.data.current_turn.stt_interim_end_time = time.perf_counter()
+                cascading_metrics_collector.data.current_turn.stt_interim_latency = cascading_metrics_collector._round_latency(cascading_metrics_collector.data.current_turn.stt_interim_end_time - cascading_metrics_collector.data.current_turn.stt_interim_start_time)
     
     async def _run_vmd_check(self) -> None:
         """Internal task to wait and check LLM, then emit result."""
@@ -354,7 +377,12 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 delay = self.min_speech_wait_timeout
                 if self.turn_detector:
                     logger.info(f"Turn detector is available, getting EOU probability")
+                    if cascading_metrics_collector.data.current_turn:
+                        cascading_metrics_collector.data.current_turn.eou_start_time = time.perf_counter()
                     eou_probability = self.turn_detector.get_eou_probability(self.agent.chat_context)
+                    if cascading_metrics_collector.data.current_turn:
+                        cascading_metrics_collector.data.current_turn.eou_end_time = time.perf_counter()
+                        cascading_metrics_collector.data.current_turn.eou_latency = cascading_metrics_collector._round_latency(cascading_metrics_collector.data.current_turn.eou_end_time - cascading_metrics_collector.data.current_turn.eou_start_time)
                     logger.info(f"EOU probability: {eou_probability}")
                     if eou_probability < self.eou_certainty_threshold:
                         logger.info(f"EOU probability is less than the threshold, using max speech wait timeout")
@@ -664,8 +692,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                     if not handle.interrupted:
                         await q.put(None)
                     
-                    if self.conversational_graph and metadata:
-                        _ = await self.conversational_graph.handle_decision(self.agent, metadata)
+                    if self.conversational_graph and metadata.get("graph_response"):
+                        _ = await self.conversational_graph.handle_decision(self.agent, metadata.get("graph_response"))
                     return "".join(response_parts)
                         
                 except asyncio.CancelledError:
@@ -749,7 +777,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         finally:
             self._current_tts_task = None
             self._current_llm_task = None
-            cascading_metrics_collector.complete_current_turn()
             if not handle.done():
                 handle._mark_done()
 
@@ -779,6 +806,9 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 tools=self.agent._tools,
                 conversational_graph=self.conversational_graph if self.conversational_graph else None
             ):
+                if llm_chunk_resp.metadata and "usage" in llm_chunk_resp.metadata:
+                    cascading_metrics_collector.set_llm_usage(llm_chunk_resp.metadata["usage"])
+
                 if self._is_interrupted:
                     logger.info("LLM processing interrupted")
                     break
@@ -925,7 +955,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
         full_response = ""
         async for response_chunk in self.process_with_llm():
-            full_response += response_chunk
+            if response_chunk.content:
+                full_response += response_chunk.content
 
         if full_response:
             cascading_metrics_collector.set_agent_response(full_response)
@@ -937,6 +968,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         Main conversation loop: handle a user turn.
         Users should implement this method to preprocess transcripts and yield response chunks.
         """
+        cascading_metrics_collector.data.current_turn.user_speech = transcript
         async for response in self.process_with_llm():
             yield response
 
@@ -1188,6 +1220,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 self.agent.session._emit_agent_state(AgentState.IDLE)
                 self.agent.session._emit_user_state(UserState.IDLE)
             logger.info("[TTS] Last audio byte processed — Agent and User set to IDLE")
+            cascading_metrics_collector.on_agent_speech_end()
+            cascading_metrics_collector.complete_current_turn()
 
         self.tts.on_first_audio_byte(on_first_audio_byte)
 
@@ -1210,8 +1244,13 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 response_iterator = string_to_iterator(response_gen)
             else:
                 response_iterator = response_gen
-
-            await self.tts.synthesize(response_iterator)
+            async def counting_wrapper(iterator: AsyncIterator[str]):
+                async for chunk in iterator:
+                    if chunk:
+                        # Count characters and update metrics
+                        cascading_metrics_collector.add_tts_characters(len(chunk))
+                    yield chunk
+            await self.tts.synthesize(counting_wrapper(response_iterator))
 
         finally:
             if self.agent.session and self.agent.session.is_background_audio_enabled:
@@ -1220,7 +1259,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             if self.agent and self.agent.session:
                 self.agent.session._reply_in_progress = False
                 self.agent.session._reset_wake_up_timer()
-            cascading_metrics_collector.on_agent_speech_end()
+
     
     async def cleanup(self) -> None:
         """Cleanup conversation flow resources"""
