@@ -353,7 +353,7 @@ RUN pip install --no-cache-dir -r requirements.txt"""
             else "# No requirements.txt found, skipping dependency installation"
         )
 
-        dockerfile_content = f"""FROM --platform=linux/arm64 python:3.11-slim
+        dockerfile_content = f"""FROM --platform=linux/arm64 python:3.12-slim
 
 WORKDIR /app
 
@@ -397,7 +397,7 @@ RUN pip install --no-cache-dir -r requirements.txt"""
                 else "# No requirements.txt found, skipping dependency installation"
             )
 
-            dockerfile_content = f"""FROM --platform=linux/arm64 python:3.11-slim
+            dockerfile_content = f"""FROM --platform=linux/arm64 python:3.12-slim
 
 WORKDIR /app
 
