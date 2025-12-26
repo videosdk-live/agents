@@ -880,7 +880,11 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                                     "call_id", f"call_{int(time.time())}")
                             )
 
-                            async for new_resp in self.llm.chat(chat_context):
+                            async for new_resp in self.llm.chat(
+                                chat_context,
+                                tools=self.agent.tools,
+                                conversational_graph=self.conversational_graph if self.conversational_graph else None
+                            ):
                                 if self._is_interrupted:
                                     break
                                 if new_resp:
@@ -925,7 +929,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
         full_response = ""
         async for response_chunk in self.process_with_llm():
-            full_response += response_chunk
+            if response_chunk.content:
+                full_response += response_chunk.content
 
         if full_response:
             cascading_metrics_collector.set_agent_response(full_response)
