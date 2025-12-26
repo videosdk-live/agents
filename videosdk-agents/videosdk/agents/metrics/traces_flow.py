@@ -229,8 +229,8 @@ class TracesFlowManager:
                     llm_attrs["provider_class"] = cascading_turn_data.llm_provider_class
                 if cascading_turn_data.llm_model_name:
                     llm_attrs["model_name"] = cascading_turn_data.llm_model_name
-                if cascading_turn_data.llm_ttft:
-                    llm_attrs["duration_ms"] = cascading_turn_data.llm_ttft
+                if cascading_turn_data.llm_duration:
+                    llm_attrs["duration_ms"] = cascading_turn_data.llm_duration
                 if cascading_turn_data.llm_start_time:
                     llm_attrs["start_timestamp"] = cascading_turn_data.llm_start_time
                 if cascading_turn_data.llm_end_time:
@@ -251,13 +251,21 @@ class TracesFlowManager:
                             "message": error["message"],
                             "timestamp": error["timestamp"]
                         })
+                    ttft_span = create_span(
+                            "Time to First Token", 
+                            attributes={"llm_ttft": cascading_turn_data.llm_ttft}, 
+                            parent_span=llm_span, 
+                            start_time=cascading_turn_data.llm_start_time
+                        )
+                    ttft_end_timestamp = cascading_turn_data.llm_start_time + (cascading_turn_data.llm_ttft/1000)
+                    self.end_span(ttft_span, end_time=ttft_end_timestamp)
 
                     llm_status = StatusCode.ERROR if llm_errors else StatusCode.OK
                     create_log(f"{cascading_turn_data.llm_provider_class}: LLM Processing Ended with status {llm_status}", "INFO")
                     self.end_span(llm_span, status_code=llm_status, end_time=cascading_turn_data.llm_end_time)
 
             tts_errors = [e for e in cascading_turn_data.errors if e['source'] == 'TTS']
-            if cascading_turn_data.tts_start_time is not None or cascading_turn_data.tts_end_time is not None or tts_errors:
+            if cascading_turn_data.tts_start_time is not None or cascading_turn_data.ttfb is not None or tts_errors:
                 create_log(f"{cascading_turn_data.tts_provider_class}: Text to Speech Processing Started", "INFO")
                 tts_span_name = f"{cascading_turn_data.tts_provider_class}: Text to Speech Processing"
 
