@@ -229,6 +229,7 @@ class OpenAILLM(LLM):
             "temperature": self.temperature,
             "stream": True,
             "max_tokens": self.max_completion_tokens,
+            "stream_options": {"include_usage": True}, 
         }
         
         if conversational_graph:
@@ -266,10 +267,26 @@ class OpenAILLM(LLM):
                 "yielded_content_length": 0
             }
 
+            usage_metadata = {
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "prompt_cached_tokens": 0
+            }
             async for chunk in response_stream:
                 if self._cancelled:
                     break
-                
+
+                if hasattr(chunk, 'usage') and chunk.usage is not None:
+                    usage_metadata["prompt_tokens"] = chunk.usage.prompt_tokens
+                    usage_metadata["completion_tokens"] = chunk.usage.completion_tokens
+                    usage_metadata["total_tokens"] = chunk.usage.total_tokens
+                    
+                    if hasattr(chunk.usage, 'prompt_tokens_details') and chunk.usage.prompt_tokens_details:
+                        usage_metadata["prompt_cached_tokens"] = getattr(chunk.usage.prompt_tokens_details, 'cached_tokens', 0)
+
+                    yield LLMResponse(content="", role=ChatRole.ASSISTANT, metadata={"usage": usage_metadata})
+
                 if not chunk.choices:
                     continue
                     
@@ -296,7 +313,7 @@ class OpenAILLM(LLM):
                     yield LLMResponse(
                         content="",
                         role=ChatRole.ASSISTANT,
-                        metadata={"function_call": current_function_call}
+                        metadata={"function_call": current_function_call, "usage": usage_metadata}
                     )
                     current_function_call = None
                 
@@ -304,9 +321,9 @@ class OpenAILLM(LLM):
                     current_content += delta.content   
                     if conversational_graph:                     
                         for content_chunk in conversational_graph.stream_conversational_graph_response(current_content, streaming_state):
-                            yield LLMResponse(content=content_chunk, role=ChatRole.ASSISTANT)
+                            yield LLMResponse(content=content_chunk, role=ChatRole.ASSISTANT, metadata={"usage": usage_metadata})
                     else:
-                        yield LLMResponse(content=delta.content, role=ChatRole.ASSISTANT)
+                        yield LLMResponse(content=delta.content, role=ChatRole.ASSISTANT, metadata={"usage": usage_metadata})
 
             if current_content and not self._cancelled:
                 if conversational_graph:
@@ -315,12 +332,13 @@ class OpenAILLM(LLM):
                         yield LLMResponse(
                             content="",
                             role=ChatRole.ASSISTANT,
-                            metadata=parsed_json
+                            metadata={"usage": usage_metadata, "graph_response": parsed_json}
                         )
                     except json.JSONDecodeError:
                              yield LLMResponse(
                                 content=current_content,
-                                role=ChatRole.ASSISTANT
+                                role=ChatRole.ASSISTANT,
+                                metadata={"usage": usage_metadata}
                             )
                 else:
                     pass
