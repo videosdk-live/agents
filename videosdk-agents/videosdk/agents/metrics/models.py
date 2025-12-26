@@ -25,41 +25,40 @@ class CascadingTurnData:
     agent_speech_duration: Optional[float] = None
     agent_speech: Optional[str] = None
     
+    stt_latency: Optional[float] = None
     stt_start_time: Optional[float] = None
     stt_end_time: Optional[float] = None
-    stt_latency: Optional[float] = None
     stt_duration: Optional[float] = None
-    stt_preflight_start_time: Optional[float] = None
     stt_preflight_end_time: Optional[float] = None
     stt_preflight_latency: Optional[float] = None
-    stt_interim_start_time: Optional[float] = None
     stt_interim_end_time: Optional[float] = None
     stt_interim_latency: Optional[float] = None
-    stt_final_start_time: Optional[float] = None
-    stt_final_end_time: Optional[float] = None
-    stt_final_latency: Optional[float] = None
-
+    stt_preemptive_generation_occurred: bool = False
+    stt_preemptive_generation_enabled: bool = False
     
+    llm_latency: Optional[float] = None
     llm_start_time: Optional[float] = None
     llm_end_time: Optional[float] = None
-    llm_latency: Optional[float] = None
     llm_duration: Optional[float] = None
+    llm_first_token_time: Optional[float] = None
+    llm_ttft: Optional[float] = None
     prompt_tokens: Optional[int] = None
     completion_tokens: Optional[int] = None
     total_tokens: Optional[int] = None
     prompt_cached_tokens: Optional[int] = None
     tokens_per_second: Optional[float] = None
 
+    
+    tts_latency: Optional[float] = None 
     tts_start_time: Optional[float] = None
     tts_end_time: Optional[float] = None
-    tts_latency: Optional[float] = None 
-    ttfb: Optional[float] = None
     tts_duration: Optional[float] = None
     tts_characters: Optional[int] = None
+    ttfb: Optional[float] = None
     
+    eou_latency: Optional[float] = None
     eou_start_time: Optional[float] = None
     eou_end_time: Optional[float] = None
-    eou_latency: Optional[float] = None
     
     function_tool_timestamps: List[Dict[str, Any]] = field(default_factory=list)
     
@@ -106,6 +105,7 @@ class CascadingMetricsData:
     is_agent_speaking: bool = False
     is_user_speaking: bool = False
     tts_first_byte_time: Optional[float] = None
+    stt_preemptive_generation_enabled: bool = False
     
     llm_provider_class: str = ""
     llm_model_name: str = ""

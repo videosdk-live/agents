@@ -121,7 +121,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
     def _update_preemptive_generation_flag(self) -> None:
         """Update the preemptive generation flag based on current STT instance"""
         self._enable_preemptive_generation = getattr(self.stt, 'enable_preemptive_generation', False) if self.stt else False
-        
+        cascading_metrics_collector.set_preemptive_generation_enabled()
+
     async def start(self) -> None:
         global_event_emitter.on("speech_started", self.on_speech_started_stt)
         global_event_emitter.on("speech_stopped", self.on_speech_stopped_stt)
@@ -254,8 +255,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 await self.handle_stt_event(text)
                 
             elif state == AgentState.THINKING:
-               if not self._enable_preemptive_generation:
-                 await self.handle_stt_event(text)
+                if not self._enable_preemptive_generation:
+                    await self.handle_stt_event(text)
 
         if self.agent.session:
             self.agent.session._emit_user_state(UserState.SPEAKING)
@@ -263,40 +264,32 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         # Handle different event types
         if stt_response.event_type == SpeechEventType.PREFLIGHT:
             if cascading_metrics_collector.data.current_turn:
-                cascading_metrics_collector.data.current_turn.stt_preflight_start_time = time.perf_counter()
+                cascading_metrics_collector.on_stt_preflight_end()
             await self._handle_preflight_transcript(text)
-            if cascading_metrics_collector.data.current_turn:
-                cascading_metrics_collector.data.current_turn.stt_preflight_end_time = time.perf_counter()
-                cascading_metrics_collector.data.current_turn.stt_preflight_latency = cascading_metrics_collector._round_latency(cascading_metrics_collector.data.current_turn.stt_preflight_end_time - cascading_metrics_collector.data.current_turn.stt_preflight_start_time)
+            
         
         elif stt_response.event_type == SpeechEventType.FINAL:
-            
             if cascading_metrics_collector.data.current_turn:
-                cascading_metrics_collector.data.current_turn.stt_final_start_time = time.perf_counter()
+                cascading_metrics_collector.data.current_turn.stt_preemptive_generation_occurred = False
             user_text = stt_response.data.text
             
             if self._enable_preemptive_generation:
-                await self._authorize_or_process_final_transcript(user_text)
+
                 if cascading_metrics_collector.data.current_turn:
-                    cascading_metrics_collector.data.current_turn.stt_final_end_time = time.perf_counter()
-                    cascading_metrics_collector.data.current_turn.stt_final_latency = cascading_metrics_collector._round_latency(cascading_metrics_collector.data.current_turn.stt_final_end_time - cascading_metrics_collector.data.current_turn.stt_final_start_time) 
-            
+                    cascading_metrics_collector.on_stt_complete()
+                    cascading_metrics_collector.data.current_turn.stt_preemptive_generation_occurred = True
+                await self._authorize_or_process_final_transcript(user_text)
+                
             else:
                 await self._process_transcript_with_eou(user_text)
-                if cascading_metrics_collector.data.current_turn:
-                    cascading_metrics_collector.data.current_turn.stt_final_end_time = time.perf_counter()
-                    cascading_metrics_collector.data.current_turn.stt_final_latency = cascading_metrics_collector._round_latency(cascading_metrics_collector.data.current_turn.stt_final_end_time - cascading_metrics_collector.data.current_turn.stt_final_start_time) 
+                
             
         elif stt_response.event_type == SpeechEventType.INTERIM:
             if cascading_metrics_collector.data.current_turn:
-                cascading_metrics_collector.data.current_turn.stt_interim_start_time = time.perf_counter()
+                cascading_metrics_collector.on_stt_interim_end()
 
             if stt_response.metadata and stt_response.metadata.get("turn_resumed"):
                 await self._handle_turn_resumed(text)
-
-            if cascading_metrics_collector.data.current_turn:
-                cascading_metrics_collector.data.current_turn.stt_interim_end_time = time.perf_counter()
-                cascading_metrics_collector.data.current_turn.stt_interim_latency = cascading_metrics_collector._round_latency(cascading_metrics_collector.data.current_turn.stt_interim_end_time - cascading_metrics_collector.data.current_turn.stt_interim_start_time)
     
     async def _run_vmd_check(self) -> None:
         """Internal task to wait and check LLM, then emit result."""
@@ -819,7 +812,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
                 if not first_chunk_received:
                     first_chunk_received = True
-                    cascading_metrics_collector.on_llm_complete()
+                    cascading_metrics_collector.on_llm_first_token()
 
                 if llm_chunk_resp.metadata and "function_call" in llm_chunk_resp.metadata:
                     func_call = llm_chunk_resp.metadata["function_call"]
@@ -927,6 +920,9 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                     if llm_chunk_resp:
                         yield llm_chunk_resp
 
+            if not self._is_interrupted:
+                cascading_metrics_collector.on_llm_complete()
+
     async def say(self, message: str, handle: UtteranceHandle) -> None:
         """
         Direct TTS synthesis (used for initial messages) and manage handle lifecycle.
@@ -968,7 +964,10 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         Main conversation loop: handle a user turn.
         Users should implement this method to preprocess transcripts and yield response chunks.
         """
-        cascading_metrics_collector.data.current_turn.user_speech = transcript
+        if cascading_metrics_collector.data.current_turn:
+            cascading_metrics_collector.data.current_turn.user_speech = transcript
+        else:
+            cascading_metrics_collector.start_new_interaction(transcript)
         async for response in self.process_with_llm():
             yield response
 
@@ -1172,6 +1171,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         """Cancel LLM generation"""
         try:
             await self.llm.cancel_current_generation()
+            cascading_metrics_collector.on_llm_complete()
         except Exception as e:
             logger.error(f"LLM cancellation failed: {e}")
 

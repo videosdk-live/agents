@@ -229,8 +229,8 @@ class TracesFlowManager:
                     llm_attrs["provider_class"] = cascading_turn_data.llm_provider_class
                 if cascading_turn_data.llm_model_name:
                     llm_attrs["model_name"] = cascading_turn_data.llm_model_name
-                if cascading_turn_data.llm_latency:
-                    llm_attrs["duration_ms"] = cascading_turn_data.llm_latency
+                if cascading_turn_data.llm_ttft:
+                    llm_attrs["duration_ms"] = cascading_turn_data.llm_ttft
                 if cascading_turn_data.llm_start_time:
                     llm_attrs["start_timestamp"] = cascading_turn_data.llm_start_time
                 if cascading_turn_data.llm_end_time:
