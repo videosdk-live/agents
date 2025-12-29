@@ -29,9 +29,8 @@ class PlaygroundManager:
                 full_turn_data (bool): Whether to send full turn data.
         """
         metrics = json.dumps(asdict(metrics))
-        # logger.info(f"Sending cascading metrics: {metrics}")
         publish_config = PubSubPublishConfig(
-            topic="CHAT",
+            topic="AGENT_METRICS",
             message={"type": "cascading", "metrics": metrics, "full_turn_data": full_turn_data}
         )
 
@@ -45,7 +44,7 @@ class PlaygroundManager:
         """
         metrics = json.dumps(asdict(metrics))
         publish_config = PubSubPublishConfig(
-            topic="CHAT",
+            topic="AGENT_METRICS",
             message={"type": "realtime", "metrics": metrics, "full_turn_data": full_turn_data}
         )
 
