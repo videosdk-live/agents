@@ -602,7 +602,7 @@ class JobContext:
             return None
 
         if self.videosdk_auth:
-            url = f"https://{self.signaling_base_url}/v2/rooms"
+            url = f"https://api.videosdk.live/v2/rooms"
             headers = {"Authorization": self.videosdk_auth}
 
             try:
