@@ -51,7 +51,6 @@ class CascadingMetricsCollector:
             'stt_latency': 'sttLatency',
             'stt_start_time': 'sttStartTime',
             'stt_end_time': 'sttEndTime',
-            'stt_duration': 'sttDuration',
             'stt_preflight_latency': 'sttPreflightLatency',
             'stt_interim_latency': 'sttInterimLatency',
 

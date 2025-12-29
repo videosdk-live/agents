@@ -370,12 +370,9 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 delay = self.min_speech_wait_timeout
                 if self.turn_detector:
                     logger.info(f"Turn detector is available, getting EOU probability")
-                    if cascading_metrics_collector.data.current_turn:
-                        cascading_metrics_collector.data.current_turn.eou_start_time = time.perf_counter()
+                    cascading_metrics_collector.on_eou_start()
                     eou_probability = self.turn_detector.get_eou_probability(self.agent.chat_context)
-                    if cascading_metrics_collector.data.current_turn:
-                        cascading_metrics_collector.data.current_turn.eou_end_time = time.perf_counter()
-                        cascading_metrics_collector.data.current_turn.eou_latency = cascading_metrics_collector._round_latency(cascading_metrics_collector.data.current_turn.eou_end_time - cascading_metrics_collector.data.current_turn.eou_start_time)
+                    cascading_metrics_collector.on_eou_complete()
                     logger.info(f"EOU probability: {eou_probability}")
                     if eou_probability < self.eou_certainty_threshold:
                         logger.info(f"EOU probability is less than the threshold, using max speech wait timeout")
@@ -388,7 +385,9 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 delay = self.min_speech_wait_timeout
                 if self.turn_detector:
                     logger.info(f"Turn detector is available, getting EOU probability")
+                    cascading_metrics_collector.on_eou_start()
                     eou_probability = self.turn_detector.get_eou_probability(self.agent.chat_context)
+                    cascading_metrics_collector.on_eou_complete()
                     logger.info(f"EOU probability: {eou_probability}")
                     logger.info(f"Calculating delay using sliding scale {self.min_speech_wait_timeout} to {self.max_speech_wait_timeout}")
                     delay_range = self.max_speech_wait_timeout - self.min_speech_wait_timeout
