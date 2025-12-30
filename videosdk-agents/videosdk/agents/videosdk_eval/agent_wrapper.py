@@ -1,9 +1,6 @@
-from videosdk.agents import Agent, ConversationFlow, AgentSession
-from videosdk.agents.pipeline import Pipeline
-from videosdk.agents.llm.chat_context import ChatRole
-from .audio_track import MockAudioTrack
-import asyncio
 import av
+from videosdk.agents import Agent, AgentSession
+from videosdk.agents.pipeline import Pipeline
 from videosdk.agents.utterance_handle import UtteranceHandle
 
 class MockPipeline(Pipeline):
@@ -21,10 +18,3 @@ class EvalAgent(Agent):
 
     async def on_enter(self): pass
     async def on_exit(self): pass
-
-class EvalConversationFlow(ConversationFlow):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.collected_agent_response = ""
-        self.collected_audio_bytes = b""
-        self._enable_preemptive_generation = False

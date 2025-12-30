@@ -2,21 +2,21 @@ from dataclasses import dataclass, field
 from typing import Optional, List
 
 @dataclass
-class LLMJudgeConfig:
+class LLMAsJudgeConfig:
     model: str
     prompt: Optional[str] = None
     checks: List[str] = field(default_factory=list)
 
 
-class LLMJudge:
+class LLMAsJudge:
     @staticmethod
     def openai(model: str, prompt: str, checks: List[str]):
-        return ("openai", LLMJudgeConfig(model=model, prompt=prompt, checks=checks))
+        return ("openai", LLMAsJudgeConfig(model=model, prompt=prompt, checks=checks))
     
     @staticmethod
     def anthropic(model: str, prompt: str, checks: List[str]):
-        return ("anthropic", LLMJudgeConfig(model=model, prompt=prompt, checks=checks))
+        return ("anthropic", LLMAsJudgeConfig(model=model, prompt=prompt, checks=checks))
     
     @staticmethod
     def google(model: str, prompt: str, checks: List[str]):
-        return ("google", LLMJudgeConfig(model=model, prompt=prompt, checks=checks))
+        return ("google", LLMAsJudgeConfig(model=model, prompt=prompt, checks=checks))

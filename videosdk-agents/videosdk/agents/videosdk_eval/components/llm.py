@@ -11,7 +11,7 @@ class LLMEvalConfig:
     use_stt_output: bool = True
     mock_input: Optional[str] = None
 
-class LLM:
+class LLMComponent:
     @staticmethod
     def openai(config: LLMEvalConfig):
         config = {

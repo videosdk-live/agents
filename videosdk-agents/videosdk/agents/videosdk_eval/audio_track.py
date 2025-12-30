@@ -1,5 +1,3 @@
-import asyncio
-
 class MockAudioTrack:
     def __init__(self):
         self.audio_buffer = bytearray()

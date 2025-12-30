@@ -9,7 +9,7 @@ class TTSEvalConfig:
     use_llm_output: bool = True
     mock_input: Optional[str] = None
 
-class TTS:
+class TTSComponent:
     @staticmethod
     def deepgram(config: TTSEvalConfig):
         config = {

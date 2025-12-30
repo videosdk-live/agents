@@ -1,8 +1,6 @@
-from videosdk.agents import Evaluation, Turn, Metric, JudgeMetric
-from videosdk.agents.videosdk_eval.providers import STT, LLM, TTS, LLMJudge, STTEvalConfig, LLMEvalConfig, TTSEvalConfig
 import logging
-from videosdk.agents import function_tool
 import aiohttp
+from videosdk.agents import Evaluation, EvalTurn, EvalMetric, LLMAsJudgeMetric, LLMAsJudge, STTEvalConfig, LLMEvalConfig, TTSEvalConfig, STTComponent, LLMComponent, TTSComponent,function_tool
 logging.basicConfig(level=logging.INFO)
 
 
@@ -46,52 +44,95 @@ async def get_weather(
 
 eval = Evaluation(
     name="basic-agent-eval",
+    include_context=False,
     metrics=[
-	    Metric.STT_LATENCY,
-        Metric.LLM_LATENCY,
-        Metric.TTS_LATENCY,
-    ]
+	    EvalMetric.STT_LATENCY,
+        EvalMetric.LLM_LATENCY,
+        EvalMetric.TTS_LATENCY,
+        EvalMetric.END_TO_END_LATENCY
+    ],
+    output_dir="./reports"
 )
 
 
 
 # senario 1
 eval.add_turn(
-    Turn(
-        stt=STT.deepgram(
-            STTEvalConfig(file_path="./sample.wav")
+    EvalTurn(
+        stt=STTComponent.deepgramv2(
+            STTEvalConfig(file_path="./sample.wav") 
         ),
-        llm=LLM.google(
+        llm=LLMComponent.google(
             LLMEvalConfig(
                 model="gemini-2.5-flash-lite",
-                use_stt_output=False,
+                use_stt_output=False, 
                 mock_input="write one paragraph about Water and get weather of Delhi",
                 tools=[get_weather]
             )
         ),
-        tts=TTS.google(
+        tts=TTSComponent.google(
             TTSEvalConfig(
                 model="en-US-Standard-A",
                 use_llm_output=False,
-                mock_input="Today is Thursday 25th december merry christmas"
+                mock_input="Peter Piper picked a peck of pickled peppers"  
             )
         ),
-        judge=LLMJudge.google(model="gemini-2.5-flash-lite",prompt="Can you evaluate the agent's response based on the following criteria: Is it relevant to the user input",checks=[JudgeMetric.REASONING,JudgeMetric.CONCLUSION])
+        judge=LLMAsJudge.google(model="gemini-2.5-flash-lite",prompt="Can you evaluate the agent's response based on the following criteria: Is it relevant to the user input",checks=[LLMAsJudgeMetric.REASONING,LLMAsJudgeMetric.SCORE])
+    )
+)
+eval.add_turn(
+    EvalTurn(
+        stt=STTComponent.deepgram(
+            STTEvalConfig(file_path="./Sports.wav") 
+        ),
+        llm=LLMComponent.google(
+            LLMEvalConfig(
+                model="gemini-2.5-flash-lite",
+                use_stt_output=True, 
+            )
+        ),
+        tts=TTSComponent.google(
+            TTSEvalConfig(
+                model="en-US-Standard-A",
+                use_llm_output=True
+            )
+        ),
+        judge=LLMAsJudge.google(model="gemini-2.5-flash-lite",prompt="Can you evaluate the agent's response based on the following criteria: Is it relevant to the user input",checks=[LLMAsJudgeMetric.REASONING,LLMAsJudgeMetric.SCORE])
     )
 )
 
 
 eval.add_turn(
-    Turn(
-         tts=TTS.google(
+    EvalTurn(
+        stt=STTComponent.deepgram(
+            STTEvalConfig(file_path="./Sports.wav") 
+        )
+    )
+)
+
+eval.add_turn(
+    EvalTurn(
+        llm=LLMComponent.google(
+            LLMEvalConfig(
+                model="gemini-2.5-flash-lite",
+                use_stt_output=False, 
+                mock_input="write one paragraph about trees",
+            )
+        ),
+    )
+)
+
+eval.add_turn(
+    EvalTurn(
+         tts=TTSComponent.google(
             TTSEvalConfig(
                 model="en-US-Standard-A",
                 use_llm_output=False,
-                mock_input="In 5 days, it will be new year"
+                mock_input="A big black bug bit a big black bear, made the big black bear bleed blood."
             )
         )
     )
 )
 
 results = eval.run()
-results.save("./reports")
+results.save()

@@ -106,8 +106,11 @@ from .voice_mail_detector import VoiceMailDetector
 from .stt import FallbackSTT
 from .llm import FallbackLLM
 from .tts import FallbackTTS
-from .videosdk_eval import Evaluation, Turn, EvaluationResult, Metric, JudgeMetric
-from .videosdk_eval.providers import STTEvalConfig, LLMEvalConfig, TTSEvalConfig
+from .videosdk_eval import (
+    Evaluation, EvaluationResult, EvalTurn, EvalMetric, LLMAsJudgeMetric,
+    STTComponent, STTEvalConfig, LLMComponent, LLMEvalConfig,
+    TTSComponent, TTSEvalConfig, LLMAsJudge, LLMAsJudgeConfig
+)
 from . import videosdk_eval
 
 __all__ = [
@@ -200,12 +203,16 @@ __all__ = [
     "FallbackLLM",
     "FallbackTTS",
     "Evaluation",
-    "Turn",
+    "EvalTurn",
     "EvaluationResult",
-    "Metric",
+    "EvalMetric",
     "STTEvalConfig",
     "LLMEvalConfig",
     "TTSEvalConfig",
-    "videosdk_eval",
-    "JudgeMetric",
+    "LLMAsJudgeMetric",
+    "STTComponent",
+    "LLMComponent",
+    "TTSComponent",
+    "LLMAsJudge",
+    "LLMAsJudgeConfig",
 ]

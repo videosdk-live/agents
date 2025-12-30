@@ -8,16 +8,52 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+class Colors:
+    CYAN = "\x1b[36m"
+    GREEN = "\x1b[32m"
+    YELLOW = "\x1b[33m"
+    RED = "\x1b[31m"
+    BLUE = "\x1b[34m"
+    MAGENTA = "\x1b[35m"
+    BRIGHT_CYAN = "\x1b[96m"
+    BOLD = "\x1b[1m"
+    RESET = "\x1b[0m"
+    GREY = "\x1b[38;20m"
+
+class CustomFormatter(logging.Formatter):
+    format = "%(levelname)s - %(name)s - %(message)s"
+
+    FORMATS = {
+        logging.DEBUG: Colors.GREY + format + Colors.RESET,
+        logging.INFO: Colors.GREY + format + Colors.RESET,
+        logging.WARNING: Colors.YELLOW + format + Colors.RESET,
+        logging.ERROR: Colors.RED + format + Colors.RESET,
+        logging.CRITICAL: Colors.BOLD + Colors.RED + format + Colors.RESET
+    }
+
+    def format(self, record):
+        log_fmt = self.FORMATS.get(record.levelno)
+        formatter = logging.Formatter(log_fmt)
+        return formatter.format(record)
+
 
 class EvalLogger:
     """Custom logger for evaluation with 'Eval:' prefix and component tracking."""
     
     def __init__(self):
         self.component_start_times = {}
+        if not logger.handlers:
+            ch = logging.StreamHandler()
+            ch.setFormatter(CustomFormatter())
+            logger.addHandler(ch)
+            logger.propagate = False
+
+    def colorize(self, text: str, color: str) -> str:
+        return f"{color}{text}{Colors.RESET}"
     
     def log(self, message: str):
         """Log a message with 'Eval:' prefix."""
-        logger.info(f"Eval: {message}")
+        logger.info(f"{self.colorize('Eval:', Colors.BRIGHT_CYAN)} {message}")
     
     def debug(self, message: str):
         """Log a debug message (without Eval prefix for detailed logs)."""
@@ -26,7 +62,13 @@ class EvalLogger:
     def component_start(self, component: str):
         """Log component start and track start time."""
         self.component_start_times[component] = time.perf_counter()
-        self.log(f"[{component}] Starting...")
+        color = Colors.CYAN
+        if "STT" in component: color = Colors.YELLOW
+        elif "LLM" in component: color = Colors.MAGENTA
+        elif "TTS" in component: color = Colors.BLUE
+        
+        comp_str = self.colorize(f"[{component}]", color)
+        self.log(f"{comp_str} Starting...")
     
     def component_end(self, component: str, latency_ms: Optional[float] = None):
         """Log component completion with latency."""
@@ -36,88 +78,141 @@ class EvalLogger:
             latency_ms = elapsed * 1000
             del self.component_start_times[component]
         
+        color = Colors.CYAN
+        if "STT" in component: color = Colors.YELLOW
+        elif "LLM" in component: color = Colors.MAGENTA
+        elif "TTS" in component: color = Colors.BLUE
+        
+        comp_str = self.colorize(f"[{component}]", color)
         if latency_ms is not None:
-            self.log(f"[{component}] Completed in {latency_ms:.2f}ms")
+            latency_str = self.colorize(f"{latency_ms:.2f}ms", Colors.GREEN)
+            self.log(f"{comp_str} Completed in {latency_str}")
         else:
-            self.log(f"[{component}] Completed")
+            self.log(f"{comp_str} Completed")
     
     def turn_start(self, turn_num: int, total: int, turn_id: str):
         """Log turn start."""
-        self.log(f"{'=' * 50}")
-        self.log(f"Turn {turn_num}/{total} (ID: {turn_id})")
-        self.log(f"{'=' * 50}")
+        sep = self.colorize('=' * 50, Colors.BRIGHT_CYAN)
+        self.log(sep)
+        self.log(f"{Colors.BOLD}Turn {turn_num}/{total}{Colors.RESET} (ID: {turn_id})")
+        self.log(sep)
     
     def turn_end(self, turn_num: int, total_latency_ms: Optional[float] = None):
         """Log turn completion."""
         if total_latency_ms is not None:
-            self.log(f"Turn {turn_num} completed - Total latency: {total_latency_ms:.2f}ms")
+            latency_str = self.colorize(f"{total_latency_ms:.2f}ms", Colors.GREEN)
+            self.log(f"Turn {turn_num} completed - Total latency: {latency_str}")
         else:
             self.log(f"Turn {turn_num} completed")
         self.log("")
     
     def evaluation_start(self, name: str, turn_count: int):
         """Log evaluation start."""
-        self.log(f"Starting evaluation: {name} with {turn_count} turns")
+        header = self.colorize(f"Starting evaluation: {name} with {turn_count} turns", Colors.BOLD + Colors.MAGENTA)
+        self.log(header)
         self.log("")
     
     def evaluation_end(self):
         """Log evaluation completion."""
-        self.log("Evaluation completed!")
+        self.log(self.colorize("Evaluation completed!", Colors.BOLD + Colors.GREEN))
     
     def display_turn_logs(self, turn_index: int, turn_id: str, stt_transcript: str, llm_response: str, tts_audio_file: str):
         """Display formatted logs for a single turn."""
-        self.log(f"\n{'=' * 60}")
-        self.log(f"TURN {turn_index + 1} RESULTS (ID: {turn_id})")
-        self.log(f"{'=' * 60}")
-        
+        sep = self.colorize('=' * 40, Colors.YELLOW)
+        self.log(sep)
+        self.log(f"{Colors.BOLD}TURN {turn_index + 1} RESULTS{Colors.RESET} (ID: {turn_id})")
+        self.log(sep)
+
         if stt_transcript:
-            self.log(f"\nSTT Transcript:\n  {stt_transcript}")
+            self.log(f"\n{self.colorize('STT Transcript:', Colors.YELLOW)}\n  {stt_transcript}")
         else:
-            self.log(f"\nSTT Transcript:\n  N/A")
+            self.log(f"\n{self.colorize('STT Transcript:', Colors.YELLOW)}\n  N/A")
         
         if llm_response:
-            self.log(f"\nLLM Response:\n  {llm_response}")
+            self.log(f"\n{self.colorize('LLM Response:', Colors.MAGENTA)}\n  {llm_response}")
         else:
-            self.log(f"\nLLM Response:\n  N/A")
+            self.log(f"\n{self.colorize('LLM Response:', Colors.MAGENTA)}\n  N/A")
         
         if tts_audio_file:
-            self.log(f"\nTTS Audio File:\n  → {tts_audio_file}")
+            self.log(f"\n{self.colorize('TTS Audio File:', Colors.BLUE)}\n  → {tts_audio_file}")
         else:
-            self.log(f"\nTTS Audio File:\n  N/A")
-    
-    def display_latency_table(self, results: list):
-        """Display all latencies in a formatted table."""
-        self.log(f"\n{'=' * 60}")
-        self.log("LATENCY SUMMARY")
-        self.log(f"{'=' * 60}\n")
+            self.log(f"\n{self.colorize('TTS Audio File:', Colors.BLUE)}\n  N/A")
+
+    def display_judge_results(self, results: list):
+        """Display judge results in a formatted table."""
+        sep = self.colorize('=' * 40, Colors.MAGENTA)
+        self.log(sep)
+        self.log(f"{Colors.BOLD}LLM-AS-JUDGE RESULTS{Colors.RESET}")
+        self.log(sep)
         
-        # Table header
-        header = f"{'Turn':<8} {'STT (ms)':<15} {'LLM (ms)':<15} {'TTS (ms)':<15} {'Total (ms)':<15}"
-        self.log(header)
-        self.log("-" * 68)
+        for res in results:
+            judge = res.get("judge", {})
+            turn_id = res.get("turn_id", "Unknown")
+            
+            self.log(f"Turn ID: {turn_id}")
+            if judge.get("status") == "skipped":
+                status_str = self.colorize("SKIPPED", Colors.YELLOW)
+                self.log(f"Judge Status: {status_str} ({judge.get('reason', 'N/A')})")
+            else:
+                passed = judge.get("passed", False)
+                status_str = self.colorize("PASSED", Colors.GREEN) if passed else self.colorize("FAILED", Colors.RED)
+                self.log(f"Judge Status: {status_str}")
+                self.log(f"{Colors.BOLD}Evaluation Details:{Colors.RESET}\n{judge.get('evaluation', 'N/A')}")
+            self.log(self.colorize("-" * 20, Colors.GREY))
+        self.log(sep + "\n")
+
+    def display_latency_table(self, results: list, metrics_filter: list = None):
+        """Display latencies in a formatted table based on specified metrics."""
+
+        sep = self.colorize('=' * 40, Colors.GREEN)
+        self.log(sep)
+        self.log(f"{Colors.BOLD}LATENCY SUMMARY{Colors.RESET}")
+        self.log(sep)
+        
+        METRIC_CONFIG = {
+            "stt_latency": {"label": "STT (ms)", "key": "stt_latency", "color": Colors.YELLOW},
+            "llm_latency": {"label": "LLM (ms)", "key": "llm_latency", "color": Colors.MAGENTA},
+            "tts_latency": {"label": "TTS (ms)", "key": "tts_latency", "color": Colors.BLUE},
+            "e2e_latency": {"label": "E2E (ms)", "key": "e2e_latency", "color": Colors.GREEN},
+        }
+        
+        if metrics_filter:
+            metric_keys = [m.value for m in metrics_filter]
+            display_metrics = {k: v for k, v in METRIC_CONFIG.items() if k in metric_keys}
+        else:
+            display_metrics = METRIC_CONFIG
+
+        col_width = 15
+        header_parts = [f"{'Turn':<8}"]
+        for metric_key in display_metrics:
+            label = display_metrics[metric_key]["label"]
+            header_parts.append(f"{label:<{col_width}}")
+        header = "".join(header_parts)
+        separator_length = len(header)
+        
+        self.log(self.colorize(header, Colors.BOLD))
+        self.log(self.colorize("-" * separator_length, Colors.GREY))
         
         # Table rows
         for res in results:
             turn_idx = res.get("turn_index", 0)
-            metrics = res.get("metrics", {})
+            metrics_data = res.get("metrics", {})
             
-            stt_latency = metrics.get("stt_latency", 0)
-            llm_latency = metrics.get("llm_latency", 0)
-            tts_latency = metrics.get("tts_latency", 0)
+            row_parts = [f"{turn_idx + 1:<8}"]
             
-            # Calculate total
-            total_latency = 0
-            if stt_latency: total_latency += stt_latency
-            if llm_latency: total_latency += llm_latency
-            if tts_latency: total_latency += tts_latency
+            for metric_key in display_metrics:
+                key = display_metrics[metric_key]["key"]
+                color = display_metrics[metric_key]["color"]
+                latency = metrics_data.get(key, 0)
+                
+                if latency:
+                    latency_str = self.colorize(f"{latency:.2f}", color)
+                else:
+                    latency_str = "N/A"
+                padding = " " * (col_width - (len(f"{latency:.2f}") if latency else 3))
+                row_parts.append(f"{latency_str}{padding}")
             
-            # Format values (show N/A for 0 or None)
-            stt_str = f"{stt_latency:.2f}" if stt_latency else "N/A"
-            llm_str = f"{llm_latency:.2f}" if llm_latency else "N/A"
-            tts_str = f"{tts_latency:.2f}" if tts_latency else "N/A"
-            total_str = f"{total_latency:.2f}" if total_latency else "N/A"
-            
-            row = f"{turn_idx + 1:<8} {stt_str:<15} {llm_str:<15} {tts_str:<15} {total_str:<15}"
+            row = "".join(row_parts)
             self.log(row)
         
         self.log("")

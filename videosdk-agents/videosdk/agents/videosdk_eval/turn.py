@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import Optional, Any
 
 @dataclass
-class Turn:
+class EvalTurn:
     stt: Optional[Any] = None
     llm: Optional[Any] = None
     tts: Optional[Any] = None

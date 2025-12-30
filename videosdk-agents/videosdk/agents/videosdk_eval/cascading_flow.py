@@ -1,11 +1,11 @@
-import time
 import asyncio
-from typing import AsyncIterator
+from dataclasses import asdict
 from videosdk.agents import SpeechEventType, ConversationFlow
-from .agent_wrapper import EvalConversationFlow
+from videosdk.agents.metrics import cascading_metrics_collector
 from .eval_logger import eval_logger
 
-class CascadingConversationFlow(ConversationFlow):
+
+class EvalConversationFlow(ConversationFlow):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._enable_preemptive_generation = False
@@ -13,6 +13,7 @@ class CascadingConversationFlow(ConversationFlow):
         self.audio_track = MockAudioTrack()
         if self.tts:
             self.tts.audio_track = self.audio_track
+            self.tts.loop = asyncio.get_event_loop()
                 
         self.enable_stt_processing = True
         self.enable_llm_processing = True
@@ -24,13 +25,16 @@ class CascadingConversationFlow(ConversationFlow):
         self.tts_mock_input = None
         self.collected_transcripts = []
         
+        # Disable interruptions for evaluation to avoid Sports.wav cutting off responses
+        self.interrupt_mode = "NONE"
+        self.interrupt_min_words = 1000
+        
     async def on_stt_transcript(self, stt_response) -> None:
         if not self.enable_stt_processing:
             return
-        
-        from videosdk.agents import SpeechEventType
         if stt_response.event_type == SpeechEventType.FINAL:
             eval_logger.component_end("STT")
+            eval_logger.log(f"FINAL STT transcript: '{stt_response.data.text}'")
         
         await super().on_stt_transcript(stt_response)
 
@@ -40,7 +44,7 @@ class CascadingConversationFlow(ConversationFlow):
     async def _process_final_transcript(self, user_text: str) -> None:
         if not self.agent:
             return
-            
+
         if user_text != self.allowed_mock_input:
             self.collected_transcripts.append(user_text)
 
@@ -102,8 +106,6 @@ class CascadingConversationFlow(ConversationFlow):
     @property
     def metrics(self) -> dict:
         """Get metrics for the current or last completed interaction"""
-        from videosdk.agents.metrics import cascading_metrics_collector
-        from dataclasses import asdict
         
         data = {}
         if cascading_metrics_collector.data.current_turn:

@@ -1,14 +1,12 @@
 from typing import Any
-from .providers.stt import STTEvalConfig
-from .providers.llm import LLMEvalConfig
-from .providers.tts import TTSEvalConfig
 import os
 
 # Import Plugins
 try:
-    from videosdk.plugins.deepgram.stt import DeepgramSTT
+    from videosdk.plugins.deepgram import DeepgramSTT, DeepgramSTTV2
 except ImportError:
     DeepgramSTT = None
+    DeepgramSTTV2 = None
 
 try:
     from videosdk.plugins.openai.llm import OpenAILLM
@@ -38,6 +36,15 @@ def create_stt(provider_name: str, config: Any):
         return DeepgramSTT(
             api_key=api_key or os.getenv("DEEPGRAM_API_KEY"),
             model=model or "nova-2"
+        )
+    elif provider_name == "deepgramv2":
+        if not DeepgramSTTV2: raise ImportError("Deepgram plugin not installed")
+        api_key = config.get("api_key") if isinstance(config, dict) else config.api_key
+        model = config.get("model") if isinstance(config, dict) else config.model
+        
+        return DeepgramSTTV2(
+            api_key=api_key or os.getenv("DEEPGRAM_API_KEY"),
+            model=model or "flux-general-en"
         )
     elif provider_name == "openai":
          if not OpenAISTT: raise ImportError("OpenAI plugin not installed")
