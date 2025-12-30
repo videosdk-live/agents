@@ -404,7 +404,6 @@ class CascadingMetricsCollector:
         if self.data.tts_start_time and self.data.tts_first_byte_time:
             total_tts_latency = self.data.tts_first_byte_time - self.data.tts_start_time
             if self.data.current_turn and self.data.current_turn.agent_speech_start_time:
-                self.data.current_turn.tts_end_time = agent_speech_end_time
                 self.data.current_turn.tts_latency = self._round_latency(total_tts_latency)
                 self.data.current_turn.agent_speech_duration = self._round_latency(agent_speech_end_time - self.data.current_turn.agent_speech_start_time)
 
@@ -480,8 +479,8 @@ class CascadingMetricsCollector:
             now = time.perf_counter()
             # ttfb = now - self.data.tts_start_time // no need to take the difference as we are using the start time of the tts span
             if self.data.current_turn:
-                self.data.current_turn.ttfb = now
-                self.data.current_turn.ttfb = self._round_latency((self.data.current_turn.ttfb - self.data.tts_start_time))
+                self.data.current_turn.tts_end_time = now
+                self.data.current_turn.ttfb = self._round_latency((self.data.current_turn.tts_end_time - self.data.tts_start_time))
                 logger.info(f"tts ttfb: {self.data.current_turn.ttfb}ms")
 
                 if self.playground:

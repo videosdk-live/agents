@@ -265,7 +265,7 @@ class TracesFlowManager:
                     self.end_span(llm_span, status_code=llm_status, end_time=cascading_turn_data.llm_end_time)
 
             tts_errors = [e for e in cascading_turn_data.errors if e['source'] == 'TTS']
-            if cascading_turn_data.tts_start_time is not None or cascading_turn_data.ttfb is not None or tts_errors:
+            if cascading_turn_data.tts_start_time is not None or cascading_turn_data.tts_end_time is not None or tts_errors:
                 create_log(f"{cascading_turn_data.tts_provider_class}: Text to Speech Processing Started", "INFO")
                 tts_span_name = f"{cascading_turn_data.tts_provider_class}: Text to Speech Processing"
 
@@ -279,9 +279,9 @@ class TracesFlowManager:
 
                 if tts_span:
                     
-                    if cascading_turn_data.ttfb is not None:
+                    if cascading_turn_data.tts_end_time is not None:
                         ttfb_span = create_span("Time to First Byte", parent_span=tts_span, start_time=cascading_turn_data.tts_start_time)
-                        self.end_span(ttfb_span, end_time=cascading_turn_data.ttfb)
+                        self.end_span(ttfb_span, end_time=cascading_turn_data.tts_end_time)
 
                     for error in tts_errors:
                         tts_span.add_event("error", attributes={
