@@ -15,10 +15,9 @@ from videosdk.agents import (
     is_function_tool,
     get_tool_info,
     build_openai_schema,
+    realtime_metrics_collector,
+    global_event_emitter
 )
-import time
-from videosdk.agents.event_bus import global_event_emitter
-from videosdk.agents import realtime_metrics_collector
 import websockets
 from websockets.client import WebSocketClientProtocol
 import aiohttp
