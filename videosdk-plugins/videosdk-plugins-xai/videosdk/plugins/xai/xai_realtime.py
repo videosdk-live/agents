@@ -79,7 +79,7 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
         self,
         *,
         api_key: str | None = None,
-        model: str = "grok-beta",
+        model: str = "grok-4-1-fast-non-reasoning",
         config: XAIRealtimeConfig | None = None,
         base_url: str | None = None,
     ) -> None:
