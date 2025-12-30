@@ -65,6 +65,7 @@ class RoomOptions:
     avatar: Optional[Any] = None
     join_meeting: Optional[bool] = True
     on_room_error: Optional[Callable[[Any], None]] = None
+    send_analytics_to_pubsub: Optional[bool] = False
     # Session management options
     auto_end_session: bool = True
     session_timeout_seconds: Optional[int] = 5
