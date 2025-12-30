@@ -348,7 +348,7 @@ class CascadingMetricsCollector:
                 self.data.current_turn.interrupted = True
                 logger.info(f"User interrupted the agent. Total interruptions: {self.data.total_interruptions}")
         if self.playground:
-            self.playground_manager.send_cascading_metrics(metrics=self.data.current_turn.interrupted)
+            self.playground_manager.send_cascading_metrics(metrics={"interrupted": self.data.current_turn.interrupted})
 
     def on_user_speech_start(self):
         """Called when user starts speaking"""
@@ -379,7 +379,7 @@ class CascadingMetricsCollector:
             self._end_timeline_event("user_speech", self.data.user_speech_end_time)
 
             if self.playground:
-                self.playground_manager.send_cascading_metrics(metrics=self.data.current_turn.user_speech_duration)
+                self.playground_manager.send_cascading_metrics(metrics={"user_speech_duration": self.data.current_turn.user_speech_duration})
     
     def on_agent_speech_start(self):
         """Called when agent starts speaking (actual audio output)"""
@@ -408,8 +408,8 @@ class CascadingMetricsCollector:
                 self.data.current_turn.agent_speech_duration = self._round_latency(agent_speech_end_time - self.data.current_turn.agent_speech_start_time)
 
                 if self.playground:
-                    self.playground_manager.send_cascading_metrics(metrics=self.data.current_turn.tts_latency)
-                    self.playground_manager.send_cascading_metrics(metrics=self.data.current_turn.agent_speech_duration)
+                    self.playground_manager.send_cascading_metrics(metrics={"tts_latency": self.data.current_turn.tts_latency})
+                    self.playground_manager.send_cascading_metrics(metrics={"agent_speech_duration": self.data.current_turn.agent_speech_duration})
 
             self.data.tts_start_time = None
             self.data.tts_first_byte_time = None
@@ -438,7 +438,7 @@ class CascadingMetricsCollector:
                 logger.info(f"stt latency: {self.data.current_turn.stt_latency}ms")
 
                 if self.playground:
-                    self.playground_manager.send_cascading_metrics(metrics=self.data.current_turn.stt_latency)
+                    self.playground_manager.send_cascading_metrics(metrics={"stt_latency": self.data.current_turn.stt_latency})
                 
             self.data.stt_start_time = None
     
@@ -461,7 +461,7 @@ class CascadingMetricsCollector:
                 logger.info(f"llm duration: {self.data.current_turn.llm_duration}ms")
 
                 if self.playground:
-                    self.playground_manager.send_cascading_metrics(metrics=self.data.current_turn.llm_duration)
+                    self.playground_manager.send_cascading_metrics(metrics={"llm_duration": self.data.current_turn.llm_duration})
                 
             self.data.llm_start_time = None
     
@@ -484,7 +484,7 @@ class CascadingMetricsCollector:
                 logger.info(f"tts ttfb: {self.data.current_turn.ttfb_latency}ms")
 
                 if self.playground:
-                    self.playground_manager.send_cascading_metrics(metrics=self.data.current_turn.ttfb)
+                    self.playground_manager.send_cascading_metrics(metrics={"ttfb": self.data.current_turn.ttfb})
             
             self.data.tts_first_byte_time = now
     
@@ -507,7 +507,7 @@ class CascadingMetricsCollector:
                 logger.info(f"eou latency: {self.data.current_turn.eou_latency}ms")
 
                 if self.playground:
-                    self.playground_manager.send_cascading_metrics(metrics=self.data.current_turn.eou_latency)
+                    self.playground_manager.send_cascading_metrics(metrics={"eou_latency": self.data.current_turn.eou_latency})
             
             self.data.eou_start_time = None
     
@@ -519,7 +519,7 @@ class CascadingMetricsCollector:
             user_speech_events = [event for event in self.data.current_turn.timeline 
                                 if event.event_type == "user_speech"]
             if self.playground:
-                self.playground_manager.send_cascading_metrics(metrics=self.data.current_turn.user_speech)
+                self.playground_manager.send_cascading_metrics(metrics={"user_speech": self.data.current_turn.user_speech})
 
             if user_speech_events:
                 most_recent_event = user_speech_events[-1]
@@ -542,7 +542,7 @@ class CascadingMetricsCollector:
             self._update_timeline_event_text("agent_speech", response)
 
             if self.playground:
-                self.playground_manager.send_cascading_metrics(metrics=self.data.current_turn.agent_speech)
+                self.playground_manager.send_cascading_metrics(metrics={"agent_speech": self.data.current_turn.agent_speech})
     
     def add_function_tool_call(self, tool_name: str):
         """Track when a function tool is called in the current turn"""
@@ -556,7 +556,7 @@ class CascadingMetricsCollector:
             self.data.current_turn.function_tool_timestamps.append(tool_timestamp)
 
             if self.playground:
-                self.playground_manager.send_cascading_metrics(metrics=self.data.current_turn.function_tool_timestamps)
+                self.playground_manager.send_cascading_metrics(metrics={"function_tool_timestamps": self.data.current_turn.function_tool_timestamps})
 
     def add_error(self, source: str, message: str):
         """Add an error to the current turn"""
@@ -568,7 +568,7 @@ class CascadingMetricsCollector:
             })
 
             if self.playground:
-                self.playground_manager.send_cascading_metrics(metrics=self.data.current_turn.errors)
+                self.playground_manager.send_cascading_metrics(metrics={"errors": self.data.current_turn.errors})
 
     def set_a2a_handoff(self):
         """Set the A2A enabled and handoff occurred flags for the current turn in A2A scenarios."""
@@ -577,7 +577,7 @@ class CascadingMetricsCollector:
             self.data.current_turn.handoff_occurred = True
 
             if self.playground:
-                self.playground_manager.send_cascading_metrics(metrics=self.data.current_turn.handoff_occurred)
+                self.playground_manager.send_cascading_metrics(metrics={"handoff_occurred": self.data.current_turn.handoff_occurred})
     
     def set_llm_usage(self, usage: Dict[str, int]):
         """Set token usage and calculate TPS"""
@@ -595,11 +595,11 @@ class CascadingMetricsCollector:
             self.data.current_turn.tokens_per_second = round(self.data.current_turn.completion_tokens / latency_seconds, 2)
 
             if self.playground:
-                self.playground_manager.send_cascading_metrics(metrics=self.data.current_turn.prompt_tokens)
-                self.playground_manager.send_cascading_metrics(metrics=self.data.current_turn.completion_tokens)
-                self.playground_manager.send_cascading_metrics(metrics=self.data.current_turn.total_tokens)
-                self.playground_manager.send_cascading_metrics(metrics=self.data.current_turn.prompt_cached_tokens)
-                self.playground_manager.send_cascading_metrics(metrics=self.data.current_turn.tokens_per_second)
+                self.playground_manager.send_cascading_metrics(metrics={"prompt_tokens": self.data.current_turn.prompt_tokens})
+                self.playground_manager.send_cascading_metrics(metrics={"completion_tokens": self.data.current_turn.completion_tokens})
+                self.playground_manager.send_cascading_metrics(metrics={"total_tokens": self.data.current_turn.total_tokens})
+                self.playground_manager.send_cascading_metrics(metrics={"prompt_cached_tokens": self.data.current_turn.prompt_cached_tokens})
+                self.playground_manager.send_cascading_metrics(metrics={"tokens_per_second": self.data.current_turn.tokens_per_second})
     
     def add_tts_characters(self, count: int):
         """Add to the total character count for the current turn"""
@@ -610,7 +610,7 @@ class CascadingMetricsCollector:
                 self.data.current_turn.tts_characters = count
 
             if self.playground:
-                self.playground_manager.send_cascading_metrics(metrics=self.data.current_turn.tts_characters)
+                self.playground_manager.send_cascading_metrics(metrics={"tts_characters": self.data.current_turn.tts_characters})
     
     def on_stt_preflight_end(self):
         """Called when STT preflight event received"""
@@ -620,7 +620,7 @@ class CascadingMetricsCollector:
             logger.info(f"stt preflight latency: {self.data.current_turn.stt_preflight_latency}ms")
 
             if self.playground:
-                self.playground_manager.send_cascading_metrics(metrics=self.data.current_turn.stt_preflight_latency)
+                self.playground_manager.send_cascading_metrics(metrics={"stt_preflight_latency": self.data.current_turn.stt_preflight_latency})
 
     def on_stt_interim_end(self):
         """Called when STT interim event received"""
@@ -630,7 +630,7 @@ class CascadingMetricsCollector:
             logger.info(f"stt interim latency: {self.data.current_turn.stt_interim_latency}ms")
 
             if self.playground:
-                self.playground_manager.send_cascading_metrics(metrics=self.data.current_turn.stt_interim_latency)
+                self.playground_manager.send_cascading_metrics(metrics={"stt_interim_latency": self.data.current_turn.stt_interim_latency})
     
     def on_llm_first_token(self):
         """Called when LLM first token received"""
@@ -640,14 +640,11 @@ class CascadingMetricsCollector:
             logger.info(f"llm ttft: {self.data.current_turn.llm_ttft}ms")
 
             if self.playground:
-                self.playground_manager.send_cascading_metrics(metrics=self.data.current_turn.llm_ttft)
+                self.playground_manager.send_cascading_metrics(metrics={"llm_ttft": self.data.current_turn.llm_ttft})
     
     def set_preemptive_generation_enabled(self):
         if self.data.current_turn:
             self.data.current_turn.stt_preemptive_generation_enabled = True
-
-            if self.playground:
-                self.playground_manager.send_cascading_metrics(metrics=self.data.current_turn.stt_preemptive_generation_enabled)
     
     def set_playground_manager(self, manager: Optional["PlaygroundManager"]):
         self.playground = True

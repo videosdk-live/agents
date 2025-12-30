@@ -106,15 +106,11 @@ class RealtimeMetricsCollector:
         await self._start_new_interaction()
         if self.current_turn and self.current_turn.user_speech_start_time is None:
             self.current_turn.user_speech_start_time = time.perf_counter()
-            if self.playground:
-                self.playground_manager.send_realtime_metrics(metrics=self.current_turn)
             await self.start_timeline_event("user_speech")
 
     async def set_user_speech_end(self) -> None:
         if self.current_turn and self.current_turn.user_speech_end_time is None:
             self.current_turn.user_speech_end_time = time.perf_counter()
-            if self.playground:
-                self.playground_manager.send_realtime_metrics(metrics=self.current_turn)
             await self.end_timeline_event("user_speech")
 
     async def set_agent_speech_start(self) -> None:
@@ -122,14 +118,11 @@ class RealtimeMetricsCollector:
             await self._start_new_interaction()
         elif self.current_turn.user_speech_start_time is not None and self.current_turn.user_speech_end_time is None:
             self.current_turn.user_speech_end_time = time.perf_counter()
-            if self.playground:
-                self.playground_manager.send_realtime_metrics(metrics=self.current_turn)
+
             await self.end_timeline_event("user_speech")
 
         if self.current_turn and self.current_turn.agent_speech_start_time is None:
             self.current_turn.agent_speech_start_time = time.perf_counter()
-            if self.playground:
-                self.playground_manager.send_realtime_metrics(metrics=self.current_turn)
             await self.start_timeline_event("agent_speech")
             if self.agent_speech_end_timer:
                 self.agent_speech_end_timer.cancel()
@@ -141,8 +134,6 @@ class RealtimeMetricsCollector:
             
             loop = asyncio.get_event_loop()
             self.agent_speech_end_timer = loop.call_later(timeout, self._finalize_interaction_and_send)
-            if self.playground:
-                self.playground_manager.send_realtime_metrics(metrics=self.current_turn)
             await self.end_timeline_event("agent_speech")
 
     async def set_a2a_handoff(self) -> None:
@@ -150,8 +141,6 @@ class RealtimeMetricsCollector:
         if self.current_turn:
             self.current_turn.is_a2a_enabled = True
             self.current_turn.handoff_occurred = True
-            if self.playground:
-                self.playground_manager.send_realtime_metrics(metrics=self.current_turn)
 
     def _finalize_agent_speech(self) -> None:
         if not self.current_turn or self.current_turn.agent_speech_end_time is not None:
@@ -165,8 +154,6 @@ class RealtimeMetricsCollector:
 
         self.current_turn.agent_speech_end_time = time.perf_counter()
         self.agent_speech_end_timer = None
-        if self.playground:
-            self.playground_manager.send_realtime_metrics(metrics=self.current_turn)
 
     def _finalize_interaction_and_send(self) -> None:
         if not self.current_turn:
