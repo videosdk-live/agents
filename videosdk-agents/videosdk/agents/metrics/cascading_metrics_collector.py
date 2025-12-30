@@ -481,7 +481,7 @@ class CascadingMetricsCollector:
             if self.data.current_turn:
                 self.data.current_turn.ttfb = now
                 self.data.current_turn.ttfb = self._round_latency((self.data.current_turn.ttfb - self.data.tts_start_time) * 1000)
-                logger.info(f"tts ttfb: {self.data.current_turn.ttfb_latency}ms")
+                logger.info(f"tts ttfb: {self.data.current_turn.ttfb}ms")
 
                 if self.playground:
                     self.playground_manager.send_cascading_metrics(metrics={"ttfb": self.data.current_turn.ttfb})
