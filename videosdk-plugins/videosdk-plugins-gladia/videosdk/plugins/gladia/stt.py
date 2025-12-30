@@ -67,7 +67,6 @@ class GladiaSTT(STT):
         self._init_lock = asyncio.Lock()
     async def _initialize_session(self) -> None:
         async with self._init_lock:
-            # Prevent duplicate session creation
             if self._ws_url is not None:
                 return
             if self._session is None:
@@ -106,6 +105,7 @@ class GladiaSTT(STT):
                 self._session_id = data["id"]
                 self._ws_url = data["url"]
                 logger.info(f"[GladiaSTT] Session created: {self._session_id}")
+                
     async def _ensure_websocket(self) -> aiohttp.ClientWebSocketResponse:
         """Ensure WebSocket connection is established."""
         if self._ws is None or self._ws.closed:
@@ -113,6 +113,7 @@ class GladiaSTT(STT):
         if self._ws is None:
             raise RuntimeError("Failed to establish WebSocket connection")
         return self._ws
+    
     async def _connect_websocket(self) -> None:
         if self._is_connected:
             return
@@ -121,6 +122,7 @@ class GladiaSTT(STT):
         self._ws = await self._session.ws_connect(self._ws_url)
         self._is_connected = True
         self._ws_task = asyncio.create_task(self._process_messages())
+        
     async def process_audio(self, audio_frames: bytes, **kwargs: Any) -> None:
         """Process audio frames and send to WebSocket."""
         try:
@@ -132,7 +134,9 @@ class GladiaSTT(STT):
             ws = await self._ensure_websocket()
             await ws.send_bytes(resampled_audio)
         except Exception as e:
-            logger.error(f"[GladiaSTT] Error processing audio: {e}")
+            logger.error(f"[GladiaSTT] Error processing audio: {str(e)}")
+            self.emit("error", str(e))
+            
     async def _process_messages(self) -> None:
         """Process incoming WebSocket messages."""
         if self._ws is None:
@@ -144,6 +148,8 @@ class GladiaSTT(STT):
                     await self._handle_message(data)
                 elif msg.type == aiohttp.WSMsgType.ERROR:
                     logger.error(f"[GladiaSTT] WebSocket error: {self._ws.exception()}")
+                    self.emit(
+                        "error", f"WebSocket error: {self._ws.exception()}")
                     break
                 elif msg.type == aiohttp.WSMsgType.CLOSED:
                     logger.info("[GladiaSTT] WebSocket connection closed")
@@ -153,12 +159,15 @@ class GladiaSTT(STT):
             logger.info("[GladiaSTT] Message processing cancelled")
         except Exception as e:
             logger.error(f"[GladiaSTT] Error in message processing: {e}")
+            self.emit("error", str(e))
+            
     async def _handle_message(self, data: dict) -> None:
         """Handle different message types from Gladia API."""
+        
         msg_type = data.get("type")
         logger.debug(f"[GladiaSTT] Received message type: {msg_type}")
+        
         if msg_type == "transcript":
-            # Handle transcript message
             transcript_data = data.get("data", {})
             utterance = transcript_data.get("utterance", {})
             
@@ -173,7 +182,6 @@ class GladiaSTT(STT):
                     logger.info("[GladiaSTT] Speech started event emitted")
                 
                 event_type = SpeechEventType.FINAL if is_final else SpeechEventType.INTERIM
-                # Send transcript to callback
                 event = STTResponse(
                     event_type=event_type,
                     data=SpeechData(
@@ -187,7 +195,8 @@ class GladiaSTT(STT):
                     logger.info(f"[GladiaSTT] Transcript sent to callback: {transcript_text}")
                 except Exception as e:
                     logger.error(f"[GladiaSTT] Error calling transcript callback: {e}")
-                # Emit speech stopped for final transcripts
+                    self.emit("Error calling transcript callback:", str(e))
+
                 if is_final and self._is_speaking:
                     self._is_speaking = False
                     global_event_emitter.emit("speech_stopped")
@@ -195,6 +204,8 @@ class GladiaSTT(STT):
         elif msg_type == "error":
             error_info = data.get("error", "Unknown error")
             logger.error(f"[GladiaSTT] API error: {error_info}")
+            self.emit("API error",str(error_info))
+            
     def _resample_audio(self, audio_bytes: bytes) -> bytes:
         """Resample audio from input sample rate to output sample rate and convert to mono."""
         try:
@@ -217,7 +228,9 @@ class GladiaSTT(STT):
             return resampled_data.astype(np.int16).tobytes()
         except Exception as e:
             logger.error(f"[GladiaSTT] Error resampling audio: {e}")
+            self.emit("Error in resampling audio", str(e))
             return b''
+        
     async def stop_stream(self) -> None:
         """Send stop stream message to Gladia API."""
         try:
@@ -229,6 +242,8 @@ class GladiaSTT(STT):
                 logger.info("[GladiaSTT] Stop recording message sent")
         except Exception as e:
             logger.error(f"[GladiaSTT] Error sending stop message: {e}")
+            self.emit("Error sending stop message", str(e))
+            
     async def aclose(self) -> None:
         """Close WebSocket connection and cleanup."""
         logger.info("[GladiaSTT] Closing connection...")
