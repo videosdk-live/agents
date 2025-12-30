@@ -81,8 +81,6 @@ class CascadingTurnData:
     
     timeline: List[TimelineEvent] = field(default_factory=list)
     errors: List[Dict[str, Any]] = field(default_factory=list)
-    agent_response: str = ""
-    stt_transcript: str = ""
     is_a2a_enabled: bool = False
     handoff_occurred: bool = False  
 
