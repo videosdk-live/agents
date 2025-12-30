@@ -480,7 +480,7 @@ class CascadingMetricsCollector:
             # ttfb = now - self.data.tts_start_time // no need to take the difference as we are using the start time of the tts span
             if self.data.current_turn:
                 self.data.current_turn.ttfb = now
-                self.data.current_turn.ttfb = self._round_latency((self.data.current_turn.ttfb - self.data.tts_start_time) * 1000)
+                self.data.current_turn.ttfb = self._round_latency((self.data.current_turn.ttfb - self.data.tts_start_time))
                 logger.info(f"tts ttfb: {self.data.current_turn.ttfb}ms")
 
                 if self.playground:
