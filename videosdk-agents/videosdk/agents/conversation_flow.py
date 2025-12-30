@@ -963,9 +963,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         Main conversation loop: handle a user turn.
         Users should implement this method to preprocess transcripts and yield response chunks.
         """
-        if cascading_metrics_collector.data.current_turn:
-            cascading_metrics_collector.data.current_turn.user_speech = transcript
-        else:
+        if not cascading_metrics_collector.data.current_turn:
             cascading_metrics_collector.start_new_interaction(transcript)
         async for response in self.process_with_llm():
             yield response
