@@ -105,6 +105,9 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
           
         # Conversational Graph
         self.conversational_graph = None
+        
+        # Context truncation
+        self.max_context_items: int | None = None
 
 
     def apply_flow_config(self, eou_config: "EOUConfig", interrupt_config: "InterruptConfig") -> None:
@@ -765,6 +768,18 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             if not self.agent or not getattr(self.agent, "chat_context", None):
                 logger.info("Agent not available for LLM processing, exiting")
                 return
+            
+            if self.max_context_items:
+                current_items = len(self.agent.chat_context.items)
+                if current_items > self.max_context_items:
+                    try:
+                        logger.info(f"Chat Context Truncating from {current_items} to {self.max_context_items} items (max_context_items={self.max_context_items})")
+                        self.agent.chat_context.truncate(self.max_context_items)
+                        logger.info(f"Chat Context Truncation complete. Final size: {len(self.agent.chat_context.items)} items")
+                    except Exception as e:
+                        logger.error(f"Chat Context Error during truncation: {e}", exc_info=True)
+                else:
+                    logger.debug(f"Context size {current_items} is within limit (max_context_items={self.max_context_items})")
 
             cascading_metrics_collector.on_llm_start()
             first_chunk_received = False
