@@ -65,6 +65,7 @@ class GladiaSTT(STT):
         self._ws_url: str | None = None
         self._is_connected = False
         self._init_lock = asyncio.Lock()
+        
     async def _initialize_session(self) -> None:
         async with self._init_lock:
             if self._ws_url is not None:
@@ -195,7 +196,7 @@ class GladiaSTT(STT):
                     logger.info(f"[GladiaSTT] Transcript sent to callback: {transcript_text}")
                 except Exception as e:
                     logger.error(f"[GladiaSTT] Error calling transcript callback: {e}")
-                    self.emit("Error calling transcript callback:", str(e))
+                    self.emit("error", f"calling transcript callback: {str(e)}")
 
                 if is_final and self._is_speaking:
                     self._is_speaking = False
@@ -204,7 +205,7 @@ class GladiaSTT(STT):
         elif msg_type == "error":
             error_info = data.get("error", "Unknown error")
             logger.error(f"[GladiaSTT] API error: {error_info}")
-            self.emit("API error",str(error_info))
+            self.emit("error", f"API Error {str(error_info)}")
             
     def _resample_audio(self, audio_bytes: bytes) -> bytes:
         """Resample audio from input sample rate to output sample rate and convert to mono."""
@@ -228,7 +229,7 @@ class GladiaSTT(STT):
             return resampled_data.astype(np.int16).tobytes()
         except Exception as e:
             logger.error(f"[GladiaSTT] Error resampling audio: {e}")
-            self.emit("Error in resampling audio", str(e))
+            self.emit("error", f"Error in resampling audio {str(e)}")
             return b''
         
     async def stop_stream(self) -> None:
@@ -242,7 +243,7 @@ class GladiaSTT(STT):
                 logger.info("[GladiaSTT] Stop recording message sent")
         except Exception as e:
             logger.error(f"[GladiaSTT] Error sending stop message: {e}")
-            self.emit("Error sending stop message", str(e))
+            self.emit("error", f"Error sending stop message {str(e)}")
             
     async def aclose(self) -> None:
         """Close WebSocket connection and cleanup."""
