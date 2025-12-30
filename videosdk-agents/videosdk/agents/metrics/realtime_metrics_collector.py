@@ -284,6 +284,5 @@ class RealtimeMetricsCollector:
     def set_playground_manager(self, manager: Optional["PlaygroundManager"]):
         self.playground = True
         self.playground_manager = manager
-        print("Playground manager set", self.playground_manager) 
 
 realtime_metrics_collector = RealtimeMetricsCollector() 

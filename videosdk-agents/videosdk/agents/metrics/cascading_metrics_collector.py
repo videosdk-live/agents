@@ -19,6 +19,7 @@ class CascadingMetricsCollector:
         self.traces_flow_manager: Optional[TracesFlowManager] = None
         self.active_spans: Dict[str, Span] = {}
         self.pending_user_start_time: Optional[float] = None
+        self.playground = False
         
     def set_traces_flow_manager(self, manager: TracesFlowManager):
         """Set the TracesFlowManager instance"""
@@ -280,7 +281,7 @@ class CascadingMetricsCollector:
         if self.data.current_turn:
             self._calculate_e2e_metrics(self.data.current_turn)
 
-            if not self._validate_interaction_has_required_latencies(self.data.current_turn):
+            if not self._validate_interaction_has_required_latencies(self.data.current_turn) and self.data.total_turns > 1:
                 if self.data.current_turn.user_speech_start_time is not None:
                     if (self.pending_user_start_time is None or
                         self.data.current_turn.user_speech_start_time < self.pending_user_start_time):
@@ -649,4 +650,3 @@ class CascadingMetricsCollector:
     def set_playground_manager(self, manager: Optional["PlaygroundManager"]):
         self.playground = True
         self.playground_manager = manager
-        print("Playground manager set", self.playground_manager)
