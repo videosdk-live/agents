@@ -72,6 +72,7 @@ class CascadingMetricsCollector:
             'tts_duration': 'ttsDuration',
             'tts_characters': 'ttsCharacters',
             'ttfb': 'ttfb',
+            "tts_latency": "ttsLatency",
 
             # EOU Metrics
             'eou_latency': 'eouLatency',
