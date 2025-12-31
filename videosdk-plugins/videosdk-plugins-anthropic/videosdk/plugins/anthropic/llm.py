@@ -157,6 +157,13 @@ class AnthropicLLM(LLM):
             current_tool_call_id = None
             current_tool_arguments = ""
             
+            usage_metadata = {
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "prompt_cached_tokens": 0
+            }
+
             # State for partial JSON parsing
             streaming_state = {
                 "in_response": False,
@@ -167,6 +174,18 @@ class AnthropicLLM(LLM):
             async for event in response_stream:
                 if self._cancelled:
                     break
+
+                if event.type == "message_start":
+                    usage_metadata["prompt_tokens"] = event.message.usage.input_tokens
+                    usage_metadata["prompt_cached_tokens"] = getattr(event.message.usage, 'cache_read_input_tokens', 0) or 0
+                    yield LLMResponse(content="", role=ChatRole.ASSISTANT, metadata={"usage": usage_metadata})
+
+                elif event.type == "message_delta":
+                    if hasattr(event, "usage"):
+                        usage_metadata["completion_tokens"] = event.usage.output_tokens
+                        usage_metadata["total_tokens"] = usage_metadata["prompt_tokens"] + usage_metadata["completion_tokens"]
+                        yield LLMResponse(content="", role=ChatRole.ASSISTANT, metadata={"usage": usage_metadata})
+
 
                 if event.type == "content_block_start":
                     if event.content_block.type == "tool_use":
@@ -183,9 +202,9 @@ class AnthropicLLM(LLM):
                         current_content += delta.text
                         if conversational_graph:
                             for content_chunk in conversational_graph.stream_conversational_graph_response(current_content, streaming_state):
-                                yield LLMResponse(content=content_chunk, role=ChatRole.ASSISTANT)
+                                yield LLMResponse(content=content_chunk, role=ChatRole.ASSISTANT, metadata={"usage": usage_metadata})
                         else:
-                            yield LLMResponse(content=delta.text, role=ChatRole.ASSISTANT)
+                            yield LLMResponse(content=delta.text, role=ChatRole.ASSISTANT, metadata={"usage": usage_metadata})
 
                     elif delta.type == "input_json_delta":
                         if current_tool_call:
@@ -209,12 +228,18 @@ class AnthropicLLM(LLM):
                                     "name": current_tool_call["name"],
                                     "arguments": current_tool_call["arguments"],
                                     "call_id": current_tool_call_id
-                                }
+                                },
+                                "usage": usage_metadata
                             }
                         )
                         current_tool_call = None
                         current_tool_call_id = None
                         current_tool_arguments = ""
+
+            if not self._cancelled:
+                yield LLMResponse(content="", role=ChatRole.ASSISTANT, metadata={"usage": usage_metadata})
+
+
             if current_content and not self._cancelled:
                 if conversational_graph:
                     try:
@@ -222,12 +247,13 @@ class AnthropicLLM(LLM):
                         yield LLMResponse(
                             content="",
                             role=ChatRole.ASSISTANT,
-                            metadata=parsed_json
+                            metadata={"graph_response":parsed_json, "usage": usage_metadata}
                         )
                     except json.JSONDecodeError:
                              yield LLMResponse(
                                 content=current_content,
-                                role=ChatRole.ASSISTANT
+                                role=ChatRole.ASSISTANT,
+                                metadata={"usage": usage_metadata}
                             )
                 else:
                     pass

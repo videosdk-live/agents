@@ -59,6 +59,7 @@ from .event_emitter import EventEmitter
 from .job import WorkerJob, JobContext, RoomOptions, Options, WebSocketConfig, WebRTCConfig
 from .worker import Worker, WorkerOptions, WorkerType
 from .utterance_handle import UtteranceHandle
+from .playground_manager import PlaygroundManager
 
 # New execution module exports
 from .execution import (
@@ -196,4 +197,5 @@ __all__ = [
     "FallbackSTT",
     "FallbackLLM",
     "FallbackTTS",
+    "PlaygroundManager",
 ]
