@@ -116,7 +116,7 @@ class EvalLogger:
         """Log evaluation completion."""
         self.log(self.colorize("Evaluation completed!", Colors.BOLD + Colors.GREEN))
     
-    def display_turn_logs(self, turn_index: int, turn_id: str, stt_transcript: str, llm_response: str, tts_audio_file: str):
+    def display_turn_logs(self, turn_index: int, turn_id: str, stt_transcript: str, llm_response: str, tts_audio_file: str, llm_input: str = ""):
         """Display formatted logs for a single turn."""
         sep = self.colorize('=' * 40, Colors.YELLOW)
         self.log(sep)
@@ -127,6 +127,9 @@ class EvalLogger:
             self.log(f"\n{self.colorize('STT Transcript:', Colors.YELLOW)}\n  {stt_transcript}")
         else:
             self.log(f"\n{self.colorize('STT Transcript:', Colors.YELLOW)}\n  N/A")
+        
+        if llm_input and llm_input != stt_transcript and llm_input != "N/A":
+            self.log(f"\n{self.colorize('LLM Input (Overridden):', Colors.CYAN)}\n  {llm_input}")
         
         if llm_response:
             self.log(f"\n{self.colorize('LLM Response:', Colors.MAGENTA)}\n  {llm_response}")

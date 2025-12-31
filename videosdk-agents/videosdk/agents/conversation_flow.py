@@ -658,6 +658,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             if self.agent.session and self.agent.session.is_background_audio_enabled:
                 await self.agent.session.start_thinking_audio()
 
+            cascading_metrics_collector.set_llm_input(user_text)
             llm_stream = self.run(user_text)
 
             q = asyncio.Queue(maxsize=50)

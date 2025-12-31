@@ -19,6 +19,8 @@ class CascadingTurnData:
     user_speech_end_time: Optional[float] = None
     user_speech_duration: Optional[float] = None
     user_speech: Optional[str] = None
+    stt_transcript: Optional[str] = None
+    llm_input: Optional[str] = None
 
     agent_speech_start_time: Optional[float] = None
     agent_speech_end_time: Optional[float] = None

@@ -58,7 +58,7 @@ class EvaluationResult:
 
             for key, value in metrics.items():
                 is_latency_metric = (
-                    key.startswith(("stt_latency", "llm_latency", "tts_latency", "e2e_latency"))
+                    key.startswith(("stt_duration", "llm_duration", "tts_duration", "e2e_latency"))
                     or "time_to" in key
                 )
                 if is_latency_metric:
@@ -94,7 +94,13 @@ class EvaluationResult:
                         continue
 
                     f.write(f"Turn ID: {res.get('turn_id', 'Unknown')}\n")
-                    f.write(f"User: {' '.join(user_transcripts) if user_transcripts else 'N/A'}\n")
+                    stt_text = ' '.join(user_transcripts) if user_transcripts else 'N/A'
+                    f.write(f"User STT Transcript: {stt_text}\n")
+                    
+                    llm_input = metrics.get("llm_input")
+                    if llm_input and llm_input != stt_text:
+                        f.write(f"LLM Input (Overridden): {llm_input}\n")
+
                     f.write(f"Agent: {agent_response if agent_response else 'N/A'}\n")
                     f.write("-" * 40 + "\n")
 
@@ -180,9 +186,22 @@ class Evaluation:
             turn_id = str(res.get("turn_id", "N/A"))
             metrics = res.get("metrics", {})
             
+            # Get LLM input (what was actually sent to LLM)
+            llm_input = metrics.get("llm_input") or ""
+            
             # Get STT transcript
             stt_transcripts = metrics.get("collected_transcripts", [])
-            stt_transcript = " ".join(stt_transcripts) if stt_transcripts else ""
+            stt_transcript = ""
+            if stt_transcripts:
+                stt_transcript = " ".join(stt_transcripts)
+            
+            # Fallback to user_speech ONLY if it's not the same as llm_input
+            if not stt_transcript:
+                user_speech = metrics.get("user_speech")
+                if user_speech and user_speech != llm_input:
+                    stt_transcript = user_speech
+            
+            stt_transcript = stt_transcript or "N/A"
             
             # Get LLM response
             llm_response = res.get("response_text", "") or "N/A"
@@ -191,7 +210,8 @@ class Evaluation:
             tts_audio_file = metrics.get("tts_audio_file", "")
             
             # Display turn logs
-            eval_logger.display_turn_logs(turn_idx, turn_id, stt_transcript, llm_response, tts_audio_file)
+            eval_logger.display_turn_logs(turn_index=turn_idx, turn_id=turn_id, stt_transcript=stt_transcript, 
+                                        llm_response=llm_response, tts_audio_file=tts_audio_file, llm_input=llm_input)
 
         eval_logger.display_judge_results(results)
         eval_logger.display_latency_table(results, self.metrics)
@@ -356,7 +376,7 @@ class Evaluation:
 
             computed_metrics = flow.metrics
             metrics_data = flow.metrics
-            actual_llm_response = metrics_data.get("agent_response", "") or "N/A"
+            actual_llm_response = metrics_data.get("agent_speech", "") or "N/A"
             spoken_response = actual_llm_response
             
             # For TTS-override turns, keep track of what was actually spoken vs generated

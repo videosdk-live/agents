@@ -32,28 +32,45 @@ def create_stt(provider_name: str, config: Any):
         if not DeepgramSTT: raise ImportError("Deepgram plugin not installed")
         api_key = config.get("api_key") if isinstance(config, dict) else config.api_key
         model = config.get("model") if isinstance(config, dict) else config.model
+        sample_rate = config.get("sample_rate", 48000) if isinstance(config, dict) else getattr(config, "sample_rate", 48000)
         
         return DeepgramSTT(
             api_key=api_key or os.getenv("DEEPGRAM_API_KEY"),
-            model=model or "nova-2"
+            model=model or "nova-2",
+            sample_rate=sample_rate
         )
     elif provider_name == "deepgramv2":
         if not DeepgramSTTV2: raise ImportError("Deepgram plugin not installed")
         api_key = config.get("api_key") if isinstance(config, dict) else config.api_key
         model = config.get("model") if isinstance(config, dict) else config.model
+        sample_rate = config.get("sample_rate", 48000) if isinstance(config, dict) else getattr(config, "sample_rate", 48000)
         
         return DeepgramSTTV2(
             api_key=api_key or os.getenv("DEEPGRAM_API_KEY"),
-            model=model or "flux-general-en"
+            model=model or "flux-general-en",
+            input_sample_rate=sample_rate
         )
     elif provider_name == "openai":
          if not OpenAISTT: raise ImportError("OpenAI plugin not installed")
          api_key = config.get("api_key") if isinstance(config, dict) else config.api_key
          model = config.get("model") if isinstance(config, dict) else config.model
+         sample_rate = config.get("sample_rate", 48000) if isinstance(config, dict) else getattr(config, "sample_rate", 48000)
 
          return OpenAISTT(
              api_key=api_key or os.getenv("OPENAI_API_KEY"),
-             model=model or "whisper-1" 
+             model=model or "whisper-1",
+             sample_rate=sample_rate
+         )
+    elif provider_name == "google":
+         if not GoogleSTT: raise ImportError("Google plugin not installed")
+         api_key = config.get("api_key") if isinstance(config, dict) else config.api_key
+         model = config.get("model") if isinstance(config, dict) else config.model
+         sample_rate = config.get("sample_rate", 48000) if isinstance(config, dict) else getattr(config, "sample_rate", 48000)
+
+         return GoogleSTT(
+             api_key=api_key or os.getenv("GOOGLE_API_KEY"),
+             model=model,
+             sample_rate=sample_rate
          )
     else:
         raise ValueError(f"Unknown STT provider: {provider_name}")
