@@ -72,6 +72,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         eou_config: EOUConfig | None = None,
         interrupt_config: InterruptConfig | None = None,
         conversational_graph: Any | None = None,
+        max_context_items: int | None = None,
     ) -> None:
         """
         Initialize the cascading pipeline.
@@ -86,6 +87,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
             denoise: Denoise (optional)
             eou_config: End of utterance configuration (optional)
             interrupt_config: Interruption configuration (optional)
+            max_context_items: Maximum number of context items to keep (auto-truncates when exceeded)
         """
         self.stt = stt
         self.llm = llm
@@ -98,6 +100,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         self.vision = False
         self.eou_config = eou_config or EOUConfig()
         self.interrupt_config = interrupt_config or InterruptConfig()
+        self.max_context_items = max_context_items
 
         if self.stt:
             self.stt.on(
@@ -188,6 +191,13 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         self.conversation_flow.denoise = self.denoise
         self.conversation_flow.avatar = self.avatar
         self.conversation_flow.user_speech_callback = self.on_user_speech_started
+        self.conversation_flow.max_context_items = self.max_context_items
+        
+        if self.max_context_items:
+            logger.info(f"Chat Context truncation enabled: max_context_items={self.max_context_items}")
+        else:
+            logger.info("Chat Context Auto-truncation disabled (max_context_items not set)")
+            
         if hasattr(self.conversation_flow, "apply_flow_config"):
             self.conversation_flow.apply_flow_config(
                 eou_config=self.eou_config,

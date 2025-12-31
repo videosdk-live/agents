@@ -590,12 +590,23 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                 self._agent_speaking = False
 
                 except Exception as e:
-                    if "1000 (OK)" in str(e):
-                        logger.info("Normal WebSocket closure")
-                    else:
-                        logger.error(f"Error in receive loop: {e}")
-                        traceback.print_exc()
+                    err_msg = str(e)
+                    is_server_disconnect = (
+                        "ConnectionClosed" in type(e).__name__ 
+                        or "1011" in err_msg 
+                        or "1000" in err_msg
+                    )
 
+                    if is_server_disconnect:
+                        logger.info(f"Session ended by server ({err_msg}). Stopping local connection.")
+                        # CRITICAL: We set _closing to True to stop the outer loop
+                        # from attempting to reconnect.
+                        self._closing = True
+                        self._session_should_close.set()
+                        break
+                    
+                    logger.error(f"Error in receive loop: {e}")
+                    traceback.print_exc()
                     self._session_should_close.set()
                     break
 
@@ -623,7 +634,9 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                         turn_complete=False,
                     )
                 except Exception as e:
-                    if "closed" in str(e).lower():
+                    if "closed" in str(e).lower() or "1011" in str(e):
+                        logger.info("Keep-alive detected closed session. Stopping.")
+                        self._closing = True  # Stop the outer loop
                         self._session_should_close.set()
                         break
                     self.emit("error", f"Keep-alive error: {e}")
@@ -678,9 +691,17 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         AUDIO_SAMPLE_RATE = 24000 if self.vertexai else 48000
         self.target_sample_rate = 16000 if self.vertexai else self.target_sample_rate
         audio_data = self._resample_audio(audio_data)
-        await self._session.session.send_realtime_input(
-            audio=Blob(data=audio_data, mime_type=f"audio/pcm;rate={AUDIO_SAMPLE_RATE}")
-        )
+        try:
+            await self._session.session.send_realtime_input(
+                audio=Blob(data=audio_data, mime_type=f"audio/pcm;rate={AUDIO_SAMPLE_RATE}")
+            )
+        except Exception as e:
+            if "1011" in str(e) or "closed" in str(e).lower():
+                logger.info("Cannot send audio (session closed).")
+                self._closing = True
+                self._session_should_close.set()
+            else:
+                logger.error(f"Error sending audio: {e}")
 
     async def interrupt(self) -> None:
         """Interrupt current response"""
@@ -830,7 +851,8 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         try:
             await session.session_cm.__aexit__(None, None, None)
         except Exception as e:
-            self.emit("error", f"Error closing session: {e}")
+            if "1011" not in str(e) and "closed" not in str(e).lower():
+                self.emit("error", f"Error closing session: {e}")
 
     async def aclose(self) -> None:
         """Clean up all resources"""
