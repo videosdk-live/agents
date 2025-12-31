@@ -288,7 +288,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 
             
         elif stt_response.event_type == SpeechEventType.INTERIM:
-            if cascading_metrics_collector.data.current_turn:
+            if cascading_metrics_collector.data.current_turn and self._enable_preemptive_generation: 
                 cascading_metrics_collector.on_stt_interim_end()
 
             if stt_response.metadata and stt_response.metadata.get("turn_resumed"):

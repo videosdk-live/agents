@@ -1,14 +1,14 @@
 # This test script is used to test cascading pipeline.
 import logging
 import aiohttp
-from videosdk.agents import Agent, AgentSession, CascadingPipeline, function_tool, WorkerJob, MCPServerStdio, ConversationFlow, JobContext, RoomOptions
+from videosdk.agents import Agent, AgentSession, CascadingPipeline, function_tool, WorkerJob, ConversationFlow, JobContext, RoomOptions
 from videosdk.plugins.openai import OpenAILLM
 from videosdk.plugins.deepgram import DeepgramSTT
 from videosdk.plugins.silero import SileroVAD
 from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
 from videosdk.plugins.elevenlabs import ElevenLabsTTS
 
-logging.getLogger().setLevel(logging.CRITICAL)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 pre_download_model()
 
 @function_tool
@@ -25,7 +25,6 @@ async def get_weather(
             longitude: The longitude of the location
         """
         print("###Getting weather for", latitude, longitude)
-        # logger.info(f"getting weather for {latitude}, {longitude}")
         url = f"https://api.open-meteo.com/v1/forecast?latitude={latitude}&longitude={longitude}&current=temperature_2m"
         weather_data = {}
         async with aiohttp.ClientSession() as session:
@@ -80,7 +79,7 @@ async def entrypoint(ctx: JobContext):
     conversation_flow = ConversationFlow(agent)
 
     pipeline = CascadingPipeline(
-        stt= DeepgramSTT(),
+        stt=DeepgramSTT(),
         llm=OpenAILLM(),
         tts=ElevenLabsTTS(),
         vad=SileroVAD(),
@@ -95,7 +94,7 @@ async def entrypoint(ctx: JobContext):
     await session.start(wait_for_participant=True, run_until_shutdown=True)
 
 def make_context() -> JobContext:
-    room_options = RoomOptions(room_id="<room_id>", name="Sandbox Agent", playground=True)
+    room_options = RoomOptions(room_id="<room_id>", name="VideoSDK's Cascading Agent", playground=True)
     return JobContext(room_options=room_options)
 
 if __name__ == "__main__":
