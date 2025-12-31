@@ -933,7 +933,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             try:
                 await self._synthesize_with_tts(message)
             finally:
-                cascading_metrics_collector.complete_current_turn()
                 handle._mark_done()
 
     async def process_text_input(self, text: str) -> None:
