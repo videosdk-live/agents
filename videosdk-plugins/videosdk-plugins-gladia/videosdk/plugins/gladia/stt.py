@@ -2,8 +2,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import base64
-from typing import Any
+from typing import Any, List
 import aiohttp
 import numpy as np
 from videosdk.agents import STT, STTResponse, SpeechData, SpeechEventType, global_event_emitter
