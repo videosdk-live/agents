@@ -1,13 +1,11 @@
 import asyncio
 import time
 import traceback
-from aiortc import AudioStreamTrack, MediaStreamTrack, VideoStreamTrack
 from av import VideoFrame, AudioFrame
 from av.audio.resampler import AudioResampler
 import logging
 import numpy as np
 from simli import SimliConfig, SimliClient
-from vsaiortc.mediastreams import MediaStreamError
 from videosdk import CustomVideoTrack, CustomAudioTrack
 
 
@@ -50,7 +48,7 @@ class SimliAudioTrack(CustomAudioTrack):
         """Return next audio frame to VideoSDK."""
         try:
             if self.readyState != "live":
-                raise MediaStreamError
+                raise Exception("Track not live")
             frame = await self.queue.get()
             return frame
 
@@ -115,9 +113,9 @@ class SimliAvatar:
         self.config = config
         self._stream_start_time = None
         self.video_track: SimliVideoTrack | None = None
-        self.video_receiver_track: VideoStreamTrack | None = None
+        self.video_receiver = None
         self.audio_track: SimliAudioTrack | None = None
-        self.audio_receiver_track: AudioStreamTrack | None = None
+        self.audio_receiver = None
         self.run = True
         self._is_speaking = False
         self._avatar_speaking = False
@@ -147,29 +145,33 @@ class SimliAvatar:
 
     async def _initialize_connection(self):
         """Initialize connection with retry logic"""
-        self.simli_client = SimliClient(self.config, True, 0, self.simli_url)
+        self.simli_client = SimliClient(
+            config=self.config,
+            latencyInterval=0,
+            simliURL=self.simli_url,
+            enable_logging=True
+        )
         await self.simli_client.Initialize()
-        while not hasattr(self.simli_client, "audioReceiver"):
-            await asyncio.sleep(0.0001)
-        self._register_track(self.simli_client.audioReceiver)
-        self._register_track(self.simli_client.videoReceiver)
+        while not hasattr(self.simli_client, "audioReceiver") or self.simli_client.audioReceiver is None:
+            await asyncio.sleep(0.001)
+        while not hasattr(self.simli_client, "videoReceiver") or self.simli_client.videoReceiver is None:
+            await asyncio.sleep(0.001)
+        
+        self.audio_receiver = self.simli_client.audioReceiver
+        self.video_receiver = self.simli_client.videoReceiver
+        
+        asyncio.ensure_future(self._process_video_frames())
+        asyncio.ensure_future(self._process_audio_frames())
+        
         self.simli_client.registerSilentEventCallback(self.mark_silent)
         self.simli_client.registerSpeakEventCallback(self.mark_speaking)
-
-    def _register_track(self, track: MediaStreamTrack):
-        if track.kind == "video":
-            self.video_receiver_track: VideoStreamTrack = track
-            asyncio.ensure_future(self._process_video_frames())
-        elif track.kind == "audio":
-            self.audio_receiver_track: AudioStreamTrack = track
-            asyncio.ensure_future(self._process_audio_frames())
 
     async def _process_video_frames(self):
         """Simple video frame processing for real-time playback"""
 
         while self.run and not self._stopping:
             try:
-                frame: VideoFrame = await self.video_receiver_track.recv()
+                frame: VideoFrame = await self.video_receiver.recv()
                 if frame is None:
                     continue
                 self.video_track.add_frame(frame)
@@ -185,7 +187,7 @@ class SimliAvatar:
 
         while self.run and not self._stopping:
             try:
-                frame: AudioFrame = await self.audio_receiver_track.recv()
+                frame: AudioFrame = await self.audio_receiver.recv()
                 if frame is None:
                     logger.warning("Simli: Received None audio frame, continuing...")
                     continue
