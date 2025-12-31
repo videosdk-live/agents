@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 import logging
 import requests
 import sys
+from .playground_manager import PlaygroundManager
 
 if TYPE_CHECKING:
     from .worker import ExecutorType, WorkerPermissions, _default_executor_type
@@ -64,6 +65,7 @@ class RoomOptions:
     avatar: Optional[Any] = None
     join_meeting: Optional[bool] = True
     on_room_error: Optional[Callable[[Any], None]] = None
+    send_analytics_to_pubsub: Optional[bool] = False
     # Session management options
     auto_end_session: bool = True
     session_timeout_seconds: Optional[int] = 5
@@ -286,7 +288,7 @@ class JobContext:
         self._shutdown_callbacks: list[Callable[[], Coroutine[None, None, None]]] = []
         self._is_shutting_down: bool = False
         self.want_console = len(sys.argv) > 1 and sys.argv[1].lower() == "console"
-
+        self.playground_manager: Optional["PlaygroundManager"] = None
     def _set_pipeline_internal(self, pipeline: Any) -> None:
         """Internal method called by pipeline constructors"""
         self._pipeline = pipeline
@@ -601,7 +603,7 @@ class JobContext:
             return None
 
         if self.videosdk_auth:
-            url = "https://api.videosdk.live/v2/rooms"
+            url = f"https://api.videosdk.live/v2/rooms"
             headers = {"Authorization": self.videosdk_auth}
 
             try:
