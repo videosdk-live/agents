@@ -22,6 +22,20 @@ if TYPE_CHECKING:
     
 logger = logging.getLogger(__name__)
 
+class ToolList(list):
+    """
+    Custom list class that supports addition and subtraction for Tool management.
+    """
+    def __add__(self, other):
+        if isinstance(other, list):
+            return ToolList(super().__add__(other))
+        return ToolList(super().__add__([other]))
+
+    def __sub__(self, other):
+        if not isinstance(other, list):
+            other = [other]
+        return ToolList([item for item in self if item not in other])
+
 if 'AgentSession' not in globals():
     from typing import TYPE_CHECKING
     if TYPE_CHECKING:
@@ -75,9 +89,9 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
         )
 
     @property
-    def tools(self) -> List[FunctionTool]:
+    def tools(self) -> ToolList[FunctionTool]:
         """Get the tools for the agent"""
-        return self._tools
+        return ToolList(self._tools)
     
     def register_tools(self) -> None:
         """Internal Method: Register external function tools for the agent"""
@@ -87,7 +101,7 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
 
     def update_tools(self, tools: List[FunctionTool]) -> None:
         """Update the tools for the agent"""
-        self._tools.extend(tools)
+        self._tools = tools
         self._register_class_tools()
         self.register_tools()
     

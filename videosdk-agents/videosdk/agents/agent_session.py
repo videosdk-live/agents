@@ -9,6 +9,7 @@ from .conversation_flow import ConversationFlow
 from .pipeline import Pipeline
 from .metrics import cascading_metrics_collector, realtime_metrics_collector
 from .realtime_pipeline import RealTimePipeline
+from .cascading_pipeline import CascadingPipeline
 from .utils import get_tool_info, UserState, AgentState
 from .utterance_handle import UtteranceHandle 
 import time
@@ -18,6 +19,7 @@ from .event_bus import global_event_emitter
 from .background_audio import BackgroundAudioHandler,BackgroundAudioHandlerConfig
 from .dtmf_handler import DTMFHandler
 from .voice_mail_detector import VoiceMailDetector
+from .playground_manager import PlaygroundManager
 import logging
 import av
 logger = logging.getLogger(__name__)
@@ -70,7 +72,9 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         self.dtmf_handler = dtmf_handler
         self.voice_mail_detector = voice_mail_detector
         self._is_voice_mail_detected = False
-
+        self._playground_manager = None
+        self._playground = False
+        self._send_analytics_to_pubsub = False
 
         if hasattr(self.pipeline, 'set_agent'):
             self.pipeline.set_agent(self.agent)
@@ -102,7 +106,12 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             if job_ctx:
                 self._job_context = job_ctx
                 job_ctx.add_shutdown_callback(self.close)
-        except Exception:
+            
+            self._playground = job_ctx.room_options.playground
+            self._send_analytics_to_pubsub = job_ctx.room_options.send_analytics_to_pubsub
+
+        except Exception as e:
+            logger.error(f"AgentSession: Error in session initialization: {e}")
             self._job_context = None
 
     @property
@@ -256,6 +265,15 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
 
         if self.dtmf_handler:
             await self.dtmf_handler.start()
+
+        if self._playground or self._send_analytics_to_pubsub:
+            job_ctx = get_current_job_context()
+            self.playground_manager = PlaygroundManager(job_ctx)
+            if isinstance(self.pipeline, RealTimePipeline):
+                realtime_metrics_collector.set_playground_manager(self.playground_manager)
+
+            elif isinstance(self.pipeline, CascadingPipeline):
+                cascading_metrics_collector.set_playground_manager(self.playground_manager)
 
         if isinstance(self.pipeline, RealTimePipeline):
             await realtime_metrics_collector.start_session(self.agent, self.pipeline)

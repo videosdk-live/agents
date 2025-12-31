@@ -216,6 +216,16 @@ class GoogleLLM(LLM):
                 candidate = response.candidates[0]
                 if not candidate.content.parts:
                     continue
+                
+                usage = None
+                if response.usage_metadata:
+                    usage = {
+                        "prompt_tokens": response.usage_metadata.prompt_token_count,
+                        "completion_tokens": response.usage_metadata.candidates_token_count,
+                        "total_tokens": response.usage_metadata.total_token_count,
+                        # Gemini uses cached_content_token_count if caching is enabled
+                        "prompt_cached_tokens": getattr(response.usage_metadata, 'cached_content_token_count', 0)
+                    }
 
                 for part in candidate.content.parts:
                     if part.function_call:
@@ -228,15 +238,15 @@ class GoogleLLM(LLM):
                         yield LLMResponse(
                             content="",
                             role=ChatRole.ASSISTANT,
-                            metadata={"function_call": function_call}
+                            metadata={"function_call": function_call, "usage": usage}
                         )
                     elif part.text:
                         current_content += part.text
                         if conversational_graph:
                             for content_chunk in conversational_graph.stream_conversational_graph_response(current_content, streaming_state):
-                                yield LLMResponse(content=content_chunk, role=ChatRole.ASSISTANT)
+                                yield LLMResponse(content=content_chunk, role=ChatRole.ASSISTANT, metadata={"usage": usage})
                         else:
-                            yield LLMResponse(content=part.text, role=ChatRole.ASSISTANT)
+                            yield LLMResponse(content=part.text, role=ChatRole.ASSISTANT, metadata={"usage": usage})
             
             if current_content and not self._cancelled:
                 if conversational_graph:
@@ -245,12 +255,13 @@ class GoogleLLM(LLM):
                         yield LLMResponse(
                             content="",
                             role=ChatRole.ASSISTANT,
-                            metadata=parsed_json
+                            metadata={"graph_response":parsed_json, "usage": usage}
                         )
                     except json.JSONDecodeError:
                         yield LLMResponse(
                             content=current_content,
-                            role=ChatRole.ASSISTANT
+                            role=ChatRole.ASSISTANT,
+                            metadata={"usage": usage}
                         )
                 else:
                     pass
