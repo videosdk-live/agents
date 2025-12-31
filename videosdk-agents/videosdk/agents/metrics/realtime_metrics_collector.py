@@ -8,6 +8,8 @@ from dataclasses import asdict
 from .models import RealtimeTurnData, TimelineEvent
 from .analytics import AnalyticsClient
 from .traces_flow import TracesFlowManager
+from ..playground_manager import PlaygroundManager
+
 import logging
 
 logger = logging.getLogger(__name__)
@@ -34,7 +36,7 @@ class RealtimeMetricsCollector:
         self.agent_speech_end_timer: Optional[asyncio.TimerHandle] = None
         self.analytics_client = AnalyticsClient()
         self.traces_flow_manager: Optional[TracesFlowManager] = None
-
+        self.playground: bool = False
     def set_session_id(self, session_id: str):
         """Set the session ID for metrics tracking"""
         self.analytics_client.set_session_id(session_id)
@@ -116,6 +118,7 @@ class RealtimeMetricsCollector:
             await self._start_new_interaction()
         elif self.current_turn.user_speech_start_time is not None and self.current_turn.user_speech_end_time is None:
             self.current_turn.user_speech_end_time = time.perf_counter()
+
             await self.end_timeline_event("user_speech")
 
         if self.current_turn and self.current_turn.agent_speech_start_time is None:
@@ -175,6 +178,8 @@ class RealtimeMetricsCollector:
             return
 
         self.current_turn.compute_latencies()
+        if self.playground:
+            self.playground_manager.send_realtime_metrics(metrics=self.current_turn, full_turn_data=True)
         if not hasattr(self, 'traces_flow_manager') or self.traces_flow_manager is None:
             try:
                 from . import cascading_metrics_collector as cascading_metrics_collector
@@ -275,5 +280,9 @@ class RealtimeMetricsCollector:
 
     def finalize_session(self) -> None:
         asyncio.run_coroutine_threadsafe(self._start_new_interaction(), asyncio.get_event_loop())
+    
+    def set_playground_manager(self, manager: Optional["PlaygroundManager"]):
+        self.playground = True
+        self.playground_manager = manager
 
 realtime_metrics_collector = RealtimeMetricsCollector() 
