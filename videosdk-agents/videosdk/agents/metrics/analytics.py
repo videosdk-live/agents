@@ -38,10 +38,12 @@ class AnalyticsClient:
         current_session_id = self.session_id or session_id_from_payload
 
         if not current_session_id:
+            logger.error("Failed sending session data : No session ID")
             return
 
         auth_token = os.getenv("VIDEOSDK_AUTH_TOKEN")
         if not auth_token:
+            logger.error("Failed sending session data : No auth token")
             return
 
         url = f"{self.base_url}/v2/sessions/{current_session_id}/agent-analytics"
