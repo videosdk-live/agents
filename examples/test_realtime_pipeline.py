@@ -1,5 +1,4 @@
 # This test script is used to test realtime pipeline.
-import asyncio
 import logging
 from videosdk.agents import Agent, AgentSession, RealTimePipeline,WorkerJob, JobContext, RoomOptions
 from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig
@@ -48,10 +47,8 @@ async def entrypoint(ctx: JobContext):
     await session.start(wait_for_participant=True, run_until_shutdown=True)
 
 def make_context() -> JobContext:
-    room_options = RoomOptions(room_id="<room_id>", name="Sandbox Agent", playground=True) 
-    return JobContext(
-        room_options=room_options
-        )
+    room_options = RoomOptions(room_id="<room_id>", name="VideoSDK's Realtime Agent", playground=True) 
+    return JobContext(room_options=room_options)
 
 
 if __name__ == "__main__":
