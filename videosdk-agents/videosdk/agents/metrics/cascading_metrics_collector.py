@@ -375,7 +375,7 @@ class CascadingMetricsCollector:
         self.data.user_speech_end_time = time.perf_counter()
         
         if self.data.current_turn and self.data.current_turn.user_speech_start_time:
-            self.data.current_turn.user_speech_end_time = time.perf_counter()
+            self.data.current_turn.user_speech_end_time = self.data.user_speech_end_time
             self.data.current_turn.user_speech_duration = self._round_latency(self.data.current_turn.user_speech_end_time - self.data.current_turn.user_speech_start_time)
             self._end_timeline_event("user_speech", self.data.user_speech_end_time)
             logger.info(f"user speech duration: {self.data.current_turn.user_speech_duration}ms")
@@ -459,7 +459,6 @@ class CascadingMetricsCollector:
             if self.data.current_turn:
                 self.data.current_turn.llm_end_time = llm_end_time
                 self.data.current_turn.llm_duration = self._round_latency(llm_duration)
-                self.data.current_turn.llm_latency = self.data.current_turn.llm_duration
                 logger.info(f"llm duration: {self.data.current_turn.llm_duration}ms")
 
                 if self.playground:
@@ -488,7 +487,6 @@ class CascadingMetricsCollector:
             if self.data.current_turn:
                 self.data.current_turn.tts_end_time = now
                 self.data.current_turn.ttfb = self._round_latency((self.data.current_turn.tts_end_time - self.data.tts_start_time))
-                self.data.current_turn.tts_latency = self.data.current_turn.ttfb
                 logger.info(f"tts ttfb: {self.data.current_turn.ttfb}ms")
 
                 if self.playground:
@@ -523,7 +521,6 @@ class CascadingMetricsCollector:
         """Set the user transcript for the current turn and update timeline"""
         if self.data.current_turn:
             self.data.current_turn.user_speech = transcript
-            self.data.current_turn.stt_transcript = transcript
             logger.info(f"user input speech: {transcript}")
             user_speech_events = [event for event in self.data.current_turn.timeline 
                                 if event.event_type == "user_speech"]

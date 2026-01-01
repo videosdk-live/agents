@@ -174,8 +174,8 @@ class EvalLogger:
         
         METRIC_CONFIG = {
             "stt_latency": {"label": "STT (ms)", "key": "stt_latency", "color": Colors.YELLOW},
-            "llm_latency": {"label": "LLM (ms)", "key": "llm_latency", "color": Colors.MAGENTA},
-            "tts_latency": {"label": "TTS (ms)", "key": "tts_latency", "color": Colors.BLUE},
+            "llm_ttft": {"label": "LLM (ms)", "key": "llm_ttft", "color": Colors.MAGENTA},
+            "ttfb": {"label": "TTS (ms)", "key": "ttfb", "color": Colors.BLUE},
             "e2e_latency": {"label": "E2E (ms)", "key": "e2e_latency", "color": Colors.GREEN},
         }
         

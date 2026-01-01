@@ -59,7 +59,6 @@ class EvalConversationFlow(ConversationFlow):
         if hasattr(self, '_interruption_check_task') and self._interruption_check_task and not self._interruption_check_task.done():
             self._interruption_check_task.cancel()
             
-        await super().cleanup()
 
     async def _generate_and_synthesize_response(self, user_text: str, handle, wait_for_authorization: bool = False) -> None:
         is_allowed_mock = False
@@ -68,6 +67,8 @@ class EvalConversationFlow(ConversationFlow):
         self.generation_done_event.clear()
 
         if self.enable_llm_processing or is_allowed_mock:
+            if cascading_metrics_collector.data.current_turn:
+                cascading_metrics_collector.data.current_turn.llm_input = user_text
             eval_logger.component_start("LLM")
             await super()._generate_and_synthesize_response(user_text, handle, wait_for_authorization)
         else:
@@ -75,8 +76,8 @@ class EvalConversationFlow(ConversationFlow):
             if not handle.done():
                 handle._mark_done()
         
-        self.generation_done_event.set()
-
+        if not self.allowed_mock_input or is_allowed_mock or self.enable_llm_processing:
+             self.generation_done_event.set()
     async def _synthesize_with_tts(self, response_iterator) -> None:
         self.llm_done_event.set()
         eval_logger.component_end("LLM")

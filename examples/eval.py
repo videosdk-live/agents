@@ -59,7 +59,7 @@ eval = Evaluation(
 # senario 1
 eval.add_turn(
     EvalTurn(
-        stt=STTComponent.deepgramv2(
+        stt=STTComponent.deepgram(
             STTEvalConfig(file_path="./sample.wav") 
         ),
         llm=LLMComponent.google(

@@ -2,8 +2,8 @@ from enum import Enum
 
 class EvalMetric(Enum):
     STT_LATENCY = "stt_latency"
-    LLM_LATENCY = "llm_latency"
-    TTS_LATENCY = "tts_latency"
+    LLM_LATENCY = "llm_ttft"
+    TTS_LATENCY = "ttfb"
     END_TO_END_LATENCY = "e2e_latency"
 
 class LLMAsJudgeMetric(Enum):

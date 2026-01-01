@@ -58,7 +58,7 @@ class EvaluationResult:
 
             for key, value in metrics.items():
                 is_latency_metric = (
-                    key.startswith(("stt_duration", "llm_duration", "tts_duration", "e2e_latency"))
+                    key.startswith(("stt_latency", "llm_ttft", "ttfb", "e2e_latency"))
                     or "time_to" in key
                 )
                 if is_latency_metric:
@@ -200,8 +200,8 @@ class Evaluation:
                 user_speech = metrics.get("user_speech")
                 if user_speech and user_speech != llm_input:
                     stt_transcript = user_speech
-            
-            stt_transcript = stt_transcript or "N/A"
+                else:
+                    stt_transcript = "N/A"
             
             # Get LLM response
             llm_response = res.get("response_text", "") or "N/A"
@@ -329,9 +329,14 @@ class Evaluation:
                         await flow.send_audio_delta(chunk)
                         await asyncio.sleep(0.075)
                 
+                if hasattr(flow.stt, 'flush'):
+                    await flow.stt.flush()
+                
+                cascading_metrics_collector.on_user_speech_end()
+                
                 if should_suppress_llm_during_stt:
                     eval_logger.log("Waiting for STT events to settle (draining buffer)...")
-                    await asyncio.sleep(5.0)
+                    await asyncio.sleep(15.0)
 
                     flow.allowed_mock_input = llm_mock_input
                     eval_logger.log(f"STT skipped for LLM. Processing mock input: {llm_mock_input}")
