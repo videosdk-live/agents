@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import Any, Callable, Optional, Literal, Awaitable
 import asyncio
 import uuid
-
+from dataclasses import asdict
 from .agent import Agent
 from .llm.chat_context import ChatRole
 from .conversation_flow import ConversationFlow
@@ -20,6 +20,7 @@ from .background_audio import BackgroundAudioHandler,BackgroundAudioHandlerConfi
 from .dtmf_handler import DTMFHandler
 from .voice_mail_detector import VoiceMailDetector
 from .playground_manager import PlaygroundManager
+from .metrics.log_analytics import get_details
 import logging
 import av
 logger = logging.getLogger(__name__)
@@ -106,9 +107,13 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             if job_ctx:
                 self._job_context = job_ctx
                 job_ctx.add_shutdown_callback(self.close)
-            
-            self._playground = job_ctx.room_options.playground
-            self._send_analytics_to_pubsub = job_ctx.room_options.send_analytics_to_pubsub
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = None
+                get_details(asdict(job_ctx.room_options), loop=loop)
+                self._playground = job_ctx.room_options.playground
+                self._send_analytics_to_pubsub = job_ctx.room_options.send_analytics_to_pubsub
 
         except Exception as e:
             logger.error(f"AgentSession: Error in session initialization: {e}")
