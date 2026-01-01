@@ -7,6 +7,7 @@ from .integration import (
     create_log,
 )
 from .realtime_metrics_collector import RealtimeMetricsCollector
+from .log_analytics import attach_analytics
 
 cascading_metrics_collector = CascadingMetricsCollector()
 realtime_metrics_collector = RealtimeMetricsCollector()
@@ -23,4 +24,5 @@ __all__ = [
     'create_span',
     'complete_span',
     'create_log',
+    'attach_analytics',
 ]
