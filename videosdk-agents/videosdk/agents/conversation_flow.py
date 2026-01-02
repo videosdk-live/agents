@@ -7,7 +7,7 @@ import json
 import asyncio
 from .event_emitter import EventEmitter
 from .stt.stt import STT, STTResponse
-from .llm.llm import LLM
+from .llm.llm import LLM, ResponseChunk
 from .llm.chat_context import ChatRole, ImageContent
 from .utils import is_function_tool, get_tool_info
 from .tts.tts import TTS
@@ -676,11 +676,19 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                             await q.put(None)
                             return "".join(response_parts)
 
-                        if chunk.content:
-                            response_parts.append(chunk.content)
-                            await q.put(chunk.content)
-                        if chunk.metadata:
-                            metadata = chunk.metadata
+                        content = chunk
+                        chunk_metadata = None
+
+                        if hasattr(chunk, "content"):
+                            content = chunk.content
+                            if hasattr(chunk, "metadata"):
+                                chunk_metadata = chunk.metadata
+
+                        if content:
+                            response_parts.append(content)
+                            await q.put(content)
+                        if chunk_metadata:
+                            metadata = chunk_metadata
                         
                         self._partial_response = "".join(response_parts)
 
@@ -921,7 +929,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                                 if self._is_interrupted:
                                     break
                                 if new_resp:
-                                    yield new_resp
+                                    yield ResponseChunk(new_resp.content, new_resp.metadata, new_resp.role)
                         except Exception as e:
                             logger.error(
                                 f"Error executing function {func_call['name']}: {e}")
@@ -932,7 +940,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                                 agent_session._is_executing_tool = False
                 else:
                     if llm_chunk_resp:
-                        yield llm_chunk_resp
+                        yield ResponseChunk(llm_chunk_resp.content, llm_chunk_resp.metadata, llm_chunk_resp.role)
 
             if not self._is_interrupted:
                 cascading_metrics_collector.on_llm_complete()

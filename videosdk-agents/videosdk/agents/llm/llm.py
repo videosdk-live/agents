@@ -43,6 +43,17 @@ class LLMResponse(BaseModel):
     metadata: Optional[dict[str, Any]] = None
 
 
+class ResponseChunk(str):
+    def __new__(cls, content: str, metadata: dict[str, Any] | None = None, role: str | None = None):
+        obj = super().__new__(cls, content or "")
+        obj.metadata = metadata
+        obj.role = role
+        return obj
+
+    @property
+    def content(self) -> str:
+        return str(self)
+
 class LLM(EventEmitter[Literal["error"]]):
     """
     Base class for LLM implementations.
