@@ -374,10 +374,11 @@ class CascadingMetricsCollector:
         self.data.is_user_speaking = False
         self.data.user_speech_end_time = time.perf_counter()
         
-        if self.data.current_turn:
+        if self.data.current_turn and self.data.current_turn.user_speech_start_time:
             self.data.current_turn.user_speech_end_time = self.data.user_speech_end_time
             self.data.current_turn.user_speech_duration = self._round_latency(self.data.current_turn.user_speech_end_time - self.data.current_turn.user_speech_start_time)
             self._end_timeline_event("user_speech", self.data.user_speech_end_time)
+            logger.info(f"user speech duration: {self.data.current_turn.user_speech_duration}ms")
 
             if self.playground:
                 self.playground_manager.send_cascading_metrics(metrics={"user_speech_duration": self.data.current_turn.user_speech_duration})
@@ -465,6 +466,11 @@ class CascadingMetricsCollector:
                 
             self.data.llm_start_time = None
     
+    def set_llm_input(self, text: str):
+        """Record the actual text sent to LLM"""
+        if self.data.current_turn:
+            self.data.current_turn.llm_input = text
+
     def on_tts_start(self):
         """Called when TTS processing starts"""
         self.data.tts_start_time = time.perf_counter()

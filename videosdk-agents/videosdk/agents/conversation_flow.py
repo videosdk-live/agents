@@ -917,7 +917,11 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                                     "call_id", f"call_{int(time.time())}")
                             )
 
-                            async for new_resp in self.llm.chat(chat_context):
+                            async for new_resp in self.llm.chat(
+                                chat_context,
+                                tools=self.agent.tools,
+                                conversational_graph=self.conversational_graph if self.conversational_graph else None
+                            ):
                                 if self._is_interrupted:
                                     break
                                 if new_resp:
