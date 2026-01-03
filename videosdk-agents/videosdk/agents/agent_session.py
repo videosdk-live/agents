@@ -106,9 +106,8 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             if job_ctx:
                 self._job_context = job_ctx
                 job_ctx.add_shutdown_callback(self.close)
-            
-            self._playground = job_ctx.room_options.playground
-            self._send_analytics_to_pubsub = job_ctx.room_options.send_analytics_to_pubsub
+                self._playground = job_ctx.room_options.playground
+                self._send_analytics_to_pubsub = job_ctx.room_options.send_analytics_to_pubsub
 
         except Exception as e:
             logger.error(f"AgentSession: Error in session initialization: {e}")
