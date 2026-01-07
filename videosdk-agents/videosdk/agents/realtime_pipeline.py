@@ -303,7 +303,6 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         self.avatar = None
         self.denoise = None
         self._current_utterance_handle = None
-        self.model.current_utterance = None
         if self._vmd_check_task and not self._vmd_check_task.done():
             self._vmd_check_task.cancel()
         self.voice_mail_detector = None
