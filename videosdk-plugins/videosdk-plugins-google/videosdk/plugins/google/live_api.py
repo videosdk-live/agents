@@ -494,7 +494,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                 continue
 
                             if model_turn := server_content.model_turn:
-                                if self._user_speaking:
+                                if not self._agent_speaking and self._user_speaking:
                                     await realtime_metrics_collector.set_user_speech_end()
                                     self._user_speaking = False
                                 if accumulated_input_text:
