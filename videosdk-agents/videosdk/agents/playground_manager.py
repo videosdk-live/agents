@@ -24,7 +24,10 @@ class PlaygroundManager:
             message={"type": "cascading", "metrics": metrics, "full_turn_data": full_turn_data}
         )
 
-        asyncio.create_task(self.job_context.room.publish_to_pubsub(publish_config))
+        if self.job_context.room:
+            asyncio.create_task(self.job_context.room.publish_to_pubsub(publish_config))
+        else:
+            logger.debug("Cannot send cascading metrics: room is not available")
 
     def send_realtime_metrics(self, metrics: dict, full_turn_data: bool = False):
         """Sends realtime metrics to the playground.
@@ -40,4 +43,5 @@ class PlaygroundManager:
             message={"type": "realtime", "metrics": metrics, "full_turn_data": full_turn_data}
         )
 
-        asyncio.create_task(self.job_context.room.publish_to_pubsub(publish_config))
+        if self.job_context.room:
+            asyncio.create_task(self.job_context.room.publish_to_pubsub(publish_config))
