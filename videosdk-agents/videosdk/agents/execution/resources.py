@@ -57,6 +57,10 @@ class ProcessResource(BaseResource):
             daemon=True,
         )
         self.process.start()
+        child_pid = self.process.pid
+        logger.info(
+            f"New process started | resource_id={self.resource_id} | pid={self.process.pid}"
+        )
 
         # Wait for process to be ready
         timeout = self.config.get("initialize_timeout", 10.0)
@@ -88,10 +92,11 @@ class ProcessResource(BaseResource):
             raise RuntimeError(f"Process {self.resource_id} is not ready")
 
         # Send task to process
+        # Note: entrypoint and args must be picklable
         task_data = {
             "task_id": task_id,
             "config": config,
-            "entrypoint_name": entrypoint.__name__,
+            "entrypoint": entrypoint,
             "args": args,
             "kwargs": kwargs,
         }
@@ -152,6 +157,10 @@ class ProcessResource(BaseResource):
     ):
         """Worker function that runs in the process."""
         try:
+            # Set up event loop for this process
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
             logger.info(f"Process worker {resource_id} started")
 
             # Signal ready
@@ -170,12 +179,19 @@ class ProcessResource(BaseResource):
                     if not task_queue.empty():
                         task_data = task_queue.get_nowait()
                         task_id = task_data["task_id"]
+                        entrypoint = task_data["entrypoint"]
+                        args = task_data.get("args", ())
+                        kwargs = task_data.get("kwargs", {})
+
+                        logger.info(f"Executing task {task_id} on resource {resource_id}")
 
                         try:
                             # Execute the task
-                            # Note: In a real implementation, you'd need to serialize/deserialize the entrypoint
-                            # For now, we'll use a simple approach
-                            result = {"status": "completed", "task_id": task_id}
+                            if asyncio.iscoroutinefunction(entrypoint):
+                                result = loop.run_until_complete(entrypoint(*args, **kwargs))
+                            else:
+                                result = entrypoint(*args, **kwargs)
+
                             result_queue.put(
                                 {
                                     "task_id": task_id,
@@ -184,6 +200,7 @@ class ProcessResource(BaseResource):
                                 }
                             )
                         except Exception as e:
+                            logger.error(f"Task execution failed: {e}")
                             result_queue.put(
                                 {"task_id": task_id, "status": "error", "error": str(e)}
                             )
@@ -193,8 +210,24 @@ class ProcessResource(BaseResource):
                 except Exception as e:
                     logger.error(f"Error in process worker {resource_id}: {e}")
                     time.sleep(1.0)
-
+            
             logger.info(f"Process worker {resource_id} shutting down")
+            
+            # Clean up tasks
+            if loop and not loop.is_closed():
+                try:
+                    # Cancel all running tasks
+                    tasks = asyncio.all_tasks(loop)
+                    for task in tasks:
+                        task.cancel()
+                    
+                    if tasks:
+                        # Allow tasks to finish cancellation
+                        loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=True))
+                        
+                    loop.close()
+                except Exception as e:
+                    logger.error(f"Error closing process worker loop: {e}")
 
         except Exception as e:
             logger.error(f"Fatal error in process worker {resource_id}: {e}")

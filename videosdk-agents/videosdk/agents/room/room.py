@@ -297,12 +297,11 @@ class VideoSDKHandler(BaseTransportHandler):
             data: Meeting leave event data from VideoSDK.
         """
         logger.info(f"Meeting Left: {data}")
-        self._cancel_session_end_task()
         
         if hasattr(self, 'participants_data') and self.participants_data:
             self.participants_data.clear()
-        
-        self._session_ended = True
+
+        asyncio.create_task(self._end_session("meeting_left"))
 
     def _is_agent_participant(self, participant: Participant) -> bool:
         """
@@ -716,7 +715,8 @@ class VideoSDKHandler(BaseTransportHandler):
         Args:
             pubsub_config (PubSubPublishConfig): Configuration for pubsub publishing.
         """
-        await self.meeting.pubsub.publish(pubsub_config)
+        if self.meeting:
+         await self.meeting.pubsub.publish(pubsub_config)
 
     async def upload_file(self, base64_data, file_name):
         """

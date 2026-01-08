@@ -1006,7 +1006,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         if self.user_speech_callback:   
             self.user_speech_callback()
         
-        if self.agent.session:
+        if self.agent and self.agent.session:
             self.agent.session._emit_user_state(UserState.SPEAKING)
 
     def on_speech_stopped_stt(self, event_data: Any) -> None:
@@ -1123,7 +1123,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             utterance = self.agent.session.current_utterance if self.agent and self.agent.session else None
             if utterance and not utterance.is_interruptible:
                 logger.info("Interruption is disabled for the current utterance. Not interrupting.")
-                if self.agent.session:
+                if self.agent and self.agent.session:
                     self.agent.session._emit_user_state(UserState.SPEAKING)
                 return
 
@@ -1142,7 +1142,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 else:
                     await self._interrupt_tts()
             
-            if self.agent.session:
+            if self.agent and self.agent.session:
                 self.agent.session._emit_user_state(UserState.SPEAKING)
 
     async def _interrupt_tts(self) -> None:
@@ -1157,7 +1157,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             else:
                 logger.info("Cannot interrupt non-interruptible utterance in _interrupt_tts")
 
-        if self.agent.session and self.agent.session.is_background_audio_enabled:
+        if self.agent and self.agent.session and self.agent.session.is_background_audio_enabled:
             await self.agent.session.stop_thinking_audio()
 
         if self._wait_timer:
@@ -1205,7 +1205,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
         cascading_metrics_collector.on_user_speech_end()
         
-        if self.agent.session:
+        if self.agent and self.agent.session:
             self.agent.session._emit_user_state(UserState.IDLE)
 
     async def _synthesize_with_tts(self, response_gen: AsyncIterator[str] | str) -> None:
@@ -1219,7 +1219,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             self.agent.session._pause_wake_up_timer()
 
         if not self.audio_track:
-            if hasattr(self.agent.session, "pipeline") and hasattr(self.agent.session.pipeline, "audio_track"):
+            if self.agent and self.agent.session and hasattr(self.agent.session, "pipeline") and hasattr(self.agent.session.pipeline, "audio_track"):
                 self.audio_track = self.agent.session.pipeline.audio_track
             else:
                 logger.warning("[ConversationFlow] Audio track not found in pipeline — last audio callback will be skipped.")
@@ -1229,17 +1229,17 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             self.audio_track.enable_audio_input(manual_control=True)
 
         async def on_first_audio_byte():
-            if self.agent.session and self.agent.session.is_background_audio_enabled:
+            if self.agent and self.agent.session and self.agent.session.is_background_audio_enabled:
                 await self.agent.session.stop_thinking_audio()
             cascading_metrics_collector.on_tts_first_byte()
             cascading_metrics_collector.on_agent_speech_start()
 
-            if self.agent.session:
+            if self.agent and self.agent.session:
                 self.agent.session._emit_agent_state(AgentState.SPEAKING)
                 self.agent.session._emit_user_state(UserState.LISTENING)
 
         async def on_last_audio_byte():
-            if self.agent.session:
+            if self.agent and self.agent.session:
                 self.agent.session._emit_agent_state(AgentState.IDLE)
                 self.agent.session._emit_user_state(UserState.IDLE)
             logger.info("[TTS] Last audio byte processed — Agent and User set to IDLE")
@@ -1276,7 +1276,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             await self.tts.synthesize(counting_wrapper(response_iterator))
 
         finally:
-            if self.agent.session and self.agent.session.is_background_audio_enabled:
+            if self.agent and self.agent.session and self.agent.session.is_background_audio_enabled:
                 await self.agent.session.stop_thinking_audio()
 
             if self.agent and self.agent.session:

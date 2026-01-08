@@ -61,7 +61,7 @@ class ResourceManager:
 
         # Start resource creation
         self._resource_creation_task = asyncio.create_task(
-            self._resource_creation_loop()
+            self._resource_lifecycle_loop()
         )
 
         # Initialize initial resources
@@ -149,31 +149,60 @@ class ResourceManager:
         logger.info(f"Created {resource_type.value} resource: {resource_id}")
         return resource
 
-    async def _resource_creation_loop(self):
-        """Background loop for creating resources as needed."""
+    async def _resource_lifecycle_loop(self):
+        """Background loop for managing resource lifecycle (creation and cleanup)."""
         # Wait a bit longer before starting the loop to allow initial resources to stabilize
-        await asyncio.sleep(10.0)
+        await asyncio.sleep(5.0)
 
         while not self._shutdown:
             try:
-                # Check if we need more resources
-                available_count = len([r for r in self.resources if r.is_available])
+                # Group resources by status
+                available_resources = [r for r in self.resources if r.is_available]
+                active_resources = [r for r in self.resources if not r.is_available]
+                
+                available_count = len(available_resources)
                 total_count = len(self.resources)
-
+                
+                # S C A L E   U P
                 # Create more resources if needed
                 if (
                     available_count < self.config.num_idle_resources
                     and total_count < self.config.max_resources
                 ):
                     logger.info(
-                        f"Creating additional {self.config.resource_type.value} resource"
+                        f"Scaling up: Creating additional {self.config.resource_type.value} resource. "
+                        f"Available: {available_count}, Target Idle: {self.config.num_idle_resources}"
                     )
                     await self._create_resource(self.config.resource_type)
 
-                await asyncio.sleep(10.0)  # Check every 10 seconds instead of 5
+                # S C A L E   D O W N
+                # Remove excess idle resources
+                elif available_count > self.config.num_idle_resources:
+                    # Determine how many to remove
+                    excess_count = available_count - self.config.num_idle_resources
+                    
+                    # Sort by last heartbeat (approximate for idle time) or just take from end
+                    # We want to keep resources that might be "warm", but really we just need to reduce count.
+                    # Taking from the front of the list implies removing older resources if we append new ones.
+                    
+                    resources_to_remove = available_resources[:excess_count]
+                    
+                    if resources_to_remove:
+                        logger.info(
+                            f"Scaling down: Removing {len(resources_to_remove)} excess idle resources. "
+                            f"Available: {available_count}, Target Idle: {self.config.num_idle_resources}"
+                        )
+                        
+                        for resource in resources_to_remove:
+                            if resource in self.resources:
+                                self.resources.remove(resource)
+                                # Shutdown in background to not block loop
+                                asyncio.create_task(resource.shutdown())
+
+                await asyncio.sleep(5.0)  # Check every 5 seconds
 
             except Exception as e:
-                logger.error(f"Error in resource creation loop: {e}")
+                logger.error(f"Error in resource lifecycle loop: {e}")
                 await asyncio.sleep(5.0)
 
     async def _health_check_loop(self):
