@@ -18,7 +18,14 @@ from .execution import (
     TaskType,
     TaskExecutor,
 )
-from .job import JobContext, RoomOptions, JobAcceptArguments, RunningJobInfo
+from .job import (
+    JobContext,
+    RoomOptions,
+    JobAcceptArguments,
+    RunningJobInfo,
+    _set_current_job_context,
+    _reset_current_job_context,
+)
 from .backend import (
     BackendConnection,
     WorkerMessage,
@@ -39,6 +46,25 @@ if sys.platform.startswith("win"):
     _default_executor_type = ExecutorType.THREAD
 else:
     _default_executor_type = ExecutorType.PROCESS
+
+
+async def _execute_job_entrypoint(
+    entrypoint: Callable,
+    room_options: RoomOptions,
+    metadata: Dict[str, Any],
+):
+    """Execute job entrypoint in a separate process/thread."""
+    # Create job context
+    ctx = JobContext(room_options=room_options, metadata=metadata)
+
+    # Set context var
+    token = _set_current_job_context(ctx)
+    try:
+        # Execute entrypoint
+        await entrypoint(ctx)
+    finally:
+        _reset_current_job_context(token)
+
 
 
 class WorkerType(Enum):
@@ -758,51 +784,63 @@ class Worker:
             )
             await self.backend_connection.send_message(job_update)
 
-            # Set up session end callback BEFORE executing entrypoint
-            # This ensures the callback is set up even if entrypoint fails
-            self.setup_session_end_callback(job_context, assignment.job_id)
-            logger.info(f"Session end callback set up for job {assignment.job_id}")
+            # Execute the job using the process manager
+            logger.info(f"Executing job {assignment.job_id} via process manager")
 
-            # Set up meeting event handlers to ensure proper event handling
-            self.setup_meeting_event_handlers(job_context, assignment.job_id)
-            logger.info(f"Meeting event handlers set up for job {assignment.job_id}")
-
-            # Execute the job using the worker's entrypoint function
-            logger.info(f"Executing job {assignment.job_id} with entrypoint function")
+            if not self.process_manager:
+                raise RuntimeError("Task executor not initialized")
 
             try:
-                # Set the current job context so pipeline auto-registration works
-                from .job import _set_current_job_context, _reset_current_job_context
-
-                token = _set_current_job_context(job_context)
-                try:
-                    # Execute the entrypoint function
-                    await self.options.entrypoint_fnc(job_context)
-                    logger.info(
-                        f"Entrypoint function completed for job {assignment.job_id}"
-                    )
-                finally:
-                    pass
-            except Exception as entrypoint_error:
-                logger.error(
-                    f"Entrypoint function failed for job {assignment.job_id}: {entrypoint_error}"
+                # Execute in separate process/thread
+                # Pass arguments positionally to ensure they are captured by *args in TaskExecutor
+                timeout_val = (
+                    assignment.timeout
+                    if hasattr(assignment, "timeout") and assignment.timeout
+                    else 3600.0
                 )
-                # Don't remove the job from _current_jobs here - let the session end callback handle it
-                # The job should remain active until the session actually ends
+                
+                result = await self.process_manager.execute(
+                    _execute_job_entrypoint,       # entrypoint
+                    TaskType.JOB,                  # task_type
+                    timeout_val,                   # timeout
+                    3,                             # retry_count
+                    0,                             # priority
+                    self.options.entrypoint_fnc,   # arg1
+                    room_options,                  # arg2
+                    assignment.metadata,           # arg3
+                )
 
-                # Send error update but keep job active
+                logger.info(f"Job {assignment.job_id} execution completed: {result.status}")
+
+                if result.status.value == "completed":
+                    final_update = JobUpdate(
+                        job_id=assignment.job_id,
+                        status="completed",
+                    )
+                    await self.backend_connection.send_message(final_update)
+                else:
+                    final_update = JobUpdate(
+                        job_id=assignment.job_id,
+                        status="failed",
+                        error=result.error or "Unknown error during execution",
+                    )
+                    await self.backend_connection.send_message(final_update)
+
+            except Exception as execution_error:
+                logger.error(
+                    f"Execution failed for job {assignment.job_id}: {execution_error}"
+                )
                 error_update = JobUpdate(
                     job_id=assignment.job_id,
-                    status="error",
-                    error=f"Entrypoint failed: {entrypoint_error}",
+                    status="failed",
+                    error=str(execution_error),
                 )
                 await self.backend_connection.send_message(error_update)
 
-            # The job should remain in _current_jobs until the session ends
-            # This ensures the registry sees the correct load and job count
-            logger.info(
-                f"Job {assignment.job_id} remains active in worker's current jobs: {len(self._current_jobs)} total jobs"
-            )
+            self._current_jobs.pop(assignment.job_id, None)
+            logger.info(f"Removed job {assignment.job_id} from current jobs")
+
+            await self._send_immediate_status_update()
 
         except Exception as e:
             logger.error(f"Error launching job {assignment.job_id}: {e}")
