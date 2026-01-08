@@ -494,7 +494,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                 continue
 
                             if model_turn := server_content.model_turn:
-                                if self._user_speaking:
+                                if not self._agent_speaking and self._user_speaking:
                                     await realtime_metrics_collector.set_user_speech_end()
                                     self._user_speaking = False
                                 if accumulated_input_text:
@@ -613,7 +613,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                 await asyncio.sleep(0.1)
 
         except asyncio.CancelledError:
-            self.emit("error", "Receive loop cancelled")
+            pass
         except Exception as e:
             self.emit("error", e)
             traceback.print_exc()
