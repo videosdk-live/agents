@@ -32,7 +32,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "videosdk-agents>=0.0.56",
+    "videosdk-agents>=0.0.57",
     "aiohttp",
     "numpy",
     "bodhi-sdk",
