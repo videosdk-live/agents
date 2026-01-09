@@ -1,7 +1,7 @@
 """
 VideoSDK Inference Gateway Plugins
 
-Lightweight STT, TTS, LLM, and Realtime clients that connect to VideoSDK's Inference Gateway.
+Lightweight STT, TTS, and Realtime clients that connect to VideoSDK's Inference Gateway.
 All heavy lifting (API connections, resampling, etc.) is handled server-side.
 
 Usage:
@@ -10,7 +10,6 @@ Usage:
     # Quick start with factory methods
     stt = STT.google()
     tts = TTS.sarvam(speaker="anushka")
-    llm = LLM.google(model="gemini-2.0-flash")
     realtime = Realtime.gemini(model="gemini-2.0-flash-exp")
     
     # Use with CascadingPipeline
@@ -22,13 +21,11 @@ Usage:
 
 from .stt import STT
 from .tts import TTS
-from .llm import LLM
 from .realtime import Realtime
 
 __all__ = [
     "STT",
     "TTS",
-    "LLM",
     "Realtime",
 ]
 
