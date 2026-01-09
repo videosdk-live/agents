@@ -21,7 +21,7 @@ from videosdk.agents import (
 logger = logging.getLogger(__name__)
 
 # Default inference gateway URLs
-DEFAULT_STT_URL = "wss://inference-gateway.videosdk.live"
+VIDEOSDK_INFERENCE_URL = "wss://inference-gateway.videosdk.live"
 
 
 class STT(BaseSTT):
@@ -74,7 +74,7 @@ class STT(BaseSTT):
         self.language = language
         self.config = config or {}
         self.enable_streaming = enable_streaming
-        self.base_url = base_url or DEFAULT_STT_URL
+        self.base_url = base_url or VIDEOSDK_INFERENCE_URL
 
         # WebSocket state
         self._session: Optional[aiohttp.ClientSession] = None

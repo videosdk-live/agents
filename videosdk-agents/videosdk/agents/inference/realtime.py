@@ -32,7 +32,7 @@ from videosdk.agents.event_bus import global_event_emitter
 logger = logging.getLogger(__name__)
 
 # Default inference gateway URL
-DEFAULT_LLM_URL = "wss://inference-gateway.videosdk.live"
+VIDEOSDK_INFERENCE_URL = "wss://inference-gateway.videosdk.live"
 
 
 # Default image encoding options for vision
@@ -131,7 +131,7 @@ class Realtime(RealtimeBaseModel[RealtimeEventTypes]):
         self.model = model
         self.model_id = model.split("/")[-1] if "/" in model else model
         self.config = config or GeminiRealtimeConfig()
-        self.base_url = base_url or DEFAULT_LLM_URL
+        self.base_url = base_url or VIDEOSDK_INFERENCE_URL
 
         # WebSocket state
         self._session: Optional[aiohttp.ClientSession] = None
