@@ -22,10 +22,10 @@ from videosdk.agents import (
     RoomOptions,
     WorkerJob,
 )
-from videosdk.inference import STT, TTS, LLM
+from videosdk.agents.inference import STT, TTS
 from videosdk.plugins.sarvamai import SarvamAITTS
 from videosdk.plugins.silero import SileroVAD
-
+from videosdk.plugins.google import GoogleLLM
 # Minimal logging
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -59,11 +59,8 @@ async def entrypoint(ctx: JobContext):
     pipeline = CascadingPipeline(
         # Inference STT (via VideoSDK Gateway)
         stt=STT.sarvam(model_id="saarika:v2.5", language="en-IN"),
-        # Inference LLM (via VideoSDK Gateway) - Google Gemini
-        llm=LLM.google(
-            model="gemini-2.0-flash",
-            temperature=0.7,
-        ),
+        # Use direct Google LLM plugin
+        llm=GoogleLLM(model="gemini-3-flash-preview"),
         # Inference TTS (via VideoSDK Gateway)
         # tts=TTS.sarvam(model_id="bulbul:v2", speaker="anushka", language="en-IN"),
         # tts=TTS.google(
@@ -88,7 +85,7 @@ async def entrypoint(ctx: JobContext):
 def make_context() -> JobContext:
     """Create job context for playground mode."""
     room_options = RoomOptions(
-        room_id="<ROOM_ID>",
+        # room_id="<ROOM_ID>",
         name="Inference STT Test Agent",
         playground=True
     )

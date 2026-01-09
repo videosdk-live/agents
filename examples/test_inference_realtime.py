@@ -23,7 +23,7 @@ from videosdk.agents import (
     RoomOptions,
     WorkerJob,
 )
-from videosdk.inference import Realtime
+from videosdk.agents.inference import Realtime
 
 # Minimal logging
 logging.basicConfig(
