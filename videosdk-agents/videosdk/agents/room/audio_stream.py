@@ -267,6 +267,11 @@ class MixingCustomAudioStreamTrack(CustomAudioStreamTrack):
         mixed_arr = np.add(primary_arr, background_arr, dtype=np.int16)
         return mixed_arr.tobytes()
 
+    def on_last_audio_byte(self, callback: Callable[[], Awaitable[None]]) -> None:
+        """Set callback for when the final audio byte of synthesis is produced"""
+        logger.info("on last audio callback")
+        self._last_audio_callback = callback
+
     async def recv(self) -> AudioFrame:
         """
         Overrides base method to perform mixing and just-in-time frame creation.
@@ -292,6 +297,13 @@ class MixingCustomAudioStreamTrack(CustomAudioStreamTrack):
             if has_primary:
                 primary_chunk = self.audio_data_buffer[: self.chunk_size]
                 self.audio_data_buffer = self.audio_data_buffer[self.chunk_size :]
+                self._is_speaking = True
+            elif getattr(self, "_is_speaking", False):
+                logger.info("[AudioTrack] Agent finished speaking — triggering last_audio_callback.")
+                self._is_speaking = False
+
+                if hasattr(self, "_last_audio_callback") and self._last_audio_callback:
+                    asyncio.create_task(self._last_audio_callback())
 
             background_chunk = b''
             has_background = len(self.background_audio_buffer) >= self.chunk_size
