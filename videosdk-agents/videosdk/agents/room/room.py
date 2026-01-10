@@ -533,7 +533,6 @@ class VideoSDKHandler(BaseTransportHandler):
         """
         peer_name = participant.display_name
         self.participants_data[participant.id] = {"name": peer_name}
-        logger.info(f"Participant joined: meta data={participant.meta_data}")
         self.participants_data[participant.id]["sipUser"] = participant.meta_data.get("sipUser", False) if participant.meta_data else False
         logger.info(f"Participant joined: {peer_name}")
 
