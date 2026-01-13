@@ -271,6 +271,7 @@ class VideoSDKHandler(BaseTransportHandler):
         """
         if self.on_room_error:
             self.on_room_error(data)
+            asyncio.create_task(self._end_session("error_in_meeting"))
 
     def on_meeting_joined(self, data):
         """
