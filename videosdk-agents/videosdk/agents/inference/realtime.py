@@ -162,7 +162,7 @@ class Realtime(RealtimeBaseModel[RealtimeEventTypes]):
     @staticmethod
     def gemini(
         *,
-        model: str = "gemini-2.0-flash-exp",
+        model: str = "gemini-2.5-flash-native-audio-preview-12-2025",
         voice: Voice = "Puck",
         language_code: str = "en-US",
         temperature: float | None = None,
@@ -209,7 +209,7 @@ class Realtime(RealtimeBaseModel[RealtimeEventTypes]):
         )
 
         return Realtime(
-            provider="gemini",
+            provider="google",
             model=model,
             config=config,
             base_url=base_url,
