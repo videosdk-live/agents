@@ -658,6 +658,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         if room and hasattr(room, "participants_data"):
             participants = room.participants_data
             for participant_info in participants.values():
-                if participant_info.get("sipUser"):
+                # SIP-specific on_enter logic is currently limited to outbound calls.
+                if participant_info.get("sipUser") and participant_info.get("sipCallType") == "outbound":
                     return True
         return False
