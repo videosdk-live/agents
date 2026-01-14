@@ -20,7 +20,7 @@ classifiers = [
     "Topic :: Multimedia :: Video",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-dependencies = ["videosdk-agents>=0.0.58","azure-cognitiveservices-speech>=1.46.0","azure-ai-voicelive>=1.0.0b1","azure-core==1.35.0",
+dependencies = ["videosdk-agents>=0.0.59","azure-cognitiveservices-speech>=1.46.0","azure-ai-voicelive>=1.0.0b1","azure-core==1.35.0",
 "azure-identity==1.22.0","httpx>=0.28.1"]
 
 [tool.hatch.version]
