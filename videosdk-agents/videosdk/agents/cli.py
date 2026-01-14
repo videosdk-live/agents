@@ -164,7 +164,8 @@ def get_headers(config: dict) -> dict:
 
 def handle_docker_error(error: subprocess.CalledProcessError) -> None:
     """Handle Docker command errors with user-friendly messages."""
-    error_msg = error.stderr.decode() if error.stderr else str(error)
+    # error_msg = error.stderr.decode() if error.stderr else str(error)
+    error_msg = error.stderr if isinstance(error.stderr, str) else error.stderr.decode() if error.stderr else str(error)
 
     if "permission denied" in error_msg.lower():
         raise DockerError(
