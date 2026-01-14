@@ -18,6 +18,7 @@ except Exception:
 
 import numpy as np
 from .room.audio_stream import TeeCustomAudioStreamTrack
+from .transports.base import BaseTransportHandler
 import logging
 
 logger = logging.getLogger(__name__)
@@ -260,8 +261,9 @@ class MicrophoneStreamer:
             except Exception: pass
 
 
-class ConsoleMode:
+class ConsoleMode(BaseTransportHandler):
     def __init__(self, *, audio_track: TeeCustomAudioStreamTrack, loop: asyncio.AbstractEventLoop) -> None:
+        super().__init__(loop, None)
         self.audio_track = audio_track
         self.agent_audio_track = None
         self.loop = loop
@@ -310,6 +312,8 @@ class ConsoleMode:
 
     def init_meeting(self) -> None: return
     async def join(self) -> None: return
+    async def connect(self) -> None: return
+    async def disconnect(self) -> None: return
     def leave(self) -> None: return
     async def cleanup(self) -> None: return
     async def wait_for_participant(self, participant_id: str | None = None) -> str: return participant_id or "console-user"
