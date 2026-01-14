@@ -5,7 +5,7 @@ import time
 import fractions
 import numpy as np
 import av
-
+from typing import Any
 try:
     import aiohttp
     from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack
@@ -239,6 +239,10 @@ class WebRTCTransportHandler(BaseTransportHandler):
     async def wait_for_participant(self, participant_id=None):
         await self._participant_joined.wait()
         return "webrtc_peer"
+   
+    async def publish_to_pubsub(self, pubsub_config: Any):
+        """Publish a message to the pubsub topic"""
+        pass
 
     async def disconnect(self):
         if self._signaling_task:

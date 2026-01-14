@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import json
+from typing import Any
 try:
     import websockets
 except ImportError:
@@ -109,6 +110,10 @@ class WebSocketTransportHandler(BaseTransportHandler):
         logger.info("Waiting for WebSocket client...")
         await self._participant_joined_event.wait()
         return "ws_client"
+
+    async def publish_to_pubsub(self, pubsub_config: Any):
+        """Publish a message to the pubsub topic"""
+        pass
 
     async def disconnect(self):
         if self.server:
