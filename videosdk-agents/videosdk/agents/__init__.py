@@ -54,7 +54,7 @@ from .utils import (
     build_nova_sonic_schema,
     segment_text,
 )
-from .room.audio_stream import CustomAudioStreamTrack, TeeCustomAudioStreamTrack, TeeMixingCustomAudioStreamTrack
+from .room.output_stream import CustomAudioStreamTrack, TeeCustomAudioStreamTrack, TeeMixingCustomAudioStreamTrack
 from .event_emitter import EventEmitter
 from .job import WorkerJob, JobContext, RoomOptions, Options, WebSocketConfig, WebRTCConfig
 from .worker import Worker, WorkerOptions, WorkerType

@@ -3,7 +3,7 @@ from typing import Any, Literal, Optional, Callable
 import asyncio
 from .utterance_handle import UtteranceHandle # Import the handle
 from .event_emitter import EventEmitter
-from .room.audio_stream import CustomAudioStreamTrack
+from .room.output_stream import CustomAudioStreamTrack
 import logging
 import av
 logger = logging.getLogger(__name__)
