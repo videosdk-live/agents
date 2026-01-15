@@ -25,6 +25,11 @@ class BaseTransportHandler(ABC):
         pass
 
     @abstractmethod
+    async def publish_to_pubsub(self, pubsub_config: Any):
+        """Publish a message to the pubsub topic"""
+        pass
+
+    @abstractmethod
     async def cleanup(self):
         """Free resources"""
         pass

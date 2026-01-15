@@ -208,7 +208,7 @@ class VideoSDKHandler(BaseTransportHandler):
         self._left: bool = False
         self.sdk_metadata = {
             "sdk": "agents",
-            "sdk_version": "0.0.54"
+            "sdk_version": "0.0.59"
         }
         self.videosdk_meeting_meta_data= {
             "agent_id": self.agent_id,
@@ -271,6 +271,7 @@ class VideoSDKHandler(BaseTransportHandler):
         """
         if self.on_room_error:
             self.on_room_error(data)
+            asyncio.create_task(self._end_session("error_in_meeting"))
 
     def on_meeting_joined(self, data):
         """
@@ -297,12 +298,11 @@ class VideoSDKHandler(BaseTransportHandler):
             data: Meeting leave event data from VideoSDK.
         """
         logger.info(f"Meeting Left: {data}")
-        self._cancel_session_end_task()
         
         if hasattr(self, 'participants_data') and self.participants_data:
             self.participants_data.clear()
-        
-        self._session_ended = True
+
+        asyncio.create_task(self._end_session("meeting_left"))
 
     def _is_agent_participant(self, participant: Participant) -> bool:
         """
@@ -534,6 +534,8 @@ class VideoSDKHandler(BaseTransportHandler):
         """
         peer_name = participant.display_name
         self.participants_data[participant.id] = {"name": peer_name}
+        self.participants_data[participant.id]["sipUser"] = participant.meta_data.get("sipUser", False) if participant.meta_data else False
+        self.participants_data[participant.id]["sipCallType"] = participant.meta_data.get("callType", False) if participant.meta_data else False
         logger.info(f"Participant joined: {peer_name}")
 
         if self.recording and len(self.participants_data) == 1:
@@ -716,7 +718,8 @@ class VideoSDKHandler(BaseTransportHandler):
         Args:
             pubsub_config (PubSubPublishConfig): Configuration for pubsub publishing.
         """
-        await self.meeting.pubsub.publish(pubsub_config)
+        if self.meeting:
+         await self.meeting.pubsub.publish(pubsub_config)
 
     async def upload_file(self, base64_data, file_name):
         """

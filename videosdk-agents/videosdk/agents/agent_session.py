@@ -9,6 +9,7 @@ from .conversation_flow import ConversationFlow
 from .pipeline import Pipeline
 from .metrics import cascading_metrics_collector, realtime_metrics_collector
 from .realtime_pipeline import RealTimePipeline
+from .cascading_pipeline import CascadingPipeline
 from .utils import get_tool_info, UserState, AgentState
 from .utterance_handle import UtteranceHandle 
 import time
@@ -18,6 +19,7 @@ from .event_bus import global_event_emitter
 from .background_audio import BackgroundAudioHandler,BackgroundAudioHandlerConfig
 from .dtmf_handler import DTMFHandler
 from .voice_mail_detector import VoiceMailDetector
+from .playground_manager import PlaygroundManager
 import logging
 import av
 logger = logging.getLogger(__name__)
@@ -70,7 +72,9 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         self.dtmf_handler = dtmf_handler
         self.voice_mail_detector = voice_mail_detector
         self._is_voice_mail_detected = False
-
+        self._playground_manager = None
+        self._playground = False
+        self._send_analytics_to_pubsub = False
 
         if hasattr(self.pipeline, 'set_agent'):
             self.pipeline.set_agent(self.agent)
@@ -102,7 +106,11 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             if job_ctx:
                 self._job_context = job_ctx
                 job_ctx.add_shutdown_callback(self.close)
-        except Exception:
+                self._playground = job_ctx.room_options.playground
+                self._send_analytics_to_pubsub = job_ctx.room_options.send_analytics_to_pubsub
+
+        except Exception as e:
+            logger.error(f"AgentSession: Error in session initialization: {e}")
             self._job_context = None
 
     @property
@@ -257,6 +265,15 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         if self.dtmf_handler:
             await self.dtmf_handler.start()
 
+        if self._playground or self._send_analytics_to_pubsub:
+            job_ctx = get_current_job_context()
+            self.playground_manager = PlaygroundManager(job_ctx)
+            if isinstance(self.pipeline, RealTimePipeline):
+                realtime_metrics_collector.set_playground_manager(self.playground_manager)
+
+            elif isinstance(self.pipeline, CascadingPipeline):
+                cascading_metrics_collector.set_playground_manager(self.playground_manager)
+
         if isinstance(self.pipeline, RealTimePipeline):
             await realtime_metrics_collector.start_session(self.agent, self.pipeline)
         else:
@@ -318,6 +335,37 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         self.on("on_speech_out", self.agent.on_speech_out)
 
         await self.pipeline.start()
+
+        if self._should_delay_for_sip_user():
+            logger.info("SIP user detected, waiting for audio stream to be enabled before calling on_enter")
+            audio_stream_enabled = asyncio.Event()
+
+            def on_audio_stream_enabled(data):
+                stream = data.get("stream")
+                participant = data.get("participant")
+                if stream and stream.kind == "audio" and participant and participant.meta_data.get("sipUser"):
+                    logger.info(f"SIP user audio stream enabled for participant {participant.id}")
+                    audio_stream_enabled.set()
+
+            global_event_emitter.on("AUDIO_STREAM_ENABLED", on_audio_stream_enabled)
+
+            async def wait_and_start():
+                try:
+                    await audio_stream_enabled.wait()
+                    logger.info("SIP user audio stream enabled, proceeding with on_enter")
+                    await self.agent.on_enter()
+                    global_event_emitter.emit("AGENT_STARTED", {"session": self})
+                    if self.on_wake_up is not None:
+                        self._start_wake_up_timer()
+                    self._emit_agent_state(AgentState.IDLE)
+                except Exception as e:
+                    logger.error(f"Error in wait_and_start: {e}")
+                finally:
+                    global_event_emitter.off("AUDIO_STREAM_ENABLED", on_audio_stream_enabled)
+
+            asyncio.create_task(wait_and_start())
+            return 
+
         await self.agent.on_enter()
         global_event_emitter.emit("AGENT_STARTED", {"session": self})
         if self.on_wake_up is not None:
@@ -597,3 +645,20 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
                 return
             except Exception as exc:
                 logger.error(f"Error calling call_transfer: {exc}")
+
+    def _should_delay_for_sip_user(self) -> bool:
+        """Check if there are SIP users in the room that need audio stream initialization"""
+        job_ctx = self._job_context
+        if not job_ctx:
+            try:
+                job_ctx = get_current_job_context()
+            except Exception:
+                job_ctx = None
+        room = getattr(job_ctx, "room", None) if job_ctx else None
+        if room and hasattr(room, "participants_data"):
+            participants = room.participants_data
+            for participant_info in participants.values():
+                # SIP-specific on_enter logic is currently limited to outbound calls.
+                if participant_info.get("sipUser") and participant_info.get("sipCallType") == "outbound":
+                    return True
+        return False

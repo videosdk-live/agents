@@ -164,7 +164,8 @@ def get_headers(config: dict) -> dict:
 
 def handle_docker_error(error: subprocess.CalledProcessError) -> None:
     """Handle Docker command errors with user-friendly messages."""
-    error_msg = error.stderr.decode() if error.stderr else str(error)
+    # error_msg = error.stderr.decode() if error.stderr else str(error)
+    error_msg = error.stderr if isinstance(error.stderr, str) else error.stderr.decode() if error.stderr else str(error)
 
     if "permission denied" in error_msg.lower():
         raise DockerError(
@@ -353,7 +354,7 @@ RUN pip install --no-cache-dir -r requirements.txt"""
             else "# No requirements.txt found, skipping dependency installation"
         )
 
-        dockerfile_content = f"""FROM --platform=linux/arm64 python:3.11-slim
+        dockerfile_content = f"""FROM --platform=linux/arm64 python:3.12-slim
 
 WORKDIR /app
 
@@ -397,7 +398,7 @@ RUN pip install --no-cache-dir -r requirements.txt"""
                 else "# No requirements.txt found, skipping dependency installation"
             )
 
-            dockerfile_content = f"""FROM --platform=linux/arm64 python:3.11-slim
+            dockerfile_content = f"""FROM --platform=linux/arm64 python:3.12-slim
 
 WORKDIR /app
 

@@ -59,6 +59,7 @@ from .event_emitter import EventEmitter
 from .job import WorkerJob, JobContext, RoomOptions, Options, WebSocketConfig, WebRTCConfig
 from .worker import Worker, WorkerOptions, WorkerType
 from .utterance_handle import UtteranceHandle
+from .playground_manager import PlaygroundManager
 
 # New execution module exports
 from .execution import (
@@ -106,6 +107,12 @@ from .voice_mail_detector import VoiceMailDetector
 from .stt import FallbackSTT
 from .llm import FallbackLLM
 from .tts import FallbackTTS
+from .videosdk_eval import (
+    Evaluation, EvaluationResult, EvalTurn, EvalMetric, LLMAsJudgeMetric,
+    STTComponent, STTEvalConfig, LLMComponent, LLMEvalConfig,
+    TTSComponent, TTSEvalConfig, LLMAsJudge, LLMAsJudgeConfig
+)
+from . import videosdk_eval
 
 __all__ = [
     "Agent",
@@ -196,4 +203,5 @@ __all__ = [
     "FallbackSTT",
     "FallbackLLM",
     "FallbackTTS",
+    "PlaygroundManager",
 ]
