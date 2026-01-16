@@ -6,8 +6,9 @@ from av.audio.resampler import AudioResampler
 import logging
 import numpy as np
 from simli import SimliConfig, SimliClient
-from videosdk import CustomVideoTrack, CustomAudioTrack
-
+from videosdk import CustomVideoTrack
+from videosdk.agents import AdaptiveAudioStreamTrack
+from fractions import Fraction
 
 logger = logging.getLogger(__name__)
 
@@ -27,9 +28,21 @@ videosdk_output_resampler = AudioResampler(
 )
 
 
-class SimliAudioTrack(CustomAudioTrack):
+class SimliAudioTrack(AdaptiveAudioStreamTrack):
     def __init__(self, loop: asyncio.AbstractEventLoop, simli_client: SimliClient):
-        super().__init__()
+        # We inherit from AdaptiveAudioStreamTrack to support its interface (e.g. last_audio_callback)
+        # but we override most logic because Simli provides pre-mixed/generated frames via Queue.
+        super().__init__(loop)
+        
+        # Override Adaptive properties to match Simli's 48k Stereo output
+        self.sample_rate = VIDEOSDK_AUDIO_SAMPLE_RATE
+        self.channels = 2
+        self.sample_width = 2
+        self.time_base_fraction = Fraction(1, self.sample_rate)
+        # 20ms ptime
+        self.samples = int(0.02 * self.sample_rate) 
+        self.chunk_size = int(self.samples * self.channels * self.sample_width)
+
         self.kind = "audio"
         self.loop = loop
         self._timestamp = 0
@@ -43,12 +56,19 @@ class SimliAudioTrack(CustomAudioTrack):
                 self.queue.get_nowait()
             except asyncio.QueueEmpty:
                 break
+        # Also clear Adaptive buffers just in case
+        self.audio_data_buffer.clear()
+        self.background_audio_buffer.clear()
 
     async def recv(self) -> AudioFrame:
         """Return next audio frame to VideoSDK."""
         try:
             if self.readyState != "live":
                 raise Exception("Track not live")
+            
+            # Simple Queue-based retrieval (lowest latency for Simli)
+            # We do NOT use the Adaptive buffering/mixing logic here because
+            # Simli frames are already mixed/generated externally.
             frame = await self.queue.get()
             return frame
 
@@ -67,11 +87,21 @@ class SimliAudioTrack(CustomAudioTrack):
             return
         try:
             for resampled_frame in videosdk_output_resampler.resample(frame):
+                # Set timebase/pts properties if needed, or rely on sink to handle
+                resampled_frame.sample_rate = self.sample_rate
                 self.queue.put_nowait(resampled_frame)
         except asyncio.QueueEmpty:
             pass
         except Exception as e:
             logger.error(f"Error adding Simli audio frame: {e}")
+
+    def _create_silence_frame(self):
+        # Create a silent frame with the expected properties
+        frame = AudioFrame(format='s16', layout='stereo', samples=self.samples)
+        for p in frame.planes:
+            p.update(bytes(p.buffer_size))
+        frame.sample_rate = self.sample_rate
+        return frame
 
 
 class SimliVideoTrack(CustomVideoTrack):
@@ -139,6 +169,13 @@ class SimliAvatar:
 
     async def mark_silent(self):
         self._avatar_speaking = False
+        # Trigger last_audio_callback if configured
+        if self.audio_track and hasattr(self.audio_track, "_last_audio_callback") and self.audio_track._last_audio_callback:
+            logger.info("Simli marked silent, triggering last_audio_callback")
+            if asyncio.iscoroutinefunction(self.audio_track._last_audio_callback):
+                await self.audio_track._last_audio_callback()
+            else:
+                asyncio.create_task(self.audio_track._last_audio_callback())
 
     async def mark_speaking(self):
         self._avatar_speaking = True

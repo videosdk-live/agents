@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 
 from videosdk.agents import (
     Agent,
-    CustomAudioStreamTrack,
+    AdaptiveAudioStreamTrack,
     RealtimeBaseModel,
     realtime_metrics_collector,
 )
@@ -137,7 +137,7 @@ class AzureVoiceLive(RealtimeBaseModel[AzureVoiceLiveEventTypes]):
             "You are a helpful voice assistant that can answer questions and help with tasks."
         )
         self.loop = None
-        self.audio_track: Optional[CustomAudioStreamTrack] = None
+        self.audio_track: Optional[AdaptiveAudioStreamTrack] = None
         self.config: AzureVoiceLiveConfig = config or AzureVoiceLiveConfig()
         self.input_sample_rate = VIDEOSDK_INPUT_SAMPLE_RATE
         self.target_sample_rate = AZURE_VOICE_LIVE_SAMPLE_RATE
@@ -164,7 +164,7 @@ class AzureVoiceLive(RealtimeBaseModel[AzureVoiceLiveEventTypes]):
                 and self.loop
                 and Modality.AUDIO in self.config.modalities
             ):
-                self.audio_track = CustomAudioStreamTrack(self.loop)
+                self.audio_track = AdaptiveAudioStreamTrack(self.loop)
             elif not self.loop and Modality.AUDIO in self.config.modalities:
                 self.emit(
                     "error", "Event loop not initialized. Audio playback will not work."

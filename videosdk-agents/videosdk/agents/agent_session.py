@@ -400,7 +400,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             self._thinking_was_playing = True
 
         audio_track = self._get_audio_track()
-        if not hasattr(audio_track, 'add_background_bytes'):
+        if not audio_track.background_audio:
             logger.warning(
                 "Cannot play background audio. This feature requires the mixing audio track. "
                 "Enable it by setting `background_audio=True` in RoomOptions."
@@ -433,8 +433,19 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
     
     async def start_thinking_audio(self):
         """Start thinking audio"""
-        if self._background_audio_player and self._background_audio_player.is_playing:
+        # If background audio is playing, pause it (or just stop and remember to resume)
+        audio_track = self._get_audio_track()
+        if not audio_track.background_audio:
+            logger.warning(
+                "Cannot play 'thinking' audio. This feature requires the mixing audio track. "
+                "Enable it by setting `background_audio=True` in RoomOptions."
+            )
             return
+        if self._background_audio_player and self._background_audio_player.is_playing:
+            await self._background_audio_player.stop() 
+            self._bg_was_playing_before_thinking = True
+        else:
+            self._bg_was_playing_before_thinking = False
 
         audio_track = self._get_audio_track()
         if not hasattr(audio_track, 'add_background_bytes'):
@@ -453,7 +464,14 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         if self._thinking_audio_player:
             await self._thinking_audio_player.stop()
             self._thinking_audio_player = None
+        
+        # Resume background if it was playing
+        if getattr(self, '_bg_was_playing_before_thinking', False):
+            if self._background_audio_player:
+                await self._background_audio_player.start()
+            self._bg_was_playing_before_thinking = False
     
+
 
     async def reply(self, instructions: str, wait_for_playback: bool = True, frames: list[av.VideoFrame] | None = None, interruptible: bool = True) -> UtteranceHandle:
         """

@@ -11,7 +11,7 @@ from scipy import signal
 from dotenv import load_dotenv
 from videosdk.agents import (
     Agent,
-    CustomAudioStreamTrack,
+    AdaptiveAudioStreamTrack,
     RealtimeBaseModel,
     build_gemini_schema,
     is_function_tool,
@@ -238,7 +238,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                 and self.loop
                 and "AUDIO" in self.config.response_modalities
             ):
-                self.audio_track = CustomAudioStreamTrack(self.loop)
+                self.audio_track = AdaptiveAudioStreamTrack(self.loop)
             elif not self.loop and "AUDIO" in self.config.response_modalities:
                 self.emit(
                     "error", "Event loop not initialized. Audio playback will not work."

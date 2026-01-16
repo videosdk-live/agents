@@ -3,7 +3,7 @@ from typing import Any, Literal, Optional, Callable
 import asyncio
 from .utterance_handle import UtteranceHandle # Import the handle
 from .event_emitter import EventEmitter
-from .room.output_stream import CustomAudioStreamTrack
+from .room.output_stream import AdaptiveAudioStreamTrack
 import logging
 import av
 logger = logging.getLogger(__name__)
@@ -18,7 +18,7 @@ class Pipeline(EventEmitter[Literal["start"]], ABC):
         """Initialize the pipeline with event emitter capabilities"""
         super().__init__()
         self.loop: asyncio.AbstractEventLoop | None = None
-        self.audio_track: CustomAudioStreamTrack | None = None
+        self.audio_track: AdaptiveAudioStreamTrack | None = None
         self._wake_up_callback: Optional[Callable[[], None]] = None
         self._recent_frames: list[av.VideoFrame] = []
         self._max_frames_buffer = 5
@@ -34,7 +34,7 @@ class Pipeline(EventEmitter[Literal["start"]], ABC):
         except ImportError:
             pass
 
-    def _set_loop_and_audio_track(self, loop: asyncio.AbstractEventLoop, audio_track: CustomAudioStreamTrack) -> None:
+    def _set_loop_and_audio_track(self, loop: asyncio.AbstractEventLoop, audio_track: AdaptiveAudioStreamTrack) -> None:
         """Internal Method: Set the event loop and configure components"""
         self.loop = loop
         self.audio_track = audio_track
