@@ -205,7 +205,7 @@ class VideoSDKHandler(BaseTransportHandler):
         self._left: bool = False
         self.sdk_metadata = {
             "sdk": "agents",
-            "sdk_version": "0.0.58"
+            "sdk_version": "0.0.60"
         }
         self.videosdk_meeting_meta_data= {
             "agent_id": self.agent_id,
