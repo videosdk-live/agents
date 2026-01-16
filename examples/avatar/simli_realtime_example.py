@@ -1,10 +1,12 @@
 import asyncio
 import aiohttp
 import os
+import logging
 
 from videosdk.agents import Agent, AgentSession, RealTimePipeline, function_tool, JobContext, RoomOptions, WorkerJob
 from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig
 from videosdk.plugins.simli import SimliAvatar, SimliConfig
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 
 @function_tool
 async def get_weather(
@@ -86,9 +88,9 @@ async def start_session(context: JobContext):
 
 def make_context() -> JobContext:
     room_options = RoomOptions(
-        room_id="<room_id>",
+        # room_id="<room_id>",
         name="Simli Avatar Realtime Agent",
-        playground=False 
+        playground=True 
     )
 
     return JobContext(room_options=room_options)

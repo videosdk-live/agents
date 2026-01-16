@@ -8,11 +8,11 @@ except ImportError:
     websockets = None
 
 from .base import BaseTransportHandler
-from ..room.output_stream import AdaptiveAudioStreamTrack
+from ..room.output_stream import OutputAudioStreamTrack
 
 logger = logging.getLogger(__name__)
 
-class WebSocketAudioTrack(AdaptiveAudioStreamTrack):
+class WebSocketAudioTrack(OutputAudioStreamTrack):
     def __init__(self, loop, websocket_handler, sinks=None, pipeline=None):
         super().__init__(loop, sinks, pipeline)
         self.websocket_handler = websocket_handler

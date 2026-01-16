@@ -18,7 +18,7 @@ class MediaStreamError(Exception):
     pass
 
 
-class AdaptiveAudioStreamTrack(CustomAudioTrack):
+class OutputAudioStreamTrack(CustomAudioTrack):
     """
     A single audio track implementation that adapts based on context:
     - Buffers primary audio (TTS).
@@ -58,7 +58,7 @@ class AdaptiveAudioStreamTrack(CustomAudioTrack):
         self.background_audio = background_audio
         # Metrics/Status
         self.frame_time = 0 
-        print("New object of AdaptiveAudioStreamTrack created background is set to ", background_audio)
+        print("New object of OutputAudioStreamTrack created background is set to ", background_audio)
 
     @property
     def background_audio(self):

@@ -54,7 +54,7 @@ from .utils import (
     build_nova_sonic_schema,
     segment_text,
 )
-from .room.output_stream import AdaptiveAudioStreamTrack
+from .room.output_stream import OutputAudioStreamTrack
 from .event_emitter import EventEmitter
 from .job import WorkerJob, JobContext, RoomOptions, Options, WebSocketConfig, WebRTCConfig
 from .worker import Worker, WorkerOptions, WorkerType
@@ -127,7 +127,7 @@ __all__ = [
     "get_tool_info",
     "FunctionTool",
     "FunctionToolInfo",
-    "AdaptiveAudioStreamTrack"
+    "OutputAudioStreamTrack"
     "build_openai_schema",
     "build_gemini_schema",
     "ToolChoice",

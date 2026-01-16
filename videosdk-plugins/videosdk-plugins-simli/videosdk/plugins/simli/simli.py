@@ -7,7 +7,7 @@ import logging
 import numpy as np
 from simli import SimliConfig, SimliClient
 from videosdk import CustomVideoTrack
-from videosdk.agents import AdaptiveAudioStreamTrack
+from videosdk.agents import OutputAudioStreamTrack
 from fractions import Fraction
 
 logger = logging.getLogger(__name__)
@@ -28,9 +28,9 @@ videosdk_output_resampler = AudioResampler(
 )
 
 
-class SimliAudioTrack(AdaptiveAudioStreamTrack):
+class SimliAudioTrack(OutputAudioStreamTrack):
     def __init__(self, loop: asyncio.AbstractEventLoop, simli_client: SimliClient):
-        # We inherit from AdaptiveAudioStreamTrack to support its interface (e.g. last_audio_callback)
+        # We inherit from OutputAudioStreamTrack to support its interface (e.g. last_audio_callback)
         # but we override most logic because Simli provides pre-mixed/generated frames via Queue.
         super().__init__(loop)
         

@@ -19,7 +19,7 @@ from videosdk.agents import (
     is_function_tool,
     get_tool_info,
     build_openai_schema, 
-    AdaptiveAudioStreamTrack,
+    OutputAudioStreamTrack,
     RealtimeBaseModel,
     global_event_emitter,
     Agent,
@@ -101,7 +101,7 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
         self._formatted_tools: List[Dict[str, Any]] = []
         
         self.loop = None
-        self.audio_track: Optional[AdaptiveAudioStreamTrack] = None
+        self.audio_track: Optional[OutputAudioStreamTrack] = None
         self.input_sample_rate = INPUT_SAMPLE_RATE
         self.target_sample_rate = DEFAULT_SAMPLE_RATE
         self._agent_speaking = False

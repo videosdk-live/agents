@@ -21,7 +21,7 @@ from videosdk.agents import (
     is_function_tool,
     get_tool_info,
     build_openai_schema,
-    AdaptiveAudioStreamTrack,
+    OutputAudioStreamTrack,
     ToolChoice,
     RealtimeBaseModel,
     global_event_emitter,
@@ -154,7 +154,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         self._instructions: Optional[str] = None
         self._tools: Optional[List[FunctionTool]] = []
         self.loop = None
-        self.audio_track: Optional[AdaptiveAudioStreamTrack] = None
+        self.audio_track: Optional[OutputAudioStreamTrack] = None
         self._formatted_tools: Optional[List[Dict[str, Any]]] = None
         self.config: OpenAIRealtimeConfig = config or OpenAIRealtimeConfig()
         self.input_sample_rate = 48000

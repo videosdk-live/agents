@@ -9,7 +9,7 @@ from videosdk import (
 )
 from .meeting_event_handler import MeetingHandler
 from .participant_event_handler import ParticipantHandler
-from .output_stream import AdaptiveAudioStreamTrack
+from .output_stream import OutputAudioStreamTrack
 from ._input_stream import InputStreamManager
 from ._sip_manager import SIPManager
 from ._recording_manager import RecordingManager
@@ -146,22 +146,22 @@ class VideoSDKHandler(BaseTransportHandler):
             self.audio_track = custom_microphone_audio_track
             if audio_sinks:
                 if self.background_audio:
-                    self.agent_audio_track = AdaptiveAudioStreamTrack(
+                    self.agent_audio_track = OutputAudioStreamTrack(
                         loop=self.loop, sinks=audio_sinks, background_audio=True
                     )
                 else:
-                    self.agent_audio_track = AdaptiveAudioStreamTrack(
+                    self.agent_audio_track = OutputAudioStreamTrack(
                         loop=self.loop, sinks=audio_sinks
                     )
             else:
                 self.agent_audio_track = None
         else:
             if self.background_audio:
-                self.audio_track = AdaptiveAudioStreamTrack(
+                self.audio_track = OutputAudioStreamTrack(
                     loop=self.loop, sinks=audio_sinks, background_audio=True
                 )
             else:
-                self.audio_track = AdaptiveAudioStreamTrack(
+                self.audio_track = OutputAudioStreamTrack(
                     loop=self.loop, sinks=audio_sinks
                 )
             self.agent_audio_track = None

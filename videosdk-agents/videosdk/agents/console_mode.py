@@ -17,7 +17,7 @@ except Exception:
     _SD_AVAILABLE = False
 
 import numpy as np
-from .room.output_stream import AdaptiveAudioStreamTrack
+from .room.output_stream import OutputAudioStreamTrack
 from .transports.base import BaseTransportHandler
 import logging
 
@@ -262,7 +262,7 @@ class MicrophoneStreamer:
 
 
 class ConsoleMode(BaseTransportHandler):
-    def __init__(self, *, audio_track: AdaptiveAudioStreamTrack, loop: asyncio.AbstractEventLoop) -> None:
+    def __init__(self, *, audio_track: OutputAudioStreamTrack, loop: asyncio.AbstractEventLoop) -> None:
         super().__init__(loop, None)
         self.audio_track = audio_track
         self.agent_audio_track = None
@@ -372,7 +372,7 @@ async def setup_console_voice_for_ctx(
     speaker = LocalAudioPlayer(samplerate=24000, channels=1, output_device=output_device,
                              apm_processor=processor, reverse_stream_queue=system_audio_queue)
 
-    audio_track = AdaptiveAudioStreamTrack(loop=loop, sinks=[speaker])
+    audio_track = OutputAudioStreamTrack(loop=loop, sinks=[speaker])
 
     ctx.room = ConsoleMode(audio_track=audio_track, loop=loop)
 

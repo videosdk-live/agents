@@ -10,7 +10,7 @@ import numpy as np
 from dotenv import load_dotenv
 from videosdk.agents import (
     Agent,
-    AdaptiveAudioStreamTrack,
+    OutputAudioStreamTrack,
     RealtimeBaseModel,
     is_function_tool,
     get_tool_info,
@@ -117,7 +117,7 @@ class UltravoxRealtime(RealtimeBaseModel[UltravoxEventTypes]):
 
         try:
             if not self.audio_track and self.loop:
-                self.audio_track = AdaptiveAudioStreamTrack(self.loop)
+                self.audio_track = OutputAudioStreamTrack(self.loop)
             elif not self.loop:
                 raise RuntimeError("Event loop not initialized")
 
