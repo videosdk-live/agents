@@ -4,7 +4,6 @@ numpy
 httpx
 aiohttp
 openai
-av>=14.0.0,<15.0.0
 dotenv
 pyee>=13.0.0
 grpcio

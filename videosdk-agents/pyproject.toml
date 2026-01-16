@@ -22,12 +22,11 @@ classifiers = [
 ]
 dependencies = [
     "uvicorn",
-    "videosdk>=0.2.5",
+    "videosdk>=0.2.9",
     "numpy",
     "httpx",
     "aiohttp",
     "openai",
-    "av>=14.0.0,<15.0.0",
     "python-dotenv",
     "pyee>=13.0.0",
     "grpcio",
