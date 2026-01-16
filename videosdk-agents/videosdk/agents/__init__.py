@@ -142,7 +142,7 @@ __all__ = [
     "FunctionCall",
     "FunctionCallOutput",
     "LLMResponse",
-    "ConversationalGraphResponse"
+    "ConversationalGraphResponse",
     "STT",
     "STTResponse",
     "SpeechEventType",
