@@ -138,9 +138,9 @@ class VideoSDKHandler(BaseTransportHandler):
         self._session_id_collected = False
         self.recording = recording
 
-        self.traces_flow_manager = TracesFlowManager(room_id=self.meeting_id)
-        cascading_metrics_collector.set_traces_flow_manager(
-            self.traces_flow_manager)
+        # self.traces_flow_manager = TracesFlowManager(room_id=self.meeting_id)
+        # cascading_metrics_collector.set_traces_flow_manager(
+        #     self.traces_flow_manager)
 
         if custom_microphone_audio_track:
             self.audio_track = custom_microphone_audio_track
@@ -279,8 +279,8 @@ class VideoSDKHandler(BaseTransportHandler):
         """
         logger.info(f"Agent joined the meeting")
         self._meeting_joined_data = data
-        asyncio.create_task(self._collect_session_id())
-        asyncio.create_task(self._collect_meeting_attributes())
+        # asyncio.create_task(self._collect_session_id())
+        # asyncio.create_task(self._collect_meeting_attributes())
         if self.recording:
             asyncio.create_task(
                 self.start_participant_recording(
@@ -649,7 +649,7 @@ class VideoSDKHandler(BaseTransportHandler):
             except Exception as e:
                 logger.error(f"Error ending traces flow manager: {e}")
             self.traces_flow_manager = None
-            cascading_metrics_collector.set_traces_flow_manager(None)
+            # cascading_metrics_collector.set_traces_flow_manager(None)
         
         self.participants_data.clear()
         self._participant_joined_events.clear()
@@ -676,8 +676,8 @@ class VideoSDKHandler(BaseTransportHandler):
                 session_id = getattr(self.meeting, "session_id", None)
                 if session_id:
                     self._session_id = session_id
-                    cascading_metrics_collector.set_session_id(session_id)
-                    realtime_metrics_collector.set_session_id(session_id)
+                    # cascading_metrics_collector.set_session_id(session_id)
+                    # realtime_metrics_collector.set_session_id(session_id)
                     self._session_id_collected = True
                     if self.traces_flow_manager:
                         self.traces_flow_manager.set_session_id(session_id)
@@ -698,13 +698,13 @@ class VideoSDKHandler(BaseTransportHandler):
 
                 if attributes:
                     peer_id = getattr(self.meeting, "participant_id", "agent")
-                    auto_initialize_telemetry_and_logs(
-                        room_id=self.meeting_id,
-                        peer_id=peer_id,
-                        room_attributes=attributes,
-                        session_id=self._session_id,
-                        sdk_metadata=self.sdk_metadata,
-                    )
+                    # auto_initialize_telemetry_and_logs(
+                    #     room_id=self.meeting_id,
+                    #     peer_id=peer_id,
+                    #     room_attributes=attributes,
+                    #     session_id=self._session_id,
+                    #     sdk_metadata=self.sdk_metadata,
+                    # )
                 else:
                     logger.error("No meeting attributes found")
             else:

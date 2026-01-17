@@ -124,15 +124,16 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
     def _update_preemptive_generation_flag(self) -> None:
         """Update the preemptive generation flag based on current STT instance"""
         self._enable_preemptive_generation = getattr(self.stt, 'enable_preemptive_generation', False) if self.stt else False
-        cascading_metrics_collector.set_preemptive_generation_enabled()
+        # cascading_metrics_collector.set_preemptive_generation_enabled()
 
     async def start(self) -> None:
         global_event_emitter.on("speech_started", self.on_speech_started_stt)
         global_event_emitter.on("speech_stopped", self.on_speech_stopped_stt)
 
         if self.agent and self.agent.instructions:
-            cascading_metrics_collector.set_system_instructions(
-                self.agent.instructions)
+            pass
+            # cascading_metrics_collector.set_system_instructions(
+            #     self.agent.instructions)
 
     def set_voice_mail_detector(self, detector: VoiceMailDetector | None) -> None:
         """Configures voicemail detection. Called by AgentSession."""
@@ -266,21 +267,21 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
         # Handle different event types
         if stt_response.event_type == SpeechEventType.PREFLIGHT:
-            if cascading_metrics_collector.data.current_turn:
-                cascading_metrics_collector.on_stt_preflight_end()
+            # if cascading_metrics_collector.data.current_turn:
+            #     cascading_metrics_collector.on_stt_preflight_end()
             await self._handle_preflight_transcript(text)
             
         
         elif stt_response.event_type == SpeechEventType.FINAL:
-            if cascading_metrics_collector.data.current_turn:
-                cascading_metrics_collector.data.current_turn.stt_preemptive_generation_occurred = False
+            # if cascading_metrics_collector.data.current_turn:
+            #     cascading_metrics_collector.data.current_turn.stt_preemptive_generation_occurred = False
             user_text = stt_response.data.text
             
             if self._enable_preemptive_generation:
 
-                if cascading_metrics_collector.data.current_turn:
-                    cascading_metrics_collector.on_stt_complete()
-                    cascading_metrics_collector.data.current_turn.stt_preemptive_generation_occurred = True
+                # if cascading_metrics_collector.data.current_turn:
+                #     cascading_metrics_collector.on_stt_complete()
+                #     cascading_metrics_collector.data.current_turn.stt_preemptive_generation_occurred = True
                 await self._authorize_or_process_final_transcript(user_text)
                 
             else:
@@ -288,8 +289,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 
             
         elif stt_response.event_type == SpeechEventType.INTERIM:
-            if cascading_metrics_collector.data.current_turn and self._enable_preemptive_generation: 
-                cascading_metrics_collector.on_stt_interim_end()
+            # if cascading_metrics_collector.data.current_turn and self._enable_preemptive_generation: 
+            #     cascading_metrics_collector.on_stt_interim_end()
 
             if stt_response.metadata and stt_response.metadata.get("turn_resumed"):
                 await self._handle_turn_resumed(text)
@@ -373,9 +374,9 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 delay = self.min_speech_wait_timeout
                 if self.turn_detector:
                     logger.info(f"Turn detector is available, getting EOU probability")
-                    cascading_metrics_collector.on_eou_start()
+                    # cascading_metrics_collector.on_eou_start()
                     eou_probability = self.turn_detector.get_eou_probability(self.agent.chat_context)
-                    cascading_metrics_collector.on_eou_complete()
+                    # cascading_metrics_collector.on_eou_complete()
                     logger.info(f"EOU probability: {eou_probability}")
                     if eou_probability < self.eou_certainty_threshold:
                         logger.info(f"EOU probability is less than the threshold, using max speech wait timeout")
@@ -388,9 +389,9 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 delay = self.min_speech_wait_timeout
                 if self.turn_detector:
                     logger.info(f"Turn detector is available, getting EOU probability")
-                    cascading_metrics_collector.on_eou_start()
+                    # cascading_metrics_collector.on_eou_start()
                     eou_probability = self.turn_detector.get_eou_probability(self.agent.chat_context)
-                    cascading_metrics_collector.on_eou_complete()
+                    # cascading_metrics_collector.on_eou_complete()
                     logger.info(f"EOU probability: {eou_probability}")
                     logger.info(f"Calculating delay using sliding scale {self.min_speech_wait_timeout} to {self.max_speech_wait_timeout}")
                     delay_range = self.max_speech_wait_timeout - self.min_speech_wait_timeout
@@ -410,9 +411,9 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         temp_context = self.agent.chat_context.copy()
         temp_context.add_message(role=ChatRole.USER, content=transcript)
         
-        cascading_metrics_collector.on_eou_start()
+        # cascading_metrics_collector.on_eou_start()
         is_eou = self.turn_detector.detect_end_of_utterance(temp_context)
-        cascading_metrics_collector.on_eou_complete()
+        # cascading_metrics_collector.on_eou_complete()
         
         return is_eou
 
@@ -458,16 +459,16 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
     async def _process_final_transcript(self, user_text: str) -> None:
         """Process final transcript with EOU detection and response generation"""
         
-        if not cascading_metrics_collector.data.current_turn: 
-            cascading_metrics_collector.start_new_interaction()
+        # if not cascading_metrics_collector.data.current_turn: 
+            # cascading_metrics_collector.start_new_interaction()
 
-        cascading_metrics_collector.set_user_transcript(user_text)
-        cascading_metrics_collector.on_stt_complete()
+        # cascading_metrics_collector.set_user_transcript(user_text)
+        # cascading_metrics_collector.on_stt_complete()
 
-        if self.vad and cascading_metrics_collector.data.is_user_speaking: 
-            cascading_metrics_collector.on_user_speech_end()
-        elif not self.vad:
-            cascading_metrics_collector.on_user_speech_end()
+        # if self.vad and cascading_metrics_collector.data.is_user_speaking: 
+        #     cascading_metrics_collector.on_user_speech_end()
+        # elif not self.vad:
+        #     cascading_metrics_collector.on_user_speech_end()
 
         final_user_text = user_text
         if self.agent.knowledge_base:
@@ -542,9 +543,10 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             await self.on_turn_end()
             
             if wait_for_playback:
-                while (hasattr(cascading_metrics_collector.data, 'is_agent_speaking') and 
-                    cascading_metrics_collector.data.is_agent_speaking):
-                    await asyncio.sleep(0.1)
+                # while (hasattr(cascading_metrics_collector.data, 'is_agent_speaking') and 
+                #     cascading_metrics_collector.data.is_agent_speaking):
+                #     await asyncio.sleep(0.1)
+                pass
                     
         finally:
             if wait_for_playback:
@@ -771,7 +773,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 and self.agent
                 and getattr(self.agent, "chat_context", None)
             ):
-                cascading_metrics_collector.set_agent_response(full_response)
+                # cascading_metrics_collector.set_agent_response(full_response)
                 self.agent.chat_context.add_message(
                     role=ChatRole.ASSISTANT,
                     content=full_response
@@ -808,7 +810,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 else:
                     logger.debug(f"Context size {current_items} is within limit (max_context_items={self.max_context_items})")
 
-            cascading_metrics_collector.on_llm_start()
+            # cascading_metrics_collector.on_llm_start()
             first_chunk_received = False
             
             agent_session = getattr(self.agent, "session", None) if self.agent else None
@@ -822,7 +824,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 conversational_graph=self.conversational_graph if self.conversational_graph else None
             ):
                 if llm_chunk_resp.metadata and "usage" in llm_chunk_resp.metadata:
-                    cascading_metrics_collector.set_llm_usage(llm_chunk_resp.metadata["usage"])
+                    # cascading_metrics_collector.set_llm_usage(llm_chunk_resp.metadata["usage"])
+                    pass
 
                 if self._is_interrupted:
                     logger.info("LLM processing interrupted")
@@ -834,12 +837,12 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
                 if not first_chunk_received:
                     first_chunk_received = True
-                    cascading_metrics_collector.on_llm_first_token()
+                    # cascading_metrics_collector.on_llm_first_token()
 
                 if llm_chunk_resp.metadata and "function_call" in llm_chunk_resp.metadata:
                     func_call = llm_chunk_resp.metadata["function_call"]
 
-                    cascading_metrics_collector.add_function_tool_call(func_call["name"])
+                    # cascading_metrics_collector.add_function_tool_call(func_call["name"])
 
                     chat_context = getattr(self.agent, "chat_context", None)
                     if not chat_context:
@@ -947,15 +950,16 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                         yield ResponseChunk(llm_chunk_resp.content, llm_chunk_resp.metadata, llm_chunk_resp.role)
 
             if not self._is_interrupted:
-                cascading_metrics_collector.on_llm_complete()
+                # cascading_metrics_collector.on_llm_complete()
+                pass
 
     async def say(self, message: str, handle: UtteranceHandle) -> None:
         """
         Direct TTS synthesis (used for initial messages) and manage handle lifecycle.
         """
         if self.tts:
-            cascading_metrics_collector.start_new_interaction("")
-            cascading_metrics_collector.set_agent_response(message)
+            # cascading_metrics_collector.start_new_interaction("")
+            # cascading_metrics_collector.set_agent_response(message)
 
             try:
                 await self._synthesize_with_tts(message)
@@ -967,7 +971,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         Process text input directly (for A2A communication).
         This bypasses STT and directly processes the text through the LLM.
         """
-        cascading_metrics_collector.start_new_interaction(text)
+        # cascading_metrics_collector.start_new_interaction(text)
 
         self.agent.chat_context.add_message(
             role=ChatRole.USER,
@@ -980,8 +984,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 full_response += response_chunk.content
 
         if full_response:
-            cascading_metrics_collector.set_agent_response(full_response)
-            cascading_metrics_collector.complete_current_turn()
+            # cascading_metrics_collector.set_agent_response(full_response)
+            # cascading_metrics_collector.complete_current_turn()
             global_event_emitter.emit("text_response", {"text": full_response})
 
     async def run(self, transcript: str) -> AsyncIterator[str]:
@@ -989,8 +993,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         Main conversation loop: handle a user turn.
         Users should implement this method to preprocess transcripts and yield response chunks.
         """
-        if not cascading_metrics_collector.data.current_turn:
-            cascading_metrics_collector.start_new_interaction(transcript)
+        # if not cascading_metrics_collector.data.current_turn:
+        #     cascading_metrics_collector.start_new_interaction(transcript)
         async for response in self.process_with_llm():
             yield response
 
@@ -1112,7 +1116,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 logger.info("[FALSE_INTERRUPT] Timeout reached but no paused state found. No action needed.")        
     
     async def on_speech_started(self) -> None:       
-            cascading_metrics_collector.on_user_speech_start()
+            # cascading_metrics_collector.on_user_speech_start()
 
             if self.user_speech_callback:
                 self.user_speech_callback()
@@ -1188,22 +1192,22 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self._partial_response = ""
         self._is_interrupted = False
 
-        cascading_metrics_collector.on_interrupted()
+        # cascading_metrics_collector.on_interrupted()
 
     async def _cancel_llm(self) -> None:
         """Cancel LLM generation"""
         try:
             await self.llm.cancel_current_generation()
-            cascading_metrics_collector.on_llm_complete()
+            # cascading_metrics_collector.on_llm_complete()
         except Exception as e:
             logger.error(f"LLM cancellation failed: {e}")
 
     def on_speech_stopped(self) -> None:
         if not self._stt_started:
-            cascading_metrics_collector.on_stt_start()
+            # cascading_metrics_collector.on_stt_start()
             self._stt_started = True
 
-        cascading_metrics_collector.on_user_speech_end()
+        # cascading_metrics_collector.on_user_speech_end()
         
         if self.agent and self.agent.session:
             self.agent.session._emit_user_state(UserState.IDLE)
@@ -1231,8 +1235,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         async def on_first_audio_byte():
             if self.agent and self.agent.session and self.agent.session.is_background_audio_enabled:
                 await self.agent.session.stop_thinking_audio()
-            cascading_metrics_collector.on_tts_first_byte()
-            cascading_metrics_collector.on_agent_speech_start()
+            # cascading_metrics_collector.on_tts_first_byte()
+            # cascading_metrics_collector.on_agent_speech_start()
 
             if self.agent and self.agent.session:
                 self.agent.session._emit_agent_state(AgentState.SPEAKING)
@@ -1243,8 +1247,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 self.agent.session._emit_agent_state(AgentState.IDLE)
                 self.agent.session._emit_user_state(UserState.IDLE)
             logger.info("[TTS] Last audio byte processed — Agent and User set to IDLE")
-            cascading_metrics_collector.on_agent_speech_end()
-            cascading_metrics_collector.complete_current_turn()
+            # cascading_metrics_collector.on_agent_speech_end()
+            # cascading_metrics_collector.complete_current_turn()
 
         self.tts.on_first_audio_byte(on_first_audio_byte)
 
@@ -1258,7 +1262,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
         self.tts.reset_first_audio_tracking()
 
-        cascading_metrics_collector.on_tts_start()
+        # cascading_metrics_collector.on_tts_start()
         try:
             response_iterator: AsyncIterator[str]
             if isinstance(response_gen, str):
@@ -1271,7 +1275,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 async for chunk in iterator:
                     if chunk:
                         # Count characters and update metrics
-                        cascading_metrics_collector.add_tts_characters(len(chunk))
+                        # cascading_metrics_collector.add_tts_characters(len(chunk))
+                        pass
                     yield chunk
             await self.tts.synthesize(counting_wrapper(response_iterator))
 

@@ -437,7 +437,7 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
         """Handle error events from components (STT, LLM, TTS, VAD, TURN-D)"""
         from .metrics import cascading_metrics_collector
 
-        cascading_metrics_collector.add_error(source, str(error_data))
+        # cascading_metrics_collector.add_error(source, str(error_data))
         logger.error(f"[{source}] Component error: {error_data}")
 
     async def reply_with_context(self, instructions: str, wait_for_playback: bool, handle: UtteranceHandle, frames: list[av.VideoFrame] | None = None) -> None:
