@@ -8,7 +8,7 @@ except ImportError:
     websockets = None
 
 from .base import BaseTransportHandler
-from ..room.audio_stream import TeeCustomAudioStreamTrack
+from ..room.output_stream import TeeCustomAudioStreamTrack
 
 logger = logging.getLogger(__name__)
 

@@ -198,10 +198,10 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
 
     def on_model_error(self, error: Exception):
         """
-        Handle errors emitted from the model and send to realtime metrics cascading_metrics_collector.
+        Handle errors emitted from the model and send to realtime metrics realtime_metrics_collector.
         """
         error_data = {"message": str(error), "timestamp": time.time()}
-        realtime_metrics_collector.set_realtime_model_error(error_data)
+        # realtime_metrics_collector.set_realtime_model_error(error_data)
         logger.error(f"Realtime model error: {error_data}")
 
     def on_realtime_model_transcription(self, data: dict) -> None:

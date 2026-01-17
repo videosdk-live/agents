@@ -17,7 +17,7 @@ except Exception:
     _SD_AVAILABLE = False
 
 import numpy as np
-from .room.audio_stream import TeeCustomAudioStreamTrack
+from .room.output_stream import TeeCustomAudioStreamTrack
 from .transports.base import BaseTransportHandler
 import logging
 
