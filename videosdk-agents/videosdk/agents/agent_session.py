@@ -5,11 +5,7 @@ import uuid
 
 from .agent import Agent
 from .llm.chat_context import ChatRole
-from .conversation_flow import ConversationFlow
 from .pipeline import Pipeline
-from .metrics import cascading_metrics_collector, realtime_metrics_collector
-from .realtime_pipeline import RealTimePipeline
-from .cascading_pipeline import CascadingPipeline
 from .utils import get_tool_info, UserState, AgentState
 from .utterance_handle import UtteranceHandle 
 import time
@@ -33,7 +29,6 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         self,
         agent: Agent,
         pipeline: Pipeline,
-        conversation_flow: Optional[ConversationFlow] = None,
         wake_up: Optional[int] = None,
         background_audio: Optional[BackgroundAudioHandlerConfig] = None,
         dtmf_handler: Optional[DTMFHandler] = None,
@@ -45,14 +40,14 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         Args:
             agent: Instance of an Agent class that handles the core logic
             pipeline: Pipeline instance to process the agent's operations
-            conversation_flow: ConversationFlow instance to manage conversation state
             wake_up: Time in seconds after which to trigger wake-up callback if no speech detected
             background_audio: Configuration for background audio (optional)
+            dtmf_handler: DTMF handler for phone number input (optional)
+            voice_mail_detector: Voicemail detector (optional)
         """
         super().__init__()
         self.agent = agent
         self.pipeline = pipeline
-        self.conversation_flow = conversation_flow
         self.agent.session = self
         self.wake_up = wake_up
         self.on_wake_up: Optional[Callable[[], None] | Callable[[], Any]] = None
@@ -76,31 +71,27 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         self._playground = False
         self._send_analytics_to_pubsub = False
 
+        # Set agent on pipeline (pipeline handles all internal wiring)
         if hasattr(self.pipeline, 'set_agent'):
             self.pipeline.set_agent(self.agent)
         
-        if (
-            hasattr(self.pipeline, "set_conversation_flow")
-            and self.conversation_flow is not None
-        ):
-            self.pipeline.set_conversation_flow(self.conversation_flow)
-            if hasattr(self.conversation_flow, "set_voice_mail_detector"):
-                self.conversation_flow.set_voice_mail_detector(self.voice_mail_detector)
-            
-
-            self.conversation_flow.on("voicemail_result", self._handle_voicemail_result)
-        elif hasattr(self.pipeline, "set_voice_mail_detector") and self.voice_mail_detector:
-            self.pipeline.set_voice_mail_detector(self.voice_mail_detector)
+        # Setup voicemail detection
+        if self.voice_mail_detector:
+            if hasattr(self.pipeline, "set_voice_mail_detector"):
+                self.pipeline.set_voice_mail_detector(self.voice_mail_detector)
             
             if hasattr(self.pipeline, "on"):
                 self.pipeline.on("voicemail_result", self._handle_voicemail_result)
 
+        # Setup wake-up callback
         if hasattr(self.pipeline, 'set_wake_up_callback'):
             self.pipeline.set_wake_up_callback(self._reset_wake_up_timer)
 
+        # Register global events
         global_event_emitter.on("ON_SPEECH_IN", self._on_speech_in)
         global_event_emitter.on("ON_SPEECH_OUT", self._on_speech_out)
 
+        # Get job context
         try:
             job_ctx = get_current_job_context()
             if job_ctx:
@@ -268,11 +259,11 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         if self._playground or self._send_analytics_to_pubsub:
             job_ctx = get_current_job_context()
             self.playground_manager = PlaygroundManager(job_ctx)
-            if isinstance(self.pipeline, RealTimePipeline):
-                realtime_metrics_collector.set_playground_manager(self.playground_manager)
-
-            elif isinstance(self.pipeline, CascadingPipeline):
-                cascading_metrics_collector.set_playground_manager(self.playground_manager)
+            # TODO: Update metrics collection for new unified pipeline architecture
+            # if self.pipeline._is_realtime_mode:
+            #     realtime_metrics_collector.set_playground_manager(self.playground_manager)
+            # else:
+            #     cascading_metrics_collector.set_playground_manager(self.playground_manager)
 
         # if isinstance(self.pipeline, RealTimePipeline):
         #     await realtime_metrics_collector.start_session(self.agent, self.pipeline)
@@ -500,12 +491,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         self._pause_wake_up_timer()
         
         try:
-            if not isinstance(self.pipeline, RealTimePipeline):
-                # traces_flow_manager = cascading_metrics_collector.traces_flow_manager
-                # if traces_flow_manager:
-                    # traces_flow_manager.agent_reply_called(instructions)
-                    pass
-
+            # Call pipeline's reply_with_context
             if hasattr(self.pipeline, 'reply_with_context'):
                 await self.pipeline.reply_with_context(instructions, wait_for_playback, handle=handle, frames=frames)
 
@@ -579,13 +565,6 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             await self.pipeline.cleanup()
         except Exception as e:
             logger.error(f"Error cleaning up pipeline: {e}")
-        
-        if self.conversation_flow:
-            try:
-                await self.conversation_flow.cleanup()
-            except Exception as e:
-                logger.error(f"Error cleaning up conversation flow: {e}")
-            self.conversation_flow = None
         
         try:
             await self.agent.cleanup()

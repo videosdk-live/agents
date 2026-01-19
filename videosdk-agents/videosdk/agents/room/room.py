@@ -1,5 +1,6 @@
 from functools import partial
 import logging
+from typing import Callable, Optional, Any, TYPE_CHECKING
 from videosdk import (
     VideoSDK,
     Participant,
@@ -13,7 +14,6 @@ from .output_stream import TeeCustomAudioStreamTrack, TeeMixingCustomAudioStream
 from ._input_stream import InputStreamManager
 from ._sip_manager import SIPManager
 from ._recording_manager import RecordingManager
-from ..pipeline import Pipeline
 from dotenv import load_dotenv
 import asyncio
 import os
@@ -21,12 +21,14 @@ from asyncio import AbstractEventLoop
 from ..metrics.traces_flow import TracesFlowManager
 from ..metrics import cascading_metrics_collector
 from ..metrics.integration import auto_initialize_telemetry_and_logs
-from typing import Callable, Optional, Any
 from ..metrics.realtime_metrics_collector import realtime_metrics_collector
 import requests
 import time
 from ..event_bus import global_event_emitter
 from ..transports.base import BaseTransportHandler
+
+if TYPE_CHECKING:
+    from ..pipeline import Pipeline
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +48,7 @@ class VideoSDKHandler(BaseTransportHandler):
         name: str,
         agent_participant_id: str,
         agent_id: str,
-        pipeline: Pipeline,
+        pipeline: "Pipeline",
         loop: AbstractEventLoop,
         vision: bool = False,
         recording: bool = False,
