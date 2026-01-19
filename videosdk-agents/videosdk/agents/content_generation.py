@@ -48,7 +48,7 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
         """Start the content generation component"""
         logger.info("ContentGeneration started")
     
-    async def generate(self, user_text: str, knowledge_base: KnowledgeBase | None = None) -> AsyncIterator[ResponseChunk]:
+    async def generate(self, user_text: str) -> AsyncIterator[ResponseChunk]:
         """
         Process user text with LLM and yield response chunks.
         

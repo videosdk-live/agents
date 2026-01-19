@@ -430,7 +430,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 logger.warning("No content generation available")
                 return
             
-            llm_stream = self.content_generation.generate(user_text, self.agent.knowledge_base if self.agent else None)
+            llm_stream = self.content_generation.generate(user_text)
             
             q = asyncio.Queue(maxsize=50)
             
