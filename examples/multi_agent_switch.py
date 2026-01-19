@@ -1,5 +1,5 @@
 import logging
-from videosdk.agents import Agent, AgentSession, CascadingPipeline, function_tool, WorkerJob ,ConversationFlow, JobContext, RoomOptions
+from videosdk.agents import Agent, AgentSession, Pipeline, function_tool, WorkerJob,JobContext, RoomOptions
 from videosdk.plugins.deepgram import DeepgramSTT
 from videosdk.plugins.google import GoogleLLM
 from videosdk.plugins.cartesia import CartesiaTTS
@@ -63,9 +63,8 @@ class TravelSupportAgent(Agent):
 async def entrypoint(ctx: JobContext):
     
     agent = TravelAgent()
-    conversation_flow = ConversationFlow(agent)
 
-    pipeline = CascadingPipeline(
+    pipeline = Pipeline(
         stt=DeepgramSTT(),
         llm=GoogleLLM(),
         tts=CartesiaTTS(),
@@ -75,13 +74,12 @@ async def entrypoint(ctx: JobContext):
     session = AgentSession(
         agent=agent, 
         pipeline=pipeline,
-        conversation_flow=conversation_flow
     )
 
     await session.start(wait_for_participant=True, run_until_shutdown=True)
 
 def make_context() -> JobContext:
-    room_options = RoomOptions(name="Multi Agent Switch Agent", playground=True)
+    room_options = RoomOptions(room_id="<room_id>", name="Multi Agent Switch Agent", playground=True)
     return JobContext(room_options=room_options)
 
 if __name__ == "__main__":

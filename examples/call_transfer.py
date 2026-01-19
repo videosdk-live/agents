@@ -1,5 +1,5 @@
 import logging
-from videosdk.agents import Agent, AgentSession, CascadingPipeline, function_tool, WorkerJob,ConversationFlow, JobContext, RoomOptions, Options
+from videosdk.agents import Agent, AgentSession, Pipeline, function_tool, WorkerJob, JobContext, RoomOptions, Options
 from videosdk.plugins.deepgram import DeepgramSTT
 from videosdk.plugins.google import GoogleLLM
 from videosdk.plugins.cartesia import CartesiaTTS
@@ -33,9 +33,8 @@ class CallTransferAgent(Agent):
 async def entrypoint(ctx: JobContext):
     
     agent = CallTransferAgent()
-    conversation_flow = ConversationFlow(agent)
 
-    pipeline = CascadingPipeline(
+    pipeline = Pipeline(
         stt=DeepgramSTT(),
         llm=GoogleLLM(),
         tts=CartesiaTTS(),
@@ -45,7 +44,6 @@ async def entrypoint(ctx: JobContext):
     session = AgentSession(
         agent=agent, 
         pipeline=pipeline,
-        conversation_flow=conversation_flow
     )
 
     await session.start(wait_for_participant=True, run_until_shutdown=True)
@@ -53,9 +51,7 @@ async def entrypoint(ctx: JobContext):
 def make_context() -> JobContext:
     room_options = RoomOptions(name="Call Transfer Agent", playground=True)
     
-    return JobContext(
-        room_options=room_options
-        )
+    return JobContext(room_options=room_options)
 
 if __name__ == "__main__":
     job = WorkerJob(entrypoint=entrypoint, jobctx=make_context,options=Options(agent_id="YOUR_AGENT_ID",register=True,host="localhost",port=8081))

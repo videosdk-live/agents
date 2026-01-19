@@ -4,7 +4,7 @@ import pathlib
 import sys
 import logging
 from typing import Optional
-from videosdk.agents import Agent, AgentSession, RealTimePipeline,MCPServerStdio, MCPServerHTTP, WorkerJob, JobContext, RoomOptions
+from videosdk.agents import Agent, AgentSession, Pipeline,MCPServerStdio, MCPServerHTTP, WorkerJob, JobContext, RoomOptions
 from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig
 from openai.types.beta.realtime.session import  TurnDetection
 
@@ -69,7 +69,7 @@ async def entrypoint(ctx: JobContext):
         )
     )
 
-    pipeline = RealTimePipeline(model=model)
+    pipeline = Pipeline(llm=model)
     
     agent = MCPAgent()
 

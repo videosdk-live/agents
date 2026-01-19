@@ -5,10 +5,9 @@ from videosdk.agents import (
     Agent,
     Options,
     AgentSession,
-    CascadingPipeline,
+    Pipeline,
     function_tool,
     WorkerJob,
-    ConversationFlow,
     JobContext,
     RoomOptions,
 )
@@ -90,16 +89,14 @@ class VoiceAgent(Agent):
 async def entrypoint(ctx: JobContext):
 
     agent = VoiceAgent()
-    conversation_flow = ConversationFlow(agent)
 
-    pipeline = CascadingPipeline(
+    pipeline = Pipeline(
         stt=DeepgramSTT(), llm=OpenAILLM(), tts=GoogleTTS(), vad=SileroVAD()
     )
 
     session = AgentSession(
         agent=agent,
         pipeline=pipeline,
-        conversation_flow=conversation_flow,
     )
 
     await session.start(wait_for_participant=True, run_until_shutdown=True)

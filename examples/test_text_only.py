@@ -7,7 +7,7 @@ import sys
 import logging
 
 import aiohttp
-from videosdk.agents import Agent, AgentSession, RealTimePipeline, function_tool, MCPServerStdio, MCPServerHTTP, global_event_emitter, WorkerJob, JobContext, RoomOptions
+from videosdk.agents import Agent, AgentSession, Pipeline, function_tool, MCPServerStdio, MCPServerHTTP, global_event_emitter, WorkerJob, JobContext, RoomOptions
 # from videosdk.plugins.aws import NovaSonicRealtime, NovaSonicConfig
 from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig
 from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig
@@ -124,7 +124,7 @@ async def main(context: dict):
 
     global_event_emitter.on("text_response", handle_text_response)
 
-    pipeline = RealTimePipeline(model=model)
+    pipeline = Pipeline(llm=model)
     agent = MyVoiceAgent()
     session = AgentSession(agent=agent, pipeline=pipeline)
 
@@ -164,9 +164,8 @@ async def entryPoint(jobctx):
 
 def make_context() -> JobContext:
     room_options = RoomOptions(room_id="<room-id", name="Sandbox Agent", playground=True) 
-    return JobContext(
-        room_options=room_options
-        )
+    
+    return JobContext(room_options=room_options)
 
 
 if __name__ == "__main__":

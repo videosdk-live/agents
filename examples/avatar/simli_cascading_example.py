@@ -3,7 +3,7 @@ import aiohttp
 import os
 from typing import AsyncIterator
 
-from videosdk.agents import Agent, AgentSession, CascadingPipeline, function_tool, JobContext, RoomOptions, WorkerJob, ConversationFlow, ChatRole
+from videosdk.agents import Agent, AgentSession, Pipeline, function_tool, JobContext, RoomOptions, WorkerJob
 from videosdk.plugins.silero import SileroVAD
 from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
 from videosdk.plugins.simli import SimliAvatar, SimliConfig
@@ -86,10 +86,9 @@ async def start_session(context: JobContext):
 
     # Create agent and conversation flow
     agent = MyVoiceAgent()
-    conversation_flow = ConversationFlow(agent)
 
     # Create pipeline with avatar
-    pipeline = CascadingPipeline(
+    pipeline = Pipeline(
         stt=stt, 
         llm=llm, 
         tts=tts, 
@@ -101,7 +100,6 @@ async def start_session(context: JobContext):
     session = AgentSession(
         agent=agent,
         pipeline=pipeline,
-        conversation_flow=conversation_flow
     )
 
     await session.start(wait_for_participant=True, run_until_shutdown=True)

@@ -2,7 +2,7 @@ import asyncio
 import aiohttp
 import os
 
-from videosdk.agents import Agent, AgentSession, RealTimePipeline, function_tool, JobContext, RoomOptions, WorkerJob
+from videosdk.agents import Agent, AgentSession, Pipeline, function_tool, JobContext, RoomOptions, WorkerJob
 from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig
 from videosdk.plugins.simli import SimliAvatar, SimliConfig
 
@@ -78,7 +78,7 @@ async def start_session(context: JobContext):
     )
 
     # Create pipeline with avatar
-    pipeline = RealTimePipeline(model=model, avatar=simli_avatar)
+    pipeline = Pipeline(llm=model, avatar=simli_avatar)
 
     session = AgentSession(agent=MyVoiceAgent(), pipeline=pipeline)
 

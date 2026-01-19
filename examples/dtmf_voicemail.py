@@ -1,13 +1,12 @@
 # This test script is used to test DTMF Event and Voicemail Detection and it's handling.
 import logging
-from videosdk.agents import Agent, AgentSession, CascadingPipeline, DTMFHandler, VoiceMailDetector, WorkerJob,ConversationFlow, JobContext, RoomOptions, Options
+from videosdk.agents import Agent, AgentSession, Pipeline, DTMFHandler, VoiceMailDetector, WorkerJob, JobContext, RoomOptions, Options
 from videosdk.plugins.deepgram import DeepgramSTT
 from videosdk.plugins.openai import OpenAILLM
 from videosdk.plugins.elevenlabs import ElevenLabsTTS
 from videosdk.plugins.silero import SileroVAD
 from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 pre_download_model()
 class VoiceAgent(Agent):
     def __init__(self):
@@ -23,9 +22,8 @@ class VoiceAgent(Agent):
 async def entrypoint(ctx: JobContext):
     
     agent = VoiceAgent()
-    conversation_flow = ConversationFlow(agent)
 
-    pipeline=CascadingPipeline(
+    pipeline=Pipeline(
         stt=DeepgramSTT(),
         llm=OpenAILLM(),
         tts=ElevenLabsTTS(),
@@ -46,7 +44,6 @@ async def entrypoint(ctx: JobContext):
     session = AgentSession(
         agent=agent, 
         pipeline=pipeline,
-        conversation_flow=conversation_flow,
         dtmf_handler = dtmf_handler,
         voice_mail_detector = voice_mail_detector
     )

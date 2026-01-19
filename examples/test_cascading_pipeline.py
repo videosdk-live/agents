@@ -1,12 +1,13 @@
-# This test script is used to test cascading pipeline.
+# This test script is used to test the unified pipeline with cascading components.
 import logging
 import aiohttp
-from videosdk.agents import Agent, AgentSession, CascadingPipeline, function_tool, WorkerJob, ConversationFlow, JobContext, RoomOptions
+from videosdk.agents import Agent, AgentSession, Pipeline, function_tool, WorkerJob, JobContext, RoomOptions
 from videosdk.plugins.openai import OpenAILLM
 from videosdk.plugins.deepgram import DeepgramSTT
 from videosdk.plugins.silero import SileroVAD
 from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
 from videosdk.plugins.elevenlabs import ElevenLabsTTS
+
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 pre_download_model()
@@ -76,19 +77,17 @@ class VoiceAgent(Agent):
 async def entrypoint(ctx: JobContext):
     
     agent = VoiceAgent()
-    conversation_flow = ConversationFlow(agent)
 
-    pipeline = CascadingPipeline(
+    pipeline = Pipeline(
         stt=DeepgramSTT(),
         llm=OpenAILLM(),
         tts=ElevenLabsTTS(),
         vad=SileroVAD(),
         turn_detector=TurnDetector()
-    )
+    )    
     session = AgentSession(
         agent=agent, 
-        pipeline=pipeline,
-        conversation_flow=conversation_flow
+        pipeline=pipeline
     )
 
     await session.start(wait_for_participant=True, run_until_shutdown=True)

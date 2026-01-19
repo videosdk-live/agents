@@ -1,8 +1,8 @@
-# This test script is used to test realtime pipeline.
+# This test script is used to test the unified pipeline with realtime model.
 import logging
-from videosdk.agents import Agent, AgentSession, RealTimePipeline,WorkerJob, JobContext, RoomOptions
+from videosdk.agents import Agent, AgentSession, Pipeline, WorkerJob, JobContext, RoomOptions
 from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig
-from openai.types.beta.realtime.session import TurnDetection
+from openai.types.beta.realtime.session import TurnDetection, InputAudioTranscription
 
 logging.getLogger().setLevel(logging.CRITICAL)
 class RealtimeAgent(Agent):
@@ -35,7 +35,7 @@ async def entrypoint(ctx: JobContext):
         )
     )
     
-    pipeline = RealTimePipeline(model=model)
+    pipeline = Pipeline(llm=model)
     
     agent = RealtimeAgent()
     

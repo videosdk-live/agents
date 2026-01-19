@@ -1,6 +1,6 @@
 import asyncio
 import os
-from videosdk.agents import Agent, AgentSession, CascadingPipeline, WorkerJob, ConversationFlow, JobContext, RoomOptions
+from videosdk.agents import Agent, AgentSession, Pipeline, WorkerJob, JobContext, RoomOptions
 from videosdk.plugins.deepgram import DeepgramSTT
 from videosdk.plugins.silero import SileroVAD
 from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
@@ -8,6 +8,7 @@ from videosdk.plugins.anthropic import AnthropicLLM
 from videosdk.plugins.google import GoogleTTS
 import logging
 
+pre_download_model()
 logging.getLogger().setLevel(logging.CRITICAL)
 # pre_download_model()
 class VoiceAgent(Agent):
@@ -25,9 +26,8 @@ class VoiceAgent(Agent):
 async def entrypoint(ctx: JobContext):
     
     agent = VoiceAgent()
-    conversation_flow = ConversationFlow(agent)
-
-    pipeline = CascadingPipeline(
+    
+    pipeline = Pipeline(
         stt= DeepgramSTT(api_key=os.getenv("DEEPGRAM_API_KEY")),
         llm=AnthropicLLM(api_key=os.getenv("ANTHROPIC_API_KEY")),
         tts=GoogleTTS(api_key=os.getenv("GOOGLE_API_KEY")),
@@ -37,7 +37,6 @@ async def entrypoint(ctx: JobContext):
     session = AgentSession(
         agent=agent, 
         pipeline=pipeline,
-        conversation_flow=conversation_flow,
         wake_up=45
     )
     
@@ -51,9 +50,7 @@ async def entrypoint(ctx: JobContext):
 def make_context() -> JobContext:
     room_options = RoomOptions(room_id="<room_id>", name="Sandbox Agent", playground=True)
     
-    return JobContext(
-        room_options=room_options
-        )
+    return JobContext(room_options=room_options)
 
 if __name__ == "__main__":
 
