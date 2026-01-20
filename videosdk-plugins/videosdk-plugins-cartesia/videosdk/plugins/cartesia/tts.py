@@ -135,7 +135,7 @@ class CartesiaTTS(TTS):
                 future.set_exception(e)
         finally:
             if has_sent_transcript and not self._interrupted:
-                final_payload = {**base_payload, "transcript": " ", "continue": False}
+                final_payload = {**base_payload, "transcript": "", "continue": False}
                 if self._ws_connection and not self._ws_connection.closed:
                     await self._ws_connection.send_str(json.dumps(final_payload))
 

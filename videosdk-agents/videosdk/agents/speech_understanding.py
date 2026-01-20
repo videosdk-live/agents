@@ -72,6 +72,12 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
             self.stt.on_stt_transcript(self._on_stt_transcript)
         if self.vad:
             self.vad.on_vad_event(self._on_vad_event)
+
+        # Setup delay range for ADAPTIVE mode
+        if self.mode == "ADAPTIVE":
+            self.delay_range = self.max_speech_wait_timeout - self.min_speech_wait_timeout
+        elif self.mode == "DEFAULT":
+            self.delay = self.min_speech_wait_timeout
     
     def update_preemptive_generation_flag(self) -> None:
         """Update the preemptive generation flag based on current STT instance"""
@@ -168,28 +174,23 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
                 self._accumulated_transcript += " " + new_transcript
             else:
                 self._accumulated_transcript = new_transcript
-            
-            delay = self.min_speech_wait_timeout
-            
-            if self.mode == 'DEFAULT':
-                if self.turn_detector and self.agent:
+                
+            if self.turn_detector and self.agent:
                     eou_probability = self.turn_detector.get_eou_probability(self.agent.chat_context)
                     logger.info(f"EOU probability: {eou_probability}")
+
+            if self.mode == 'DEFAULT':
                     if eou_probability < self.eou_certainty_threshold:
-                        delay = self.max_speech_wait_timeout
+                        self.delay = self.max_speech_wait_timeout
                         
             elif self.mode == 'ADAPTIVE':
-                if self.turn_detector and self.agent:
-                    eou_probability = self.turn_detector.get_eou_probability(self.agent.chat_context)
-                    logger.info(f"EOU probability: {eou_probability}")
-                    delay_range = self.max_speech_wait_timeout - self.min_speech_wait_timeout
                     wait_factor = 1.0 - eou_probability
-                    delay = self.min_speech_wait_timeout + (delay_range * wait_factor)
+                    self.delay = self.min_speech_wait_timeout + (self.delay_range * wait_factor)
             
-            logger.info(f"Using delay: {delay} seconds")
-            await self._wait_for_additional_speech(delay)
+            logger.info(f"Using delay: {self.delay} seconds")
+            await self._wait_for_additional_speech()
     
-    async def _wait_for_additional_speech(self, delay: float) -> None:
+    async def _wait_for_additional_speech(self) -> None:
         """Wait for additional speech within the timeout period"""
         if self._waiting_for_more_speech:
             if self._wait_timer:
@@ -199,7 +200,7 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
         
         loop = asyncio.get_event_loop()
         self._wait_timer = loop.call_later(
-            delay,
+            self.delay,
             lambda: asyncio.create_task(self._on_speech_timeout())
         )
     

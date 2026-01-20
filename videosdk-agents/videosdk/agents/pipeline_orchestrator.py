@@ -230,7 +230,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 )
                 
                 self.emit("content_generated", {"text": full_response})
-                
+                logger.info(f"Content generated: {full_response}")
                 if self.speech_generation:
                     await self.speech_generation.synthesize(full_response)
                 
@@ -409,7 +409,15 @@ class PipelineOrchestrator(EventEmitter[Literal[
             handle = UtteranceHandle(utterance_id="utt_fallback")
             handle._mark_done()
         
-        asyncio.create_task(self._generate_and_synthesize(final_user_text, handle))
+
+        # # Reset false interrupt state since we are starting a fresh turn
+        self._cancel_false_interrupt_timer()
+        self._is_in_false_interrupt_pause = False
+        self._false_interrupt_paused_speech = False
+
+        if self._current_generation_task and not self._current_generation_task.done():
+            self._current_generation_task.cancel()
+        self._current_generation_task = asyncio.create_task(self._generate_and_synthesize(final_user_text, handle))
     
     async def _generate_and_synthesize(
         self, 
@@ -425,6 +433,9 @@ class PipelineOrchestrator(EventEmitter[Literal[
         try:
             if self.agent and self.agent.session and self.agent.session.is_background_audio_enabled:
                 await self.agent.session.start_thinking_audio()
+            
+            if self.speech_generation:
+                self.speech_generation.reset_interrupt()
             
             if not self.content_generation:
                 logger.warning("No content generation available")
@@ -726,6 +737,9 @@ class PipelineOrchestrator(EventEmitter[Literal[
         
         if self.content_generation:
             await self.content_generation.cancel()
+            
+        if self._current_generation_task and not self._current_generation_task.done():
+            self._current_generation_task.cancel()
         
         self._partial_response = ""
         self._is_interrupted = False
@@ -751,6 +765,9 @@ class PipelineOrchestrator(EventEmitter[Literal[
         
         if self.content_generation:
             await self.content_generation.cancel()
+            
+        if self._current_generation_task and not self._current_generation_task.done():
+            self._current_generation_task.cancel()
         
         if self.speech_generation:
             await self.speech_generation.interrupt()
