@@ -1,7 +1,7 @@
 import logging
 import os
 from typing import List
-from videosdk.agents import Agent,AgentSession,CascadingPipeline,ConversationFlow,JobContext,RoomOptions,WorkerJob,KnowledgeBase,KnowledgeBaseConfig
+from videosdk.agents import Agent,AgentSession,Pipeline,JobContext,RoomOptions,WorkerJob,KnowledgeBase,KnowledgeBaseConfig
 from videosdk.plugins.google import GoogleLLM, GoogleTTS
 from videosdk.plugins.sarvamai import SarvamAISTT
 from videosdk.plugins.silero import SileroVAD
@@ -83,15 +83,14 @@ class VoiceAgent(Agent):
 
 async def entrypoint(ctx: JobContext):
     agent = VoiceAgent()
-    conversation_flow = ConversationFlow(agent)
-    pipeline = CascadingPipeline(
+    pipeline = Pipeline(
         stt=SarvamAISTT(),
         llm=GoogleLLM(),
         tts=GoogleTTS(),
         vad=SileroVAD(),
         turn_detector=TurnDetector(),
     )
-    session = AgentSession(agent=agent, pipeline=pipeline, conversation_flow=conversation_flow)
+    session = AgentSession(agent=agent, pipeline=pipeline)
     await session.start(wait_for_participant=True, run_until_shutdown=True)
 
 def make_context() -> JobContext:

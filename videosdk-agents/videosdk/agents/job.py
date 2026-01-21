@@ -1,21 +1,20 @@
 import logging
-from .room.room import VideoSDKHandler
-from .pipeline import Pipeline
-from typing import Callable, Coroutine, Optional, Any
+from typing import Callable, Coroutine, Optional, Any, TYPE_CHECKING
 import os
 import asyncio
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum, unique
-from typing import TYPE_CHECKING
 import logging
 import requests
 import sys
 from .playground_manager import PlaygroundManager
 
 if TYPE_CHECKING:
+    from .pipeline import Pipeline
     from .worker import ExecutorType, WorkerPermissions, _default_executor_type
     from .transports.base import BaseTransportHandler
+    from .room.room import VideoSDKHandler
 else:
     # Import at runtime to avoid circular imports
     ExecutorType = None
@@ -280,7 +279,7 @@ class JobContext:
         self.room_options = room_options
         self.metadata = metadata or {}
         self._loop = loop or asyncio.get_event_loop()
-        self._pipeline: Optional[Pipeline] = None
+        self._pipeline: Optional["Pipeline"] = None
         self.videosdk_auth = self.room_options.auth_token or os.getenv(
             "VIDEOSDK_AUTH_TOKEN"
         )
@@ -333,6 +332,8 @@ class JobContext:
                 self.add_shutdown_callback(cleanup_callback)
             else:
                 if self.room_options.transport_mode == TransportMode.VIDEOSDK:
+                    from .room.room import VideoSDKHandler
+                    
                     if not self.room_options.room_id:
                         self.room_options.room_id = self.get_room_id()
                     if self.room_options.join_meeting:

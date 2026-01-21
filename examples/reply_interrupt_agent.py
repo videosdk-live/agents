@@ -1,7 +1,7 @@
 import asyncio
 from typing import Optional
 from videosdk import PubSubSubscribeConfig
-from videosdk.agents import Agent, AgentSession, CascadingPipeline,WorkerJob,ConversationFlow,JobContext, RoomOptions
+from videosdk.agents import Agent, AgentSession, Pipeline,WorkerJob,JobContext, RoomOptions
 from videosdk.plugins.deepgram import DeepgramSTT
 from videosdk.plugins.elevenlabs import ElevenLabsTTS
 from videosdk.plugins.anthropic import AnthropicLLM
@@ -26,9 +26,8 @@ class PubSubAgent(Agent):
 async def entrypoint(ctx: JobContext):
     
     agent = PubSubAgent(ctx)
-    conversation_flow = ConversationFlow(agent)
 
-    pipeline = CascadingPipeline(
+    pipeline = Pipeline(
         stt= DeepgramSTT(),
         llm=AnthropicLLM(),
         tts=ElevenLabsTTS(),
@@ -38,7 +37,6 @@ async def entrypoint(ctx: JobContext):
     session = AgentSession(
         agent=agent, 
         pipeline=pipeline,
-        conversation_flow=conversation_flow,
     )
     
     shutdown_event = asyncio.Event()
@@ -88,9 +86,7 @@ async def entrypoint(ctx: JobContext):
 def make_context() -> JobContext:
     room_options = RoomOptions(room_id="<room_id>", name="Videosdk's Agent", playground=True)
     
-    return JobContext(
-        room_options=room_options
-        )
+    return JobContext(room_options=room_options)
 
 if __name__ == "__main__":
 

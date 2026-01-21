@@ -1,7 +1,7 @@
 import asyncio
 from typing import AsyncIterator, Optional
 from videosdk import PubSubPublishConfig, PubSubSubscribeConfig
-from videosdk.agents import Agent, AgentSession, CascadingPipeline, function_tool, WorkerJob,ConversationFlow,JobContext, RoomOptions
+from videosdk.agents import Agent, AgentSession, Pipeline, function_tool, WorkerJob,JobContext, RoomOptions
 from videosdk.plugins.deepgram import DeepgramSTT
 from videosdk.plugins.elevenlabs import ElevenLabsTTS
 from videosdk.plugins.anthropic import AnthropicLLM
@@ -45,9 +45,8 @@ def on_pubsub_message(message):
 async def entrypoint(ctx: JobContext):
     
     agent = PubSubAgent(ctx)
-    conversation_flow = ConversationFlow(agent)
 
-    pipeline = CascadingPipeline(
+    pipeline = Pipeline(
         stt= DeepgramSTT(),
         llm=AnthropicLLM(),
         tts=ElevenLabsTTS(),
@@ -57,7 +56,6 @@ async def entrypoint(ctx: JobContext):
     session = AgentSession(
         agent=agent, 
         pipeline=pipeline,
-        conversation_flow=conversation_flow,
     )
     
     shutdown_event = asyncio.Event()

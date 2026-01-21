@@ -1,7 +1,7 @@
 import asyncio
 import os
 from typing import Optional
-from videosdk.agents import Agent, AgentSession, CascadingPipeline, WorkerJob, MCPServerStdio, ConversationFlow, JobContext, RoomOptions
+from videosdk.agents import Agent, AgentSession, Pipeline, WorkerJob, MCPServerStdio, JobContext, RoomOptions
 from videosdk.plugins.google import GoogleTTS
 from videosdk.plugins.deepgram import DeepgramSTT
 from videosdk.plugins.silero import SileroVAD
@@ -46,7 +46,6 @@ class CustomerAgent(Agent):
 async def entrypoint(ctx: JobContext):
     
     agent = CustomerAgent(ctx)
-    conversation_flow = ConversationFlow(agent)
 
     pipeline = CascadingPipeline(
         stt= DeepgramSTT(api_key=os.getenv("DEEPGRAM_API_KEY")),  
@@ -59,7 +58,6 @@ async def entrypoint(ctx: JobContext):
     session = AgentSession(
         agent=agent, 
         pipeline=pipeline,
-        conversation_flow=conversation_flow,
     )
 
     await session.start(wait_for_participant=True, run_until_shutdown=True)
@@ -67,9 +65,7 @@ async def entrypoint(ctx: JobContext):
 def make_context() -> JobContext:
     room_options = RoomOptions(room_id="<room_id>", name="Customer Agent", playground=True)
     
-    return JobContext(
-        room_options=room_options
-        )
+    return JobContext(room_options=room_options)
 
 
 if __name__ == "__main__":

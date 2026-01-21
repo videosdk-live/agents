@@ -1,10 +1,8 @@
-from videosdk.agents import Agent, AgentSession,CascadingPipeline,WorkerJob, ConversationFlow, JobContext, RoomOptions, function_tool, RealTimePipeline
-from videosdk.plugins.openai import OpenAILLM,OpenAITTS
+from videosdk.agents import Agent, AgentSession, Pipeline, WorkerJob, JobContext, RoomOptions, function_tool
+from videosdk.plugins.openai import OpenAILLM, OpenAITTS
 from videosdk.plugins.deepgram import DeepgramSTT
 from videosdk.plugins.silero import SileroVAD
 from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
-from videosdk.plugins.google import GoogleLLM
-from videosdk.plugins.cartesia import CartesiaTTS
 import logging
 logging.basicConfig(level=logging.INFO)
 
@@ -41,22 +39,18 @@ class VoiceAgent(Agent):
 async def entrypoint(ctx: JobContext):
     
     agent = VoiceAgent()
-    conversation_flow = ConversationFlow(agent)
 
-    pipeline = CascadingPipeline(
+    pipeline = Pipeline(
         stt=DeepgramSTT(),
-        # llm=OpenAILLM(),
-        # tts=OpenAITTS(),
-        llm=GoogleLLM(),
-        tts=CartesiaTTS(),
+        llm=OpenAILLM(),
+        tts=OpenAITTS(),
         vad=SileroVAD(),
         turn_detector=TurnDetector()
     )
 
     session = AgentSession(
         agent=agent, 
-        pipeline=pipeline,
-        conversation_flow=conversation_flow,
+        pipeline=pipeline
     )
 
     await session.start(wait_for_participant=True, run_until_shutdown=True)
