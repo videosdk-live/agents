@@ -40,7 +40,7 @@ from .agent_session import AgentSession
 from .utils import UserState, AgentState
 from .pipeline import Pipeline, EOUConfig, InterruptConfig
 from .realtime_base_model import RealtimeBaseModel
-from .realtime_llm_adapter import RealtimeLLMWrapper
+from .realtime_llm_adapter import RealtimeLLMAdapter
 
 from .metrics import realtime_metrics_collector
 from .utils import (
@@ -123,7 +123,7 @@ __all__ = [
     "EOUConfig",
     "InterruptConfig",
     "RealtimeBaseModel",
-    "RealtimeLLMWrapper",
+    "RealtimeLLMAdapter",
     "function_tool",
     "is_function_tool",
     "get_tool_info",

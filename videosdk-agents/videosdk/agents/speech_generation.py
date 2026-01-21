@@ -10,6 +10,7 @@ from .utils import UserState, AgentState
 if TYPE_CHECKING:
     from .agent import Agent
     from .room.output_stream import CustomAudioStreamTrack
+    from .pipeline_hooks import PipelineHooks
 
 logger = logging.getLogger(__name__)
 
@@ -31,12 +32,14 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
         tts: TTS | None = None,
         avatar: Any | None = None,
         audio_track: CustomAudioStreamTrack | None = None,
+        hooks: "PipelineHooks | None" = None,
     ) -> None:
         super().__init__()
         self.agent = agent
         self.tts = tts
         self.avatar = avatar
         self.audio_track = audio_track
+        self.hooks = hooks
         self.tts_lock = asyncio.Lock()
         self._is_interrupted = False
     
@@ -92,6 +95,10 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
                     self.agent.session._emit_agent_state(AgentState.IDLE)
                     self.agent.session._emit_user_state(UserState.IDLE)
                 
+                # Trigger agent_turn_end hook
+                if self.hooks and self.hooks.has_agent_turn_end_hooks():
+                    await self.hooks.trigger_agent_turn_end()
+                
                 logger.info("TTS synthesis complete - Agent and User set to IDLE")
                 self.emit("last_audio_byte", {})
             
@@ -108,6 +115,10 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
             self.tts.reset_first_audio_tracking()
             
             self.emit("synthesis_started", {})
+            
+            # Trigger agent_turn_start hook
+            if self.hooks and self.hooks.has_agent_turn_start_hooks():
+                await self.hooks.trigger_agent_turn_start()
             
             try:
                 response_iterator: AsyncIterator[str]

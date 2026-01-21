@@ -7,7 +7,8 @@ from .utterance_handle import UtteranceHandle
 from .event_emitter import EventEmitter
 from .room.output_stream import CustomAudioStreamTrack
 from .pipeline_orchestrator import PipelineOrchestrator
-from .realtime_llm_adapter import RealtimeLLMWrapper
+from .pipeline_hooks import PipelineHooks
+from .realtime_llm_adapter import RealtimeLLMAdapter
 from .realtime_base_model import RealtimeBaseModel
 from .stt.stt import STT
 from .llm.llm import LLM
@@ -108,16 +109,19 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         self.max_context_items = max_context_items
         self.voice_mail_detector = voice_mail_detector
         
+        # Pipeline hooks for middleware/interception
+        self.hooks = PipelineHooks()
+        
         # Detect and handle realtime models
         self._is_realtime_mode = False
-        self.llm: LLM | RealtimeLLMWrapper | None = None
+        self.llm: LLM | RealtimeLLMAdapter | None = None
         self._realtime_model: RealtimeBaseModel | None = None
         
         if isinstance(llm, RealtimeBaseModel):
             logger.info("Realtime model detected - wrapping as LLM")
             self._is_realtime_mode = True
             self._realtime_model = llm
-            self.llm = RealtimeLLMWrapper(llm)
+            self.llm = RealtimeLLMAdapter(llm)
             
             if stt or tts:
                 logger.warning("STT/TTS components ignored when using realtime model (model handles audio I/O)")
@@ -152,6 +156,81 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                 job_context._set_pipeline_internal(self)
         except Exception:
             pass
+    
+    def on(self, event: Literal["speech_in", "speech_out", "stt", "llm", "agent_response", "vision_frame", "user_turn_start", "user_turn_end", "agent_turn_start", "agent_turn_end"]) -> Callable:
+        """
+        Decorator to register a hook for pipeline events.
+        
+        Supported hooks:
+        - speech_in: Process raw incoming user audio (async iterator)
+        - speech_out: Process outgoing agent audio after TTS (async iterator)
+        - stt: Process user transcript after STT, before LLM
+        - llm: Control LLM invocation (can bypass with direct response)
+        - agent_response: Process agent response after LLM, before TTS
+        - vision_frame: Process video frames when vision is enabled (async iterator)
+        - user_turn_start: Called when user turn starts
+        - user_turn_end: Called when user turn ends
+        - agent_turn_start: Called when agent processing starts
+        - agent_turn_end: Called when agent finishes speaking
+        
+        Examples:
+            @pipeline.on("speech_in")
+            async def process_audio(audio_stream):
+                '''Apply noise reduction to incoming audio'''
+                async for audio_chunk in audio_stream:
+                    # Process audio_chunk (bytes)
+                    processed = apply_noise_reduction(audio_chunk)
+                    yield processed
+            
+            @pipeline.on("stt")
+            async def clean_transcript(transcript: str) -> str:
+                '''Remove filler words from transcript'''
+                return transcript.replace("um", "").replace("uh", "")
+            
+            @pipeline.on("agent_response")
+            async def process_response(response: str):
+                '''Stream modified response to TTS'''
+                for word in response.split():
+                    yield word.replace("API", "A P I") + " "
+            
+            @pipeline.on("vision_frame")
+            async def process_frames(frame_stream):
+                '''Apply filters to video frames'''
+                async for frame in frame_stream:
+                    # Process av.VideoFrame
+                    filtered_frame = apply_filter(frame)
+                    yield filtered_frame
+            
+            @pipeline.on("user_turn_start")
+            async def on_user_turn_start(transcript: str) -> None:
+                '''Log when user starts speaking'''
+                print(f"User said: {transcript}")
+            
+            @pipeline.on("user_turn_end")
+            async def on_user_turn_end() -> None:
+                '''Log when user turn ends'''
+                print("User turn ended")
+            
+            @pipeline.on("agent_turn_start")
+            async def on_agent_turn_start() -> None:
+                '''Log when agent starts processing'''
+                print("Agent processing started")
+            
+            @pipeline.on("agent_turn_end")
+            async def on_agent_turn_end() -> None:
+                '''Log when agent finishes speaking'''
+                print("Agent finished speaking")
+            
+            @pipeline.on("llm")
+            async def custom_handler(transcript: str):
+                '''Bypass LLM with streaming response or don't yield for normal flow'''
+                if "hours" in transcript.lower():
+                    # Yield to bypass LLM and stream response directly to TTS
+                    for word in "We're open 24/7".split():
+                        yield word + " "
+                # If no yields, the generator will be empty and LLM will be used
+        """
+        return self.hooks.on(event)
     
     def _setup_error_handlers(self) -> None:
         """Setup error handlers for all components"""
@@ -210,6 +289,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                 conversational_graph=self.conversational_graph,
                 max_context_items=self.max_context_items,
                 voice_mail_detector=self.voice_mail_detector,
+                hooks=self.hooks, 
             )
             
             self.orchestrator.on("transcript_ready", lambda data: self.emit("transcript_ready", data))
@@ -217,7 +297,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
             self.orchestrator.on("synthesis_complete", lambda data: self.emit("synthesis_complete", data))
             self.orchestrator.on("voicemail_result", lambda data: self.emit("voicemail_result", data))
         else:
-            if isinstance(self.llm, RealtimeLLMWrapper):
+            if isinstance(self.llm, RealtimeLLMAdapter):
                 self.llm.set_agent(agent)
     
     def _set_loop_and_audio_track(self, loop: asyncio.AbstractEventLoop, audio_track: CustomAudioStreamTrack) -> None:
@@ -253,6 +333,9 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
             
             if self.tts.audio_track:
                 logger.info(f"TTS audio track configured: {type(self.tts.audio_track).__name__}")
+                # Set hooks on audio track for speech_out processing
+                if hasattr(self.tts.audio_track, 'set_pipeline_hooks'):
+                    self.tts.audio_track.set_pipeline_hooks(self.hooks)
             
             if self.orchestrator:
                 self.orchestrator.set_audio_track(self.tts.audio_track)
@@ -264,6 +347,10 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                 self._realtime_model.audio_track = getattr(job_context.room, 'agent_audio_track', None) or job_context.room.audio_track
             elif self.audio_track:
                 self._realtime_model.audio_track = self.audio_track
+            
+            # Set hooks on audio track for speech_out processing
+            if self._realtime_model.audio_track and hasattr(self._realtime_model.audio_track, 'set_pipeline_hooks'):
+                self._realtime_model.audio_track.set_pipeline_hooks(self.hooks)
     
     def set_wake_up_callback(self, callback: Callable[[], None]) -> None:
         """Set wake-up callback for speech detection"""
@@ -288,7 +375,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
             if self._realtime_model:
                 await self._realtime_model.connect()
                 
-                if isinstance(self.llm, RealtimeLLMWrapper):
+                if isinstance(self.llm, RealtimeLLMAdapter):
                     self.llm.on_user_speech_started(lambda data: self._on_user_speech_started_realtime(data))
                     self.llm.on_user_speech_ended(lambda data: asyncio.create_task(self._on_user_speech_ended_realtime(data)))
                     self.llm.on_agent_speech_started(lambda data: asyncio.create_task(self._on_agent_speech_started_realtime(data)))
@@ -309,7 +396,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         self._current_utterance_handle = handle
         
         if self._is_realtime_mode:
-            if isinstance(self.llm, RealtimeLLMWrapper):
+            if isinstance(self.llm, RealtimeLLMAdapter):
                 self.llm.current_utterance = handle
                 try:
                     await self.llm.send_message(message)
@@ -331,7 +418,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
             message: Text message to send
         """
         if self._is_realtime_mode:
-            if isinstance(self.llm, RealtimeLLMWrapper):
+            if isinstance(self.llm, RealtimeLLMAdapter):
                 await self.llm.send_text_message(message)
         else:
             if self.orchestrator:
@@ -345,7 +432,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
             audio_data: Raw audio bytes
         """
         if self._is_realtime_mode:
-            if isinstance(self.llm, RealtimeLLMWrapper):
+            if isinstance(self.llm, RealtimeLLMAdapter):
                 await self.llm.handle_audio_input(audio_data)
         else:
             if self.orchestrator:
@@ -364,12 +451,21 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         if self._vision_lock.locked():
             return
         
+        # Process through vision_frame hook if available
+        if self.hooks and self.hooks.has_vision_frame_hooks():
+            async def frame_stream():
+                yield video_data
+            
+            processed_stream = self.hooks.process_vision_frame(frame_stream())
+            async for processed_frame in processed_stream:
+                video_data = processed_frame
+        
         self._recent_frames.append(video_data)
         if len(self._recent_frames) > self._max_frames_buffer:
             self._recent_frames.pop(0)
         
         if self._is_realtime_mode:
-            if isinstance(self.llm, RealtimeLLMWrapper):
+            if isinstance(self.llm, RealtimeLLMAdapter):
                 await self.llm.handle_video_input(video_data)
     
     def get_latest_frames(self, num_frames: int = 1) -> list[av.VideoFrame]:
@@ -434,7 +530,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         self._current_utterance_handle = handle
         
         if self._is_realtime_mode:
-            if isinstance(self.llm, RealtimeLLMWrapper):
+            if isinstance(self.llm, RealtimeLLMAdapter):
                 self.llm.current_utterance = handle
                 
                 if frames and hasattr(self.llm, 'send_message_with_frames'):
@@ -499,7 +595,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
             text: User text input
         """
         if self._is_realtime_mode:
-            if isinstance(self.llm, RealtimeLLMWrapper):
+            if isinstance(self.llm, RealtimeLLMAdapter):
                 await self.llm.send_text_message(text)
         else:
             if self.orchestrator:
@@ -576,7 +672,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
             if self.stt:
                 await self.stt.aclose()
                 self.stt = None
-            if self.llm and not isinstance(self.llm, RealtimeLLMWrapper):
+            if self.llm and not isinstance(self.llm, RealtimeLLMAdapter):
                 await self.llm.aclose()
                 self.llm = None
             if self.tts:

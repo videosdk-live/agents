@@ -23,6 +23,7 @@ from .voice_mail_detector import VoiceMailDetector
 if TYPE_CHECKING:
     from .agent import Agent
     from .knowledge_base.base import KnowledgeBase
+    from .pipeline_hooks import PipelineHooks
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +72,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
         conversational_graph: Any | None = None,
         max_context_items: int | None = None,
         voice_mail_detector: VoiceMailDetector | None = None,
+        hooks: "PipelineHooks | None" = None,
     ) -> None:
         super().__init__()
         
@@ -81,6 +83,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
         self.voice_mail_detection_done = False
         self._vmd_buffer = ""
         self._vmd_check_task: asyncio.Task | None = None
+        self.hooks = hooks
         
         # Interruption configuration
         self.interrupt_mode = interrupt_mode
@@ -113,6 +116,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 mode=mode,
                 min_speech_wait_timeout=min_speech_wait_timeout[0],
                 max_speech_wait_timeout=min_speech_wait_timeout[1],
+                hooks=hooks,
             )
             # Setup event listeners with sync wrappers
             self.speech_understanding.on("transcript_final", self._wrap_async(self._on_transcript_final))
@@ -139,6 +143,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 agent=agent,
                 tts=tts,
                 avatar=avatar,
+                hooks=hooks,
             )
             # Setup event listeners
             self.speech_generation.on("synthesis_started", lambda data: logger.info("Speech synthesis started"))
@@ -382,14 +387,54 @@ class PipelineOrchestrator(EventEmitter[Literal[
             logger.warning("No agent available")
             return
         
-        final_user_text = user_text
+        if self.hooks and self.hooks.has_user_turn_start_hooks():
+            await self.hooks.trigger_user_turn_start(user_text)
+        
+        # Process transcript through stt hooks first
+        processed_text = user_text
+        if self.hooks and self.hooks.has_stt_hooks():
+            processed_text = await self.hooks.process_stt(user_text)
+            logger.info(f"Processed transcript through stt hooks: '{user_text}' -> '{processed_text}'")
+        
+        # Then check llm hook with the processed text
+        if self.hooks and self.hooks.has_llm_hook():
+            direct_response = await self.hooks.process_llm_gate(processed_text)
+            
+            if direct_response is not None:
+                logger.info("llm hook is bypassing LLM - using direct response")
+                
+                if self.agent.session:
+                    if self.agent.session.current_utterance and not self.agent.session.current_utterance.done():
+                        if self.agent.session.current_utterance.is_interruptible:
+                            self.agent.session.current_utterance.interrupt()
+                    
+                    handle = UtteranceHandle(utterance_id=f"utt_{uuid.uuid4().hex[:8]}")
+                    self.agent.session.current_utterance = handle
+                else:
+                    handle = UtteranceHandle(utterance_id="utt_fallback")
+                    handle._mark_done()
+                
+                if self.speech_generation:
+                    try:
+                        # direct_response is an AsyncIterator from the hook
+                        await self.speech_generation.synthesize(direct_response)
+                    finally:
+                        if self.hooks and self.hooks.has_user_turn_end_hooks():
+                            await self.hooks.trigger_user_turn_end()
+                        
+                        if not handle.done():
+                            handle._mark_done()
+                
+                return
+        
+        final_user_text = processed_text
         if self.agent.knowledge_base:
-            kb_context = await self.agent.knowledge_base.process_query(user_text)
+            kb_context = await self.agent.knowledge_base.process_query(processed_text)
             if kb_context:
-                final_user_text = f"{kb_context}\n\nUser: {user_text}"
+                final_user_text = f"{kb_context}\n\nUser: {processed_text}"
         
         if self.conversational_graph:
-            final_user_text = self.conversational_graph.handle_input(user_text)
+            final_user_text = self.conversational_graph.handle_input(processed_text)
         
         self.agent.chat_context.add_message(
             role=ChatRole.USER,
@@ -408,8 +453,11 @@ class PipelineOrchestrator(EventEmitter[Literal[
         else:
             handle = UtteranceHandle(utterance_id="utt_fallback")
             handle._mark_done()
-        
-        asyncio.create_task(self._generate_and_synthesize(final_user_text, handle))
+
+        if self._current_generation_task and not self._current_generation_task.done():
+            self._current_generation_task.cancel()
+        self._current_generation_task = asyncio.create_task(self._generate_and_synthesize(final_user_text, handle))
+    
     
     async def _generate_and_synthesize(
         self, 
@@ -425,6 +473,9 @@ class PipelineOrchestrator(EventEmitter[Literal[
         try:
             if self.agent and self.agent.session and self.agent.session.is_background_audio_enabled:
                 await self.agent.session.start_thinking_audio()
+
+            if self.speech_generation:
+                self.speech_generation.reset_interrupt()    
             
             if not self.content_generation:
                 logger.warning("No content generation available")
@@ -481,6 +532,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
                         return
                 
                 async def tts_stream_gen():
+                    """Generate TTS stream from queue"""
                     while True:
                         if handle.interrupted or (wait_for_authorization and self._preemptive_cancelled):
                             break
@@ -489,15 +541,22 @@ class PipelineOrchestrator(EventEmitter[Literal[
                             chunk = await asyncio.wait_for(q.get(), timeout=0.1)
                             if chunk is None:
                                 break
+                            print(f"chunk: at the tts consumer at pipline orchestrator  {chunk}")
                             yield chunk
+                            
                         except asyncio.TimeoutError:
                             if handle.interrupted or (wait_for_authorization and self._preemptive_cancelled):
                                 break
                             continue
                 
+                if self.hooks and self.hooks.has_agent_response_hooks():
+                    processed_stream = self.hooks.process_agent_response(tts_stream_gen())
+                else:
+                    processed_stream = tts_stream_gen()
+                
                 if self.speech_generation:
                     try:
-                        await self.speech_generation.synthesize(tts_stream_gen())
+                        await self.speech_generation.synthesize(processed_stream)
                     except asyncio.CancelledError:
                         if self.speech_generation:
                             await self.speech_generation.interrupt()
@@ -527,6 +586,9 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 self.emit("content_generated", {"text": full_response})
         
         finally:
+            if self.hooks and self.hooks.has_user_turn_end_hooks():
+                await self.hooks.trigger_user_turn_end()
+            
             if not handle.done():
                 handle._mark_done()
     
@@ -726,6 +788,9 @@ class PipelineOrchestrator(EventEmitter[Literal[
         
         if self.content_generation:
             await self.content_generation.cancel()
+
+        if self._current_generation_task and not self._current_generation_task.done():
+            self._current_generation_task.cancel()     
         
         self._partial_response = ""
         self._is_interrupted = False
@@ -746,12 +811,15 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 await self._preemptive_generation_task
             except asyncio.CancelledError:
                 logger.info("Preemptive task cancelled successfully")
-        
+
         self._preemptive_generation_task = None
         
         if self.content_generation:
             await self.content_generation.cancel()
-        
+
+        if self._current_generation_task and not self._current_generation_task.done():
+            self._current_generation_task.cancel()     
+             
         if self.speech_generation:
             await self.speech_generation.interrupt()
         

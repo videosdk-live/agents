@@ -12,6 +12,7 @@ from .denoise import Denoise
 
 if TYPE_CHECKING:
     from .agent import Agent
+    from .pipeline_hooks import PipelineHooks
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
         min_speech_wait_timeout: float = 0.5,
         max_speech_wait_timeout: float = 0.8,
         eou_certainty_threshold: float = 0.85,
+        hooks: "PipelineHooks | None" = None,
     ) -> None:
         super().__init__()
         self.agent = agent
@@ -46,6 +48,7 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
         self.vad = vad
         self.turn_detector = turn_detector
         self.denoise = denoise
+        self.hooks = hooks
         
         # EOU configuration
         self.mode = mode
@@ -86,11 +89,12 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
         """
         Process incoming audio data through denoise, STT, and VAD.
         
+        Note: speech_in hook is processed at the input stream level before this method.
+        
         Args:
-            audio_data: Raw audio bytes
+            audio_data: Raw audio bytes (already processed through speech_in hook)
         """
         try:
-            
             if self.denoise:
                 audio_data = await self.denoise.denoise(audio_data)
             

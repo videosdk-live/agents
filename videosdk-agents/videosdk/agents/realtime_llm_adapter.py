@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class RealtimeLLMWrapper(EventEmitter):
+class RealtimeLLMAdapter(EventEmitter):
     """
     Wraps a RealtimeBaseModel to expose an LLM-compatible interface.
     
@@ -79,7 +79,7 @@ class RealtimeLLMWrapper(EventEmitter):
         Yields:
             ResponseChunk objects (mostly empty for realtime models)
         """
-        logger.info("RealtimeLLMWrapper.chat() called - realtime models handle I/O directly")
+        logger.info("RealtimeLLMAdapter.chat() called - realtime models handle I/O directly")
         
         async def empty_gen():
             yield ResponseChunk(content="", metadata={"realtime_mode": True}, role=ChatRole.ASSISTANT)
