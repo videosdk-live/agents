@@ -31,8 +31,10 @@ class InputStreamManager:
                 
                 # Process through speech_in hook if available
                 if self.pipeline and self.pipeline.hooks and self.pipeline.hooks.has_speech_in_hooks():
+                    captured_frame = pcm_frame
+                    
                     async def audio_stream():
-                        yield pcm_frame
+                        yield captured_frame
                     
                     processed_stream = self.pipeline.hooks.process_speech_in(audio_stream())
                     pcm_frame = b""

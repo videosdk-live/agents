@@ -135,8 +135,10 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         
         # Process through speech_out hook if available
         if hasattr(self, '_pipeline_hooks') and self._pipeline_hooks and self._pipeline_hooks.has_speech_out_hooks():
+            captured_data = audio_data
+            
             async def audio_stream():
-                yield audio_data
+                yield captured_data
             
             processed_stream = self._pipeline_hooks.process_speech_out(audio_stream())
             audio_data = b""
