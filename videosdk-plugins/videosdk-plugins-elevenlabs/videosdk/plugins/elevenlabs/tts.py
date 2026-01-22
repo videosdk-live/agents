@@ -42,6 +42,7 @@ class ElevenLabsTTS(TTS):
         base_url: str = API_BASE_URL,
         enable_streaming: bool = True,
         inactivity_timeout: int = WS_INACTIVITY_TIMEOUT,
+        language: str = "en",
     ) -> None:
         """Initialize the ElevenLabs TTS plugin.
 
@@ -55,6 +56,7 @@ class ElevenLabsTTS(TTS):
             base_url (str): The base URL to use for the TTS plugin. Defaults to "https://api.elevenlabs.io/v1".
             enable_streaming (bool): Whether to enable streaming for the TTS plugin. Defaults to True.
             inactivity_timeout (int): The inactivity timeout to use for the TTS plugin. Defaults to 300.
+            language (str): The language to use for the TTS plugin. Defaults to "en".
         """
         super().__init__(
             sample_rate=ELEVENLABS_SAMPLE_RATE, num_channels=ELEVENLABS_CHANNELS
@@ -63,6 +65,7 @@ class ElevenLabsTTS(TTS):
         self.model = model
         self.voice = voice
         self.speed = speed
+        self.language = language
         self.audio_track = None
         self.loop = None
         self.response_format = response_format
@@ -134,6 +137,7 @@ class ElevenLabsTTS(TTS):
         params = {
             "model_id": self.model,
             "output_format": self.response_format,
+            "language_code": self.language,
         }
 
         headers = {
