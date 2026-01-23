@@ -129,8 +129,6 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
         self.is_active = False
         self.response_task = None
         self._agent_speaking = False
-        self._user_speaking = False
-        self._user_transcript_received = False
         self._initialize_bedrock_client()
         self.input_sample_rate = 48000
         self.target_sample_rate = 16000
@@ -321,8 +319,6 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
         try:
             audio_array = np.frombuffer(audio_data, dtype=np.int16)
 
-            if audio_array.size == 0:
-                return
             if len(audio_array) % 2 == 0:
                 audio_array = audio_array.reshape(-1, 2)
                 audio_array = np.mean(audio_array, axis=1).astype(np.int16)
@@ -398,19 +394,12 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                         role = text_output.get(
                                             "role", "UNKNOWN")
                                         if role == "USER":
-                                            if transcript and isinstance(transcript, str) and transcript.strip():
-                                                realtime_metrics_collector.mark_user_activity()
-                                                if not self._user_speaking:
-                                                    await realtime_metrics_collector.set_user_speech_start()
-                                                    self._user_speaking = True
-                                                    self._user_transcript_received = False
-                                                if not self._user_transcript_received:
-                                                    await realtime_metrics_collector.set_user_speech_end()
-                                                    self._user_speaking = False
-                                                    self._user_transcript_received = True
-                                                await realtime_metrics_collector.set_user_transcript(
-                                                    transcript
-                                                )
+                                            await realtime_metrics_collector.set_user_speech_start()
+                                            await realtime_metrics_collector.set_user_transcript(
+                                                transcript
+                                            )
+                                            await realtime_metrics_collector.set_user_speech_end()
+                                            await self.emit("user_speech_ended", {})
                                             try:
                                                 await self.emit(
                                                     "realtime_model_transcription",
@@ -463,8 +452,8 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                         audio_bytes = base64.b64decode(
                                             audio_content)
                                         if not self._agent_speaking:
-                                            await realtime_metrics_collector.set_agent_speech_start()
                                             await self.emit("agent_speech_started", {})
+                                            await realtime_metrics_collector.set_agent_speech_start()
                                             self._agent_speaking = True
 
                                         if (
@@ -490,8 +479,11 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                             "stopReason", "") == "END_TURN"
                                         and self._agent_speaking
                                     ):
-                                        await self.emit("agent_speech_ended", {})
+                                        await realtime_metrics_collector.set_agent_speech_end(
+                                            timeout=1.0
+                                        )
                                         self._agent_speaking = False
+                                        await self.emit("agent_speech_ended", {})
 
                                 elif "usageEvent" in json_data["event"]:
                                     pass
@@ -511,7 +503,9 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                     print(
                                         f"Nova completionEnd received: {json.dumps(completion_end, indent=2)}"
                                     )
-                                    await self.emit("agent_speech_ended", {})
+                                    await realtime_metrics_collector.set_agent_speech_end(
+                                        timeout=1.0
+                                    )
                                     self._agent_speaking = False
 
                                 else:
@@ -598,12 +592,13 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
         if self.audio_track:
             self.audio_track.interrupt()
         print("Interrupting user speech, calling set_agent_speech_end")
+        await self.emit("user_speech_ended", {})
+        await realtime_metrics_collector.set_agent_speech_end(timeout=1.0)
         await realtime_metrics_collector.set_interrupted()
         if self._agent_speaking:
             print("Interrupting agent speech, calling set_agent_speech_end")
-            await self.emit("agent_speech_ended", {})
+            await realtime_metrics_collector.set_agent_speech_end(timeout=1.0)
             self._agent_speaking = False
-        self._user_transcript_received = False
 
         content_end_payload = {
             "event": {
