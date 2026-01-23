@@ -129,6 +129,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         """
         Handle agent speech ended event and mark utterance as done, forwarding to agent if handler exists.
         """
+        asyncio.create_task(realtime_metrics_collector.set_agent_speech_end())
         if self._current_utterance_handle and not self._current_utterance_handle.done():
             self._current_utterance_handle._mark_done()
         self.model.current_utterance = None
@@ -162,6 +163,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         """
         Handle user speech started event
         """
+        asyncio.create_task(realtime_metrics_collector.set_user_speech_start())
         self._notify_speech_started()
         # self.interrupt() # Not sure yet whether this affects utterance handling.
         if self.agent.session:
@@ -304,7 +306,6 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         self.avatar = None
         self.denoise = None
         self._current_utterance_handle = None
-        self.model.current_utterance = None
         if self._vmd_check_task and not self._vmd_check_task.done():
             self._vmd_check_task.cancel()
         self.voice_mail_detector = None
@@ -318,6 +319,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         """
         Handle agent turn started event
         """
+        await realtime_metrics_collector.set_user_speech_end()
         if self.agent and self.agent.session and self.agent.session.is_background_audio_enabled:
             await self.agent.session.start_thinking_audio()
 
