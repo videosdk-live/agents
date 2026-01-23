@@ -436,26 +436,47 @@ class PipelineOrchestrator(EventEmitter[Literal[
         if self.conversational_graph:
             final_user_text = self.conversational_graph.handle_input(processed_text)
         
+        # Check for uninterruptible utterance
+        if self.agent.session and self.agent.session.current_utterance:
+             is_active = (
+                 not self.agent.session.current_utterance.done() or 
+                 self.agent.session.agent_state == AgentState.SPEAKING
+             )
+             
+             if is_active and not self.agent.session.current_utterance.is_interruptible:
+                 logger.info("Current utterance is not interruptible. Ignoring user input.")
+                 return
+
+        # Check if we should interrupt based on word count (for STT-based interruption)
+        # Only check word count if agent is currently speaking or thinking (responding)
+        if self.agent.session and self.agent.session.agent_state in (AgentState.SPEAKING, AgentState.THINKING):
+            # Agent is responding, check word count threshold for STT-based interruption
+            word_count = len(processed_text.strip().split())
+            
+            if self.interrupt_mode in ("STT_ONLY", "HYBRID"):
+                if word_count < self.interrupt_min_words:
+                    logger.info(f"Final transcript '{processed_text}' has {word_count} word(s), which is less than interrupt_min_words ({self.interrupt_min_words}). Ignoring transcript (not interrupting).")
+                    return
+                else:
+                    logger.info(f"Final transcript '{processed_text}' has {word_count} word(s), which meets interrupt_min_words ({self.interrupt_min_words}). Will interrupt and process.")
+        
         self.agent.chat_context.add_message(
             role=ChatRole.USER,
             content=final_user_text
         )
         
+        # Fully interrupt current response: stop TTS, cancel LLM, cancel generation task.
+        # This ensures audio stops immediately when we interrupt (e.g. on 4 words).
+        if self.agent.session and self.agent.session.agent_state in (AgentState.SPEAKING, AgentState.THINKING):
+            await self._interrupt_pipeline()
+        
         if self.agent.session:
-            if self.agent.session.current_utterance and not self.agent.session.current_utterance.done():
-                if self.agent.session.current_utterance.is_interruptible:
-                    self.agent.session.current_utterance.interrupt()
-                else:
-                    logger.info("Current utterance is not interruptible")
-            
             handle = UtteranceHandle(utterance_id=f"utt_{uuid.uuid4().hex[:8]}")
             self.agent.session.current_utterance = handle
         else:
             handle = UtteranceHandle(utterance_id="utt_fallback")
             handle._mark_done()
 
-        if self._current_generation_task and not self._current_generation_task.done():
-            self._current_generation_task.cancel()
         self._current_generation_task = asyncio.create_task(self._generate_and_synthesize(final_user_text, handle))
     
     
@@ -490,8 +511,8 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 response_parts = []
                 try:
                     async for chunk in llm_stream:
-                        if handle.interrupted or (wait_for_authorization and self._preemptive_cancelled):
-                            logger.info("LLM collection interrupted")
+                        if handle.interrupted or self._is_interrupted or (wait_for_authorization and self._preemptive_cancelled):
+                            logger.info("LLM collection interrupted - stopping collection")
                             await q.put(None)
                             return "".join(response_parts)
                         
@@ -499,11 +520,16 @@ class PipelineOrchestrator(EventEmitter[Literal[
                         
                         if content:
                             response_parts.append(content)
+                            # Check again before putting in queue
+                            if handle.interrupted or self._is_interrupted or (wait_for_authorization and self._preemptive_cancelled):
+                                logger.info("LLM collection interrupted before queueing chunk - stopping")
+                                await q.put(None)
+                                return "".join(response_parts)
                             await q.put(content)
                         
                         self._partial_response = "".join(response_parts)
                     
-                    if not handle.interrupted:
+                    if not handle.interrupted and not self._is_interrupted:
                         await q.put(None)
                     
                     return "".join(response_parts)
@@ -534,20 +560,33 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 async def tts_stream_gen():
                     """Generate TTS stream from queue"""
                     while True:
-                        if handle.interrupted or (wait_for_authorization and self._preemptive_cancelled):
+                        if handle.interrupted or self._is_interrupted or (wait_for_authorization and self._preemptive_cancelled):
+                            logger.info("TTS stream generator interrupted - breaking loop")
                             break
                         
                         try:
                             chunk = await asyncio.wait_for(q.get(), timeout=0.1)
                             if chunk is None:
                                 break
+                            
+                            # Check again after getting chunk
+                            if handle.interrupted or self._is_interrupted or (wait_for_authorization and self._preemptive_cancelled):
+                                logger.info("TTS stream generator interrupted after getting chunk - breaking loop")
+                                break
+                            
                             print(f"chunk: at the tts consumer at pipline orchestrator  {chunk}")
                             yield chunk
                             
                         except asyncio.TimeoutError:
-                            if handle.interrupted or (wait_for_authorization and self._preemptive_cancelled):
+                            if handle.interrupted or self._is_interrupted or (wait_for_authorization and self._preemptive_cancelled):
+                                logger.info("TTS stream generator interrupted during timeout - breaking loop")
                                 break
                             continue
+                
+                # Check for interruption before starting synthesis
+                if handle.interrupted or self._is_interrupted or (wait_for_authorization and self._preemptive_cancelled):
+                    logger.info("TTS consumer interrupted before synthesis - returning early")
+                    return
                 
                 if self.hooks and self.hooks.has_agent_response_hooks():
                     processed_stream = self.hooks.process_agent_response(tts_stream_gen())
@@ -558,8 +597,14 @@ class PipelineOrchestrator(EventEmitter[Literal[
                     try:
                         await self.speech_generation.synthesize(processed_stream)
                     except asyncio.CancelledError:
+                        logger.info("TTS synthesis cancelled")
                         if self.speech_generation:
                             await self.speech_generation.interrupt()
+                    except Exception as e:
+                        if handle.interrupted or self._is_interrupted:
+                            logger.info(f"TTS synthesis interrupted with exception: {e}")
+                        else:
+                            raise
             
             collector_task = asyncio.create_task(collector())
             tts_task = asyncio.create_task(tts_consumer())
@@ -771,6 +816,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
     
     async def _interrupt_pipeline(self) -> None:
         """Interrupt all components"""
+        logger.info("Interrupting pipeline - setting interrupt flags")
         self._is_interrupted = True
         self._cancel_false_interrupt_timer()
         self._is_in_false_interrupt_pause = False
@@ -793,7 +839,6 @@ class PipelineOrchestrator(EventEmitter[Literal[
             self._current_generation_task.cancel()     
         
         self._partial_response = ""
-        self._is_interrupted = False
     
     async def interrupt(self) -> None:
         """Public method to interrupt the pipeline"""

@@ -124,6 +124,8 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
                 response_iterator: AsyncIterator[str]
                 if isinstance(response_gen, str):
                     async def string_to_iterator(text: str):
+                        if self._is_interrupted:
+                            return
                         yield text
                     response_iterator = string_to_iterator(response_gen)
                 else:
@@ -152,7 +154,10 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
     async def interrupt(self) -> None:
         """Interrupt the current synthesis"""
         self._is_interrupted = True
-        
+        if self.audio_track:
+            if hasattr(self.audio_track, "interrupt"):
+                self.audio_track.interrupt()
+
         if self.tts:
             await self.tts.interrupt()
         
