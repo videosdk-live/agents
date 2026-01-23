@@ -613,7 +613,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                 await asyncio.sleep(0.1)
 
         except asyncio.CancelledError:
-            pass
+            self.emit("error", "Receive loop cancelled")
         except Exception as e:
             self.emit("error", e)
             traceback.print_exc()
