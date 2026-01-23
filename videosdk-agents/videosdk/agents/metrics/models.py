@@ -148,8 +148,8 @@ class RealtimeTurnData:
     handoff_occurred: bool = False 
 
     def compute_latencies(self):
-        if self.user_speech_end_time and self.agent_speech_start_time:
-            self.ttfb = (self.agent_speech_start_time - self.user_speech_end_time) * 1000
+        if self.user_speech_start_time and self.agent_speech_start_time:
+            self.ttfb = (self.agent_speech_start_time - self.user_speech_start_time) * 1000
         if self.user_speech_end_time and self.agent_speech_start_time:
             self.thinking_delay = (self.agent_speech_start_time - self.user_speech_end_time) * 1000
         if self.user_speech_start_time and self.agent_speech_end_time:
