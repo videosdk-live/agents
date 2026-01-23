@@ -260,9 +260,6 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
                 )
         
         self._emit_agent_state(AgentState.STARTING)
-        if self.agent is None:
-            logger.error("AgentSession: Agent is None during start, cannot initialize.")
-            return
         await self.agent.initialize_mcp()
 
         if self.dtmf_handler:

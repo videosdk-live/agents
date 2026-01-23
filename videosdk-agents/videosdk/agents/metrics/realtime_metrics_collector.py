@@ -129,7 +129,6 @@ class RealtimeMetricsCollector:
 
     async def set_agent_speech_end(self, timeout: float = 1.0) -> None:
         if self.current_turn:
-            self.current_turn.agent_speech_end_time = time.perf_counter()
             if self.agent_speech_end_timer:
                 self.agent_speech_end_timer.cancel()
             
