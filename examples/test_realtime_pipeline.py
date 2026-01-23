@@ -24,7 +24,7 @@ async def entrypoint(ctx: JobContext):
         model="gpt-realtime-2025-08-28",
         config=OpenAIRealtimeConfig(
             voice="alloy", # alloy, ash, ballad, coral, echo, fable, onyx, nova, sage, shimmer, and verse
-            modalities=["audio"],
+            modalities=["audio", "text"],
             turn_detection=TurnDetection(
                 type="server_vad",
                 threshold=0.5,
