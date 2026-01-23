@@ -221,7 +221,6 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
         """Process incoming audio: Resample 48k -> target (usually 24k) and send to xAI"""
         if not self._session or self._closing:
             return
-
         if "audio" not in self.config.modalities:
             return
 
@@ -381,14 +380,12 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
             traceback.print_exc()
 
     async def _handle_speech_started(self) -> None:
+        if self.current_utterance and not self.current_utterance.is_interruptible:
+            return
+        await self.interrupt()
         logger.info("xAI User speech started")
         self.emit("user_speech_started", {"type": "done"})
         await realtime_metrics_collector.set_user_speech_start()
-        
-        if self.current_utterance and not self.current_utterance.is_interruptible:
-            return
-            
-        await self.interrupt()
 
     async def _handle_speech_stopped(self) -> None:
         logger.info("xAI User speech stopped")
@@ -401,9 +398,9 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
             return
 
         if not self._agent_speaking:
+            self.emit("agent_speech_started", {})
             await realtime_metrics_collector.set_agent_speech_start()
             self._agent_speaking = True
-            self.emit("agent_speech_started", {})
 
         if self.audio_track and self.loop:
             audio_bytes = base64.b64decode(delta)
@@ -425,6 +422,7 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
         transcript = data.get("transcript", "")
         if transcript:
             logger.info(f"xAI User transcript: {transcript}")
+            realtime_metrics_collector.mark_user_activity()
             await realtime_metrics_collector.set_user_transcript(transcript)
             try:
                 self.emit(
@@ -436,17 +434,16 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
 
     async def _handle_response_done(self) -> None:
         if hasattr(self, "_current_transcript") and self._current_transcript:
-             logger.info(f"xAI Agent response: {self._current_transcript}")
-             await realtime_metrics_collector.set_agent_response(self._current_transcript)
-             global_event_emitter.emit(
+            logger.info(f"xAI Agent response: {self._current_transcript}")
+            await realtime_metrics_collector.set_agent_response(self._current_transcript)
+            global_event_emitter.emit(
                 "text_response",
                 {"text": self._current_transcript, "type": "done"},
             )
-             self._current_transcript = ""
+            self._current_transcript = ""
 
         logger.info("xAI Agent speech ended")
         self.emit("agent_speech_ended", {})
-        await realtime_metrics_collector.set_agent_speech_end(timeout=1.0)
         self._agent_speaking = False
 
         if self._has_unprocessed_tool_outputs and not self._generated_text_in_current_response:

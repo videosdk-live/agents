@@ -482,7 +482,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                 if self.current_utterance and not self.current_utterance.is_interruptible:
                                     logger.info("Interruption is disabled for the current utterance. Ignoring server interrupt signal.")
                                     continue
-                                
+                                await realtime_metrics_collector.set_interrupted()
                                 if active_response_id:
                                     active_response_id = None
                                     accumulated_text = ""
@@ -494,7 +494,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                 continue
 
                             if model_turn := server_content.model_turn:
-                                if self._user_speaking:
+                                if not self._agent_speaking and self._user_speaking:
                                     await realtime_metrics_collector.set_user_speech_end()
                                     self._user_speaking = False
                                 if accumulated_input_text:
@@ -584,9 +584,6 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                 accumulated_text = ""
                                 final_transcription = ""
                                 self.emit("agent_speech_ended", {})
-                                await realtime_metrics_collector.set_agent_speech_end(
-                                    timeout=1.0
-                                )
                                 self._agent_speaking = False
 
                 except Exception as e:
@@ -613,7 +610,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                 await asyncio.sleep(0.1)
 
         except asyncio.CancelledError:
-            self.emit("error", "Receive loop cancelled")
+            pass
         except Exception as e:
             self.emit("error", e)
             traceback.print_exc()

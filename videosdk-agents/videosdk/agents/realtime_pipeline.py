@@ -86,7 +86,13 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
                 if self.avatar:
                     self.model.audio_track = getattr(job_context.room, 'agent_audio_track', None) or job_context.room.audio_track
                 elif self.audio_track:
-                     self.model.audio_track = self.audio_track
+                    self.model.audio_track = self.audio_track
+                    
+            if self.model.audio_track and hasattr(self.model.audio_track, "on_last_audio_byte"):
+                async def on_last_audio_byte() -> None:
+                    logger.info("[RealTimePipeline] Audio playback finished — setting agent_speech_end_time")
+                    await realtime_metrics_collector.set_agent_speech_end()
+                self.model.audio_track.on_last_audio_byte(on_last_audio_byte)
 
     async def start(self, **kwargs: Any) -> None:
         """

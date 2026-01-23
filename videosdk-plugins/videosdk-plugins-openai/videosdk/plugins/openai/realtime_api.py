@@ -160,6 +160,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         self.input_sample_rate = 48000
         self.target_sample_rate = 16000
         self._agent_speaking = False
+        self._user_speaking = False
 
     def set_agent(self, agent: Agent) -> None:
         self._instructions = agent.instructions
@@ -175,6 +176,16 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         url = self.process_base_url(self.base_url, self.model)
 
         self._session = await self._create_session(url, headers)
+        if self.audio_track and hasattr(self.audio_track, "_last_audio_callback"):
+            original_callback = self.audio_track._last_audio_callback
+            async def safe_last_audio_callback()-> None:
+                if not self._agent_speaking:
+                    if original_callback:
+                        await original_callback()
+                else:
+                    logger.debug("Suppressing premature audio completion (streaming in progress)")
+
+            self.audio_track._last_audio_callback = safe_last_audio_callback
         await self._handle_websocket(self._session)
         await self.send_first_session_update()
 
@@ -429,19 +440,26 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
     async def _handle_speech_started(self, data: dict) -> None:
         """Handle speech detection start"""
         if "audio" in self.config.modalities:
-            self.emit("user_speech_started", {"type": "done"})
+            if not self._user_speaking:
+                self.emit("user_speech_started", {"type": "done"})
+                await realtime_metrics_collector.set_user_speech_start()
+                self._user_speaking = True
             logger.info("Interrupting on speech start.>>")
             if self.current_utterance and not self.current_utterance.is_interruptible:
                 logger.info("Interruption is disabled for the current utterance. Not interrupting on speech start.")
                 return
-            await self.interrupt()
-            if self.audio_track:
-                self.audio_track.interrupt()
-        await realtime_metrics_collector.set_user_speech_start()
+            if self._agent_speaking is not None:
+                await self.interrupt()
+                if self.audio_track:
+                    self.audio_track.interrupt()
+        await realtime_metrics_collector.mark_user_activity()
 
     async def _handle_speech_stopped(self, data: dict) -> None:
         """Handle speech detection end"""
-        await realtime_metrics_collector.set_user_speech_end()
+        realtime_metrics_collector.mark_user_activity()
+        if self._user_speaking:
+            await realtime_metrics_collector.set_user_speech_end()
+            self._user_speaking = False
         self.emit("user_speech_ended", {})
 
     async def _handle_response_created(self, data: dict) -> None:
@@ -515,6 +533,9 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
 
         try:
             if not self._agent_speaking:
+                if self._user_speaking:
+                    await realtime_metrics_collector.set_user_speech_end()
+                    self._user_speaking = False
                 await realtime_metrics_collector.set_agent_speech_start()
                 self._agent_speaking = True
                 self.emit("agent_speech_started", {})
@@ -541,7 +562,6 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
             self.audio_track.interrupt()
         if self._agent_speaking:
             self.emit("agent_speech_ended", {})
-            await realtime_metrics_collector.set_agent_speech_end(timeout=1.0)
             self._agent_speaking = False
 
     async def _handle_audio_transcript_delta(self, data: dict) -> None:
@@ -555,6 +575,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         """Handle input audio transcription completion for user transcript"""
         transcript = data.get("transcript", "")
         if transcript:
+            realtime_metrics_collector.mark_user_activity()
             await realtime_metrics_collector.set_user_transcript(transcript)
             try:
                 self.emit(
@@ -590,7 +611,6 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
                 pass
             self._current_audio_transcript = ""
         self.emit("agent_speech_ended", {})
-        await realtime_metrics_collector.set_agent_speech_end(timeout=1.0)
         self._agent_speaking = False
         pass
 
@@ -664,7 +684,6 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
                 self.config.input_audio_transcription.model_dump(
                     by_alias=True,
                     exclude_unset=True,
-                    exclude_defaults=True,
                 )
                 if self.config.input_audio_transcription
                 else None
