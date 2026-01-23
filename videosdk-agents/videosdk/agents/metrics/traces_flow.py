@@ -257,8 +257,9 @@ class TracesFlowManager:
                             parent_span=llm_span, 
                             start_time=cascading_turn_data.llm_start_time
                         )
-                    ttft_end_timestamp = cascading_turn_data.llm_start_time + (cascading_turn_data.llm_ttft/1000)
-                    self.end_span(ttft_span, end_time=ttft_end_timestamp)
+                    if cascading_turn_data.llm_ttft is not None:
+                        ttft_end_timestamp = cascading_turn_data.llm_start_time + (cascading_turn_data.llm_ttft/1000)
+                        self.end_span(ttft_span, end_time=ttft_end_timestamp)
 
                     llm_status = StatusCode.ERROR if llm_errors else StatusCode.OK
                     create_log(f"{cascading_turn_data.llm_provider_class}: LLM Processing Ended with status {llm_status}", "INFO")
