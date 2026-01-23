@@ -482,7 +482,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                 if self.current_utterance and not self.current_utterance.is_interruptible:
                                     logger.info("Interruption is disabled for the current utterance. Ignoring server interrupt signal.")
                                     continue
-                                await realtime_metrics_collector.set_interrupted()
+                                
                                 if active_response_id:
                                     active_response_id = None
                                     accumulated_text = ""
@@ -584,6 +584,9 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                 accumulated_text = ""
                                 final_transcription = ""
                                 self.emit("agent_speech_ended", {})
+                                await realtime_metrics_collector.set_agent_speech_end(
+                                    timeout=1.0
+                                )
                                 self._agent_speaking = False
 
                 except Exception as e:
@@ -677,6 +680,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         """Handle incoming audio data from the user"""
         if not self._session or self._closing:
             return
+
         if self.current_utterance and not self.current_utterance.is_interruptible:
             logger.info("Interruption is disabled for the current utterance. Not processing audio input.")
             return
