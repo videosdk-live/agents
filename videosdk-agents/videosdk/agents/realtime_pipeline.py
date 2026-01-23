@@ -86,13 +86,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
                 if self.avatar:
                     self.model.audio_track = getattr(job_context.room, 'agent_audio_track', None) or job_context.room.audio_track
                 elif self.audio_track:
-                    self.model.audio_track = self.audio_track
-            
-            if self.model.audio_track and hasattr(self.model.audio_track, "on_last_audio_byte"):
-                async def on_last_audio_byte() -> None:
-                    logger.info("[RealTimePipeline] Audio playback finished — setting agent_speech_end_time")
-                    await realtime_metrics_collector.set_agent_speech_end()
-                self.model.audio_track.on_last_audio_byte(on_last_audio_byte)
+                     self.model.audio_track = self.audio_track
 
     async def start(self, **kwargs: Any) -> None:
         """
@@ -135,6 +129,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         """
         Handle agent speech ended event and mark utterance as done, forwarding to agent if handler exists.
         """
+        asyncio.create_task(realtime_metrics_collector.set_agent_speech_end())
         if self._current_utterance_handle and not self._current_utterance_handle.done():
             self._current_utterance_handle._mark_done()
         self.model.current_utterance = None
@@ -165,6 +160,7 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         """
         Handle user speech started event
         """
+        asyncio.create_task(realtime_metrics_collector.set_user_speech_start())
         self._notify_speech_started()
         # self.interrupt() # Not sure yet whether this affects utterance handling.
         if self.agent.session:
