@@ -37,7 +37,6 @@ class RealtimeMetricsCollector:
         self.analytics_client = AnalyticsClient()
         self.traces_flow_manager: Optional[TracesFlowManager] = None
         self.playground: bool = False
-        
     def set_session_id(self, session_id: str):
         """Set the session ID for metrics tracking"""
         self.analytics_client.set_session_id(session_id)
@@ -99,56 +98,44 @@ class RealtimeMetricsCollector:
                 **RealtimeMetricsCollector._agent_info
             )
             self.turns.append(self.current_turn)
-            self.last_user_activity_time = None
-
-    def mark_user_activity(self, timestamp: Optional[float] = None) -> None:
-        """Mark the time of the last user activity (e.g. transcription received)"""
-        self.last_user_activity_time = timestamp if timestamp is not None else time.perf_counter()
 
     async def set_user_speech_start(self) -> None:
-        if self.current_turn and self.current_turn.agent_speech_start_time is not None and self.current_turn.agent_speech_end_time is None:
-            await self.set_interrupted()
-        if self.current_turn and (self.current_turn.user_speech_start_time is not None) and (self.current_turn.user_speech_end_time is not None):
+        if self.current_turn:
             self._finalize_interaction_and_send()
         
         await self._start_new_interaction()
         if self.current_turn and self.current_turn.user_speech_start_time is None:
             self.current_turn.user_speech_start_time = time.perf_counter()
-            await self.start_timeline_event("user_speech", self.current_turn.user_speech_start_time)
+            await self.start_timeline_event("user_speech")
 
-    async def set_user_speech_end(self, timestamp: Optional[float] = None) -> None:
-        if self.current_turn and (self.current_turn.user_speech_start_time is not None) and (self.current_turn.user_speech_end_time is None):
-            if timestamp is not None:
-                self.current_turn.user_speech_end_time = timestamp
-            elif self.last_user_activity_time is not None:
-                self.current_turn.user_speech_end_time = self.last_user_activity_time
-            else:
-                self.current_turn.user_speech_end_time = time.perf_counter()
-            await self.end_timeline_event("user_speech", self.current_turn.user_speech_end_time) 
+    async def set_user_speech_end(self) -> None:
+        if self.current_turn and self.current_turn.user_speech_end_time is None:
+            self.current_turn.user_speech_end_time = time.perf_counter()
+            await self.end_timeline_event("user_speech")
 
     async def set_agent_speech_start(self) -> None:
         if not self.current_turn:
             await self._start_new_interaction()
-        elif (self.current_turn.user_speech_start_time is not None) and (self.current_turn.user_speech_end_time is None):
-            await self.set_user_speech_end()
+        elif self.current_turn.user_speech_start_time is not None and self.current_turn.user_speech_end_time is None:
+            self.current_turn.user_speech_end_time = time.perf_counter()
+
+            await self.end_timeline_event("user_speech")
 
         if self.current_turn and self.current_turn.agent_speech_start_time is None:
             self.current_turn.agent_speech_start_time = time.perf_counter()
-            await self.start_timeline_event("agent_speech", self.current_turn.agent_speech_start_time)
+            await self.start_timeline_event("agent_speech")
             if self.agent_speech_end_timer:
                 self.agent_speech_end_timer.cancel()
 
     async def set_agent_speech_end(self, timeout: float = 1.0) -> None:
         if self.current_turn:
-            if self.current_turn.agent_speech_start_time is None:
-                return
             self.current_turn.agent_speech_end_time = time.perf_counter()
             if self.agent_speech_end_timer:
                 self.agent_speech_end_timer.cancel()
             
             loop = asyncio.get_event_loop()
             self.agent_speech_end_timer = loop.call_later(timeout, self._finalize_interaction_and_send)
-            await self.end_timeline_event("agent_speech", self.current_turn.agent_speech_end_time)
+            await self.end_timeline_event("agent_speech")
 
     async def set_a2a_handoff(self) -> None:
         """Set the A2A enabled and handoff occurred flags for the current turn in A2A scenarios."""
@@ -170,15 +157,12 @@ class RealtimeMetricsCollector:
         self.agent_speech_end_timer = None
 
     def _finalize_interaction_and_send(self) -> None:
-        if self.agent_speech_end_timer:
-            self.agent_speech_end_timer.cancel()
-            self.agent_speech_end_timer = None
         if not self.current_turn:
             return
         
         self._finalize_agent_speech()
 
-        if (self.current_turn.user_speech_start_time is not None) and (self.current_turn.user_speech_end_time is None):
+        if self.current_turn.user_speech_start_time and not self.current_turn.user_speech_end_time:
             self.current_turn.user_speech_end_time = time.perf_counter()
 
         current_time = time.perf_counter()
@@ -232,18 +216,19 @@ class RealtimeMetricsCollector:
         if self.current_turn:
             self.current_turn.timeline.append(event)
 
-    async def start_timeline_event(self, event_type: str, start_time: float) -> None:
+    async def start_timeline_event(self, event_type: str) -> None:
         """Start a timeline event with a precise start time"""
         if self.current_turn:
             event = TimelineEvent(
                 event_type=event_type,
-                start_time=start_time
+                start_time=time.perf_counter()
             )
             self.current_turn.timeline.append(event)
 
-    async def end_timeline_event(self, event_type: str, end_time: float) -> None:
+    async def end_timeline_event(self, event_type: str) -> None:
         """End a timeline event and calculate duration"""
         if self.current_turn:
+            end_time = time.perf_counter()
             for event in reversed(self.current_turn.timeline):
                 if event.event_type == event_type and event.end_time is None:
                     event.end_time = end_time
@@ -268,7 +253,10 @@ class RealtimeMetricsCollector:
         if self.current_turn:
             if self.current_turn.user_speech_start_time is None:
                 self.current_turn.user_speech_start_time = time.perf_counter()
-                await self.start_timeline_event("user_speech", self.current_turn.user_speech_start_time)
+                await self.start_timeline_event("user_speech")
+            if self.current_turn.user_speech_end_time is None:
+                self.current_turn.user_speech_end_time = time.perf_counter()
+                await self.end_timeline_event("user_speech")
             logger.info(f"user input speech: {text}")
             await self.update_timeline_event_text("user_speech", text)
 
@@ -277,7 +265,7 @@ class RealtimeMetricsCollector:
         if self.current_turn:
             if self.current_turn.agent_speech_start_time is None:
                 self.current_turn.agent_speech_start_time = time.perf_counter()
-                await self.start_timeline_event("agent_speech", self.current_turn.agent_speech_start_time)
+                await self.start_timeline_event("agent_speech")
                 logger.info(f"agent output speech: {text}")
             await self.update_timeline_event_text("agent_speech", text)
 
@@ -288,19 +276,8 @@ class RealtimeMetricsCollector:
             self.current_turn.realtime_model_errors.append(error)
 
     async def set_interrupted(self) -> None:
-        """
-        Handle interruption by finalizing the current turn immediately.
-        Only marks as interrupted if the agent was actually speaking.
-        """
         if self.current_turn:
-            if self.current_turn.agent_speech_start_time is not None:
-                self.current_turn.interrupted = True
-                if self.current_turn.agent_speech_end_time is None:
-                    self.current_turn.agent_speech_end_time = time.perf_counter()
-                    await self.end_timeline_event("agent_speech", self.current_turn.agent_speech_end_time)
-                self._finalize_interaction_and_send()
-            else:
-                logger.debug("Interrupt signal received but agent hadn't started speaking - ignoring to preserve turn")
+            self.current_turn.interrupted = True
 
     def finalize_session(self) -> None:
         asyncio.run_coroutine_threadsafe(self._start_new_interaction(), asyncio.get_event_loop())
