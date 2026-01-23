@@ -18,7 +18,7 @@ class SileroVAD(BaseVAD):
         self,
         input_sample_rate: int = 48000,
         model_sample_rate: Literal[8000, 16000] = 16000,
-        threshold: float = 0.30,
+        threshold: float = 0.70,
         min_speech_duration: float = 0.1,
         min_silence_duration: float = 0.75,
         force_cpu: bool = True,
