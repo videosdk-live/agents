@@ -134,6 +134,8 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         self.model.current_utterance = None
         if self.agent and hasattr(self.agent, 'on_agent_speech_ended'):
             self.agent.on_agent_speech_ended(data)
+        if self.agent and self.agent.session:
+            self.agent.session._reset_wake_up_timer()
     
     async def on_audio_delta(self, audio_data: bytes):
         """
@@ -324,6 +326,8 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         """
         if self.agent and self.agent.session and self.agent.session.is_background_audio_enabled:
             await self.agent.session.stop_thinking_audio()
+        if self.agent and self.agent.session:
+            self.agent.session._pause_wake_up_timer()
 
     async def reply_with_context(self, instructions: str, wait_for_playback: bool, handle: UtteranceHandle, frames: list[av.VideoFrame] | None = None) -> None:
         """
