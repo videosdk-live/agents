@@ -20,7 +20,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "videosdk-agents>=0.0.60",
+    "videosdk-agents>=0.0.61",
     "simli-ai>=1.0.3",
 ]
 
