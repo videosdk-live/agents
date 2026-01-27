@@ -3,10 +3,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from typing import Any, Optional
+from typing import Any, Optional, Literal
 from urllib.parse import urlencode
 import logging
-
 import numpy as np
 import aiohttp
 from videosdk.agents import STT as BaseSTT, STTResponse, SpeechData, SpeechEventType, global_event_emitter
@@ -32,6 +31,9 @@ class AssemblyAISTT(BaseSTT):
         end_of_turn_confidence_threshold: float = 0.5,
         min_end_of_turn_silence_when_confident: int = 800,
         max_turn_silence: int = 2000,
+        speech_model: Literal["universal-streaming-english", "universal-streaming-multilingual"] = ("universal-streaming-english"),
+        language_detection: bool = True,
+        region: str = "US",
     ) -> None:
         """Initialize the AssemblyAI STT plugin.
 
@@ -44,6 +46,9 @@ class AssemblyAISTT(BaseSTT):
             end_of_turn_confidence_threshold (float): The end of turn confidence threshold to use for the STT plugin. Defaults to 0.5.
             min_end_of_turn_silence_when_confident (int): The minimum end of turn silence when confident to use for the STT plugin. Defaults to 800.
             max_turn_silence (int): The maximum turn silence to use for the STT plugin. Defaults to 2000.
+            speech_model (Literal["universal-streaming-english", "universal-streaming-multilingual"]): The speech recognition model to use. Defaults to "universal-streaming-english".
+            language_detection (bool): Whether to enable automatic language detection. Defaults to True.
+            region (str): The region to use for the STT service (e.g., "US", "EU"). Defaults to "US".
         """
         super().__init__()
         
@@ -63,6 +68,9 @@ class AssemblyAISTT(BaseSTT):
         self.end_of_turn_confidence_threshold = end_of_turn_confidence_threshold
         self.min_end_of_turn_silence_when_confident = min_end_of_turn_silence_when_confident
         self.max_turn_silence = max_turn_silence
+        self.region = region
+        self.speech_model = speech_model
+        self.language_detection = language_detection
 
         connection_params = {
             "sample_rate": self.target_sample_rate,
@@ -79,8 +87,19 @@ class AssemblyAISTT(BaseSTT):
         
         if self.keyterms_prompt:
             connection_params["keyterms_prompt"] = json.dumps(self.keyterms_prompt)
+        
+        if self.speech_model:
+            connection_params["speech_model"] = self.speech_model
+            
+        if self.language_detection:
+            connection_params["language_detection"] = self.language_detection
+            
+        if self.region == "EU":
+            base_url = "wss://streaming.eu.assemblyai.com"
+        else:  # US (default)
+            base_url = "wss://streaming.assemblyai.com"
 
-        self.ws_url = f"wss://streaming.assemblyai.com/v3/ws?{urlencode(connection_params)}"
+        self.ws_url =  f"{base_url}/v3/ws?{urlencode(connection_params)}"
         logger.info(f"[AssemblyAI] WebSocket URL: {self.ws_url}")
 
         self._session: Optional[aiohttp.ClientSession] = None
