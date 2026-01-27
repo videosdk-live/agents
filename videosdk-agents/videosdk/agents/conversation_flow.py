@@ -54,7 +54,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self._stt_started = False
         self.stt_lock = asyncio.Lock()
         self.llm_lock = asyncio.Lock()
-        self.tts_lock = asyncio.Lock()
 
         self.user_speech_callback: Callable[[], None] | None = None
         if self.stt:
@@ -361,8 +360,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
     async def _process_transcript_with_eou(self, new_transcript: str) -> None:
         """Enhanced transcript processing with EOU-based decision making"""
         async with self._transcript_processing_lock:
-            if self.agent.session:
-                self.agent.session._emit_agent_state(AgentState.LISTENING) 
             if self._accumulated_transcript:
                 self._accumulated_transcript += " " + new_transcript
             else:
@@ -449,9 +446,19 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             return
         
         final_transcript = self._accumulated_transcript.strip()
+        
+        word_count = len(final_transcript.split())
+        if word_count < self.interrupt_min_words and self.agent.session.agent_state != AgentState.IDLE:
+            logger.info(f"Ignoring transcript '{final_transcript}' - word count {word_count} is less than minimum {self.interrupt_min_words}")
+            self._accumulated_transcript = ""
+            return
+        
         logger.info(f"Finalizing transcript: '{final_transcript}'")
         
         self._accumulated_transcript = ""
+        
+        if self.agent.session:
+            self.agent.session._emit_agent_state(AgentState.LISTENING) 
         
         await self._process_final_transcript(final_transcript)
 
@@ -500,7 +507,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
         # Generate response
         asyncio.create_task(self._generate_and_synthesize_response(final_user_text, handle))
-
 
         await self.on_turn_end()
 
@@ -674,6 +680,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                         if handle.interrupted or (wait_for_authorization and self._preemptive_cancelled):
                             logger.info("LLM collection interrupted")
                             await q.put(None)
+                            await llm_stream.aclose()
                             return "".join(response_parts)
 
                         content = chunk
@@ -703,6 +710,12 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                     logger.info("LLM collection cancelled")
                     await q.put(None)
                     return "".join(response_parts)
+                finally:
+                    if hasattr(llm_stream, 'aclose'):
+                        try:
+                            await llm_stream.aclose()
+                        except Exception:
+                            pass
 
             async def tts_consumer():
                 """Consumes LLM chunks and sends to TTS with authorization gate"""
@@ -1242,6 +1255,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             if self.agent and self.agent.session:
                 self.agent.session._emit_agent_state(AgentState.IDLE)
                 self.agent.session._emit_user_state(UserState.IDLE)
+                self.agent.session._reset_wake_up_timer()
             logger.info("[TTS] Last audio byte processed — Agent and User set to IDLE")
             cascading_metrics_collector.on_agent_speech_end()
             cascading_metrics_collector.complete_current_turn()
@@ -1281,7 +1295,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
             if self.agent and self.agent.session:
                 self.agent.session._reply_in_progress = False
-                self.agent.session._reset_wake_up_timer()
 
     
     async def cleanup(self) -> None:

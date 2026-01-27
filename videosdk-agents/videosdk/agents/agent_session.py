@@ -173,7 +173,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             await asyncio.sleep(self.wake_up)
             if self._wake_up_timer_active and self.on_wake_up and not self._reply_in_progress:
                 if asyncio.iscoroutinefunction(self.on_wake_up):
-                    await self.on_wake_up()
+                    asyncio.create_task(self.on_wake_up())
                 else:
                     self.on_wake_up()
         except asyncio.CancelledError:
