@@ -3,10 +3,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from typing import Any, Optional
+from typing import Any, Optional, Literal
 from urllib.parse import urlencode
 import logging
-
 import numpy as np
 import aiohttp
 from videosdk.agents import STT as BaseSTT, STTResponse, SpeechData, SpeechEventType, global_event_emitter
@@ -32,8 +31,8 @@ class AssemblyAISTT(BaseSTT):
         end_of_turn_confidence_threshold: float = 0.5,
         min_end_of_turn_silence_when_confident: int = 800,
         max_turn_silence: int = 2000,
-        speech_model: str | None = None,
-        language_detection: bool = False,
+        speech_model: Literal["universal-streaming-english", "universal-streaming-multilingual"] = ("universal-streaming-english"),
+        language_detection: bool = True,
         region: str = "US",
     ) -> None:
         """Initialize the AssemblyAI STT plugin.
