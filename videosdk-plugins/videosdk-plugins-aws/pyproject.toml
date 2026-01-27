@@ -21,7 +21,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "videosdk-agents>=0.0.61",
+    "videosdk-agents>=0.0.62",
     "aws-sdk-bedrock-runtime",
     "smithy-aws-core",
     "boto3",
