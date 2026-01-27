@@ -46,6 +46,9 @@ class AssemblyAISTT(BaseSTT):
             end_of_turn_confidence_threshold (float): The end of turn confidence threshold to use for the STT plugin. Defaults to 0.5.
             min_end_of_turn_silence_when_confident (int): The minimum end of turn silence when confident to use for the STT plugin. Defaults to 800.
             max_turn_silence (int): The maximum turn silence to use for the STT plugin. Defaults to 2000.
+            speech_model (Literal["universal-streaming-english", "universal-streaming-multilingual"]): The speech recognition model to use. Defaults to "universal-streaming-english".
+            language_detection (bool): Whether to enable automatic language detection. Defaults to True.
+            region (str): The region to use for the STT service (e.g., "US", "EU"). Defaults to "US".
         """
         super().__init__()
         
