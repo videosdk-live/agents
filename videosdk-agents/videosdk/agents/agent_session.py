@@ -154,7 +154,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         if self.wake_up is not None and self.on_wake_up is not None:
             if self._reply_in_progress:
                 return
-            if self.agent_state != AgentState.IDLE:
+            if self.agent_state == AgentState.SPEAKING:
                 return
             if self._wake_up_task and not self._wake_up_task.done():
                 self._wake_up_task.cancel()
