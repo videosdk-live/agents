@@ -5,7 +5,7 @@ import base64
 import json
 import os
 import logging
-from typing import Any, AsyncIterator, Optional, Dict
+from typing import Any, AsyncIterator, Optional, Dict, Union, List
 
 import aiohttp
 
@@ -176,6 +176,49 @@ class TTS(BaseTTS):
             provider="sarvamai",
             model_id=model_id,
             voice_id=speaker,
+            language=language,
+            config=config,
+            enable_streaming=enable_streaming,
+            sample_rate=sample_rate,
+            base_url=base_url,
+        )
+
+    @staticmethod
+    def cartesia(
+        *,
+        model_id: str = "sonic-2",
+        voice_id: Union[str, List[float]] = "faf0731e-dfb9-4cfc-8119-259a79b27e12",
+        language: str = "en",
+        sample_rate: int = 24000,
+        enable_streaming: bool = True,
+        base_url: str | None = None,
+    ) -> "TTS":
+        """
+        Create a TTS instance configured for Cartesia.
+
+        Args:
+            model_id: Cartesia model (default: "sonic-2")
+            voice_id: Voice ID (string) or voice embedding (list of floats)
+                     (default: "f786b574-daa5-4673-aa0c-cbe3e8534c02")
+            language: Language code (default: "en")
+            sample_rate: Audio sample rate (default: 24000)
+            enable_streaming: Enable streaming mode (default: True)
+            base_url: Custom inference gateway URL
+
+        Returns:
+            Configured TTS instance for Cartesia
+        """
+        config = {
+            "model": model_id,
+            "language": language,
+            "voice": voice_id,
+            "sample_rate": sample_rate,
+        }
+
+        return TTS(
+            provider="cartesia",
+            model_id=model_id,
+            voice_id=voice_id if isinstance(voice_id, str) else "embedding",
             language=language,
             config=config,
             enable_streaming=enable_streaming,
@@ -376,7 +419,31 @@ class TTS(BaseTTS):
     async def _handle_message(self, raw_message: str) -> None:
         """Handle incoming messages from the inference server."""
         try:
-            data = json.loads(raw_message)
+            # Skip empty messages
+            if not raw_message or not raw_message.strip():
+                logger.debug("[InferenceTTS] Received empty message, skipping")
+                return
+
+            # Try to parse as JSON
+            try:
+                data = json.loads(raw_message)
+            except json.JSONDecodeError:
+                # Handle non-JSON messages (like plain text acknowledgments)
+                logger.debug(
+                    f"[InferenceTTS] Received non-JSON message: {raw_message[:100]}"
+                )
+
+                # Check if it's a known plain text response
+                if "success" in raw_message.lower() or "ok" in raw_message.lower():
+                    logger.debug("[InferenceTTS] Received acknowledgment")
+                    return
+
+                # Otherwise, log and continue
+                logger.warning(
+                    f"[InferenceTTS] Unexpected non-JSON message: {raw_message[:200]}"
+                )
+                return
+
             msg_type = data.get("type")
 
             if msg_type == "audio":
@@ -396,8 +463,6 @@ class TTS(BaseTTS):
                 logger.error(f"[InferenceTTS] Server error: {error_msg}")
                 self.emit("error", error_msg)
 
-        except json.JSONDecodeError as e:
-            logger.error(f"[InferenceTTS] Failed to parse message: {e}")
         except Exception as e:
             logger.error(f"[InferenceTTS] Error handling message: {e}")
 
@@ -418,10 +483,7 @@ class TTS(BaseTTS):
             audio_bytes = self._remove_wav_header(audio_bytes)
 
             # Trigger first audio callback for TTFB metrics
-            if (
-                not self._first_chunk_sent
-                and self._first_audio_callback
-            ):
+            if not self._first_chunk_sent and self._first_audio_callback:
                 self._first_chunk_sent = True
                 asyncio.create_task(self._first_audio_callback())
 
@@ -437,7 +499,7 @@ class TTS(BaseTTS):
         if audio_bytes.startswith(b"RIFF"):
             data_pos = audio_bytes.find(b"data")
             if data_pos != -1:
-                return audio_bytes[data_pos + 8:]
+                return audio_bytes[data_pos + 8 :]
         return audio_bytes
 
     async def interrupt(self) -> None:
@@ -489,4 +551,3 @@ class TTS(BaseTTS):
     def label(self) -> str:
         """Get a descriptive label for this TTS instance."""
         return f"videosdk.inference.TTS.{self.provider}.{self.model_id}"
-
