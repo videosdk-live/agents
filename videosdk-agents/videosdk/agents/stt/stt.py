@@ -34,6 +34,7 @@ class SpeechData:
     language: Optional[str] = None
     start_time: float = 0.0
     end_time: float = 0.0
+    duration: float = 0.0
 
 
 class STTResponse(BaseModel):

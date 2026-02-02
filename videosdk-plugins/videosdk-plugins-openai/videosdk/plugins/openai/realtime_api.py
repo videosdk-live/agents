@@ -566,6 +566,8 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
 
     async def _handle_response_done(self, data: dict) -> None:
         """Handle response completion for agent transcript"""
+        usage_details = self.get_realtime_tokens(data)
+        realtime_metrics_collector.set_token_details(usage_details)
         if (
             hasattr(self, "_current_audio_transcript")
             and self._current_audio_transcript
@@ -763,3 +765,45 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
             mime = f"image/{fmt.lower()}"
             encoded = base64.b64encode(image_bytes).decode("utf-8")
             return f"data:{mime};base64,{encoded}"
+
+    def get_realtime_tokens(self, event: dict) -> dict:
+        """
+        Extract and flatten all token details needed for pricing from a
+        OpenAI Realtime response.done event into a single-level dictionary.
+
+        Parameters:
+            event (dict): Full Realtime event payload
+
+        Returns:
+            dict: Single-level dictionary with token counts
+        """
+        usage = event.get("response", {}).get("usage", {})
+        input_details = usage.get("input_token_details", {})
+        cached_details = input_details.get("cached_tokens_details", {})
+        output_details = usage.get("output_token_details", {})
+
+        # Flattened dictionary
+        token_dict = {
+            # Overall
+            "total_tokens": usage.get("total_tokens", 0),
+            "input_tokens": usage.get("input_tokens", 0),
+            "output_tokens": usage.get("output_tokens", 0),
+
+            # Input breakdown
+            "input_text_tokens": input_details.get("text_tokens", 0),
+            "input_audio_tokens": input_details.get("audio_tokens", 0),
+            "input_image_tokens": input_details.get("image_tokens", 0),
+            "input_cached_tokens": input_details.get("cached_tokens", 0),
+
+            # Cached breakdown
+            "cached_text_tokens": cached_details.get("text_tokens", 0),
+            "cached_audio_tokens": cached_details.get("audio_tokens", 0),
+            "cached_image_tokens": cached_details.get("image_tokens", 0),
+
+            # Output breakdown
+            "output_text_tokens": output_details.get("text_tokens", 0),
+            "output_audio_tokens": output_details.get("audio_tokens", 0),
+            "output_image_tokens": output_details.get("image_tokens", 0)
+        }
+
+        return token_dict

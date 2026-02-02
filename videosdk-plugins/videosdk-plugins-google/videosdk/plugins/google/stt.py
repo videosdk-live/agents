@@ -146,6 +146,7 @@ class SpeechStream:
         self._running = False
         self._stream_task: Optional[asyncio.Task] = None
         self.emit = lambda event, payload: logger.warning(f"Emit: {event}, Payload: {payload}")  # mock
+        self._last_billed_sec = 0.0
 
     async def start(self):
         if self._running:
@@ -214,6 +215,7 @@ class SpeechStream:
                 session_started_at = time.time()
                 stream = await self._client.streaming_recognize(requests=self._audio_generator())
                 async for response in stream:
+                    print("GoogleSTT Response",response)
                     if time.time() - session_started_at > _MAX_SESSION_DURATION:
                         break
                     self._handle_response(response)
@@ -245,7 +247,8 @@ class SpeechStream:
 
             is_final = response.results[0].is_final
             confidence = alt.confidence
-
+            if is_final:
+                duration = self.extract(response)
             if confidence >= self._config["min_confidence_threshold"]:
                 if self._transcript_callback:
                     event = STTResponse(
@@ -253,12 +256,27 @@ class SpeechStream:
                         data=SpeechData(
                             text=transcript,
                             confidence=confidence,
-                            language=response.results[0].language_code or self._config["languages"][0]
+                            language=response.results[0].language_code or self._config["languages"][0],
+                            duration=duration if duration else 0
                         )
                     )
                     asyncio.create_task(self._transcript_callback(event))
         except Exception as e:
             self.emit("error", {"message": "Error handling response", "error": str(e)})
+        
+    def extract(self, response):
+        """
+        Returns:
+            - per-turn duration (delta)
+        """
+
+        billed = response.metadata.total_billed_duration
+        current_billed_sec = billed.seconds
+
+        turn_billed_sec = max(0.0, current_billed_sec - self._last_billed_sec)
+        self._last_billed_sec = current_billed_sec
+
+        return turn_billed_sec
 
     async def close(self):
         self._running = False

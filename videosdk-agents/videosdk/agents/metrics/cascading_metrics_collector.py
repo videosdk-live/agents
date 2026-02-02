@@ -1,6 +1,6 @@
 import time
 import hashlib
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, List
 from dataclasses import asdict
 from opentelemetry.trace import Span
 from .models import TimelineEvent, CascadingTurnData, CascadingMetricsData
@@ -55,8 +55,21 @@ class CascadingMetricsCollector:
             'stt_end_time': 'sttEndTime',
             'stt_preflight_latency': 'sttPreflightLatency',
             'stt_interim_latency': 'sttInterimLatency',
+            'stt_duration': 'sttDuration',
+            'stt_confidence': 'sttConfidence',
+
+            # STT Token Metrics
+            'stt_input_tokens': 'sttInputTokens',
+            'stt_output_tokens': 'sttOutputTokens',
+            'stt_total_tokens': 'sttTotalTokens',
+            
+            # KB Metrics
+            'kb_retrieval_latency': 'kbRetrievalLatency',
+            'kb_documents': 'kbDocuments',
+            'kb_scores': 'kbScores',
 
             # LLM Metrics
+            'llm_input': 'llmInput',
             'llm_duration': 'llmDuration',
             'llm_start_time': 'llmStartTime',
             'llm_end_time': 'llmEndTime',
@@ -196,22 +209,12 @@ class CascadingMetricsCollector:
         Returns True if at least one latency is present, False if ALL are absent/None.
         """
         stt_present = turn.stt_latency is not None
-        tts_present = turn.tts_latency is not None  
+        tts_present = turn.ttfb is not None  
         llm_present = turn.llm_ttft is not None
         eou_present = turn.eou_latency is not None
         
         if not any([stt_present, tts_present, llm_present, eou_present]):
             return False
-        
-        present_latencies = []
-        if stt_present:
-            present_latencies.append("STT")
-        if tts_present:
-            present_latencies.append("TTS") 
-        if llm_present:
-            present_latencies.append("LLM")
-        if eou_present:
-            present_latencies.append("EOU")
         
         return True
 
@@ -302,6 +305,13 @@ class CascadingMetricsCollector:
             # transformed_data = self._intify_latencies_and_timestamps(transformed_data)
 
             always_remove_fields = [
+                'kb_start_time',
+                'kb_end_time',
+                'kb_duration',
+                'user_speech'
+                'stt_preflight_end_time',
+                'stt_interim_end_time',
+                'stt_preflight_end_time',
                 'errors',
                 'functionToolTimestamps',
                 'sttStartTime', 'sttEndTime',
@@ -325,7 +335,9 @@ class CascadingMetricsCollector:
                     'systemInstructions',
                     'llmProviderClass', 'llmModelName',
                     'sttProviderClass', 'sttModelName',
-                    'ttsProviderClass', 'ttsModelName'
+                    'ttsProviderClass', 'ttsModelName',
+                    'eouProviderClass', 'eouModelName'
+                    'vadProviderClass', 'vadModelName'
                 ]
                 for field in provider_fields:
                     if field in transformed_data:
@@ -348,8 +360,9 @@ class CascadingMetricsCollector:
             if self.data.current_turn:
                 self.data.current_turn.interrupted = True
                 logger.info(f"User interrupted the agent. Total interruptions: {self.data.total_interruptions}")
-        if self.playground:
-            self.playground_manager.send_cascading_metrics(metrics={"interrupted": self.data.current_turn.interrupted})
+                
+                if self.playground:
+                    self.playground_manager.send_cascading_metrics(metrics={"interrupted": self.data.current_turn.interrupted})
 
     def on_user_speech_start(self):
         """Called when user starts speaking"""
@@ -419,6 +432,21 @@ class CascadingMetricsCollector:
             self.data.tts_start_time = None
             self.data.tts_first_byte_time = None
     
+    def on_stt_response(self, duration: float, confidence: float):
+        if not self.data.current_turn:
+            self.start_new_interaction()
+        
+        if self.data.current_turn:
+            self.data.current_turn.stt_duration = duration
+            self.data.current_turn.stt_confidence = confidence
+            logger.info(f"Stt duration {duration}, confidence {confidence}")
+
+    def on_stt_metrics(self, metrics: Dict[str, Any]):
+        if self.data.current_turn:
+            self.data.current_turn.stt_input_tokens = metrics.get("input_tokens")
+            self.data.current_turn.stt_output_tokens = metrics.get("output_tokens")
+            self.data.current_turn.stt_total_tokens = metrics.get("total_tokens")
+
     def on_stt_start(self):
         """Called when STT processing starts"""
         self.data.stt_start_time = time.perf_counter()
@@ -443,13 +471,41 @@ class CascadingMetricsCollector:
                 
             self.data.stt_start_time = None
     
+    def on_knowledge_base_start(self):
+        """Called when knowledge base processing starts"""
+        self.data.knowledge_base_start_time = time.perf_counter()
+        if self.data.current_turn:
+            self.data.current_turn.kb_retrieval_start_time = self.data.knowledge_base_start_time
+    
+    def on_knowledge_base_complete(self, documents: List[str], scores: List[float], record_id: List[str] = None):
+        """Called when knowledge base processing completes"""
+        if self.data.knowledge_base_start_time:
+            knowledge_base_end_time = time.perf_counter()
+            kb_retrieval_latency = knowledge_base_end_time - self.data.knowledge_base_start_time
+            if self.data.current_turn:
+                self.data.current_turn.kb_documents = documents
+                self.data.current_turn.kb_scores = scores
+                self.data.current_turn.kb_record_ids = record_id
+                self.data.current_turn.knowledge_base_end_time = knowledge_base_end_time
+                self.data.current_turn.kb_retrieval_latency = self._round_latency(kb_retrieval_latency)
+                logger.info(f"knowledge base retrieval latency: {self.data.current_turn.kb_retrieval_latency}ms")
+
+                if self.playground:
+                    self.playground_manager.send_cascading_metrics(metrics={"kb_retrieval_latency": self.data.current_turn.kb_retrieval_latency})
+                
+            self.data.knowledge_base_start_time = None
+
     def on_llm_start(self):
         """Called when LLM processing starts"""
         self.data.llm_start_time = time.perf_counter()
         
         if self.data.current_turn:
             self.data.current_turn.llm_start_time = self.data.llm_start_time
-
+    
+    def on_llm_input(self, text: str):
+        """Record the actual text sent to LLM"""
+        if self.data.current_turn:
+            self.data.current_turn.llm_input = text
     
     def on_llm_complete(self):
         """Called when LLM processing completes"""
@@ -652,6 +708,12 @@ class CascadingMetricsCollector:
         if self.data.current_turn:
             self.data.current_turn.stt_preemptive_generation_enabled = True
     
+    def set_recording_started(self, started: bool):
+        self.data.recording_started = started
+    
+    def set_recording_stopped(self, stopped: bool):
+        self.data.recording_stopped = stopped
+
     def set_playground_manager(self, manager: Optional["PlaygroundManager"]):
         self.playground = True
         self.playground_manager = manager

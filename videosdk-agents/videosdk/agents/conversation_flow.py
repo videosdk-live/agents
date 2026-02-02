@@ -271,6 +271,13 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             
         
         elif stt_response.event_type == SpeechEventType.FINAL:
+            final_response = stt_response.data
+            confidence = final_response.confidence
+            duration = final_response.duration
+            cascading_metrics_collector.on_stt_response(duration, confidence)
+            if stt_response.metadata is not None and stt_response.metadata.get("metrics"):
+                cascading_metrics_collector.on_stt_metrics(stt_response.metadata.get("metrics"))
+
             if cascading_metrics_collector.data.current_turn:
                 cascading_metrics_collector.data.current_turn.stt_preemptive_generation_occurred = False
             user_text = stt_response.data.text
@@ -668,6 +675,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 await self.agent.session.start_thinking_audio()
 
             llm_stream = self.run(user_text)
+            cascading_metrics_collector.on_llm_input(user_text)
 
             q = asyncio.Queue(maxsize=50)
 

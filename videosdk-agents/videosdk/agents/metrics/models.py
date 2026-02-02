@@ -26,6 +26,19 @@ class CascadingTurnData:
     agent_speech_duration: Optional[float] = None
     agent_speech: Optional[str] = None
     
+    kb_documents: Optional[List[str]] = None
+    kb_scores: Optional[List[float]] = None
+    kb_retrieval_latency: Optional[float] = None
+    kb_start_time: Optional[float] = None
+    kb_end_time: Optional[float] = None
+    kb_duration: Optional[float] = None
+
+    stt_confidence: Optional[float] = None
+    
+    stt_input_tokens: Optional[int] = None
+    stt_output_tokens: Optional[int] = None
+    stt_total_tokens: Optional[int] = None
+
     stt_latency: Optional[float] = None
     stt_start_time: Optional[float] = None
     stt_end_time: Optional[float] = None
@@ -107,6 +120,8 @@ class CascadingMetricsData:
     is_user_speaking: bool = False
     tts_first_byte_time: Optional[float] = None
     stt_preemptive_generation_enabled: bool = False
+    recording_started: bool = False
+    recording_stopped: bool = False
     
     llm_provider_class: str = ""
     llm_model_name: str = ""
@@ -146,7 +161,29 @@ class RealtimeTurnData:
     realtime_model_errors: List[Dict[str, Any]] = field(default_factory=list)
     is_a2a_enabled: bool = False
     handoff_occurred: bool = False 
+    
+    # Token details
+    realtime_input_tokens: Optional[int] = None
+    realtime_total_tokens: Optional[int] = None
+    realtime_output_tokens: Optional[int] = None
 
+    realtime_input_text_tokens: Optional[int] = None
+    realtime_input_audio_tokens: Optional[int] = None
+    realtime_input_image_tokens: Optional[int] = None
+    realtime_input_cached_tokens: Optional[int] = None
+
+    realtime_thoughts_tokens: Optional[int] = None
+
+    realtime_cached_text_tokens: Optional[int] = None
+    realtime_cached_audio_tokens: Optional[int] = None
+    realtime_cached_image_tokens: Optional[int] = None
+
+
+    realtime_output_text_tokens: Optional[int] = None
+    realtime_output_audio_tokens: Optional[int] = None
+    realtime_output_image_tokens: Optional[int] = None
+
+    
     def compute_latencies(self):
         if self.user_speech_start_time and self.agent_speech_start_time:
             self.ttfb = (self.agent_speech_start_time - self.user_speech_start_time) * 1000

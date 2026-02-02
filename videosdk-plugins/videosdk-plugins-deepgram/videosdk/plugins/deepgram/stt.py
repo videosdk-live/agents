@@ -180,6 +180,7 @@ class DeepgramSTT(BaseSTT):
                             confidence=alt.get("confidence", 0.0),
                             start_time=alt["words"][0]["start"] if alt["words"] else 0.0,
                             end_time=alt["words"][-1]["end"] if alt["words"] else 0.0,
+                            duration=msg["duration"]
                         ),
                         metadata={"model": self.model}
                     )
