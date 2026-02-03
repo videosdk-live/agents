@@ -313,12 +313,7 @@ class AssemblyAISTT(BaseSTT):
             if not w.get("word_is_final", True):
                 continue
 
-            start = w.get("start")
-            end = w.get("end")
             conf = w.get("confidence")
-
-            if start is None or end is None:
-                continue
 
             # confidence average
             if conf is not None:
@@ -326,8 +321,8 @@ class AssemblyAISTT(BaseSTT):
                 count += 1
 
             # duration bounds
-            min_start = start if min_start is None else min(min_start, start)
-            max_end = end if max_end is None else max(max_end, end)
+            min_start = words[0].get("start")
+            max_end = words[-1].get("end")
 
         avg_confidence = total_conf / count if count > 0 else 0.0
         duration_ms = (max_end - min_start) if (min_start is not None and max_end is not None) else 0
