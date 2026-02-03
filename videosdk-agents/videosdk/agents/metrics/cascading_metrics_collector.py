@@ -114,7 +114,13 @@ class CascadingMetricsCollector:
             'system_instructions': 'systemInstructions',
             'handoff_occurred': 'handOffOccurred',
             'is_a2a_enabled': 'isA2aEnabled',
-            'errors': 'errors'
+            'errors': 'errors',
+
+            # Additional
+            'stt_preemptive_generation_occurred': 'sttPreemptiveGenerationOccurred',
+            'stt_preemptive_generation_enabled': 'sttPreemptiveGenerationEnabled',
+            'recording_started': 'recordingStarted',
+            'recording_stopped': 'recordingStopped',
         }
 
         timeline_field_mapping = {
@@ -301,6 +307,8 @@ class CascadingMetricsCollector:
                 self.playground_manager.send_cascading_metrics(metrics=self.data.current_turn, full_turn_data=True)
             interaction_data = asdict(self.data.current_turn)
             interaction_data['timeline'] = [asdict(event) for event in self.data.current_turn.timeline]
+            interaction_data['recording_started'] = self.data.recording_started
+            interaction_data['recording_stopped'] = self.data.recording_stopped
             transformed_data = self._transform_to_camel_case(interaction_data)
             # transformed_data = self._intify_latencies_and_timestamps(transformed_data)
 
@@ -308,7 +316,7 @@ class CascadingMetricsCollector:
                 'kb_start_time',
                 'kb_end_time',
                 'kb_duration',
-                'user_speech'
+                'user_speech',
                 'stt_preflight_end_time',
                 'stt_interim_end_time',
                 'stt_preflight_end_time',
@@ -320,7 +328,7 @@ class CascadingMetricsCollector:
                 'eouStartTime', 'eouEndTime',
                 'is_a2a_enabled',
                 "interactionId",
-                "timestamp"
+                "timestamp",
             ]
 
             if not self.data.current_turn.is_a2a_enabled: 
@@ -333,9 +341,9 @@ class CascadingMetricsCollector:
             if len(self.data.turns) > 1: 
                 provider_fields = [
                     'systemInstructions',
-                    'llmProviderClass', 'llmModelName',
-                    'sttProviderClass', 'sttModelName',
-                    'ttsProviderClass', 'ttsModelName',
+                    # 'llmProviderClass', 'llmModelName',
+                    # 'sttProviderClass', 'sttModelName',
+                    # 'ttsProviderClass', 'ttsModelName',
                     'eouProviderClass', 'eouModelName'
                     'vadProviderClass', 'vadModelName'
                 ]
