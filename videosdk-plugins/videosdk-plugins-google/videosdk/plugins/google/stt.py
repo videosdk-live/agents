@@ -215,7 +215,6 @@ class SpeechStream:
                 session_started_at = time.time()
                 stream = await self._client.streaming_recognize(requests=self._audio_generator())
                 async for response in stream:
-                    print("GoogleSTT Response",response)
                     if time.time() - session_started_at > _MAX_SESSION_DURATION:
                         break
                     self._handle_response(response)
