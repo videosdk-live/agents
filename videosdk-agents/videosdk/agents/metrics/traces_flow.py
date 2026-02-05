@@ -173,8 +173,22 @@ class TracesFlowManager:
                     stt_attrs["start_timestamp"] = cascading_turn_data.stt_start_time
                 if cascading_turn_data.stt_end_time:
                     stt_attrs["end_timestamp"] = cascading_turn_data.stt_end_time
-                
+                if cascading_turn_data.stt_provider_class == "DeepgramSTTV2" and cascading_turn_data.stt_preemptive_generation_enabled:
+                    stt_attrs["enable_preemptive_generation"] = cascading_turn_data.stt_preemptive_generation_enabled
                 stt_span = create_span(stt_span_name, stt_attrs, parent_span=turn_span, start_time=cascading_turn_data.stt_start_time)
+                if cascading_turn_data.stt_preemptive_generation_enabled:
+                    with trace.use_span(stt_span):
+                        preemptive_attributes = {
+                            "preemptive_generation_occurred": cascading_turn_data.stt_preemptive_generation_occurred,
+                            "partial_text": cascading_turn_data.stt_preflight_transcript,
+                            "final_text": cascading_turn_data.stt_transcript,
+                        }
+                        if cascading_turn_data.stt_preemptive_generation_occurred:
+                            preemptive_attributes["preemptive_generation_latency"] = cascading_turn_data.stt_preflight_latency
+                        preemptive_span = create_span("Preemptive Generation", preemptive_attributes, parent_span=stt_span, start_time=cascading_turn_data.stt_start_time)
+                        preemptive_end_time = cascading_turn_data.stt_preflight_end_time or cascading_turn_data.stt_end_time
+                        self.end_span(preemptive_span, status_code=StatusCode.OK, end_time=preemptive_end_time)
+
 
                 if stt_span:
                     for error in stt_errors:
@@ -203,9 +217,26 @@ class TracesFlowManager:
                     eou_attrs["start_timestamp"] = cascading_turn_data.eou_start_time
                 if cascading_turn_data.eou_end_time:
                     eou_attrs["end_timestamp"] = cascading_turn_data.eou_end_time
+                if cascading_turn_data.eou_probability:
+                    eou_attrs["eou_probability"] = cascading_turn_data.eou_probability
+                if cascading_turn_data.waited_for_additional_speech:
+                    eou_attrs["waited_for_additional_speech"] = cascading_turn_data.waited_for_additional_speech
+                if cascading_turn_data.min_speech_wait_timeout:
+                    eou_attrs["min_speech_wait_timeout"] = cascading_turn_data.min_speech_wait_timeout
+                if cascading_turn_data.max_speech_wait_timeout:
+                    eou_attrs["max_speech_wait_timeout"] = cascading_turn_data.max_speech_wait_timeout
                     
                 eou_span = create_span(eou_span_name, eou_attrs, parent_span=turn_span, start_time=cascading_turn_data.eou_start_time)
 
+                if cascading_turn_data.waited_for_additional_speech and cascading_turn_data.wait_for_additional_speech_duration:
+                    delay = cascading_turn_data.wait_for_additional_speech_duration/1000
+                    with trace.use_span(eou_span):
+                        wait_for_additional_speech_attributes = {
+                            "wait_for_additional_speech_duration": delay,
+                        }
+                        wait_for_additional_speech_span = create_span("Wait for Additional Speech", wait_for_additional_speech_attributes, parent_span=eou_span, start_time=cascading_turn_data.eou_end_time)
+                        self.end_span(wait_for_additional_speech_span, status_code=StatusCode.OK, end_time=cascading_turn_data.eou_end_time + delay)
+                
                 if eou_span:
                     for error in eou_errors:
                         eou_span.add_event("error", attributes={

@@ -269,7 +269,10 @@ class CascadingMetricsCollector:
             vad_provider_class=self.data.vad_provider_class,
             vad_model_name=self.data.vad_model_name,
             eou_provider_class=self.data.eou_provider_class,
-            eou_model_name=self.data.eou_model_name
+            eou_model_name=self.data.eou_model_name,
+            stt_preemptive_generation_enabled=self.data.stt_preemptive_generation_enabled,
+            min_speech_wait_timeout=self.data.min_speech_wait_timeout,
+            max_speech_wait_timeout=self.data.max_speech_wait_timeout
         )
         
         if self.pending_user_start_time is not None:
@@ -461,7 +464,7 @@ class CascadingMetricsCollector:
         if self.data.current_turn:
             self.data.current_turn.stt_start_time = self.data.stt_start_time
     
-    def on_stt_complete(self):
+    def on_stt_complete(self, user_text: str):
         """Called when STT processing completes"""
         if self.data.current_turn and self.data.current_turn.stt_preemptive_generation_enabled and self.data.current_turn.stt_preemptive_generation_occurred:
             logger.info("STT preemptive generation occurred, skipping stt complete")
@@ -470,6 +473,7 @@ class CascadingMetricsCollector:
             stt_end_time = time.perf_counter()
             stt_latency = stt_end_time - self.data.stt_start_time
             if self.data.current_turn:
+                self.data.current_turn.stt_transcript = user_text
                 self.data.current_turn.stt_end_time = stt_end_time
                 self.data.current_turn.stt_latency = self._round_latency(stt_latency)
                 logger.info(f"stt latency: {self.data.current_turn.stt_latency}ms")
@@ -580,7 +584,18 @@ class CascadingMetricsCollector:
                     self.playground_manager.send_cascading_metrics(metrics={"eou_latency": self.data.current_turn.eou_latency})
             
             self.data.eou_start_time = None
-    
+
+    def on_wait_for_additional_speech(self, duration: float, eou_probability: float):
+        """Called when waiting for additional speech"""
+        if self.data.current_turn:
+            self.data.current_turn.wait_for_additional_speech_duration = self._round_latency(duration)
+            self.data.current_turn.waited_for_additional_speech = True
+            self.data.current_turn.eou_probability = eou_probability
+            logger.info(f"wait for additional speech duration: {self.data.current_turn.wait_for_additional_speech_duration}ms")
+
+            if self.playground:
+                self.playground_manager.send_cascading_metrics(metrics={"wait_for_additional_speech_duration": self.data.current_turn.wait_for_additional_speech_duration})
+
     def set_user_transcript(self, transcript: str):
         """Set the user transcript for the current turn and update timeline"""
         if self.data.current_turn:
@@ -712,15 +727,25 @@ class CascadingMetricsCollector:
             if self.playground:
                 self.playground_manager.send_cascading_metrics(metrics={"llm_ttft": self.data.current_turn.llm_ttft})
     
-    def set_preemptive_generation_enabled(self):
+    def set_preemptive_generation_enabled(self, enabled: bool):
+        if self.data:
+            self.data.stt_preemptive_generation_enabled = enabled
+    
+    def on_stt_preemptive_generation(self, text: str, match: bool):
         if self.data.current_turn:
-            self.data.current_turn.stt_preemptive_generation_enabled = True
+            self.data.current_turn.stt_preflight_transcript = text
+            self.data.current_turn.stt_preemptive_generation_occurred = match
     
     def set_recording_started(self, started: bool):
         self.data.recording_started = started
     
     def set_recording_stopped(self, stopped: bool):
         self.data.recording_stopped = stopped
+
+    def set_metrics(self, min_speech_wait_timeout: float, max_speech_wait_timeout: float):
+        if self.data:
+            self.data.min_speech_wait_timeout = min_speech_wait_timeout
+            self.data.max_speech_wait_timeout = max_speech_wait_timeout
 
     def set_playground_manager(self, manager: Optional["PlaygroundManager"]):
         self.playground = True

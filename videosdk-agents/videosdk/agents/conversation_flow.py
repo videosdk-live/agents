@@ -107,6 +107,10 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         
         # Context truncation
         self.max_context_items: int | None = None
+        cascading_metrics_collector.set_metrics(
+            min_speech_wait_timeout=self.min_speech_wait_timeout,
+            max_speech_wait_timeout=self.max_speech_wait_timeout
+        )
 
 
     def apply_flow_config(self, eou_config: "EOUConfig", interrupt_config: "InterruptConfig") -> None:
@@ -123,7 +127,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
     def _update_preemptive_generation_flag(self) -> None:
         """Update the preemptive generation flag based on current STT instance"""
         self._enable_preemptive_generation = getattr(self.stt, 'enable_preemptive_generation', False) if self.stt else False
-        cascading_metrics_collector.set_preemptive_generation_enabled()
+        cascading_metrics_collector.set_preemptive_generation_enabled(self._enable_preemptive_generation)
 
     async def start(self) -> None:
         global_event_emitter.on("speech_started", self.on_speech_started_stt)
@@ -285,7 +289,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             if self._enable_preemptive_generation:
 
                 if cascading_metrics_collector.data.current_turn:
-                    cascading_metrics_collector.on_stt_complete()
+                    cascading_metrics_collector.on_stt_complete(user_text)
                     cascading_metrics_collector.data.current_turn.stt_preemptive_generation_occurred = True
                 await self._authorize_or_process_final_transcript(user_text)
                 
@@ -385,6 +389,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                         logger.info(f"EOU probability is less than the threshold, using max speech wait timeout")
                         delay = self.max_speech_wait_timeout
                 logger.info(f"Using delay: {delay} seconds")
+                cascading_metrics_collector.on_wait_for_additional_speech(delay, eou_probability)
                 await self._wait_for_additional_speech(delay)
 
             elif self.mode == 'ADAPTIVE':
@@ -402,6 +407,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                     logger.info(f"Wait factor: {wait_factor}")
                     delay = self.min_speech_wait_timeout + (delay_range * wait_factor)
                     logger.info(f"Calculated delay: {delay}")
+                cascading_metrics_collector.on_wait_for_additional_speech(delay, eou_probability)
                 await self._wait_for_additional_speech(delay)
 
         
@@ -476,7 +482,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             cascading_metrics_collector.start_new_interaction()
 
         cascading_metrics_collector.set_user_transcript(user_text)
-        cascading_metrics_collector.on_stt_complete()
+        cascading_metrics_collector.on_stt_complete(user_text)
 
         if self.vad and cascading_metrics_collector.data.is_user_speaking: 
             cascading_metrics_collector.on_user_speech_end()
@@ -583,7 +589,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 # Compare transcripts
                 if final_text_normalized == preflight_normalized:
                     logger.info(f"MATCH! Authorizing preemptive generation")
-                    
+                    cascading_metrics_collector.on_stt_preemptive_generation(final_text, True)
                     # Authorize the waiting TTS to play audio
                     self._preemptive_authorized.set()
                     
@@ -601,7 +607,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                             logger.error(f"Error in preemptive playback: {e}")
                 else:
                     logger.info(f"MISMATCH! Cancelling Preemptive Generation")
-                    
+                    cascading_metrics_collector.on_stt_preemptive_generation(final_text, False)
                     # Cancel preemptive generation
                     await self._cancel_preemptive_generation()
                     

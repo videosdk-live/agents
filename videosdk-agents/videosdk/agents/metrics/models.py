@@ -48,6 +48,8 @@ class CascadingTurnData:
     stt_interim_end_time: Optional[float] = None
     stt_interim_latency: Optional[float] = None
     stt_preemptive_generation_occurred: bool = False
+    stt_transcript: Optional[str] = None
+    stt_preflight_transcript: Optional[str] = None
     stt_preemptive_generation_enabled: bool = False
     
     llm_latency: Optional[float] = None
@@ -73,6 +75,12 @@ class CascadingTurnData:
     eou_latency: Optional[float] = None
     eou_start_time: Optional[float] = None
     eou_end_time: Optional[float] = None
+    eou_probability: Optional[float] = None
+    min_speech_wait_timeout: Optional[float] = None
+    max_speech_wait_timeout: Optional[float] = None
+    eou_avg_delay: Optional[float] = None
+    waited_for_additional_speech: bool = False
+    wait_for_additional_speech_duration: Optional[float] = None
     
     function_tool_timestamps: List[Dict[str, Any]] = field(default_factory=list)
     
@@ -115,6 +123,11 @@ class CascadingMetricsData:
     llm_start_time: Optional[float] = None
     tts_start_time: Optional[float] = None
     eou_start_time: Optional[float] = None
+    eou_probability: Optional[float] = None
+    wait_for_additional_speech_duration: Optional[float] = None
+    waited_for_additional_speech: bool = False,
+    min_speech_wait_timeout: Optional[float] = None,
+    max_speech_wait_timeout: Optional[float] = None,
     user_input_start_time: Optional[float] = None
     is_agent_speaking: bool = False
     is_user_speaking: bool = False
@@ -142,8 +155,8 @@ class RealtimeTurnData:
     Turns = one user utterance + one agent response.
     """
     session_id: Optional[str] = None
-    provider_class_name: Optional[str] = None 
-    provider_model_name: Optional[str] = None 
+    realtime_provider_class: Optional[str] = None 
+    realtime_provider_model: Optional[str] = None 
     system_instructions: Optional[str] = None 
     function_tools: Optional[List[str]] = None
     mcp_tools: Optional[List[str]] = None
