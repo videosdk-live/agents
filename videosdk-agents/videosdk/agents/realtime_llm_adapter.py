@@ -45,6 +45,7 @@ class RealtimeLLMAdapter(EventEmitter):
         self.realtime_model.on("agent_speech_started", lambda data: self.emit("agent_speech_started", data))
         self.realtime_model.on("agent_speech_ended", lambda data: self.emit("agent_speech_ended", data))
         self.realtime_model.on("realtime_model_transcription", lambda data: self.emit("realtime_model_transcription", data))
+        self.realtime_model.on("llm_text_output", lambda data: self.emit("llm_text_output", data))
     
     def set_agent(self, agent: Agent) -> None:
         """Set the agent for this wrapper"""
