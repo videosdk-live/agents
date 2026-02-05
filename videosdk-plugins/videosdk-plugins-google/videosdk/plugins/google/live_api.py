@@ -111,6 +111,11 @@ class GeminiLiveConfig:
     # TODO
     # proactivity: ProactivityConfig | None = field(default_factory=dict)
     # enable_affective_dialog: bool | None = field(default=None)
+    
+    @property
+    def is_text_only_mode(self) -> bool:
+        """Check if configured for text-only responses (no audio)"""
+        return self.response_modalities == ["TEXT"]
 
 
 
@@ -266,6 +271,21 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
 
     async def _create_session(self) -> GeminiSession:
         """Create a new Gemini Live API session"""
+        has_audio_output = "AUDIO" in self.config.response_modalities
+        
+        speech_config_obj = None
+        if has_audio_output:
+            speech_config_obj = SpeechConfig(
+                voice_config=VoiceConfig(
+                    prebuilt_voice_config=PrebuiltVoiceConfig(
+                        voice_name=self.config.voice
+                    )
+                ),
+                language_code=self.config.language_code,
+            )
+
+        logger.info(f"Creating Gemini Session with modalities: {self.config.response_modalities}, has_audio_output: {has_audio_output}")
+
         config = LiveConnectConfig(
             response_modalities=self.config.response_modalities,
             generation_config=GenerationConfig(
@@ -298,17 +318,10 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                 ),
             ),
             system_instruction=self._instructions,
-            speech_config=SpeechConfig(
-                voice_config=VoiceConfig(
-                    prebuilt_voice_config=PrebuiltVoiceConfig(
-                        voice_name=self.config.voice
-                    )
-                ),
-                language_code=self.config.language_code,
-            ),
+            speech_config=speech_config_obj,
             tools=self.formatted_tools or None,
-            input_audio_transcription=self.config.input_audio_transcription,
-            output_audio_transcription=self.config.output_audio_transcription,
+            input_audio_transcription=self.config.input_audio_transcription if has_audio_output else None,
+            output_audio_transcription=self.config.output_audio_transcription if has_audio_output else None,
             realtime_input_config=self.config.realtime_input_config if self.config.realtime_input_config else None, 
             context_window_compression=self.config.context_window_compression if self.config.context_window_compression else None
         )
@@ -564,10 +577,13 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                         )
                                     except Exception:
                                         pass
+
+                                response_text = None
                                 if (
                                     "TEXT" in self.config.response_modalities
                                     and accumulated_text
                                 ):
+                                    response_text = accumulated_text
                                     global_event_emitter.emit(
                                         "text_response",
                                         {"type": "done", "text": accumulated_text},
@@ -576,10 +592,15 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                     "TEXT" not in self.config.response_modalities
                                     and final_transcription
                                 ):
+                                    response_text = final_transcription
                                     global_event_emitter.emit(
                                         "text_response",
                                         {"type": "done", "text": final_transcription},
                                     )
+                                
+                                if response_text:
+                                    self.emit("llm_text_output", {"text": response_text})
+                                
                                 active_response_id = None
                                 accumulated_text = ""
                                 final_transcription = ""

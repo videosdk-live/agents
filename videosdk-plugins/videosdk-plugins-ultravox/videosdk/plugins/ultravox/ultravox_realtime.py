@@ -453,6 +453,7 @@ class UltravoxRealtime(RealtimeBaseModel[UltravoxEventTypes]):
                                     "realtime_model_transcription",
                                     {"role": "agent", "text": text, "is_final": True},
                                 )
+                                self.emit("llm_text_output", {"text": text})
                                 global_event_emitter.emit(
                                     "text_response",
                                     {"type": "done", "text": text},

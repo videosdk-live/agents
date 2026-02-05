@@ -438,6 +438,17 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
         if hasattr(self, "_current_transcript") and self._current_transcript:
              logger.info(f"xAI Agent response: {self._current_transcript}")
              await realtime_metrics_collector.set_agent_response(self._current_transcript)
+             
+             try:
+                 self.emit(
+                     "realtime_model_transcription",
+                     {"role": "assistant", "text": self._current_transcript, "is_final": True},
+                 )
+             except Exception:
+                 pass
+             
+             self.emit("llm_text_output", {"text": self._current_transcript})
+             
              global_event_emitter.emit(
                 "text_response",
                 {"text": self._current_transcript, "type": "done"},

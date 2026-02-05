@@ -96,6 +96,11 @@ class OpenAIRealtimeConfig:
     )
     tool_choice: ToolChoice | None = DEFAULT_TOOL_CHOICE
     modalities: list[str] = field(default_factory=lambda: ["text", "audio"])
+    
+    @property
+    def is_text_only_mode(self) -> bool:
+        """Check if configured for text-only responses (no audio)"""
+        return "audio" not in self.modalities
 
 
 @dataclass
@@ -505,8 +510,24 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         """Handle new content part"""
 
     async def _handle_text_delta(self, data: dict) -> None:
-        """Handle text delta chunk"""
-        pass
+        """Handle text delta chunk (for text-only mode)"""
+        delta_content = data.get("delta", "")
+        
+        if not hasattr(self, "_current_text_response"):
+            self._current_text_response = ""
+        
+        if not self._agent_speaking and delta_content:
+            await realtime_metrics_collector.set_agent_speech_start()
+            self._agent_speaking = True
+            self.emit("agent_speech_started", {})
+        
+        self._current_text_response += delta_content
+        
+        self.emit("realtime_model_text_delta", {
+            "role": "assistant",
+            "delta": delta_content,
+            "text": self._current_text_response,
+        })
 
     async def _handle_audio_delta(self, data: dict) -> None:
         """Handle audio chunk"""
@@ -573,6 +594,9 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
             await realtime_metrics_collector.set_agent_response(
                 self._current_audio_transcript
             )
+            
+            self.emit("llm_text_output", {"text": self._current_audio_transcript})
+            
             global_event_emitter.emit(
                 "text_response",
                 {"text": self._current_audio_transcript, "type": "done"},
