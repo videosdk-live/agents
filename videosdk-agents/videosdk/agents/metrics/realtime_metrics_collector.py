@@ -23,7 +23,7 @@ class RealtimeMetricsCollector:
 
     _agent_info: Dict[str, Any] = {
         "realtime_provider_class": None,
-        "realtime_provider_model": None,
+        "realtime_model_name": None,
         "system_instructions": None,
         "function_tools": [],
         "mcp_tools": []
@@ -61,7 +61,7 @@ class RealtimeMetricsCollector:
     async def start_session(self, agent: Agent, pipeline: Pipeline) -> None:
         RealtimeMetricsCollector._agent_info = {
             "realtime_provider_class": pipeline.model.__class__.__name__,
-            "realtime_provider_model": getattr(pipeline.model, "model", None),
+            "realtime_model_name": getattr(pipeline.model, "model", None),
             "system_instructions": agent.instructions,
             "function_tools": [
                 getattr(tool, "name", tool.__name__ if callable(tool) else str(tool))
@@ -204,7 +204,7 @@ class RealtimeMetricsCollector:
         
         if len(self.turns) > 1:
             fields_to_remove.extend([
-                "realtime_provider_class", "realtime_provider_model", "system_instructions","function_tools", "mcp_tools"])
+                "realtime_provider_class", "realtime_model_name", "system_instructions","function_tools", "mcp_tools"])
        
         if not self.current_turn.is_a2a_enabled: 
             fields_to_remove.extend(["handoff_occurred"])

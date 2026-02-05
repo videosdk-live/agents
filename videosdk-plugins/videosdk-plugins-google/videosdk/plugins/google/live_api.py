@@ -939,22 +939,18 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
     
     def get_usage_details(self,usage_metadata) -> dict:
         """
-        Flatten Gemini Live UsageMetadata into the same pricing dictionary format
-        as OpenAI.
+        Flatten Gemini Live UsageMetadata into the same pricing dictionary format.
 
         Supports TEXT/AUDIO/IMAGE breakdown + thoughts tokens.
         """
-        print("*"*20)
-        print("Usage Metadata: ", usage_metadata)
-        print("*"*20)
         total_tokens = getattr(usage_metadata, "total_token_count", 0)
         input_tokens = getattr(usage_metadata, "prompt_token_count", 0)
         output_tokens = getattr(usage_metadata, "response_token_count", 0)
 
         thoughts_tokens = getattr(usage_metadata, "thoughts_token_count", 0)
 
-        prompt_details = getattr(usage_metadata, "prompt_tokens_details", [])
-        response_details = getattr(usage_metadata, "response_tokens_details", [])
+        prompt_details = getattr(usage_metadata, "prompt_tokens_details", None) or []
+        response_details = getattr(usage_metadata, "response_tokens_details", None) or []
 
         input_text_tokens = 0
         input_audio_tokens = 0

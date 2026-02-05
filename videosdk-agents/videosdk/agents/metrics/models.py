@@ -142,8 +142,8 @@ class RealtimeTurnData:
     Turns = one user utterance + one agent response.
     """
     session_id: Optional[str] = None
-    provider_class_name: Optional[str] = None 
-    provider_model_name: Optional[str] = None 
+    realtime_provider_class: Optional[str] = None 
+    realtime_model_name: Optional[str] = None 
     system_instructions: Optional[str] = None 
     function_tools: Optional[List[str]] = None
     mcp_tools: Optional[List[str]] = None
