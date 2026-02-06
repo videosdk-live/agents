@@ -268,11 +268,17 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
             except Exception as e:
                 logger.error(f"Error synthesizing with external TTS: {e}")
     
-    def on(self, event: Literal["speech_in", "speech_out", "stt", "llm", "agent_response", "vision_frame", "user_turn_start", "user_turn_end", "agent_turn_start", "agent_turn_end"]) -> Callable:
+    def on(
+        self, 
+        event: Literal["speech_in", "speech_out", "stt", "llm", "agent_response", "vision_frame", "user_turn_start", "user_turn_end", "agent_turn_start", "agent_turn_end"] | str,
+        callback: Callable | None = None
+    ) -> Callable:
         """
-        Decorator to register a hook for pipeline events.
+        Register a listener for pipeline events or a hook for processing stages.
         
-        Supported hooks:
+        Can be used as a decorator or with a callback.
+        
+        Supported hooks (decorator only):
         - speech_in: Process raw incoming user audio (async iterator)
         - speech_out: Process outgoing agent audio after TTS (async iterator)
         - stt: Process user transcript after STT, before LLM
@@ -284,64 +290,23 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         - agent_turn_start: Called when agent processing starts
         - agent_turn_end: Called when agent finishes speaking
         
+        Supported events (listener):
+        - transcript_ready
+        - content_generated
+        - synthesis_complete
+        - error
+        
         Examples:
             @pipeline.on("speech_in")
             async def process_audio(audio_stream):
-                '''Apply noise reduction to incoming audio'''
-                async for audio_chunk in audio_stream:
-                    # Process audio_chunk (bytes)
-                    processed = apply_noise_reduction(audio_chunk)
-                    yield processed
+                ...
             
-            @pipeline.on("stt")
-            async def clean_transcript(transcript: str) -> str:
-                '''Remove filler words from transcript'''
-                return transcript.replace("um", "").replace("uh", "")
-            
-            @pipeline.on("agent_response")
-            async def process_response(response: str):
-                '''Stream modified response to TTS'''
-                for word in response.split():
-                    yield word.replace("API", "A P I") + " "
-            
-            @pipeline.on("vision_frame")
-            async def process_frames(frame_stream):
-                '''Apply filters to video frames'''
-                async for frame in frame_stream:
-                    # Process av.VideoFrame
-                    filtered_frame = apply_filter(frame)
-                    yield filtered_frame
-            
-            @pipeline.on("user_turn_start")
-            async def on_user_turn_start(transcript: str) -> None:
-                '''Log when user starts speaking'''
-                print(f"User said: {transcript}")
-            
-            @pipeline.on("user_turn_end")
-            async def on_user_turn_end() -> None:
-                '''Log when user turn ends'''
-                print("User turn ended")
-            
-            @pipeline.on("agent_turn_start")
-            async def on_agent_turn_start() -> None:
-                '''Log when agent starts processing'''
-                print("Agent processing started")
-            
-            @pipeline.on("agent_turn_end")
-            async def on_agent_turn_end() -> None:
-                '''Log when agent finishes speaking'''
-                print("Agent finished speaking")
-            
-            @pipeline.on("llm")
-            async def custom_handler(transcript: str):
-                '''Bypass LLM with streaming response or don't yield for normal flow'''
-                if "hours" in transcript.lower():
-                    # Yield to bypass LLM and stream response directly to TTS
-                    for word in "We're open 24/7".split():
-                        yield word + " "
-                # If no yields, the generator will be empty and LLM will be used
+            pipeline.on("content_generated", lambda data: print(data))
         """
-        return self.hooks.on(event)
+        if event in ["speech_in", "speech_out", "stt", "llm", "agent_response", "vision_frame", "user_turn_start", "user_turn_end", "agent_turn_start", "agent_turn_end"]:
+            return self.hooks.on(event)(callback) if callback else self.hooks.on(event)
+            
+        return super().on(event, callback)
     
     def _setup_error_handlers(self) -> None:
         """Setup error handlers for all components"""
@@ -795,29 +760,6 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
             else:
                 logger.warning("No orchestrator available for text processing")
     
-    async def inject_text_to_llm(self, text: str) -> None:
-        """
-        Inject processed text into LLM for generation (hybrid mode).
-        
-        Args:
-            text: Processed text to send to LLM
-        """
-        if self.orchestrator:
-            await self.orchestrator.inject_text_to_llm(text)
-        else:
-            logger.warning("inject_text_to_llm only available in cascading mode")
-    
-    async def inject_text_to_tts(self, text: str) -> None:
-        """
-        Inject text directly to TTS (bypassing LLM) for hybrid scenarios.
-        
-        Args:
-            text: Text to synthesize
-        """
-        if self.orchestrator:
-            await self.orchestrator.inject_text_to_tts(text)
-        else:
-            logger.warning("inject_text_to_tts only available in cascading mode")
     
     def get_component_configs(self) -> Dict[str, Dict[str, Any]]:
         """Get component configurations"""

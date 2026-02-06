@@ -224,7 +224,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
         
         if self.content_generation:
             full_response = ""
-            async for response_chunk in self.content_generation.generate(text, self.agent.knowledge_base):
+            async for response_chunk in self.content_generation.generate(text):
                 if response_chunk.content:
                     full_response += response_chunk.content
             
@@ -240,26 +240,6 @@ class PipelineOrchestrator(EventEmitter[Literal[
                     await self.speech_generation.synthesize(full_response)
                 
                 self.emit("synthesis_complete", {})
-    
-    async def inject_text_to_llm(self, text: str) -> None:
-        """
-        Inject processed text into LLM for generation (hybrid mode).
-        
-        Args:
-            text: Processed text to send to LLM
-        """
-        await self.process_text(text)
-    
-    async def inject_text_to_tts(self, text: str) -> None:
-        """
-        Inject text directly to TTS (bypassing LLM).
-        
-        Args:
-            text: Text to synthesize
-        """
-        if self.speech_generation:
-            await self.speech_generation.synthesize(text)
-            self.emit("synthesis_complete", {})
     
     def get_latest_transcript(self) -> str:
         """Get the latest accumulated transcript (for hybrid scenarios)"""
