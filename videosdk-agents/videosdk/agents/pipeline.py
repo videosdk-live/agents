@@ -655,6 +655,9 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                     return
                 asyncio.create_task(self._realtime_model.interrupt())
             
+            if self.realtime_mode == "hybrid_tts" and self.speech_generation:
+                asyncio.create_task(self.speech_generation.interrupt())
+            
             if self.avatar and hasattr(self.avatar, 'interrupt'):
                 asyncio.create_task(self.avatar.interrupt())
             
@@ -705,6 +708,10 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
     def _on_user_speech_started_realtime(self, data: dict) -> None:
         """Handle user speech started in realtime mode"""
         self._notify_speech_started()
+        
+        if self.realtime_mode == "hybrid_tts" and self.speech_generation:
+            asyncio.create_task(self.speech_generation.interrupt())
+            
         if self.agent and self.agent.session:
             from .utils import UserState, AgentState
             self.agent.session._emit_user_state(UserState.SPEAKING)
