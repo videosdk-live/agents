@@ -834,6 +834,7 @@ class VideoSDKHandler(BaseTransportHandler):
         if self.meeting and not self._session_id_collected:
             try:
                 session_id = getattr(self.meeting, "session_id", None)
+                print("My session id is ", session_id)
                 if session_id:
                     self._session_id = session_id
                     cascading_metrics_collector.set_session_id(session_id)
@@ -912,8 +913,6 @@ class VideoSDKHandler(BaseTransportHandler):
             json={"roomId": self.meeting_id, "participantId": id},
             headers=headers,
         )
-        if response.status_code == 200:
-            cascading_metrics_collector.set_recording_started(True)
         logger.info(f"starting participant recording response completed for id {id} and response{response.text}")
 
     async def stop_participant_recording(self, id: str):
@@ -931,9 +930,6 @@ class VideoSDKHandler(BaseTransportHandler):
             json={"roomId": self.meeting_id, "participantId": id},
             headers=headers,
         )
-        if response.status_code == 200:
-            cascading_metrics_collector.set_recording_stopped(True)
-
         logger.info(f"stop participant recording response for id {id} and response{response.text}")
 
     async def merge_participant_recordings(self):

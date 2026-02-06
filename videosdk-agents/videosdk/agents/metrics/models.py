@@ -120,8 +120,6 @@ class CascadingMetricsData:
     is_user_speaking: bool = False
     tts_first_byte_time: Optional[float] = None
     stt_preemptive_generation_enabled: bool = False
-    recording_started: bool = False
-    recording_stopped: bool = False
     
     llm_provider_class: str = ""
     llm_model_name: str = ""

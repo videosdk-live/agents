@@ -58,7 +58,9 @@ class CascadingMetricsCollector:
             'stt_duration': 'sttDuration',
             'stt_confidence': 'sttConfidence',
 
-            # STT Token Metrics
+            'stt_preemptive_generation_occurred': 'sttPreemptiveGenerationOccurred',
+            'stt_preemptive_generation_enabled': 'sttPreemptiveGenerationEnabled',
+
             'stt_input_tokens': 'sttInputTokens',
             'stt_output_tokens': 'sttOutputTokens',
             'stt_total_tokens': 'sttTotalTokens',
@@ -116,11 +118,6 @@ class CascadingMetricsCollector:
             'is_a2a_enabled': 'isA2aEnabled',
             'errors': 'errors',
 
-            # Additional
-            'stt_preemptive_generation_occurred': 'sttPreemptiveGenerationOccurred',
-            'stt_preemptive_generation_enabled': 'sttPreemptiveGenerationEnabled',
-            'recording_started': 'recordingStarted',
-            'recording_stopped': 'recordingStopped',
         }
 
         timeline_field_mapping = {
@@ -716,11 +713,6 @@ class CascadingMetricsCollector:
         if self.data.current_turn:
             self.data.current_turn.stt_preemptive_generation_enabled = True
     
-    def set_recording_started(self, started: bool):
-        self.data.recording_started = started
-    
-    def set_recording_stopped(self, stopped: bool):
-        self.data.recording_stopped = stopped
 
     def set_playground_manager(self, manager: Optional["PlaygroundManager"]):
         self.playground = True

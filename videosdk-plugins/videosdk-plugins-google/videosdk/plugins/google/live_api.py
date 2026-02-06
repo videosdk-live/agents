@@ -983,21 +983,17 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                 output_image_tokens += count
 
         return {
-            # Overall
             "total_tokens": total_tokens,
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
 
-            # Input breakdown
             "input_text_tokens": input_text_tokens,
             "input_audio_tokens": input_audio_tokens,
             "input_image_tokens": input_image_tokens,
 
-            # Output breakdown
             "output_text_tokens": output_text_tokens,
             "output_audio_tokens": output_audio_tokens,
             "output_image_tokens": output_image_tokens,
 
-            # Gemini extra
             "thoughts_tokens": thoughts_tokens,
         }
