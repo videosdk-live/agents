@@ -834,7 +834,6 @@ class VideoSDKHandler(BaseTransportHandler):
         if self.meeting and not self._session_id_collected:
             try:
                 session_id = getattr(self.meeting, "session_id", None)
-                print("My session id is ", session_id)
                 if session_id:
                     self._session_id = session_id
                     cascading_metrics_collector.set_session_id(session_id)
