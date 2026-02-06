@@ -58,7 +58,10 @@ class CascadingMetricsCollector:
             'stt_duration': 'sttDuration',
             'stt_confidence': 'sttConfidence',
 
-            # STT Token Metrics
+            'stt_preemptive_generation_occurred': 'sttPreemptiveGenerationOccurred',
+            'stt_preemptive_generation_enabled': 'sttPreemptiveGenerationEnabled',
+
+            # For OpenAISTT only
             'stt_input_tokens': 'sttInputTokens',
             'stt_output_tokens': 'sttOutputTokens',
             'stt_total_tokens': 'sttTotalTokens',
@@ -116,11 +119,6 @@ class CascadingMetricsCollector:
             'is_a2a_enabled': 'isA2aEnabled',
             'errors': 'errors',
 
-            # Additional
-            'stt_preemptive_generation_occurred': 'sttPreemptiveGenerationOccurred',
-            'stt_preemptive_generation_enabled': 'sttPreemptiveGenerationEnabled',
-            'recording_started': 'recordingStarted',
-            'recording_stopped': 'recordingStopped',
         }
 
         timeline_field_mapping = {
@@ -310,19 +308,15 @@ class CascadingMetricsCollector:
                 self.playground_manager.send_cascading_metrics(metrics=self.data.current_turn, full_turn_data=True)
             interaction_data = asdict(self.data.current_turn)
             interaction_data['timeline'] = [asdict(event) for event in self.data.current_turn.timeline]
-            interaction_data['recording_started'] = self.data.recording_started
-            interaction_data['recording_stopped'] = self.data.recording_stopped
             transformed_data = self._transform_to_camel_case(interaction_data)
             # transformed_data = self._intify_latencies_and_timestamps(transformed_data)
 
             always_remove_fields = [
                 'kb_start_time',
                 'kb_end_time',
-                'kb_duration',
                 'user_speech',
                 'stt_preflight_end_time',
                 'stt_interim_end_time',
-                'stt_preflight_end_time',
                 'errors',
                 'functionToolTimestamps',
                 'sttStartTime', 'sttEndTime',
@@ -736,11 +730,6 @@ class CascadingMetricsCollector:
             self.data.current_turn.stt_preflight_transcript = text
             self.data.current_turn.stt_preemptive_generation_occurred = match
     
-    def set_recording_started(self, started: bool):
-        self.data.recording_started = started
-    
-    def set_recording_stopped(self, stopped: bool):
-        self.data.recording_stopped = stopped
 
     def set_metrics(self, min_speech_wait_timeout: float, max_speech_wait_timeout: float):
         if self.data:

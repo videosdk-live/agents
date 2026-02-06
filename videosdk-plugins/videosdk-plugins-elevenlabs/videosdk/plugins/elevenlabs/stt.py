@@ -200,7 +200,6 @@ class ElevenLabsSTT(BaseSTT):
 
         try:
             async for msg in self._ws:
-                # print("Received message:",msg)
                 if msg.type == aiohttp.WSMsgType.TEXT:
                     data = None
                     try:
@@ -379,7 +378,6 @@ class ElevenLabsSTT(BaseSTT):
         last_end_time = 0.0
 
         for w in words:
-            # Only consider real spoken words (skip spaces)
             if w.get("type") != "word":
                 continue
 
@@ -389,10 +387,10 @@ class ElevenLabsSTT(BaseSTT):
                 total_confidence += math.exp(logprob)
                 word_count += 1
 
-            # Track maximum end timestamp
+
             last_end_time = max(last_end_time, w.get("end", 0.0))
 
-        # Avoid division by zero
+
         avg_confidence = total_confidence / word_count if word_count > 0 else 0.0
 
         return avg_confidence, last_end_time
