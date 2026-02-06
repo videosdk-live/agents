@@ -31,13 +31,12 @@ class CascadingTurnData:
     kb_retrieval_latency: Optional[float] = None
     kb_start_time: Optional[float] = None
     kb_end_time: Optional[float] = None
-    kb_duration: Optional[float] = None
 
     stt_confidence: Optional[float] = None
     
-    stt_input_tokens: Optional[int] = None
-    stt_output_tokens: Optional[int] = None
-    stt_total_tokens: Optional[int] = None
+    stt_input_tokens: Optional[int] = 0
+    stt_output_tokens: Optional[int] = 0
+    stt_total_tokens: Optional[int] = 0
 
     stt_latency: Optional[float] = None
     stt_start_time: Optional[float] = None
@@ -56,18 +55,18 @@ class CascadingTurnData:
     llm_duration: Optional[float] = None
     llm_first_token_time: Optional[float] = None
     llm_ttft: Optional[float] = None
-    prompt_tokens: Optional[int] = None
-    completion_tokens: Optional[int] = None
-    total_tokens: Optional[int] = None
-    prompt_cached_tokens: Optional[int] = None
-    tokens_per_second: Optional[float] = None
+    prompt_tokens: Optional[int] = 0
+    completion_tokens: Optional[int] = 0
+    total_tokens: Optional[int] = 0
+    prompt_cached_tokens: Optional[int] = 0
+    tokens_per_second: Optional[float] = 0
 
     
     tts_latency: Optional[float] = None 
     tts_start_time: Optional[float] = None
     tts_end_time: Optional[float] = None
     tts_duration: Optional[float] = None
-    tts_characters: Optional[int] = None
+    tts_characters: Optional[int] = 0
     ttfb: Optional[float] = None
     
     eou_latency: Optional[float] = None
@@ -161,25 +160,25 @@ class RealtimeTurnData:
     handoff_occurred: bool = False 
     
     # Token details
-    realtime_input_tokens: Optional[int] = None
-    realtime_total_tokens: Optional[int] = None
-    realtime_output_tokens: Optional[int] = None
+    realtime_input_tokens: Optional[int] = 0
+    realtime_total_tokens: Optional[int] = 0
+    realtime_output_tokens: Optional[int] = 0
 
-    realtime_input_text_tokens: Optional[int] = None
-    realtime_input_audio_tokens: Optional[int] = None
-    realtime_input_image_tokens: Optional[int] = None
-    realtime_input_cached_tokens: Optional[int] = None
+    realtime_input_text_tokens: Optional[int] = 0
+    realtime_input_audio_tokens: Optional[int] = 0
+    realtime_input_image_tokens: Optional[int] = 0
+    realtime_input_cached_tokens: Optional[int] = 0
 
-    realtime_thoughts_tokens: Optional[int] = None
+    realtime_thoughts_tokens: Optional[int] = 0
 
-    realtime_cached_text_tokens: Optional[int] = None
-    realtime_cached_audio_tokens: Optional[int] = None
-    realtime_cached_image_tokens: Optional[int] = None
+    realtime_cached_text_tokens: Optional[int] = 0
+    realtime_cached_audio_tokens: Optional[int] = 0
+    realtime_cached_image_tokens: Optional[int] = 0
 
 
-    realtime_output_text_tokens: Optional[int] = None
-    realtime_output_audio_tokens: Optional[int] = None
-    realtime_output_image_tokens: Optional[int] = None
+    realtime_output_text_tokens: Optional[int] = 0
+    realtime_output_audio_tokens: Optional[int] = 0
+    realtime_output_image_tokens: Optional[int] = 0
 
     
     def compute_latencies(self):

@@ -61,6 +61,7 @@ class CascadingMetricsCollector:
             'stt_preemptive_generation_occurred': 'sttPreemptiveGenerationOccurred',
             'stt_preemptive_generation_enabled': 'sttPreemptiveGenerationEnabled',
 
+            # For OpenAISTT only
             'stt_input_tokens': 'sttInputTokens',
             'stt_output_tokens': 'sttOutputTokens',
             'stt_total_tokens': 'sttTotalTokens',
@@ -304,19 +305,15 @@ class CascadingMetricsCollector:
                 self.playground_manager.send_cascading_metrics(metrics=self.data.current_turn, full_turn_data=True)
             interaction_data = asdict(self.data.current_turn)
             interaction_data['timeline'] = [asdict(event) for event in self.data.current_turn.timeline]
-            interaction_data['recording_started'] = self.data.recording_started
-            interaction_data['recording_stopped'] = self.data.recording_stopped
             transformed_data = self._transform_to_camel_case(interaction_data)
             # transformed_data = self._intify_latencies_and_timestamps(transformed_data)
 
             always_remove_fields = [
                 'kb_start_time',
                 'kb_end_time',
-                'kb_duration',
                 'user_speech',
                 'stt_preflight_end_time',
                 'stt_interim_end_time',
-                'stt_preflight_end_time',
                 'errors',
                 'functionToolTimestamps',
                 'sttStartTime', 'sttEndTime',

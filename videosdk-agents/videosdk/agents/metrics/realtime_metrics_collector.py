@@ -203,8 +203,7 @@ class RealtimeMetricsCollector:
             "mcp_tools"]
         
         if len(self.turns) > 1:
-            fields_to_remove.extend([
-                "realtime_provider_class", "realtime_model_name", "system_instructions","function_tools", "mcp_tools"])
+            fields_to_remove.extend(["system_instructions","function_tools", "mcp_tools"])
        
         if not self.current_turn.is_a2a_enabled: 
             fields_to_remove.extend(["handoff_occurred"])
@@ -299,13 +298,16 @@ class RealtimeMetricsCollector:
             self.current_turn.realtime_input_tokens = token_details.get("input_tokens")
             self.current_turn.realtime_total_tokens = token_details.get("total_tokens")
             self.current_turn.realtime_output_tokens = token_details.get("output_tokens")
+
             self.current_turn.realtime_input_text_tokens = token_details.get("input_text_tokens")
             self.current_turn.realtime_input_audio_tokens = token_details.get("input_audio_tokens")
             self.current_turn.realtime_input_image_tokens = token_details.get("input_image_tokens")
+
             self.current_turn.realtime_input_cached_tokens = token_details.get("input_cached_tokens")
             self.current_turn.realtime_cached_text_tokens = token_details.get("cached_text_tokens")
             self.current_turn.realtime_cached_audio_tokens = token_details.get("cached_audio_tokens")
             self.current_turn.realtime_cached_image_tokens = token_details.get("cached_image_tokens")
+
             self.current_turn.realtime_output_text_tokens = token_details.get("output_text_tokens")
             self.current_turn.realtime_output_audio_tokens = token_details.get("output_audio_tokens")
             self.current_turn.realtime_output_image_tokens = token_details.get("output_image_tokens")
