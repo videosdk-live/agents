@@ -59,6 +59,10 @@ async def entrypoint(ctx: JobContext):
     async def on_pubsub_text_message(message):
         """Process text messages from users"""
         text = message.get('message', '') if isinstance(message, dict) else str(message)
+        if isinstance(message, dict) and message.get("message") == "interrupt":
+            print("Interrupting...")
+            session.interrupt()      
+            return
         sender = message.get('senderName', 'User') if isinstance(message, dict) else 'User'
         
         if text.strip():

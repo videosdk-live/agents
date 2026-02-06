@@ -26,6 +26,17 @@ class VoiceToTextAgent(Agent):
     async def on_exit(self) -> None:
         await self.send_text_response("Goodbye!")
 
+    async def send_text_response(self, message: str):
+        """Send text response via pubsub"""
+        try:
+            publish_config = PubSubPublishConfig(
+                topic="CHAT",
+                message=message
+            )
+            await self.ctx.room.publish_to_pubsub(publish_config)
+        except Exception as e:
+            logging.error(f"Failed to publish text response: {e}")
+
 async def entrypoint(ctx: JobContext):
     agent = VoiceToTextAgent(ctx)
 
@@ -40,7 +51,8 @@ async def entrypoint(ctx: JobContext):
     
     shutdown_event = asyncio.Event()
     
-    async def on_content_generated(data):
+    @pipeline.on("content_generated")
+    async def on_content_generated(data: dict):
         """Send agent's text response via pubsub"""
         text = data.get("text", "")
         if text.strip():
@@ -52,9 +64,7 @@ async def entrypoint(ctx: JobContext):
             )
             await ctx.room.publish_to_pubsub(publish_config)
             print("Response sent to pubsub topic 'AGENT_RESPONSE'")
-    
-    def on_content_generated_wrapper(data):
-        asyncio.create_task(on_content_generated(data))
+
     
     async def cleanup_session():
         print("Cleaning up session...")
@@ -74,7 +84,6 @@ async def entrypoint(ctx: JobContext):
         print("Waiting for participant...")
         await ctx.room.wait_for_participant()
         
-        pipeline.on("content_generated", on_content_generated_wrapper)
         
         await session.start()
         await shutdown_event.wait()
