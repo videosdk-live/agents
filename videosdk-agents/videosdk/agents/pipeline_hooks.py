@@ -25,6 +25,7 @@ class PipelineHooks:
     - user_turn_end: Called when user turn ends
     - agent_turn_start: Called when agent processing starts
     - agent_turn_end: Called when agent finishes speaking
+    - content_generated: Called when LLM content is generated (receives dict with "text" key)
     """
     
     def __init__(self) -> None:
@@ -47,10 +48,11 @@ class PipelineHooks:
         self._user_turn_end_hooks: list[Callable[[], Awaitable[None]]] = []
         self._agent_turn_start_hooks: list[Callable[[], Awaitable[None]]] = []
         self._agent_turn_end_hooks: list[Callable[[], Awaitable[None]]] = []
+        self._content_generated_hooks: list[Callable[[dict], Awaitable[None]]] = []
     
     def on(
         self, 
-        event: Literal["speech_in", "speech_out", "stt", "llm", "agent_response", "vision_frame", "user_turn_start", "user_turn_end", "agent_turn_start", "agent_turn_end"]
+        event: Literal["speech_in", "speech_out", "stt", "llm", "agent_response", "vision_frame", "user_turn_start", "user_turn_end", "agent_turn_start", "agent_turn_end", "content_generated"]
     ) -> Callable:
         """
         Decorator to register a hook for a specific event.
@@ -103,6 +105,12 @@ class PipelineHooks:
                 '''Log when agent finishes speaking'''
                 print("Agent finished speaking")
             
+            @pipeline.on("content_generated")
+            async def on_content_generated(data: dict) -> None:
+                '''Handle generated content from LLM'''
+                text = data.get("text", "")
+                print(f"Generated: {text}")
+            
             @pipeline.on("llm")
             async def custom_processing(transcript: str):
                 '''Bypass LLM with streaming response or don't yield for normal flow'''
@@ -135,6 +143,8 @@ class PipelineHooks:
                 self._agent_turn_start_hooks.append(func)
             elif event == "agent_turn_end":
                 self._agent_turn_end_hooks.append(func)
+            elif event == "content_generated":
+                self._content_generated_hooks.append(func)
             else:
                 raise ValueError(f"Unknown event: {event}")
             
@@ -377,6 +387,23 @@ class PipelineHooks:
         """Check if any agent_turn_end hooks are registered."""
         return len(self._agent_turn_end_hooks) > 0
     
+    def has_content_generated_hooks(self) -> bool:
+        """Check if any content_generated hooks are registered."""
+        return len(self._content_generated_hooks) > 0
+    
+    async def trigger_content_generated(self, data: dict) -> None:
+        """
+        Trigger all content_generated hooks.
+        
+        Args:
+            data: Dictionary containing "text" key with generated content
+        """
+        for hook in self._content_generated_hooks:
+            try:
+                await hook(data)
+            except Exception as e:
+                logger.error(f"Error in content_generated hook: {e}", exc_info=True)
+    
     async def process_llm_gate(self, transcript: str) -> AsyncIterator[str] | None:
         """
         Process turn through llm gate hook.
@@ -440,4 +467,5 @@ class PipelineHooks:
         self._user_turn_end_hooks.clear()
         self._agent_turn_start_hooks.clear()
         self._agent_turn_end_hooks.clear()
+        self._content_generated_hooks.clear()
         logger.info("Cleared all pipeline hooks")

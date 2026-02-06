@@ -270,7 +270,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
     
     def on(
         self, 
-        event: Literal["speech_in", "speech_out", "stt", "llm", "agent_response", "vision_frame", "user_turn_start", "user_turn_end", "agent_turn_start", "agent_turn_end"] | str,
+        event: Literal["speech_in", "speech_out", "stt", "llm", "agent_response", "vision_frame", "user_turn_start", "user_turn_end", "agent_turn_start", "agent_turn_end", "content_generated"] | str,
         callback: Callable | None = None
     ) -> Callable:
         """
@@ -289,10 +289,10 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         - user_turn_end: Called when user turn ends
         - agent_turn_start: Called when agent processing starts
         - agent_turn_end: Called when agent finishes speaking
+        - content_generated: Called when LLM generates content (receives dict with "text" key)
         
         Supported events (listener):
         - transcript_ready
-        - content_generated
         - synthesis_complete
         - error
         
@@ -301,9 +301,11 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
             async def process_audio(audio_stream):
                 ...
             
-            pipeline.on("content_generated", lambda data: print(data))
+            @pipeline.on("content_generated")
+            async def on_content(data):
+                print(f"LLM generated: {data['text']}")
         """
-        if event in ["speech_in", "speech_out", "stt", "llm", "agent_response", "vision_frame", "user_turn_start", "user_turn_end", "agent_turn_start", "agent_turn_end"]:
+        if event in ["speech_in", "speech_out", "stt", "llm", "agent_response", "vision_frame", "user_turn_start", "user_turn_end", "agent_turn_start", "agent_turn_end", "content_generated"]:
             return self.hooks.on(event)(callback) if callback else self.hooks.on(event)
             
         return super().on(event, callback)

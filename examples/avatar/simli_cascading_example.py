@@ -7,9 +7,10 @@ from videosdk.agents import Agent, AgentSession, Pipeline, function_tool, JobCon
 from videosdk.plugins.silero import SileroVAD
 from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
 from videosdk.plugins.simli import SimliAvatar, SimliConfig
-from videosdk.plugins.openai import OpenAILLM
 from videosdk.plugins.deepgram import DeepgramSTT
-from videosdk.plugins.elevenlabs import ElevenLabsTTS
+from videosdk.plugins.google import GoogleLLM,GoogleTTS
+
+
 
 # Pre-downloading the Turn Detector model
 pre_download_model()
@@ -63,9 +64,11 @@ class MyVoiceAgent(Agent):
 
 async def start_session(context: JobContext):
 
-    stt = DeepgramSTT(model="nova-3", language="multi", api_key=os.getenv("DEEPGRAM_API_KEY"))
-    llm = OpenAILLM(model="gpt-4o-mini", api_key=os.getenv("OPENAI_API_KEY"))
-    tts = ElevenLabsTTS(api_key=os.getenv("ELEVENLABS_API_KEY"), enable_streaming=True, speed=1.2)
+    stt = DeepgramSTT()
+    # llm = OpenAILLM(model="gpt-4o-mini", api_key=os.getenv("OPENAI_API_KEY"))
+    # tts = ElevenLabsTTS(api_key=os.getenv("ELEVENLABS_API_KEY"), enable_streaming=False, speed=1.2)
+    llm = GoogleLLM()
+    tts = GoogleTTS()
     
     # Initialize VAD and Turn Detector
     vad = SileroVAD()
@@ -106,7 +109,7 @@ async def start_session(context: JobContext):
 
 def make_context() -> JobContext:
     room_options = RoomOptions(
-        room_id="<room_id>",
+        room_id="xjld-g28c-rda8",
         name="Simli Avatar Cascading Agent",
         playground=False
     )

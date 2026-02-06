@@ -86,7 +86,7 @@ async def start_session(context: JobContext):
 
 def make_context() -> JobContext:
     room_options = RoomOptions(
-        room_id="<room_id>",
+        room_id="xjld-g28c-rda8",
         name="Simli Avatar Realtime Agent",
         playground=False 
     )

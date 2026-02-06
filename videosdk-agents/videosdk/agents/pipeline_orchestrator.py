@@ -234,6 +234,9 @@ class PipelineOrchestrator(EventEmitter[Literal[
                     content=full_response
                 )
                 
+                if self.hooks and self.hooks.has_content_generated_hooks():
+                    await self.hooks.trigger_content_generated({"text": full_response})
+                
                 self.emit("content_generated", {"text": full_response})
                 
                 if self.speech_generation:
@@ -562,6 +565,9 @@ class PipelineOrchestrator(EventEmitter[Literal[
                     role=ChatRole.ASSISTANT,
                     content=full_response
                 )
+                
+                if self.hooks and self.hooks.has_content_generated_hooks():
+                    await self.hooks.trigger_content_generated({"text": full_response})
                 
                 self.emit("content_generated", {"text": full_response})
         
