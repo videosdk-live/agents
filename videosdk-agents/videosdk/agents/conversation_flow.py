@@ -185,6 +185,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 return
                 
             elif vad_response.event_type == VADEventType.END_OF_SPEECH:
+                cascading_metrics_collector.on_vad_end_of_speech()
                 if hasattr(self, '_interruption_check_task') and not self._interruption_check_task.done():
                     logger.info("User stopped speaking, cancelling interruption check")
                     self._interruption_check_task.cancel()
@@ -199,6 +200,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             await self.on_speech_started()
             
         elif vad_response.event_type == VADEventType.END_OF_SPEECH:
+            cascading_metrics_collector.on_vad_end_of_speech()
             self._is_user_speaking = False
             self.on_speech_stopped()
 

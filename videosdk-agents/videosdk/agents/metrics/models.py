@@ -97,6 +97,10 @@ class CascadingTurnData:
     tts_model_name: str = ""
     vad_provider_class: str = ""
     vad_model_name: str = ""
+    vad_min_silence_duration: Optional[float] = None
+    vad_min_speech_duration: Optional[float] = None
+    vad_threshold: Optional[float] = None
+    vad_end_of_speech_time: Optional[float] = None
     eou_provider_class: str = ""
     eou_model_name: str = ""
     
@@ -132,7 +136,11 @@ class CascadingMetricsData:
     is_user_speaking: bool = False
     tts_first_byte_time: Optional[float] = None
     stt_preemptive_generation_enabled: bool = False
-    
+
+    vad_min_silence_duration: Optional[float] = None
+    vad_min_speech_duration: Optional[float] = None
+    vad_threshold: Optional[float] = None
+
     llm_provider_class: str = ""
     llm_model_name: str = ""
     stt_provider_class: str = ""

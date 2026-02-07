@@ -335,29 +335,49 @@ class TracesFlowManager:
                         agent_speech_span = create_span("Agent Output Speech", {"Transcript": event.text}, parent_span=turn_span, start_time=event.start_time)
                         self.end_span(agent_speech_span, end_time=event.end_time)    
 
-        if cascading_turn_data.errors:
-            vad_turn_errors = [e for e in cascading_turn_data.errors if e['source'] in ['VAD']]
-            
-            if vad_turn_errors:
-                span_name = f"{cascading_turn_data.vad_provider_class}: VAD Processing Error"
+            vad_errors = [e for e in cascading_turn_data.errors if e['source'] == 'VAD']
+            # Create VAD span when end of speech is detected - span length is min_silence_duration
+            if cascading_turn_data.vad_provider_class or cascading_turn_data.vad_end_of_speech_time or vad_errors:
+                vad_span_name = f"{cascading_turn_data.vad_provider_class}: End of Speech Detected"
                 
                 vad_attrs = {}
                 if cascading_turn_data.vad_provider_class:
                     vad_attrs["provider_class"] = cascading_turn_data.vad_provider_class
                 if cascading_turn_data.vad_model_name:
                     vad_attrs["model_name"] = cascading_turn_data.vad_model_name
+                if cascading_turn_data.vad_min_silence_duration is not None:
+                    vad_attrs["min_silence_duration"] = cascading_turn_data.vad_min_silence_duration
+                if cascading_turn_data.vad_min_speech_duration is not None:
+                    vad_attrs["min_speech_duration"] = cascading_turn_data.vad_min_speech_duration
+                if cascading_turn_data.vad_threshold is not None:
+                    vad_attrs["threshold"] = cascading_turn_data.vad_threshold
 
-                vad_turn_span = create_span(span_name, vad_attrs, parent_span=turn_span)
-                if vad_turn_span:
-                    for error in vad_turn_errors:
-                        vad_turn_span.add_event("error", attributes={
+                # Calculate span start time: end_of_speech_time - min_silence_duration
+                vad_start_time = None
+                vad_end_time = None
+                if cascading_turn_data.vad_end_of_speech_time and cascading_turn_data.vad_min_silence_duration:
+                    vad_end_time = cascading_turn_data.vad_end_of_speech_time
+                    vad_start_time = vad_end_time - cascading_turn_data.vad_min_silence_duration
+                    create_log(f"{cascading_turn_data.vad_provider_class}: End of Speech Detected (silence duration: {cascading_turn_data.vad_min_silence_duration}s)", "INFO")
+                elif cascading_turn_data.vad_end_of_speech_time:
+                    vad_end_time = cascading_turn_data.vad_end_of_speech_time
+                    vad_start_time = vad_end_time  # Instantaneous if no min_silence_duration
+                    create_log(f"{cascading_turn_data.vad_provider_class}: End of Speech Detected", "INFO")
+                else:
+                    create_log(f"{cascading_turn_data.vad_provider_class}: VAD Configuration", "INFO")
+
+                vad_span = create_span(vad_span_name, vad_attrs, parent_span=turn_span, start_time=vad_start_time)
+                
+                if vad_span:
+                    for error in vad_errors:
+                        vad_span.add_event("error", attributes={
                             "message": error["message"],
                             "timestamp": error["timestamp"],
                             "source": error["source"]
                         })
                     
-                    status = StatusCode.ERROR
-                    self.end_span(vad_turn_span, status_code=status)
+                    vad_status = StatusCode.ERROR if vad_errors else StatusCode.OK
+                    self.end_span(vad_span, status_code=vad_status, end_time=vad_end_time)
         
         if cascading_turn_data.interrupted:
             interrupted_span = create_span("Turn Interrupted", parent_span=turn_span)

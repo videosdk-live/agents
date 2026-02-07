@@ -266,6 +266,9 @@ class CascadingMetricsCollector:
             tts_model_name=self.data.tts_model_name,
             vad_provider_class=self.data.vad_provider_class,
             vad_model_name=self.data.vad_model_name,
+            vad_min_silence_duration=self.data.vad_min_silence_duration,
+            vad_min_speech_duration=self.data.vad_min_speech_duration,
+            vad_threshold=self.data.vad_threshold,
             eou_provider_class=self.data.eou_provider_class,
             eou_model_name=self.data.eou_model_name,
             stt_preemptive_generation_enabled=self.data.stt_preemptive_generation_enabled,
@@ -730,6 +733,28 @@ class CascadingMetricsCollector:
             self.data.current_turn.stt_preflight_transcript = text
             self.data.current_turn.stt_preemptive_generation_occurred = match
     
+    def config_vad(self, min_silence_duration: float = None, min_speech_duration: float = None, threshold: float = None):
+        """Configure VAD parameters for metrics tracking"""
+        if self.data:
+            if min_silence_duration is not None:
+                self.data.vad_min_silence_duration = min_silence_duration
+            if min_speech_duration is not None:
+                self.data.vad_min_speech_duration = min_speech_duration
+            if threshold is not None:
+                self.data.vad_threshold = threshold
+
+    def on_vad_end_of_speech(self):
+        """Called when VAD detects end of speech"""
+        if self.data.current_turn:
+            self.data.current_turn.vad_end_of_speech_time = time.perf_counter()
+            logger.info(f"VAD end of speech detected at {self.data.current_turn.vad_end_of_speech_time}")
+    
+    
+    def set_recording_started(self, started: bool):
+        self.data.recording_started = started
+    
+    def set_recording_stopped(self, stopped: bool):
+        self.data.recording_stopped = stopped
 
     def set_metrics(self, min_speech_wait_timeout: float, max_speech_wait_timeout: float):
         if self.data:

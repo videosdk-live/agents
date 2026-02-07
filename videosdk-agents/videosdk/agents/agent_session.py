@@ -327,6 +327,15 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
                     eou_provider=self.pipeline.turn_detector.__class__.__name__ if hasattr(self.pipeline, 'turn_detector') and self.pipeline.turn_detector else "",
                     eou_model=configs.get('eou', {}).get('model', "") if hasattr(self.pipeline, 'turn_detector') and self.pipeline.turn_detector else ""
                 )
+                
+                # Configure VAD parameters for metrics tracking
+                if hasattr(self.pipeline, 'vad') and self.pipeline.vad:
+                    vad = self.pipeline.vad
+                    cascading_metrics_collector.config_vad(
+                        min_silence_duration=getattr(vad, '_min_silence_duration', None),
+                        min_speech_duration=getattr(vad, '_min_speech_duration', None),
+                        threshold=getattr(vad, '_threshold', None)
+                    )
         
         if hasattr(self.pipeline, 'set_agent'):
             self.pipeline.set_agent(self.agent)
