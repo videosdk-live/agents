@@ -1,5 +1,5 @@
 import time
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Literal
 from dataclasses import dataclass, field, asdict
 
 
@@ -46,6 +46,7 @@ class CascadingTurnData:
     stt_preflight_latency: Optional[float] = None
     stt_interim_end_time: Optional[float] = None
     stt_interim_latency: Optional[float] = None
+    stt_ttfw: Optional[float] = None  # Time to first word - locked after first interim
     stt_preemptive_generation_occurred: bool = False
     stt_transcript: Optional[str] = None
     stt_preflight_transcript: Optional[str] = None
@@ -81,10 +82,29 @@ class CascadingTurnData:
     waited_for_additional_speech: bool = False
     wait_for_additional_speech_duration: Optional[float] = None
     
+    interrupted: bool = False
+    interrupt_words: Optional[int] = None
+    interrupt_duration: Optional[float] = None
+    interrupt_reason: List[str] = field(default_factory=list)
+    interrupt_start_time: Optional[float] = None
+    interrupt_end_time: Optional[float] = None
+
+    is_false_interrupt: bool = False
+    false_interrupt_duration: Optional[float] = None
+    false_interrupt_words: Optional[int] = None
+    false_interrupt_start_time: Optional[float] = None
+    false_interrupt_end_time: Optional[float] = None
+    resumed_after_false_interrupt: bool = False
+
+    interrupt_mode: Literal["VAD_ONLY", "STT_ONLY", "HYBRID"] = "HYBRID"
+    interrupt_min_duration: Optional[float] = None
+    interrupt_min_words: Optional[int] = None
+    false_interrupt_pause_duration: Optional[float] = None
+    resume_on_false_interrupt: Optional[bool] = None
+
     function_tool_timestamps: List[Dict[str, Any]] = field(default_factory=list)
     
     e2e_latency: Optional[float] = None
-    interrupted: bool = False
     timestamp: float = field(default_factory=time.time)
     function_tools_called: List[str] = field(default_factory=list)
     system_instructions: str = ""
@@ -108,6 +128,15 @@ class CascadingTurnData:
     errors: List[Dict[str, Any]] = field(default_factory=list)
     is_a2a_enabled: bool = False
     handoff_occurred: bool = False  
+    
+    # Background Audio attributes (no start/end times - can be played outside turn)
+    background_audio_file_path: Optional[str] = None
+    background_audio_looping: Optional[bool] = None
+    
+    # Thinking Audio attributes (no start/end times - can be played outside turn)
+    thinking_audio_file_path: Optional[str] = None
+    thinking_audio_looping: Optional[bool] = None
+    thinking_audio_override_thinking: Optional[bool] = None
 
 @dataclass
 class CascadingMetricsData:
@@ -136,6 +165,23 @@ class CascadingMetricsData:
     is_user_speaking: bool = False
     tts_first_byte_time: Optional[float] = None
     stt_preemptive_generation_enabled: bool = False
+    # Lock flag to prevent STT/EOU timestamps from being overwritten once LLM starts
+    turn_timestamps_locked: bool = False
+
+    is_interrupted: bool = False
+
+    interrupt_mode: Literal["VAD_ONLY", "STT_ONLY", "HYBRID"] = "HYBRID"
+    interrupt_min_duration: Optional[float] = None
+    interrupt_min_words: Optional[int] = None
+    false_interrupt_pause_duration: Optional[float] = None
+    resume_on_false_interrupt: Optional[bool] = None
+
+    is_false_interrupt: bool = False
+    false_interrupt_duration: Optional[float] = None
+    false_interrupt_words: Optional[int] = None
+    false_interrupt_start_time: Optional[float] = None
+    false_interrupt_end_time: Optional[float] = None
+    resumed_after_false_interrupt: bool = False
 
     vad_min_silence_duration: Optional[float] = None
     vad_min_speech_duration: Optional[float] = None
@@ -151,6 +197,14 @@ class CascadingMetricsData:
     vad_model_name: str = ""
     eou_provider_class: str = ""
     eou_model_name: str = ""
+    
+    # Background Audio session-level tracking
+    background_audio_start_time: Optional[float] = None
+    background_audio_end_time: Optional[float] = None
+    
+    # Thinking Audio session-level tracking
+    thinking_audio_start_time: Optional[float] = None
+    thinking_audio_end_time: Optional[float] = None
     
 
 @dataclass

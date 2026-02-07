@@ -123,6 +123,13 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self.interrupt_min_words = interrupt_config.interrupt_min_words
         self.false_interrupt_pause_duration = interrupt_config.false_interrupt_pause_duration
         self.resume_on_false_interrupt = interrupt_config.resume_on_false_interrupt
+        cascading_metrics_collector.set_interrupt_config(
+            mode=self.interrupt_mode,
+            min_duration=self.interrupt_min_duration,
+            min_words=self.interrupt_min_words,
+            false_interrupt_pause_duration=self.false_interrupt_pause_duration,
+            resume_on_false_interrupt=self.resume_on_false_interrupt
+        )
         
     def _update_preemptive_generation_flag(self) -> None:
         """Update the preemptive generation flag based on current STT instance"""
@@ -221,6 +228,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             
             if (self.agent.session and self.agent.session.current_utterance and self.agent.session.current_utterance.is_interruptible):
                 logger.info(f"User speech duration exceeded {self.interrupt_min_duration}s threshold, triggering interruption")
+                cascading_metrics_collector.on_interrupt_trigger(duration=self.interrupt_min_duration)
                 await self._trigger_interruption()
             else:
                 logger.debug("Interruption threshold reached but utterance is not interruptible")
@@ -1054,6 +1062,9 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             self._cancel_false_interrupt_timer()
             self._is_in_false_interrupt_pause = False
             self._false_interrupt_paused_speech = False
+            # Notify metrics that false interrupt escalated to true interrupt
+            cascading_metrics_collector.on_false_interrupt_escalated(word_count)
+            cascading_metrics_collector.on_interrupted()
             logger.info("[FALSE_INTERRUPT] Clearing audio buffers and finalizing interruption.")
             await self._interrupt_tts()
             return
@@ -1061,6 +1072,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         if self.interrupt_mode in ("STT_ONLY", "HYBRID"):
             if word_count >= self.interrupt_min_words:
                 if self.agent.session and self.agent.session.current_utterance and self.agent.session.current_utterance.is_interruptible:
+                    cascading_metrics_collector.on_interrupt_trigger(word_count)
                     await self._trigger_interruption()
                 else:
                     logger.info("Interruption not allowed for the current utterance.")
@@ -1090,6 +1102,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             else:
                 logger.info("performing full interruption.")
                 await self._interrupt_tts()
+            cascading_metrics_collector.on_interrupted()
 
     def _start_false_interrupt_timer(self):
         """Starts a timer to detect if an interruption was just a brief false interrupt."""
@@ -1103,6 +1116,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
         logger.info(f"[FALSE_INTERRUPT] Starting timer for {self.false_interrupt_pause_duration}s. If no STT transcript is received within this time, speech will resume.")
         loop = asyncio.get_event_loop()
+        cascading_metrics_collector.on_false_interrupt_start(self.false_interrupt_pause_duration)
         self._false_interrupt_timer = loop.call_later(
             self.false_interrupt_pause_duration,
             lambda: asyncio.create_task(self._on_false_interrupt_timeout())
@@ -1132,6 +1146,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             self._is_interrupted = False
             self._is_in_false_interrupt_pause = False
             self._false_interrupt_paused_speech = False
+            cascading_metrics_collector.on_false_interrupt_resume()
             await self.tts.resume()
         else:
             if self._is_interrupted or self._false_interrupt_paused_speech:
@@ -1162,7 +1177,10 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
             if self._false_interrupt_paused_speech:
                 logger.info("User continued speaking, confirming interruption of paused speech.")
-                self._false_interrupt_paused_speech = False 
+                self._false_interrupt_paused_speech = False
+                # Notify metrics that false interrupt escalated to true interrupt (via VAD)
+                cascading_metrics_collector.on_false_interrupt_escalated()
+                cascading_metrics_collector.on_interrupted()
                 await self._interrupt_tts() 
             elif self.agent and self.agent.session and self.agent.session.agent_state == AgentState.SPEAKING:
                 if can_resume:
@@ -1217,7 +1235,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self._partial_response = ""
         self._is_interrupted = False
 
-        cascading_metrics_collector.on_interrupted()
 
     async def _cancel_llm(self) -> None:
         """Cancel LLM generation"""

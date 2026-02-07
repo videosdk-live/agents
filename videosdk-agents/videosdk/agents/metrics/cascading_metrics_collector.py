@@ -1,6 +1,7 @@
 import time
 import hashlib
-from typing import Dict, Optional, Any, List
+import os.path
+from typing import Dict, Optional, Any, List, Literal
 from dataclasses import asdict
 from opentelemetry.trace import Span
 from .models import TimelineEvent, CascadingTurnData, CascadingMetricsData
@@ -20,6 +21,7 @@ class CascadingMetricsCollector:
         self.active_spans: Dict[str, Span] = {}
         self.pending_user_start_time: Optional[float] = None
         self.playground = False
+
         
     def set_traces_flow_manager(self, manager: TracesFlowManager):
         """Set the TracesFlowManager instance"""
@@ -253,6 +255,15 @@ class CascadingMetricsCollector:
         if self.data.current_turn:
             self.complete_current_turn()
         
+        # Reset the lock for the new turn
+        self.data.turn_timestamps_locked = False
+        # Clear all start times to prevent stale timestamps from previous turns
+        self.data.stt_start_time = None
+        self.data.llm_start_time = None
+        self.data.tts_start_time = None
+        self.data.eou_start_time = None
+        self.data.knowledge_base_start_time = None
+        
         self.data.total_turns += 1
         
         self.data.current_turn = CascadingTurnData(
@@ -273,7 +284,12 @@ class CascadingMetricsCollector:
             eou_model_name=self.data.eou_model_name,
             stt_preemptive_generation_enabled=self.data.stt_preemptive_generation_enabled,
             min_speech_wait_timeout=self.data.min_speech_wait_timeout,
-            max_speech_wait_timeout=self.data.max_speech_wait_timeout
+            max_speech_wait_timeout=self.data.max_speech_wait_timeout,
+            interrupt_mode=self.data.interrupt_mode,
+            interrupt_min_duration=self.data.interrupt_min_duration,
+            interrupt_min_words=self.data.interrupt_min_words,
+            false_interrupt_pause_duration=self.data.false_interrupt_pause_duration,
+            resume_on_false_interrupt=self.data.resume_on_false_interrupt
         )
         
         if self.pending_user_start_time is not None:
@@ -359,19 +375,89 @@ class CascadingMetricsCollector:
             
             self.analytics_client.send_interaction_analytics_safe(interaction_payload) 
             self.data.current_turn = None
+            self.data.is_interrupted = False
             self.pending_user_start_time = None
     
     def on_interrupted(self):
         """Called when the user interrupts the agent"""
+        if self.data.is_interrupted:
+            return
+
         if self.data.is_agent_speaking:
             self.data.total_interruptions += 1
+            self.data.is_interrupted = True
             if self.data.current_turn:
                 self.data.current_turn.interrupted = True
+                self.data.current_turn.interrupt_start_time = time.perf_counter()
                 logger.info(f"User interrupted the agent. Total interruptions: {self.data.total_interruptions}")
                 
                 if self.playground:
                     self.playground_manager.send_cascading_metrics(metrics={"interrupted": self.data.current_turn.interrupted})
 
+    def on_interrupt_trigger(self, word_count: Optional[int] = 0, duration: Optional[float] = 0):
+        """Called when the user interrupts the agent"""
+        if self.data.is_interrupted:
+            return
+
+        if self.data.is_agent_speaking:
+            if self.data.current_turn:
+                self.data.current_turn.interrupt_words = word_count
+                self.data.current_turn.interrupt_duration = duration
+                if self.data.current_turn.interrupt_words:
+                    self.data.current_turn.interrupt_reason.append("STT")
+                if self.data.current_turn.interrupt_duration:
+                    self.data.current_turn.interrupt_reason.append("VAD")
+
+    def set_interrupt_config(self, mode: Literal["VAD_ONLY", "STT_ONLY", "HYBRID"], min_duration: Optional[float] = None, min_words: Optional[int] = None, false_interrupt_pause_duration: Optional[float] = None, resume_on_false_interrupt: Optional[bool] = None):
+        self.data.interrupt_mode = mode
+        self.data.interrupt_min_duration = min_duration
+        self.data.interrupt_min_words = min_words
+        self.data.false_interrupt_pause_duration = false_interrupt_pause_duration
+        self.data.resume_on_false_interrupt = resume_on_false_interrupt
+
+    def on_false_interrupt_start(self, duration: float):
+        """Called when false interrupt timer starts (potential resume scenario)"""
+        if self.data.current_turn:
+            self.data.current_turn.false_interrupt_start_time = time.perf_counter()
+            logger.info(f"False interrupt started - waiting {duration}s to determine if real interrupt")
+
+    def on_false_interrupt_resume(self):
+        """Called when TTS resumes after false interrupt timeout (user didn't continue speaking)"""
+        if self.data.current_turn:
+            self.data.current_turn.is_false_interrupt = True
+            self.data.current_turn.false_interrupt_end_time = time.perf_counter()
+            if self.data.current_turn.false_interrupt_start_time:
+                self.data.current_turn.false_interrupt_duration = self._round_latency(
+                    self.data.current_turn.false_interrupt_end_time - self.data.current_turn.false_interrupt_start_time
+                )
+            self.data.current_turn.resumed_after_false_interrupt = True
+            
+            # Reset interrupted flag and data since this was NOT a true interrupt
+            self.data.current_turn.interrupted = False
+            self.data.current_turn.interrupt_start_time = None
+            self.data.current_turn.interrupt_end_time = None
+            self.data.current_turn.interrupt_words = None
+            self.data.current_turn.interrupt_duration = None
+            self.data.current_turn.interrupt_reason = []
+            self.data.is_interrupted = False
+            
+            logger.info(f"False interrupt ended - TTS resumed after {self.data.current_turn.false_interrupt_duration}ms")
+
+    def on_false_interrupt_escalated(self, word_count: Optional[int] = None):
+        """Called when a false interrupt escalates to a true interrupt (user continued speaking)"""
+        if self.data.current_turn:
+            self.data.current_turn.is_false_interrupt = True
+            self.data.current_turn.false_interrupt_end_time = time.perf_counter()
+            if self.data.current_turn.false_interrupt_start_time:
+                self.data.current_turn.false_interrupt_duration = self._round_latency(
+                    self.data.current_turn.false_interrupt_end_time - self.data.current_turn.false_interrupt_start_time
+                )
+            self.data.current_turn.resumed_after_false_interrupt = False
+            if word_count is not None:
+                self.data.current_turn.false_interrupt_words = word_count
+            logger.info(f"False interrupt escalated to true interrupt after {self.data.current_turn.false_interrupt_duration}ms")
+
+    
     def on_user_speech_start(self):
         """Called when user starts speaking"""
         if self.data.is_user_speaking:
@@ -457,12 +543,18 @@ class CascadingMetricsCollector:
 
     def on_stt_start(self):
         """Called when STT processing starts"""
+        # Don't overwrite STT timestamps if turn is locked (LLM has started)
+        if self.data.turn_timestamps_locked:
+            return
         self.data.stt_start_time = time.perf_counter()
         if self.data.current_turn:
             self.data.current_turn.stt_start_time = self.data.stt_start_time
     
     def on_stt_complete(self, user_text: str):
         """Called when STT processing completes"""
+        # Don't overwrite STT timestamps if turn is locked (LLM has started)
+        if self.data.turn_timestamps_locked:
+            return
         if self.data.current_turn and self.data.current_turn.stt_preemptive_generation_enabled and self.data.current_turn.stt_preemptive_generation_occurred:
             logger.info("STT preemptive generation occurred, skipping stt complete")
             return
@@ -484,7 +576,7 @@ class CascadingMetricsCollector:
         """Called when knowledge base processing starts"""
         self.data.knowledge_base_start_time = time.perf_counter()
         if self.data.current_turn:
-            self.data.current_turn.kb_retrieval_start_time = self.data.knowledge_base_start_time
+            self.data.current_turn.kb_start_time = self.data.knowledge_base_start_time
     
     def on_knowledge_base_complete(self, documents: List[str], scores: List[float], record_id: List[str] = None):
         """Called when knowledge base processing completes"""
@@ -495,7 +587,7 @@ class CascadingMetricsCollector:
                 self.data.current_turn.kb_documents = documents
                 self.data.current_turn.kb_scores = scores
                 self.data.current_turn.kb_record_ids = record_id
-                self.data.current_turn.knowledge_base_end_time = knowledge_base_end_time
+                self.data.current_turn.kb_end_time = knowledge_base_end_time
                 self.data.current_turn.kb_retrieval_latency = self._round_latency(kb_retrieval_latency)
                 logger.info(f"knowledge base retrieval latency: {self.data.current_turn.kb_retrieval_latency}ms")
 
@@ -507,6 +599,8 @@ class CascadingMetricsCollector:
     def on_llm_start(self):
         """Called when LLM processing starts"""
         self.data.llm_start_time = time.perf_counter()
+        # Lock timestamps to prevent STT/EOU overwrites from subsequent events
+        self.data.turn_timestamps_locked = True
         
         if self.data.current_turn:
             self.data.current_turn.llm_start_time = self.data.llm_start_time
@@ -561,6 +655,9 @@ class CascadingMetricsCollector:
     
     def on_eou_start(self):
         """Called when EOU (End of Utterance) processing starts"""
+        # Don't overwrite EOU timestamps if turn is locked (LLM has started)
+        if self.data.turn_timestamps_locked:
+            return
         self.data.eou_start_time = time.perf_counter()
         if self.data.current_turn:
             self.data.current_turn.eou_start_time = self.data.eou_start_time
@@ -568,6 +665,9 @@ class CascadingMetricsCollector:
     
     def on_eou_complete(self):
         """Called when EOU processing completes"""
+        # Don't overwrite EOU timestamps if turn is locked (LLM has started)
+        if self.data.turn_timestamps_locked:
+            return
         if self.data.eou_start_time:
             eou_end_time = time.perf_counter()
             eou_latency = eou_end_time - self.data.eou_start_time
@@ -710,7 +810,7 @@ class CascadingMetricsCollector:
             self.data.current_turn.stt_interim_end_time = time.perf_counter()
             self.data.current_turn.stt_interim_latency = self._round_latency(self.data.current_turn.stt_interim_end_time - self.data.current_turn.stt_start_time)
             logger.info(f"stt interim latency: {self.data.current_turn.stt_interim_latency}ms")
-
+            
             if self.playground:
                 self.playground_manager.send_cascading_metrics(metrics={"stt_interim_latency": self.data.current_turn.stt_interim_latency})
     
@@ -764,3 +864,52 @@ class CascadingMetricsCollector:
     def set_playground_manager(self, manager: Optional["PlaygroundManager"]):
         self.playground = True
         self.playground_manager = manager
+
+    # Background Audio tracking methods
+    def on_background_audio_start(self, file_path: str = None, looping: bool = False):
+        """Called when background audio starts playing"""
+        now = time.perf_counter()
+        self.data.background_audio_start_time = now
+        # Extract just the filename, not the full path
+        file_name = os.path.basename(file_path) if file_path else None
+        if self.data.current_turn:
+            self.data.current_turn.background_audio_file_path = file_name
+            self.data.current_turn.background_audio_looping = looping
+            self._start_timeline_event("background_audio", now)
+        # Create session-level span for background audio start
+        if self.traces_flow_manager:
+            self.traces_flow_manager.create_background_audio_start_span(file_path=file_name, looping=looping, start_time=now)
+        logger.info(f"Background audio started: file={file_name}, looping={looping}")
+
+    def on_background_audio_stop(self):
+        """Called when background audio stops"""
+        now = time.perf_counter()
+        self.data.background_audio_end_time = now
+        if self.data.current_turn:
+            self._end_timeline_event("background_audio", now)
+        # Create session-level span for background audio stop
+        if self.traces_flow_manager:
+            self.traces_flow_manager.create_background_audio_stop_span(end_time=now)
+        logger.info(f"Background audio stopped")
+
+    # Thinking Audio tracking methods
+    def on_thinking_audio_start(self, file_path: str = None, looping: bool = True, override_thinking: bool = True):
+        """Called when thinking audio starts playing"""
+        now = time.perf_counter()
+        self.data.thinking_audio_start_time = now
+        # Extract just the filename, not the full path
+        file_name = os.path.basename(file_path) if file_path else None
+        if self.data.current_turn:
+            self.data.current_turn.thinking_audio_file_path = file_name
+            self.data.current_turn.thinking_audio_looping = looping
+            self.data.current_turn.thinking_audio_override_thinking = override_thinking
+            self._start_timeline_event("thinking_audio", now)
+        logger.info(f"Thinking audio started: file={file_name}, looping={looping}, override_thinking={override_thinking}")
+
+    def on_thinking_audio_stop(self):
+        """Called when thinking audio stops"""
+        now = time.perf_counter()
+        self.data.thinking_audio_end_time = now
+        if self.data.current_turn:
+            self._end_timeline_event("thinking_audio", now)
+        logger.info(f"Thinking audio stopped")
