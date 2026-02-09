@@ -81,15 +81,9 @@ async def entrypoint(ctx: JobContext):
 
 
 def make_context() -> JobContext:
-    room_options = RoomOptions(
-        room_id="<room_id>",
-        name="VideoSDK's Text-to-Voice Agent (LLM+TTS)",
-        playground=True
-    )
+    room_options = RoomOptions(room_id="<room_id>",name="LLM+TTS Agent",playground=True)
     return JobContext(room_options=room_options)
 
-
 if __name__ == "__main__":
-
     job = WorkerJob(entrypoint=entrypoint, jobctx=make_context)
     job.start()
