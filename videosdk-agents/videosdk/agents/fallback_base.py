@@ -168,18 +168,20 @@ class FallbackBase:
         
         if best_ready_index < self._current_index:
             previous_provider_label = self.active_provider.label
-            logger.info(f"[{self._component_name}] Restoring primary/higher priority provider: {self.providers[best_ready_index].label}")
+            new_provider_label = self.providers[best_ready_index].label
+            logger.info(f"[{self._component_name}] Restoring primary/higher priority provider: {new_provider_label}")
             self._current_index = best_ready_index
             
-            # Emit recovery attempt event
+            # Emit recovery event - mark as recovery so it doesn't create child spans
             self._emit_fallback_event({
                 "component_type": self._component_name,
                 "temporary_disable_sec": self.temporary_disable_sec,
                 "permanent_disable_after_attempts": self.permanent_disable_after_attempts,
                 "recovery_attempt": self._recovery_attempts.get(best_ready_index, 0),
-                "message": recovery_message or f"Restoring primary/higher priority provider: {self.providers[best_ready_index].label}",
-                "original_provider_label": previous_provider_label,
-                "new_provider_label": self.providers[best_ready_index].label,
+                "message": recovery_message or f"Restoring primary/higher priority provider: {new_provider_label}",
+                "is_recovery": True,  # Flag to indicate this is a recovery, not a failure-switch
+                "original_provider_label": previous_provider_label,  # The backup we're switching FROM
+                "new_provider_label": new_provider_label,  # The primary we're restoring TO
                 "start_time": time.perf_counter(),
                 "end_time": time.perf_counter(),
                 "duration_ms": 0,

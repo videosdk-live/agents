@@ -528,6 +528,27 @@ class TracesFlowManager:
         # Fallback spans - create "Fallback: {STT|LLM|TTS}" spans with child traces
         if cascading_turn_data.fallback_events:
             for fallback_event in cascading_turn_data.fallback_events:
+                # Skip recovery events (they just indicate provider was restored, not a failure)
+                is_recovery = getattr(fallback_event, 'is_recovery', False) or fallback_event.get('is_recovery', False) if isinstance(fallback_event, dict) else getattr(fallback_event, 'is_recovery', False)
+                
+                if is_recovery:
+                    # For recovery events, just create a simple span without child traces
+                    fallback_span_name = f"Recovery: {fallback_event.component_type}"
+                    fallback_attrs = {
+                        "temporary_disable_sec": fallback_event.temporary_disable_sec,
+                        "permanent_disable_after_attempts": fallback_event.permanent_disable_after_attempts,
+                        "recovery_attempt": fallback_event.recovery_attempt,
+                        "message": fallback_event.message,
+                        "restored_provider": fallback_event.new_provider_label,
+                        "previous_provider": fallback_event.original_provider_label,
+                    }
+                    span_time = fallback_event.start_time
+                    create_log(f"Recovery event: {fallback_event.component_type} - {fallback_event.message}", "INFO")
+                    recovery_span = create_span(fallback_span_name, fallback_attrs, parent_span=turn_span, start_time=span_time)
+                    if recovery_span:
+                        self.end_span(recovery_span, status_code=StatusCode.OK, end_time=span_time)
+                    continue
+                
                 fallback_span_name = f"Fallback: {fallback_event.component_type}"
                 
                 fallback_attrs = {
@@ -536,50 +557,47 @@ class TracesFlowManager:
                     "recovery_attempt": fallback_event.recovery_attempt,
                     "message": fallback_event.message,
                 }
-                if fallback_event.duration_ms is not None:
-                    fallback_attrs["duration_ms"] = fallback_event.duration_ms
+                
+                # Use same start_time for all spans (instant spans)
+                span_time = fallback_event.start_time
                 
                 create_log(f"Fallback event: {fallback_event.component_type} - {fallback_event.message}", "WARNING")
-                fallback_span = create_span(fallback_span_name, fallback_attrs, parent_span=turn_span, start_time=fallback_event.start_time)
+                fallback_span = create_span(fallback_span_name, fallback_attrs, parent_span=turn_span, start_time=span_time)
                 
                 if fallback_span:
                     # Child trace for original connection attempt (if exists)
-                    if fallback_event.original_provider_label and fallback_event.original_connection_start:
+                    if fallback_event.original_provider_label:
                         original_conn_attrs = {
                             "provider": fallback_event.original_provider_label,
                             "status": "failed"
                         }
-                        if fallback_event.original_connection_duration_ms:
-                            original_conn_attrs["duration_ms"] = fallback_event.original_connection_duration_ms
                         
                         original_conn_span = create_span(
                             f"Connection: {fallback_event.original_provider_label}",
                             original_conn_attrs,
                             parent_span=fallback_span,
-                            start_time=fallback_event.original_connection_start
+                            start_time=span_time
                         )
-                        self.end_span(original_conn_span, status_code=StatusCode.ERROR, end_time=fallback_event.original_connection_end)
+                        self.end_span(original_conn_span, status_code=StatusCode.ERROR, end_time=span_time)
                     
                     # Child trace for new connection attempt (if switched successfully)
-                    if fallback_event.new_provider_label and fallback_event.new_connection_start:
+                    if fallback_event.new_provider_label:
                         new_conn_attrs = {
                             "provider": fallback_event.new_provider_label,
                             "status": "success"
                         }
-                        if fallback_event.new_connection_duration_ms:
-                            new_conn_attrs["duration_ms"] = fallback_event.new_connection_duration_ms
                         
                         new_conn_span = create_span(
                             f"Connection: {fallback_event.new_provider_label}",
                             new_conn_attrs,
                             parent_span=fallback_span,
-                            start_time=fallback_event.new_connection_start
+                            start_time=span_time
                         )
-                        self.end_span(new_conn_span, status_code=StatusCode.OK, end_time=fallback_event.new_connection_end)
+                        self.end_span(new_conn_span, status_code=StatusCode.OK, end_time=span_time)
                     
                     # End the fallback span - status depends on whether we successfully switched
                     fallback_status = StatusCode.OK if fallback_event.new_provider_label else StatusCode.ERROR
-                    self.end_span(fallback_span, status_code=fallback_status, end_time=fallback_event.end_time)
+                    self.end_span(fallback_span, status_code=fallback_status, end_time=span_time)
 
         turn_end_time = None
         if cascading_turn_data.tts_end_time:

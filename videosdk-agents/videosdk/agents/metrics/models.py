@@ -35,6 +35,8 @@ class FallbackEvent:
     new_connection_start: Optional[float] = None
     new_connection_end: Optional[float] = None
     new_connection_duration_ms: Optional[float] = None
+    # Flag to indicate this is a recovery event (restoring primary) vs a failure-switch event
+    is_recovery: bool = False
 
 
 @dataclass

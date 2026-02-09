@@ -798,6 +798,7 @@ class CascadingMetricsCollector:
                 new_connection_start=event_data.get("new_connection_start"),
                 new_connection_end=event_data.get("new_connection_end"),
                 new_connection_duration_ms=event_data.get("new_connection_duration_ms"),
+                is_recovery=event_data.get("is_recovery", False),
             )
             self.data.current_turn.fallback_events.append(fallback_event)
             logger.info(f"Fallback event recorded: {event_data.get('component_type')} - {event_data.get('message')}")
