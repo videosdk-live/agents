@@ -12,6 +12,31 @@ class TimelineEvent:
     duration_ms: Optional[float] = None
     text: str = "" 
 
+
+@dataclass
+class FallbackEvent:
+    """Data structure for a fallback event when a provider fails and switches to backup"""
+    component_type: str  # "STT", "LLM", or "TTS"
+    temporary_disable_sec: float
+    permanent_disable_after_attempts: int
+    recovery_attempt: int
+    message: str
+    # Timing for the overall fallback event
+    start_time: float = field(default_factory=time.perf_counter)
+    end_time: Optional[float] = None
+    duration_ms: Optional[float] = None
+    # Original provider connection attempt
+    original_provider_label: Optional[str] = None
+    original_connection_start: Optional[float] = None
+    original_connection_end: Optional[float] = None
+    original_connection_duration_ms: Optional[float] = None
+    # New provider connection attempt (if switched)
+    new_provider_label: Optional[str] = None
+    new_connection_start: Optional[float] = None
+    new_connection_end: Optional[float] = None
+    new_connection_duration_ms: Optional[float] = None
+
+
 @dataclass
 class CascadingTurnData:
     """Data structure for a single user-agent turn"""
@@ -126,6 +151,7 @@ class CascadingTurnData:
     
     timeline: List[TimelineEvent] = field(default_factory=list)
     errors: List[Dict[str, Any]] = field(default_factory=list)
+    fallback_events: List['FallbackEvent'] = field(default_factory=list)
     is_a2a_enabled: bool = False
     handoff_occurred: bool = False  
     

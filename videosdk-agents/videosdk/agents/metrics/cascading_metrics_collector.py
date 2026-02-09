@@ -4,7 +4,7 @@ import os.path
 from typing import Dict, Optional, Any, List, Literal
 from dataclasses import asdict
 from opentelemetry.trace import Span
-from .models import TimelineEvent, CascadingTurnData, CascadingMetricsData
+from .models import TimelineEvent, CascadingTurnData, CascadingMetricsData, FallbackEvent
 from .analytics import AnalyticsClient
 from .traces_flow import TracesFlowManager
 from ..playground_manager import PlaygroundManager
@@ -249,6 +249,29 @@ class CascadingMetricsCollector:
         self.data.vad_model_name = vad_model
         self.data.eou_provider_class = eou_provider
         self.data.eou_model_name = eou_model
+    
+    def update_provider_class(self, component_type: str, provider_class: str):
+        """Update the provider class for a specific component when fallback occurs.
+        This updates both the session-level data and the current turn data if exists.
+        
+        Args:
+            component_type: "STT", "LLM", or "TTS"
+            provider_class: The new provider class name (e.g., "GoogleLLM")
+        """
+        component_map = {
+            "STT": ("stt_provider_class", "stt_provider_class"),
+            "LLM": ("llm_provider_class", "llm_provider_class"),
+            "TTS": ("tts_provider_class", "tts_provider_class"),
+        }
+        
+        if component_type in component_map:
+            session_attr, turn_attr = component_map[component_type]
+            # Update session-level data
+            setattr(self.data, session_attr, provider_class)
+            # Update current turn if exists
+            if self.data.current_turn:
+                setattr(self.data.current_turn, turn_attr, provider_class)
+            logger.info(f"Updated {component_type} provider class to: {provider_class}")
     
     def start_new_interaction(self, user_transcript: str = "") -> None:
         """Start tracking a new user-agent turn"""
@@ -751,6 +774,33 @@ class CascadingMetricsCollector:
 
             if self.playground:
                 self.playground_manager.send_cascading_metrics(metrics={"errors": self.data.current_turn.errors})
+
+    def on_fallback_event(self, event_data: Dict[str, Any]):
+        """Record a fallback event for the current turn"""
+        if not self.data.current_turn:
+            self.start_new_interaction()
+        
+        if self.data.current_turn:
+            fallback_event = FallbackEvent(
+                component_type=event_data.get("component_type", ""),
+                temporary_disable_sec=event_data.get("temporary_disable_sec", 0),
+                permanent_disable_after_attempts=event_data.get("permanent_disable_after_attempts", 0),
+                recovery_attempt=event_data.get("recovery_attempt", 0),
+                message=event_data.get("message", ""),
+                start_time=event_data.get("start_time"),
+                end_time=event_data.get("end_time"),
+                duration_ms=event_data.get("duration_ms"),
+                original_provider_label=event_data.get("original_provider_label"),
+                original_connection_start=event_data.get("original_connection_start"),
+                original_connection_end=event_data.get("original_connection_end"),
+                original_connection_duration_ms=event_data.get("original_connection_duration_ms"),
+                new_provider_label=event_data.get("new_provider_label"),
+                new_connection_start=event_data.get("new_connection_start"),
+                new_connection_end=event_data.get("new_connection_end"),
+                new_connection_duration_ms=event_data.get("new_connection_duration_ms"),
+            )
+            self.data.current_turn.fallback_events.append(fallback_event)
+            logger.info(f"Fallback event recorded: {event_data.get('component_type')} - {event_data.get('message')}")
 
     def set_a2a_handoff(self):
         """Set the A2A enabled and handoff occurred flags for the current turn in A2A scenarios."""

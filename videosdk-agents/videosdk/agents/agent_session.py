@@ -315,12 +315,22 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
 
             if self.pipeline.__class__.__name__ == "CascadingPipeline":
                 configs = self.pipeline.get_component_configs() if hasattr(self.pipeline, 'get_component_configs') else {}
+                
+                # Helper to get the actual provider class name (unwrap FallbackBase)
+                from .fallback_base import FallbackBase
+                def get_provider_class(component):
+                    if component is None:
+                        return ""
+                    if isinstance(component, FallbackBase):
+                        return component.active_provider_class
+                    return component.__class__.__name__
+                
                 cascading_metrics_collector.set_provider_info(
-                    llm_provider=self.pipeline.llm.__class__.__name__ if self.pipeline.llm else "",
+                    llm_provider=get_provider_class(self.pipeline.llm),
                     llm_model=configs.get('llm', {}).get('model', "") if self.pipeline.llm else "",
-                    stt_provider=self.pipeline.stt.__class__.__name__ if self.pipeline.stt else "",
+                    stt_provider=get_provider_class(self.pipeline.stt),
                     stt_model=configs.get('stt', {}).get('model', "") if self.pipeline.stt else "",
-                    tts_provider=self.pipeline.tts.__class__.__name__ if self.pipeline.tts else "",
+                    tts_provider=get_provider_class(self.pipeline.tts),
                     tts_model=configs.get('tts', {}).get('model', "") if self.pipeline.tts else "",
                     vad_provider=self.pipeline.vad.__class__.__name__ if hasattr(self.pipeline, 'vad') and self.pipeline.vad else "",
                     vad_model=configs.get('vad', {}).get('model', "") if hasattr(self.pipeline, 'vad') and self.pipeline.vad else "",
@@ -336,6 +346,12 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
                         min_speech_duration=getattr(vad, '_min_speech_duration', None),
                         threshold=getattr(vad, '_threshold', None)
                     )
+                
+                # Wire up metrics collector to fallback adapters for fallback tracing
+                from .fallback_base import FallbackBase
+                for component in [self.pipeline.stt, self.pipeline.llm, self.pipeline.tts]:
+                    if component and isinstance(component, FallbackBase):
+                        component.set_metrics_collector(cascading_metrics_collector)
         
         if hasattr(self.pipeline, 'set_agent'):
             self.pipeline.set_agent(self.agent)
