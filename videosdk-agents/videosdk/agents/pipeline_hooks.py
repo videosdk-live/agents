@@ -39,6 +39,8 @@ class PipelineHooks:
         # Gate hook (can yield to bypass LLM, or return None to continue to LLM)
         self._llm_hook: Callable[[str], AsyncIterator[str] | Awaitable[None]] | None = None
         
+        self._agent_response_hooks: list[Callable[[str], Awaitable[AsyncIterator[str]] | str]] = []
+
         # Lifecycle hooks (side effects only)
         self._user_turn_start_hooks: list[Callable[[str], Awaitable[None]]] = []
         self._user_turn_end_hooks: list[Callable[[], Awaitable[None]]] = []
@@ -124,6 +126,8 @@ class PipelineHooks:
                 if self._llm_hook is not None:
                     logger.warning("llm hook already registered, overwriting")
                 self._llm_hook = func
+            elif event == "agent_response":
+                self._agent_response_hooks.append(func)     
             elif event == "vision_frame":
                 self._vision_frame_hooks.append(func)
             elif event == "user_turn_start":
@@ -221,6 +225,10 @@ class PipelineHooks:
         """Check if a llm hook is registered."""
         return self._llm_hook is not None
     
+    def has_agent_response_hooks(self) -> bool:
+        """Check if any agent response hooks are registered."""
+        return len(self._agent_response_hooks) > 0
+
     def has_user_turn_start_hooks(self) -> bool:
         """Check if any user_turn_start hooks are registered."""
         return len(self._user_turn_start_hooks) > 0
@@ -356,6 +364,7 @@ class PipelineHooks:
     def clear_all_hooks(self) -> None:
         """Clear all registered hooks."""
         self._vision_frame_hooks.clear()
+        self._agent_response_hooks.clear()
         self._stt_stream_hook = None
         self._tts_stream_hook = None
         self._llm_hook = None
