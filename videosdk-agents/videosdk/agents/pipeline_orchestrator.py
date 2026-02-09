@@ -375,9 +375,6 @@ class PipelineOrchestrator(EventEmitter[Literal[
         
         # Process transcript through stt hooks first
         processed_text = user_text
-        if self.hooks and self.hooks.has_stt_hooks():
-            processed_text = await self.hooks.process_stt(user_text)
-            logger.info(f"Processed transcript through stt hooks: '{user_text}' -> '{processed_text}'")
         
         # Then check llm hook with the processed text
         if self.hooks and self.hooks.has_llm_hook():
@@ -532,14 +529,9 @@ class PipelineOrchestrator(EventEmitter[Literal[
                                 break
                             continue
                 
-                if self.hooks and self.hooks.has_agent_response_hooks():
-                    processed_stream = self.hooks.process_agent_response(tts_stream_gen())
-                else:
-                    processed_stream = tts_stream_gen()
-                
                 if self.speech_generation:
                     try:
-                        await self.speech_generation.synthesize(processed_stream)
+                        await self.speech_generation.synthesize(tts_stream_gen())
                     except asyncio.CancelledError:
                         if self.speech_generation:
                             await self.speech_generation.interrupt()

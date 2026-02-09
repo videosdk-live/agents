@@ -279,9 +279,8 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         Can be used as a decorator or with a callback.
         
         Supported hooks (decorator only):
-        - speech_in: Process raw incoming user audio (async iterator)
-        - speech_out: Process outgoing agent audio after TTS (async iterator)
-        - stt: Process user transcript after STT, before LLM
+        - stt: Process user transcript after STT, before LLM (or stream STT hook)
+        - tts: Stream TTS hook (text -> audio)
         - llm: Control LLM invocation (can bypass with direct response)
         - agent_response: Process agent response after LLM, before TTS
         - vision_frame: Process video frames when vision is enabled (async iterator)
@@ -297,15 +296,11 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         - error
         
         Examples:
-            @pipeline.on("speech_in")
-            async def process_audio(audio_stream):
-                ...
-            
             @pipeline.on("content_generated")
             async def on_content(data):
                 print(f"LLM generated: {data['text']}")
         """
-        if event in ["speech_in", "speech_out", "stt", "llm", "agent_response", "vision_frame", "user_turn_start", "user_turn_end", "agent_turn_start", "agent_turn_end", "content_generated"]:
+        if event in ["stt", "tts", "llm", "agent_response", "vision_frame", "user_turn_start", "user_turn_end", "agent_turn_start", "agent_turn_end", "content_generated"]:
             return self.hooks.on(event)(callback) if callback else self.hooks.on(event)
             
         return super().on(event, callback)

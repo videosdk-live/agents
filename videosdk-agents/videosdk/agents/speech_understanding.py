@@ -70,6 +70,10 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
         self._preemptive_lock = asyncio.Lock()
         self._enable_preemptive_generation = False
         
+        # Stream STT state
+        self._stt_stream_task: asyncio.Task | None = None
+        self._stt_stream_queue: asyncio.Queue | None = None
+        
         # Setup event handlers
         if self.stt:
             self.stt.on_stt_transcript(self._on_stt_transcript)
@@ -95,6 +99,14 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
             audio_data: Raw audio bytes (already processed through speech_in hook)
         """
         try:
+            if self.hooks and self.hooks.has_stt_stream_hook():
+                if self._stt_stream_task is None:
+                    self._stt_stream_queue = asyncio.Queue()
+                    self._stt_stream_task = asyncio.create_task(self._run_stt_stream())
+                
+                await self._stt_stream_queue.put(audio_data)
+                return
+
             if self.denoise:
                 audio_data = await self.denoise.denoise(audio_data)
             
@@ -108,6 +120,28 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
         except Exception as e:
             logger.error(f"Audio processing failed: {str(e)}")
             self.emit("error", f"Audio processing failed: {str(e)}")
+
+    async def _run_stt_stream(self) -> None:
+        """Run the STT stream hook loop"""
+        async def audio_generator():
+            while True:
+                if self._stt_stream_queue:
+                    chunk = await self._stt_stream_queue.get()
+                    if chunk is None:
+                        break
+                    yield chunk
+                else:
+                    break
+
+        try:
+            async for event in self.hooks.process_stt_stream(audio_generator()):
+                if hasattr(event, "event_type"):
+                    await self._on_stt_transcript(event)
+        except Exception as e:
+            logger.error(f"Error in STT stream task: {e}", exc_info=True)
+        finally:
+            self._stt_stream_task = None
+            self._stt_stream_queue = None
     
     async def _on_vad_event(self, vad_response: VADResponse) -> None:
         """Handle VAD events"""
@@ -280,6 +314,17 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
         """Cleanup speech understanding resources"""
         logger.info("Cleaning up speech understanding")
         
+        if self._stt_stream_queue:
+            await self._stt_stream_queue.put(None)
+        
+        if self._stt_stream_task:
+            try:
+                await asyncio.wait_for(self._stt_stream_task, timeout=1.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                pass
+            self._stt_stream_task = None
+            self._stt_stream_queue = None
+
         if self._wait_timer:
             self._wait_timer.cancel()
             self._wait_timer = None

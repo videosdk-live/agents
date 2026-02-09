@@ -20,7 +20,7 @@ import logging
 import av
 logger = logging.getLogger(__name__)
 
-class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_changed", "on_speech_in", "on_speech_out"]]):
+class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_changed"]]):
     """
     Manages an agent session with its associated conversation flow and pipeline.
     """
@@ -87,9 +87,6 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         if hasattr(self.pipeline, 'set_wake_up_callback'):
             self.pipeline.set_wake_up_callback(self._reset_wake_up_timer)
 
-        # Register global events
-        global_event_emitter.on("ON_SPEECH_IN", self._on_speech_in)
-        global_event_emitter.on("ON_SPEECH_OUT", self._on_speech_out)
 
         # Get job context
         try:
@@ -130,11 +127,6 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         except Exception as e:
             logger.error(f"Error executing voicemail callback: {e}")
 
-    def _on_speech_in(self, data: dict) -> None:
-        self.emit("on_speech_in", data)
-
-    def _on_speech_out(self, data: dict) -> None:
-        self.emit("on_speech_out", data)
 
     def _start_wake_up_timer(self) -> None:
         if self.wake_up is not None and self.on_wake_up is not None:
@@ -322,8 +314,6 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         if hasattr(self.pipeline, 'set_agent'):
             self.pipeline.set_agent(self.agent)
 
-        self.on("on_speech_in", self.agent.on_speech_in)
-        self.on("on_speech_out", self.agent.on_speech_out)
 
         await self.pipeline.start()
 
@@ -543,11 +533,6 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
 
         self._cancel_wake_up_timer()
         
-        global_event_emitter.off("ON_SPEECH_IN", self._on_speech_in)
-        global_event_emitter.off("ON_SPEECH_OUT", self._on_speech_out)
-
-        self.off("on_speech_in", self.agent.on_speech_in)
-        self.off("on_speech_out", self.agent.on_speech_out)
 
         logger.info("Cleaning up agent session")
         try:

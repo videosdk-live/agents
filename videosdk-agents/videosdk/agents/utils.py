@@ -452,3 +452,68 @@ async def graceful_cancel(*tasks: asyncio.Task) -> None:
         )
     except asyncio.TimeoutError:
         pass
+
+
+class AsyncIteratorQueue:
+    def __init__(self):
+        self.queue = asyncio.Queue()
+        self.closed = False
+
+    async def put(self, item):
+        if not self.closed:
+            await self.queue.put(item)
+
+    def close(self):
+        self.closed = True
+        self.queue.put_nowait(None)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        item = await self.queue.get()
+        if item is None:
+            raise StopAsyncIteration
+        return item
+
+
+async def run_stt(audio_stream: AsyncIterator[bytes]) -> AsyncIterator[Any]:
+    """
+    Run STT on an audio stream.
+    
+    Delegates to the STT component's stream_transcribe method.
+    
+    Args:
+        audio_stream: Async iterator of audio bytes
+        
+    Yields:
+        SpeechEvent objects (with text, etc.)
+    """
+    from .job import get_current_job_context
+    ctx = get_current_job_context()
+    if not ctx or not ctx._pipeline or not ctx._pipeline.stt:
+        raise RuntimeError("No STT component available in current context")
+    
+    async for event in ctx._pipeline.stt.stream_transcribe(audio_stream):
+        yield event
+
+
+async def run_tts(text_stream: AsyncIterator[str]) -> AsyncIterator[bytes]:
+    """
+    Run TTS on a text stream.
+    
+    Delegates to the TTS component's stream_synthesize method.
+    
+    Args:
+        text_stream: Async iterator of text
+        
+    Yields:
+        Audio bytes
+    """
+    from .job import get_current_job_context
+    ctx = get_current_job_context()
+    if not ctx or not ctx._pipeline or not ctx._pipeline.tts:
+        raise RuntimeError("No TTS component available in current context")
+    
+    async for frame in ctx._pipeline.tts.stream_synthesize(text_stream):
+        yield frame

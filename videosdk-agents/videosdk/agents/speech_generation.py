@@ -61,6 +61,77 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
             response_gen: Text generator or string to synthesize
         """
         async with self.tts_lock:
+            if self.hooks and self.hooks.has_tts_stream_hook():
+                if self.agent and self.agent.session:
+                    self.agent.session._pause_wake_up_timer()
+                
+                if not self.audio_track:
+                    if self.agent and self.agent.session and hasattr(self.agent.session, "pipeline"):
+                        if hasattr(self.agent.session.pipeline, "audio_track"):
+                            self.audio_track = self.agent.session.pipeline.audio_track
+                
+                if self.audio_track and hasattr(self.audio_track, "enable_audio_input"):
+                    self.audio_track.enable_audio_input(manual_control=True)
+                
+                self.emit("synthesis_started", {})
+                
+                if self.hooks and self.hooks.has_agent_turn_start_hooks():
+                    await self.hooks.trigger_agent_turn_start()
+                
+                try:
+                    response_iterator: AsyncIterator[str]
+                    if isinstance(response_gen, str):
+                        async def string_to_iterator(text: str):
+                            yield text
+                        response_iterator = string_to_iterator(response_gen)
+                    else:
+                        response_iterator = response_gen
+                    
+                    first_byte_emitted = False
+                    
+                    async for audio_chunk in self.hooks.process_tts_stream(response_iterator):
+                        if not first_byte_emitted:
+                            if self.agent and self.agent.session and self.agent.session.is_background_audio_enabled:
+                                await self.agent.session.stop_thinking_audio()
+                            
+                            self.emit("first_audio_byte", {})
+                            
+                            if self.agent and self.agent.session:
+                                self.agent.session._emit_agent_state(AgentState.SPEAKING)
+                                self.agent.session._emit_user_state(UserState.LISTENING)
+                            first_byte_emitted = True
+                        
+                        if self.audio_track:
+                            await self.audio_track.add_new_bytes(audio_chunk)
+                    
+                    if self.agent and self.agent.session:
+                        self.agent.session._emit_agent_state(AgentState.IDLE)
+                        self.agent.session._emit_user_state(UserState.IDLE)
+                    
+                    if self.hooks and self.hooks.has_agent_turn_end_hooks():
+                        await self.hooks.trigger_agent_turn_end()
+                    
+                    logger.info("TTS stream synthesis complete")
+                    self.emit("last_audio_byte", {})
+                    
+                except asyncio.CancelledError:
+                    logger.info("Synthesis cancelled")
+                    self.emit("synthesis_interrupted", {})
+                    raise
+                except Exception as e:
+                    logger.error(f"Error during synthesis: {e}")
+                    self.emit("synthesis_error", {"error": str(e)})
+                    raise
+                finally:
+                    if self.agent and self.agent.session and self.agent.session.is_background_audio_enabled:
+                        await self.agent.session.stop_thinking_audio()
+                    
+                    if self.agent and self.agent.session:
+                        self.agent.session._reply_in_progress = False
+                        self.agent.session._reset_wake_up_timer()
+                
+                return
+
             if not self.tts:
                 logger.warning("No TTS available for synthesis")
                 return

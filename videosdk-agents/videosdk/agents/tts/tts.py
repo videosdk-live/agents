@@ -4,6 +4,7 @@ from abc import abstractmethod
 from typing import Any, AsyncIterator, Literal, Optional, Callable, Awaitable
 from ..event_emitter import EventEmitter
 import logging
+import asyncio
 logger = logging.getLogger(__name__)
 
 class TTS(EventEmitter[Literal["error"]]):
@@ -83,6 +84,72 @@ class TTS(EventEmitter[Literal["error"]]):
     async def interrupt(self) -> None:
         """Interrupt the TTS process"""
         raise NotImplementedError
+
+    async def stream_synthesize(
+        self,
+        text_stream: AsyncIterator[str],
+        **kwargs: Any
+    ) -> AsyncIterator[bytes]:
+        """
+        Synthesize text stream to audio stream.
+        
+        This default implementation mocks the audio track to capture frames.
+        
+        Args:
+            text_stream: Async iterator of text
+            **kwargs: Additional arguments
+            
+        Yields:
+            Audio bytes
+        """
+        original_track = self.audio_track
+        frame_queue = asyncio.Queue()
+        
+        class QueueTrack:
+            def __init__(self):
+                self.hooks = None
+            async def add_new_bytes(self, audio_data: bytes):
+                await frame_queue.put(audio_data)
+            def on_last_audio_byte(self, cb):
+                pass
+            def set_pipeline_hooks(self, hooks):
+                self.hooks = hooks
+            def enable_audio_input(self, manual_control=False):
+                pass
+                
+        mock_track = QueueTrack()
+        self.audio_track = mock_track
+        
+        async def synthesize_task():
+            try:
+                await self.synthesize(text_stream, **kwargs)
+            finally:
+                await frame_queue.put(None)
+                
+        task = asyncio.create_task(synthesize_task())
+        
+        try:
+            while True:
+                get_task = asyncio.create_task(frame_queue.get())
+                done, pending = await asyncio.wait(
+                    [get_task, task],
+                    return_when=asyncio.FIRST_COMPLETED
+                )
+                
+                if get_task in done:
+                    data = get_task.result()
+                    if data is None:
+                        break
+                    yield data
+                    
+                if task in done:
+                    if task.exception():
+                        raise task.exception()
+                        
+        finally:
+            self.audio_track = original_track
+            if not task.done():
+                task.cancel()
 
     async def aclose(self) -> None:
         """Cleanup resources"""

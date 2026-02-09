@@ -22,24 +22,11 @@ class InputStreamManager:
         """
         while True:
             try:
-                await asyncio.sleep(0.01)
                 frame = await stream.track.recv()
                 global_event_emitter.emit("ON_SPEECH_IN", {"frame": frame, "stream": stream})
                 
                 audio_data = frame.to_ndarray()[0]
                 pcm_frame = audio_data.flatten().astype(np.int16).tobytes()
-                
-                # Process through speech_in hook if available
-                if self.pipeline and self.pipeline.hooks and self.pipeline.hooks.has_speech_in_hooks():
-                    captured_frame = pcm_frame
-                    
-                    async def audio_stream():
-                        yield captured_frame
-                    
-                    processed_stream = self.pipeline.hooks.process_speech_in(audio_stream())
-                    pcm_frame = b""
-                    async for chunk in processed_stream:
-                        pcm_frame += chunk
                 
                 if self.pipeline:
                     await self.pipeline.on_audio_delta(pcm_frame)

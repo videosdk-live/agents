@@ -3,10 +3,11 @@ from __future__ import annotations
 from abc import abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Awaitable, Callable, Literal, Optional
+from typing import Any, Awaitable, Callable, Literal, Optional, AsyncIterator
 from pydantic import BaseModel  
 from ..event_emitter import EventEmitter
 import logging
+import asyncio
 logger = logging.getLogger(__name__)
 
 class SpeechEventType(str, Enum):
@@ -87,6 +88,64 @@ class STT(EventEmitter[Literal["error"]]):
         """
         raise NotImplementedError
 
+    async def stream_transcribe(
+        self,
+        audio_stream: AsyncIterator[bytes],
+        **kwargs: Any
+    ) -> AsyncIterator[STTResponse]:
+        """
+        Process audio stream and yield STT events (simulated via process_audio).
+        
+        This default implementation allows using the streaming hook pattern even if
+        the STT subclass doesn't implement a native streaming method, by redirecting
+        callbacks to a queue.
+        
+        Args:
+            audio_stream: Async iterator of audio bytes
+            **kwargs: Additional provider-specific arguments
+            
+        Yields:
+            STTResponse objects
+        """
+        event_queue = asyncio.Queue()
+        
+        async def capture_callback(response):
+            await event_queue.put(response)
+            
+        original_callback = self._transcript_callback
+        self.on_stt_transcript(capture_callback)
+        
+        async def feed_audio():
+            try:
+                async for chunk in audio_stream:
+                    await self.process_audio(chunk, **kwargs)
+            finally:
+                pass
+
+        feed_task = asyncio.create_task(feed_audio())
+        
+        try:
+            while True:
+                done, pending = await asyncio.wait(
+                    [asyncio.create_task(event_queue.get()), feed_task],
+                    return_when=asyncio.FIRST_COMPLETED
+                )
+                
+                for task in done:
+                    if task == feed_task:
+                        pass
+                    else:
+                        event = task.result()
+                        yield event
+                        
+                if feed_task.done() and event_queue.empty():
+                    break
+                    
+        finally:
+            self._transcript_callback = original_callback
+            if not feed_task.done():
+                feed_task.cancel()
+    
     async def aclose(self) -> None:
         """Cleanup resources"""
         logger.info(f"Cleaning up STT: {self.label}")
@@ -99,9 +158,3 @@ class STT(EventEmitter[Literal["error"]]):
             logger.error(f"Error during STT garbage collection: {e}")
         
         logger.info(f"STT cleanup completed: {self.label}")
-    
-    async def __aenter__(self) -> STT:
-        return self
-        
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
-        await self.aclose()

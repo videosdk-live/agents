@@ -9,9 +9,9 @@ from .event_emitter import EventEmitter
 from .llm.llm import LLM, ResponseChunk
 from .llm.chat_context import ChatRole
 from .utils import is_function_tool, get_tool_info, UserState, AgentState
+from .agent import Agent
 
 if TYPE_CHECKING:
-    from .agent import Agent
     from .knowledge_base.base import KnowledgeBase
 
 logger = logging.getLogger(__name__)
@@ -165,22 +165,12 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                                         replace=True
                                     )
                                 
-                                if hasattr(self.agent, 'on_speech_in'):
-                                    current_session.off("on_speech_in", self.agent.on_speech_in)
-                                if hasattr(self.agent, 'on_speech_out'):
-                                    current_session.off("on_speech_out", self.agent.on_speech_out)
-                                
                                 new_agent.session = current_session
                                 self.agent = new_agent
                                 current_session.agent = new_agent
                                 
                                 if hasattr(current_session.pipeline, 'set_agent'):
                                     current_session.pipeline.set_agent(new_agent)
-                                
-                                if hasattr(new_agent, 'on_speech_in'):
-                                    current_session.on("on_speech_in", new_agent.on_speech_in)
-                                if hasattr(new_agent, 'on_speech_out'):
-                                    current_session.on("on_speech_out", new_agent.on_speech_out)
                                 
                                 if hasattr(new_agent, 'on_enter') and asyncio.iscoroutinefunction(new_agent.on_enter):
                                     await new_agent.on_enter()

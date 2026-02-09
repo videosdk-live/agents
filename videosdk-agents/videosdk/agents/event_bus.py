@@ -5,8 +5,6 @@ EventTypes = Literal[
     "AUDIO_STREAM_ENABLED",
     "PARTICIPANT_LEFT",
     "AGENT_STARTED",
-    "ON_SPEECH_IN",
-    "ON_SPEECH_OUT",
     "ON_LLM_DECISION"
 ]
 

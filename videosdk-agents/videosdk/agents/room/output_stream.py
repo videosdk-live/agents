@@ -48,9 +48,6 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         self._paused_frames = []  # Separate buffer for paused content
         self._accepting_audio = True
         self._manual_audio_control = False
-        
-        # Pipeline hooks reference for speech_out processing
-        self._pipeline_hooks = None
 
     @property
     def can_pause(self) -> bool:
@@ -120,9 +117,6 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         logger.info("on last audio callback")
         self._last_audio_callback = callback
     
-    def set_pipeline_hooks(self, hooks) -> None:
-        """Set pipeline hooks reference for speech_out processing"""
-        self._pipeline_hooks = hooks
             
     async def add_new_bytes(self, audio_data: bytes):
         """
@@ -133,19 +127,6 @@ class CustomAudioStreamTrack(CustomAudioTrack):
             logger.debug("Audio input currently disabled, dropping audio data")
             return
         
-        # Process through speech_out hook if available
-        if hasattr(self, '_pipeline_hooks') and self._pipeline_hooks and self._pipeline_hooks.has_speech_out_hooks():
-            captured_data = audio_data
-            
-            async def audio_stream():
-                yield captured_data
-            
-            processed_stream = self._pipeline_hooks.process_speech_out(audio_stream())
-            audio_data = b""
-            async for chunk in processed_stream:
-                audio_data += chunk
-        
-        global_event_emitter.emit("ON_SPEECH_OUT", {"audio_data": audio_data})
         self.audio_data_buffer += audio_data
 
         while len(self.audio_data_buffer) >= self.chunk_size:
@@ -265,7 +246,6 @@ class MixingCustomAudioStreamTrack(CustomAudioStreamTrack):
 
     async def add_new_bytes(self, audio_data: bytes):
         """Overrides base method to buffer bytes instead of creating frames."""
-        global_event_emitter.emit("ON_SPEECH_OUT", {"audio_data": audio_data})
         self.audio_data_buffer += audio_data
 
     async def add_background_bytes(self, audio_data: bytes):

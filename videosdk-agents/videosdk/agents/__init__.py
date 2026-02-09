@@ -107,6 +107,7 @@ from .voice_mail_detector import VoiceMailDetector
 from .stt import FallbackSTT
 from .llm import FallbackLLM
 from .tts import FallbackTTS
+from .utils import run_stt, run_tts
 # from .videosdk_eval import (
 #     Evaluation, EvaluationResult, EvalTurn, EvalMetric, LLMAsJudgeMetric,
 #     STTComponent, STTEvalConfig, LLMComponent, LLMEvalConfig,
@@ -201,5 +202,7 @@ __all__ = [
     "FallbackSTT",
     "FallbackLLM",
     "FallbackTTS",
+    "run_stt",
+    "run_tts",
     "PlaygroundManager",
 ]
