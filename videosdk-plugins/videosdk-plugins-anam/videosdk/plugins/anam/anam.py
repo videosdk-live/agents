@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 VIDEOSDK_AUDIO_SAMPLE_RATE = 48000
 ANAM_INPUT_SAMPLE_RATE = 24000
+DEFAULT_AVATAR_ID = "d9ebe82e-2f34-4ff6-9632-16cb73e7de08"
 
 anam_input_resampler = AudioResampler(
     format="s16", layout="mono", rate=ANAM_INPUT_SAMPLE_RATE
@@ -105,26 +106,26 @@ class AnamAvatar:
     def __init__(
         self,
         api_key: str,
-        persona_id: Optional[str] = None,
+        avatar_id: Optional[str] = None,
         persona_config: Optional[PersonaConfig] = None,
     ):
         """Initialize the Anam Avatar plugin.
 
         Args:
             api_key (str): The Anam API key.
-            persona_id (str, optional): The ID of the persona to use.
-            persona_config (PersonaConfig, optional): Full persona configuration.
+            avatar_id (str, optional): The ID of the avatar to use.
+            persona_config (PersonaConfig, optional): Full persona configuration (must include avatar_id).
         """
         self.api_key = api_key
-        
-        if persona_id:
-            self.persona_config = PersonaConfig(
-                persona_id=persona_id,
-                enable_audio_passthrough=True,
-                llm_id="CUSTOMER_CLIENT_V1"
-            )
+
+        if persona_config is not None:
+            self.persona_config = persona_config
         else:
-            raise ValueError("Either persona_id or persona_config must be provided")
+            self.persona_config = PersonaConfig(
+                avatar_id=avatar_id or DEFAULT_AVATAR_ID,
+                enable_audio_passthrough=True,
+                llm_id="CUSTOMER_CLIENT_V1",
+            )
 
         self.client: Optional[AnamClient] = None
         self.session = None
