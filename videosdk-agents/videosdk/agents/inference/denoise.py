@@ -1,5 +1,3 @@
-# File: videosdk-agents/videosdk/agents/inference/denoise.py
-
 from __future__ import annotations
 
 import asyncio
@@ -11,17 +9,9 @@ from typing import Any, Optional, Dict
 
 import aiohttp
 
-from videosdk.agents import (
+from videosdk.agents.denoise import (
     Denoise as BaseDenoise,
 )
-import numpy as np
-
-try:
-    import resampy
-
-    RESAMPY_AVAILABLE = True
-except ImportError:
-    RESAMPY_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +28,6 @@ class Denoise(BaseDenoise):
 
     Example:
         # Using factory methods (recommended)
-        denoise = Denoise.sanas(model_name="ASR_NC3.0_VAD0.6")
         denoise = Denoise.aicoustics(model_name="sparrow-xxs-48khz")
 
         # Using generic constructor
@@ -65,6 +54,7 @@ class Denoise(BaseDenoise):
         provider: str,
         model_name: str,
         sample_rate: int = 48000,
+        channels: int = 1,
         config: Dict[str, Any] | None = None,
         base_url: str | None = None,
     ) -> None:
@@ -72,9 +62,10 @@ class Denoise(BaseDenoise):
         Initialize the VideoSDK Inference Denoise plugin.
 
         Args:
-            provider: Denoise provider name (e.g., "sanas", "aicoustics")
+            provider: Denoise provider name (e.g., "aicoustics")
             model_name: Model identifier for the provider
             sample_rate: Audio sample rate in Hz (default: 48000)
+            channels: Number of audio channels (default: 1 for mono)
             config: Provider-specific configuration dictionary
             base_url: Custom inference gateway URL (default: production gateway)
         """
@@ -89,6 +80,7 @@ class Denoise(BaseDenoise):
         self.provider = provider
         self.model_name = model_name
         self.sample_rate = sample_rate
+        self.channels = channels
         self.config = config or {}
         self.base_url = base_url or VIDEOSDK_INFERENCE_URL
 
@@ -97,6 +89,7 @@ class Denoise(BaseDenoise):
         self._ws: Optional[aiohttp.ClientWebSocketResponse] = None
         self._ws_task: Optional[asyncio.Task] = None
         self._config_sent: bool = False
+        self._reconnecting: bool = False
 
         # Audio buffering for responses
         self._audio_buffer: asyncio.Queue = asyncio.Queue()
@@ -104,57 +97,20 @@ class Denoise(BaseDenoise):
 
         # Statistics
         self._stats = {
-            "chunks_processed": 0,
-            "bytes_processed": 0,
-            "bytes_denoised": 0,
+            "chunks_sent": 0,
+            "bytes_sent": 0,
+            "chunks_received": 0,
+            "bytes_received": 0,
             "errors": 0,
+            "reconnections": 0,
         }
 
         logger.info(
             f"[InferenceDenoise] Initialized: provider={provider}, "
-            f"model={model_name}, sample_rate={sample_rate}Hz"
+            f"model={model_name}, sample_rate={sample_rate}Hz, channels={channels}"
         )
 
     # ==================== Factory Methods ====================
-
-    # @staticmethod
-    # def sanas(
-    #     *,
-    #     model_name: str = "ASR_NC3.0_VAD0.6",
-    #     sample_rate: int = 48000,
-    #     secure_media: bool = False,
-    #     base_url: str | None = None,
-    # ) -> "Denoise":
-    #     """
-    #     Create a Denoise instance configured for SANAS.
-
-    #     Args:
-    #         model_name: SANAS model (default: "ASR_NC3.0_VAD0.6")
-    #             Options: "ASR_NC3.0_VAD0.6", "ASR_NC2.0", etc.
-    #         sample_rate: Audio sample rate in Hz (default: 48000)
-    #         secure_media: Whether to use secure media connection (default: False)
-    #         base_url: Custom inference gateway URL
-
-    #     Returns:
-    #         Configured Denoise instance for SANAS
-
-    #     Example:
-    #         >>> denoise = Denoise.sanas(model_name="ASR_NC3.0_VAD0.6")
-    #     """
-    #     config = {
-    #         "model_name": model_name,
-    #         "sample_rate": sample_rate,
-    #         "secure_media": secure_media,
-    #     }
-
-    #     return Denoise(
-    #         provider="sanas",
-    #         model_name=model_name,
-    #         sample_rate=sample_rate,
-    #         config=config,
-    #         base_url=base_url,
-    #     )
-
     @staticmethod
     def aicoustics(
         *,
@@ -168,18 +124,18 @@ class Denoise(BaseDenoise):
 
         Args:
             model_name: AI-Coustics model (default: "sparrow-xxs-48khz")
-                Sparrow family (human-to-human):
+                Sparrow family (human-to-human, 48kHz):
                 - "sparrow-xxs-48khz": Ultra-fast, 10ms latency, 1MB
                 - "sparrow-s-48khz": Small, 30ms latency, 8.96MB
                 - "sparrow-l-48khz": Large, best quality, 30ms latency, 35.1MB
 
-                Quail family (human-to-machine, voice AI):
+                Quail family (human-to-machine, voice AI, 16kHz):
                 - "quail-vf-l-16khz": Voice focus + STT optimization, 35MB
                 - "quail-l-16khz": General purpose, 35MB
                 - "quail-s-16khz": Faster, 8.88MB
 
-            sample_rate: Audio sample rate in Hz (default: 48000)
-                - Sparrow models: 48000 Hz
+            sample_rate: Audio sample rate in Hz
+                - Sparrow models: 48000 Hz (default)
                 - Quail models: 16000 Hz
             channels: Number of audio channels (default: 1 for mono)
             base_url: Custom inference gateway URL
@@ -194,7 +150,7 @@ class Denoise(BaseDenoise):
             >>> # Best quality for recordings
             >>> denoise = Denoise.aicoustics(model_name="sparrow-l-48khz")
             >>>
-            >>> # Voice AI / STT optimization
+            >>> # Voice AI / STT optimization (16kHz)
             >>> denoise = Denoise.aicoustics(
             ...     model_name="quail-vf-l-16khz",
             ...     sample_rate=16000
@@ -210,6 +166,7 @@ class Denoise(BaseDenoise):
             provider="aicoustics",
             model_name=model_name,
             sample_rate=sample_rate,
+            channels=channels,
             config=config,
             base_url=base_url,
         )
@@ -229,10 +186,9 @@ class Denoise(BaseDenoise):
             **kwargs: Additional arguments (unused)
 
         Returns:
-            Denoised PCM audio bytes (int16 format)
+            Denoised PCM audio bytes (int16 format), or original audio if processing fails
         """
         try:
-            # Ensure WebSocket connection
             if not self._ws or self._ws.closed:
                 await self._connect_ws()
                 if not self._ws_task or self._ws_task.done():
@@ -243,76 +199,133 @@ class Denoise(BaseDenoise):
 
             await self._send_audio(audio_frames)
 
-            # Try to get denoised audio (non-blocking)
+            # Try to get denoised audio (with timeout to prevent blocking)
+            # This returns immediately if no audio is ready
             try:
                 denoised_audio = await asyncio.wait_for(
-                    self._audio_buffer.get(), timeout=0.01
+                    self._audio_buffer.get(), timeout=0.05
                 )
-                self._stats["bytes_denoised"] += len(denoised_audio)
+                self._stats["chunks_received"] += 1
+                self._stats["bytes_received"] += len(denoised_audio)
                 return denoised_audio
             except asyncio.TimeoutError:
-                # No denoised audio available yet, return original
-                # This can happen during initial buffering
-                return audio_frames
+                # no denoised audio available yet
+                # this is normal during initial buffering or low latency scenarios and return empty bytes to maintain stream flow
+                return b""
 
         except Exception as e:
-            logger.error(f"[InferenceDenoise] Error in denoise: {e}")
+            logger.error(f"[InferenceDenoise] Error in denoise: {e}", exc_info=True)
             self._stats["errors"] += 1
             self.emit("error", str(e))
-            # On error, return original audio
-            return audio_frames
+
+            # Attempt reconnection on persistent errors
+            if self._stats["errors"] % 10 == 0:
+                logger.warning(
+                    f"[InferenceDenoise] {self._stats['errors']} errors detected, "
+                    "attempting reconnection..."
+                )
+                await self._reconnect()
+
+            # Return empty bytes on error (don't pass through original to avoid glitches)
+            return b""
 
     # ==================== WebSocket Communication ====================
 
     async def _connect_ws(self) -> None:
         """Establish WebSocket connection to the inference gateway."""
-        if not self._session:
-            self._session = aiohttp.ClientSession()
-
-        ws_url = (
-            f"{self.base_url}/v1/denoise"
-            f"?provider={self.provider}"
-            f"&secret={self._videosdk_token}"
-            f"&modelId={self.model_name}"
-        )
+        if self._reconnecting:
+            return  # Prevent concurrent reconnection attempts
 
         try:
+            if not self._session or self._session.closed:
+                self._session = aiohttp.ClientSession()
+
+            ws_url = (
+                f"{self.base_url}/v1/denoise"
+                f"?provider={self.provider}"
+                f"&secret={self._videosdk_token}"
+                f"&modelId={self.model_name}"
+            )
+
             logger.info(
                 f"[InferenceDenoise] Connecting to {self.base_url} "
                 f"(provider={self.provider}, model={self.model_name})"
             )
-            self._ws = await self._session.ws_connect(ws_url)
+
+            timeout = aiohttp.ClientTimeout(total=10)
+            self._ws = await self._session.ws_connect(ws_url, timeout=timeout)
             self._config_sent = False
+
             logger.info("[InferenceDenoise] Connected successfully")
+
         except Exception as e:
-            logger.error(f"[InferenceDenoise] Connection failed: {e}")
+            logger.error(f"[InferenceDenoise] Connection failed: {e}", exc_info=True)
             raise
+
+    async def _reconnect(self) -> None:
+        """Attempt to reconnect to the inference gateway."""
+        if self._reconnecting:
+            return
+
+        self._reconnecting = True
+        try:
+            logger.info("[InferenceDenoise] Reconnecting...")
+
+            await self._cleanup_connection()
+
+            # wait a bit before reconnecting
+            await asyncio.sleep(1)
+
+            await self._connect_ws()
+
+            # restart listener
+            if self._ws_task:
+                self._ws_task.cancel()
+            self._ws_task = asyncio.create_task(self._listen_for_responses())
+
+            self._stats["reconnections"] += 1
+            logger.info(
+                f"[InferenceDenoise] Reconnected successfully "
+                f"(attempt {self._stats['reconnections']})"
+            )
+
+        except Exception as e:
+            logger.error(f"[InferenceDenoise] Reconnection failed: {e}")
+        finally:
+            self._reconnecting = False
 
     async def _send_config(self) -> None:
         """Send configuration message to the inference server."""
-        if not self._ws:
-            return
+        if not self._ws or self._ws.closed:
+            raise ConnectionError("WebSocket not connected")
 
         config_message = {
             "type": "config",
             "data": {
-                **self.config,
+                "model": self.model_name,
                 "sample_rate": self.sample_rate,
+                "channels": self.channels,
+                **self.config,
             },
         }
 
         try:
             await self._ws.send_str(json.dumps(config_message))
             self._config_sent = True
-            logger.info(f"[InferenceDenoise] Config sent: {config_message['data']}")
+            logger.info(
+                f"[InferenceDenoise] Config sent: "
+                f"model={self.model_name}, "
+                f"sample_rate={self.sample_rate}Hz, "
+                f"channels={self.channels}"
+            )
         except Exception as e:
             logger.error(f"[InferenceDenoise] Failed to send config: {e}")
             raise
 
     async def _send_audio(self, audio_bytes: bytes) -> None:
         """Send audio data to the inference server."""
-        if not self._ws:
-            return
+        if not self._ws or self._ws.closed:
+            raise ConnectionError("WebSocket not connected")
 
         audio_message = {
             "type": "audio",
@@ -321,8 +334,8 @@ class Denoise(BaseDenoise):
 
         try:
             await self._ws.send_str(json.dumps(audio_message))
-            self._stats["bytes_processed"] += len(audio_bytes)
-            self._stats["chunks_processed"] += 1
+            self._stats["chunks_sent"] += 1
+            self._stats["bytes_sent"] += len(audio_bytes)
         except Exception as e:
             logger.error(f"[InferenceDenoise] Failed to send audio: {e}")
             raise
@@ -336,23 +349,29 @@ class Denoise(BaseDenoise):
             async for msg in self._ws:
                 if msg.type == aiohttp.WSMsgType.TEXT:
                     await self._handle_message(msg.data)
+
                 elif msg.type == aiohttp.WSMsgType.ERROR:
                     logger.error(
                         f"[InferenceDenoise] WebSocket error: {self._ws.exception()}"
                     )
                     self.emit("error", f"WebSocket error: {self._ws.exception()}")
                     break
+
                 elif msg.type == aiohttp.WSMsgType.CLOSED:
                     logger.info("[InferenceDenoise] WebSocket closed by server")
                     break
 
         except asyncio.CancelledError:
             logger.debug("[InferenceDenoise] WebSocket listener cancelled")
+
         except Exception as e:
-            logger.error(f"[InferenceDenoise] Error in WebSocket listener: {e}")
+            logger.error(
+                f"[InferenceDenoise] Error in WebSocket listener: {e}", exc_info=True
+            )
             self.emit("error", str(e))
+
         finally:
-            await self._cleanup_connection()
+            pass
 
     async def _handle_message(self, raw_message: str) -> None:
         """
@@ -372,47 +391,64 @@ class Denoise(BaseDenoise):
 
                 if event_type == "DENOISE_AUDIO":
                     audio_data = event_data.get("audio", "")
+                    if audio_data:
+                        denoised_bytes = base64.b64decode(audio_data)
+                        await self._audio_buffer.put(denoised_bytes)
+
+                else:
+                    logger.debug(f"[InferenceDenoise] Unknown event type: {event_type}")
+
+            elif msg_type == "audio":
+                # handle audio messages (alternative format)
+                audio_data = data.get("data", "")
+                if audio_data:
                     denoised_bytes = base64.b64decode(audio_data)
                     await self._audio_buffer.put(denoised_bytes)
 
-            elif msg_type == "audio":
-                # Handle audio messages (SANAS format)
-                audio_data = data.get("data", "")
-                denoised_bytes = base64.b64decode(audio_data)
-                await self._audio_buffer.put(denoised_bytes)
-
             elif msg_type == "error":
-                error_msg = data.get("data", {}).get("error") or data.get(
+                error_data = data.get("data", {})
+                error_msg = error_data.get("error") or error_data.get(
                     "message", "Unknown error"
                 )
                 logger.error(f"[InferenceDenoise] Server error: {error_msg}")
                 self.emit("error", error_msg)
+                self._stats["errors"] += 1
 
             elif msg_type == "stats":
                 # Optional: handle statistics from server
                 stats_data = data.get("data", {})
                 logger.debug(f"[InferenceDenoise] Server stats: {stats_data}")
 
+            else:
+                logger.debug(f"[InferenceDenoise] Unknown message type: {msg_type}")
+
         except json.JSONDecodeError as e:
-            logger.error(f"[InferenceDenoise] Failed to parse message: {e}")
+            logger.error(
+                f"[InferenceDenoise] Failed to parse message: {e} | "
+                f"raw_message: {raw_message[:100]}"
+            )
         except Exception as e:
-            logger.error(f"[InferenceDenoise] Error handling message: {e}")
+            logger.error(
+                f"[InferenceDenoise] Error handling message: {e}", exc_info=True
+            )
 
     async def _cleanup_connection(self) -> None:
         """Clean up WebSocket connection resources."""
         if self._ws and not self._ws.closed:
             try:
-                # Send stop message before closing
                 stop_message = {"type": "stop"}
-                await self._ws.send_str(json.dumps(stop_message))
+                await asyncio.wait_for(
+                    self._ws.send_str(json.dumps(stop_message)), timeout=1.0
+                )
                 await asyncio.sleep(0.1)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"[InferenceDenoise] Error sending stop message: {e}")
 
             try:
                 await self._ws.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"[InferenceDenoise] Error closing WebSocket: {e}")
+
         self._ws = None
         self._config_sent = False
 
@@ -430,7 +466,27 @@ class Denoise(BaseDenoise):
             "buffer_size": self._audio_buffer.qsize(),
             "provider": self.provider,
             "model": self.model_name,
+            "sample_rate": self.sample_rate,
+            "channels": self.channels,
+            "connected": self._ws is not None and not self._ws.closed,
         }
+
+    async def flush(self) -> None:
+        """
+        Flush any remaining buffered audio.
+
+        Note: This sends a stop message to ensure all audio is processed.
+        """
+        if self._ws and not self._ws.closed:
+            try:
+                stop_message = {"type": "stop"}
+                await self._ws.send_str(json.dumps(stop_message))
+                logger.info("[InferenceDenoise] Flush requested (stop message sent)")
+
+                await asyncio.sleep(0.1)
+
+            except Exception as e:
+                logger.error(f"[InferenceDenoise] Error during flush: {e}")
 
     async def aclose(self) -> None:
         """Clean up all resources."""
@@ -439,11 +495,12 @@ class Denoise(BaseDenoise):
             f"Final stats: {self.get_stats()}"
         )
 
-        if self._ws_task:
+        # Cancel WebSocket listener task
+        if self._ws_task and not self._ws_task.done():
             self._ws_task.cancel()
             try:
-                await self._ws_task
-            except asyncio.CancelledError:
+                await asyncio.wait_for(self._ws_task, timeout=2.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
                 pass
             self._ws_task = None
 
