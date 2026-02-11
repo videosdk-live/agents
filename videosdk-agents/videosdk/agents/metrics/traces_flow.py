@@ -288,7 +288,7 @@ class TracesFlowManager:
                     self.end_span(kb_span, status_code=StatusCode.OK, end_time=cascading_turn_data.kb_end_time)
 
             llm_errors = [e for e in cascading_turn_data.errors if e['source'] == 'LLM']
-            if cascading_turn_data.llm_start_time is not None or cascading_turn_data.llm_end_time is not None or llm_errors:
+            if cascading_turn_data.llm_start_time is not None or cascading_turn_data.llm_end_time is not None or cascading_turn_data.llm_ttft is not None or llm_errors:
                 create_log(f"{cascading_turn_data.llm_provider_class}: LLM Processing Started", "INFO")
                 llm_span_name = f"{cascading_turn_data.llm_provider_class}: LLM Processing"
 
