@@ -47,7 +47,7 @@ async def entrypoint(ctx: JobContext):
     
     agent = CustomerAgent(ctx)
 
-    pipeline = CascadingPipeline(
+    pipeline = Pipeline(
         stt= DeepgramSTT(api_key=os.getenv("DEEPGRAM_API_KEY")),  
         llm=AnthropicLLM(api_key=os.getenv("ANTHROPIC_API_KEY")),
         tts=GoogleTTS(api_key=os.getenv("GOOGLE_API_KEY")),

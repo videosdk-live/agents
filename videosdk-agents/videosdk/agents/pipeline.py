@@ -270,7 +270,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
     
     def on(
         self, 
-        event: Literal["speech_in", "speech_out", "stt", "llm", "agent_response", "vision_frame", "user_turn_start", "user_turn_end", "agent_turn_start", "agent_turn_end", "content_generated"] | str,
+        event: Literal["speech_in", "speech_out", "stt", "llm","tts","agent_response", "vision_frame", "user_turn_start", "user_turn_end", "agent_turn_start", "agent_turn_end", "content_generated"] | str,
         callback: Callable | None = None
     ) -> Callable:
         """
@@ -402,6 +402,8 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                 self.llm.set_agent(agent)
         
         elif not self._is_realtime_mode:
+            if self.conversational_graph:
+                self.conversational_graph.compile()
             self.orchestrator = PipelineOrchestrator(
                 agent=agent,
                 stt=self.stt,

@@ -2,7 +2,7 @@ from mcp.server.fastmcp import FastMCP
 import datetime
 import json
 import urllib.request
-import urllib.parse
+from mcp_current_time_example import get_current_time
 
 ALPHA_VANTAGE_API_KEY = "YOUR_API_KEY"
 

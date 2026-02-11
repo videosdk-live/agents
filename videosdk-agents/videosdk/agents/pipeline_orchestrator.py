@@ -476,6 +476,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
                             return "".join(response_parts)
                         
                         content = chunk.content if hasattr(chunk, "content") else chunk
+                        metadata = chunk.metadata if hasattr(chunk, "metadata") else chunk
                         
                         if content:
                             response_parts.append(content)
@@ -485,6 +486,9 @@ class PipelineOrchestrator(EventEmitter[Literal[
                     
                     if not handle.interrupted:
                         await q.put(None)
+
+                    if self.conversational_graph and metadata.get("graph_response"):
+                        _ = await self.conversational_graph.handle_decision(self.agent, metadata.get("graph_response"))
                     
                     return "".join(response_parts)
                 
