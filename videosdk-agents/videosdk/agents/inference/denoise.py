@@ -28,12 +28,12 @@ class Denoise(BaseDenoise):
 
     Example:
         # Using factory methods (recommended)
-        denoise = Denoise.aicoustics(model_name="sparrow-xxs-48khz")
+        denoise = Denoise.aicoustics(model_id="sparrow-xxs-48khz")
 
         # Using generic constructor
         denoise = Denoise(
             provider="aicoustics",
-            model_name="sparrow-xxs-48khz",
+            model_id="sparrow-xxs-48khz",
             config={"sample_rate": 48000}
         )
 
@@ -52,7 +52,7 @@ class Denoise(BaseDenoise):
         self,
         *,
         provider: str,
-        model_name: str,
+        model_id: str,
         sample_rate: int = 48000,
         channels: int = 1,
         config: Dict[str, Any] | None = None,
@@ -63,7 +63,7 @@ class Denoise(BaseDenoise):
 
         Args:
             provider: Denoise provider name (e.g., "aicoustics")
-            model_name: Model identifier for the provider
+            model_id: Model identifier for the provider
             sample_rate: Audio sample rate in Hz (default: 48000)
             channels: Number of audio channels (default: 1 for mono)
             config: Provider-specific configuration dictionary
@@ -78,7 +78,7 @@ class Denoise(BaseDenoise):
             )
 
         self.provider = provider
-        self.model_name = model_name
+        self.model_id = model_id
         self.sample_rate = sample_rate
         self.channels = channels
         self.config = config or {}
@@ -107,14 +107,14 @@ class Denoise(BaseDenoise):
 
         logger.info(
             f"[InferenceDenoise] Initialized: provider={provider}, "
-            f"model={model_name}, sample_rate={sample_rate}Hz, channels={channels}"
+            f"model={model_id}, sample_rate={sample_rate}Hz, channels={channels}"
         )
 
     # ==================== Factory Methods ====================
     @staticmethod
     def aicoustics(
         *,
-        model_name: str = "sparrow-xxs-48khz",
+        model_id: str = "sparrow-xxs-48khz",
         sample_rate: int = 48000,
         channels: int = 1,
         base_url: str | None = None,
@@ -123,7 +123,7 @@ class Denoise(BaseDenoise):
         Create a Denoise instance configured for AI-Coustics.
 
         Args:
-            model_name: AI-Coustics model (default: "sparrow-xxs-48khz")
+            model_id: AI-Coustics model (default: "sparrow-xxs-48khz")
                 Sparrow family (human-to-human, 48kHz):
                 - "sparrow-xxs-48khz": Ultra-fast, 10ms latency, 1MB
                 - "sparrow-s-48khz": Small, 30ms latency, 8.96MB
@@ -145,30 +145,47 @@ class Denoise(BaseDenoise):
 
         Example:
             >>> # Ultra-fast for real-time calls
-            >>> denoise = Denoise.aicoustics(model_name="sparrow-xxs-48khz")
+            >>> denoise = Denoise.aicoustics(model_id="sparrow-xxs-48khz")
             >>>
             >>> # Best quality for recordings
-            >>> denoise = Denoise.aicoustics(model_name="sparrow-l-48khz")
+            >>> denoise = Denoise.aicoustics(model_id="sparrow-l-48khz")
             >>>
             >>> # Voice AI / STT optimization (16kHz)
             >>> denoise = Denoise.aicoustics(
-            ...     model_name="quail-vf-l-16khz",
+            ...     model_id="quail-vf-l-16khz",
             ...     sample_rate=16000
             ... )
         """
         config = {
-            "model": model_name,
+            "model": model_id,
             "sample_rate": sample_rate,
             "channels": channels,
         }
 
         return Denoise(
             provider="aicoustics",
-            model_name=model_name,
+            model_id=model_id,
             sample_rate=sample_rate,
             channels=channels,
             config=config,
             base_url=base_url,
+        )
+
+    @staticmethod
+    def krisp(
+        *,
+        model_id: str = "krisp-viva-tel-v2",
+        sample_rate: int = 16000,
+        channels: int = 1,
+        base_url: str | None = None,
+    ) -> "Denoise":
+
+        return Denoise(
+            provider="krisp",
+            model_id=model_id,
+            sample_rate=sample_rate,
+            channels=channels,
+            base_url=base_url or "ws://localhost:8000",
         )
 
     # ==================== Core Denoise Methods ====================
@@ -244,12 +261,12 @@ class Denoise(BaseDenoise):
                 f"{self.base_url}/v1/denoise"
                 f"?provider={self.provider}"
                 f"&secret={self._videosdk_token}"
-                f"&modelId={self.model_name}"
+                f"&modelId={self.model_id}"
             )
 
             logger.info(
                 f"[InferenceDenoise] Connecting to {self.base_url} "
-                f"(provider={self.provider}, model={self.model_name})"
+                f"(provider={self.provider}, model={self.model_id})"
             )
 
             timeout = aiohttp.ClientTimeout(total=10)
@@ -302,7 +319,7 @@ class Denoise(BaseDenoise):
         config_message = {
             "type": "config",
             "data": {
-                "model": self.model_name,
+                "model": self.model_id,
                 "sample_rate": self.sample_rate,
                 "channels": self.channels,
                 **self.config,
@@ -314,7 +331,7 @@ class Denoise(BaseDenoise):
             self._config_sent = True
             logger.info(
                 f"[InferenceDenoise] Config sent: "
-                f"model={self.model_name}, "
+                f"model={self.model_id}, "
                 f"sample_rate={self.sample_rate}Hz, "
                 f"channels={self.channels}"
             )
@@ -465,7 +482,7 @@ class Denoise(BaseDenoise):
             **self._stats,
             "buffer_size": self._audio_buffer.qsize(),
             "provider": self.provider,
-            "model": self.model_name,
+            "model": self.model_id,
             "sample_rate": self.sample_rate,
             "channels": self.channels,
             "connected": self._ws is not None and not self._ws.closed,
@@ -525,4 +542,4 @@ class Denoise(BaseDenoise):
     @property
     def label(self) -> str:
         """Get a descriptive label for this Denoise instance."""
-        return f"videosdk.inference.Denoise.{self.provider}.{self.model_name}"
+        return f"videosdk.inference.Denoise.{self.provider}.{self.model_id}"

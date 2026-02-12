@@ -26,12 +26,13 @@ class TTS(BaseTTS):
     VideoSDK Inference Gateway TTS Plugin.
 
     A lightweight Text-to-Speech client that connects to VideoSDK's Inference Gateway.
-    Supports multiple providers (Google, Sarvam) through a unified interface.
+    Supports multiple providers (Google, Sarvam, Deepgram) through a unified interface.
 
     Example:
         # Using factory methods (recommended)
         tts = TTS.google(voice_id="Achernar")
         tts = TTS.sarvam(speaker="anushka")
+        tts = TTS.deepgram(model_id="aura-asteria-en")
 
         # Using generic constructor
         tts = TTS(provider="google", model_id="Chirp3-HD", config={"voice_name": "en-US-Chirp3-HD-Achernar"})
@@ -53,7 +54,7 @@ class TTS(BaseTTS):
         Initialize the VideoSDK Inference TTS plugin.
 
         Args:
-            provider: TTS provider name (e.g., "google", "sarvamai")
+            provider: TTS provider name (e.g., "google", "sarvamai", "deepgram")
             model_id: Model identifier for the provider
             voice_id: Voice identifier
             language: Language code (default: "en-US")
@@ -220,6 +221,92 @@ class TTS(BaseTTS):
             model_id=model_id,
             voice_id=voice_id if isinstance(voice_id, str) else "embedding",
             language=language,
+            config=config,
+            enable_streaming=enable_streaming,
+            sample_rate=sample_rate,
+            base_url=base_url,
+        )
+
+    @staticmethod
+    def deepgram(
+        *,
+        model_id: str = "aura-2-amalthea-en",
+        encoding: str = "linear16",
+        sample_rate: int = 24000,
+        container: str = "none",
+        bit_rate: int | None = None,
+        enable_streaming: bool = True,
+        base_url: str | None = None,
+    ) -> "TTS":
+        """
+        Create a TTS instance configured for Deepgram Aura.
+
+        Deepgram Aura provides high-quality, low-latency text-to-speech with
+        multiple voice options.
+
+        Args:
+            model_id: Deepgram Aura model (default: "aura-asteria-en")
+                     Available models:
+                     - aura-asteria-en (Female, Conversational)
+                     - aura-luna-en (Female, Expressive)
+                     - aura-stella-en (Female, Warm)
+                     - aura-athena-en (Female, Professional)
+                     - aura-hera-en (Female, Clear)
+                     - aura-orion-en (Male, Deep)
+                     - aura-arcas-en (Male, Authoritative)
+                     - aura-perseus-en (Male, Dynamic)
+                     - aura-angus-en (Male, Conversational)
+                     - aura-orpheus-en (Male, Smooth)
+                     - aura-helios-en (Male, Energetic)
+                     - aura-zeus-en (Male, Commanding)
+            encoding: Audio encoding format (default: "linear16")
+                     Options: linear16, mulaw, alaw, opus, aac, flac
+            sample_rate: Audio sample rate in Hz (default: 24000)
+                        Supported: 8000, 16000, 24000, 48000
+            container: Container format (default: "none" for raw audio)
+                      Options: none, wav, ogg, mp3
+            bit_rate: Bitrate in bps for compressed formats (optional)
+                     Only used with opus, aac, mp3 encodings
+            enable_streaming: Enable streaming mode (default: True)
+            base_url: Custom inference gateway URL (optional)
+
+        Returns:
+            Configured TTS instance for Deepgram
+
+        Example:
+            # Using default voice
+            tts = TTS.deepgram()
+
+            # Using specific voice and settings
+            tts = TTS.deepgram(
+                model_id="aura-orion-en",
+                encoding="linear16",
+                sample_rate=24000
+            )
+
+            # Using compressed audio
+            tts = TTS.deepgram(
+                model_id="aura-luna-en",
+                encoding="opus",
+                container="ogg",
+                bit_rate=64000
+            )
+        """
+        config = {
+            "model": model_id,
+            "encoding": encoding,
+            "sample_rate": sample_rate,
+            "container": container,
+        }
+
+        if bit_rate is not None:
+            config["bit_rate"] = bit_rate
+
+        return TTS(
+            provider="deepgram",
+            model_id=model_id,
+            voice_id=model_id,  # for Deepgram, model_id includes the voice
+            language="en",
             config=config,
             enable_streaming=enable_streaming,
             sample_rate=sample_rate,
