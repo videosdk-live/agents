@@ -23,6 +23,16 @@ from .job import get_current_job_context
 
 logger = logging.getLogger(__name__)
 
+from .helper import (
+    NO_CHANGE, 
+    cleanup_pipeline, 
+    check_mode_shift, 
+    swap_component_in_orchestrator, 
+    swap_llm, 
+    swap_tts, 
+    register_stt_transcript_listener
+)
+
 
 @dataclass
 class EOUConfig:
@@ -170,6 +180,11 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
     
     def _detect_realtime_configuration(self) -> None:
         """Detect which realtime hybrid mode to use based on components"""
+        # If no realtime model is present, we cannot be in realtime mode
+        if self._realtime_model is None:
+            self.realtime_mode = None
+            self._is_realtime_mode = False
+            return
         has_external_stt = self.stt is not None
         has_external_tts = self.tts is not None
         
@@ -181,7 +196,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         
         if has_external_stt and has_external_tts:
             self.realtime_mode = "llm_only"
-            self._is_realtime_mode = False 
+            self._is_realtime_mode = True
             logger.info("Realtime configuration: llm_only (external STT + realtime LLM + external TTS)")
         elif has_external_stt:
             self.realtime_mode = "hybrid_stt"
@@ -437,6 +452,162 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         self.audio_track = audio_track
         self._configure_components()
     
+    async def change_pipeline(
+        self,
+        stt: STT | None = None,
+        llm: LLM | RealtimeBaseModel | None = None,
+        tts: TTS | None = None,
+        vad: VAD | None = None,
+        turn_detector: EOU | None = None,
+        avatar: Any | None = None,
+        denoise: Denoise | None = None,
+        eou_config: EOUConfig | None = None,
+        interrupt_config: InterruptConfig | None = None,
+        conversational_graph: Any | None = None,
+        max_context_items: int | None = None,
+        voice_mail_detector: VoiceMailDetector | None = None,
+        realtime_config: RealtimeConfig | None = None
+        ) -> None:
+        """
+        Dynamically change pipeline configuration and components.
+        
+        This method allows switching between different modes (Realtime, Cascading, Hybrid)
+        and updating individual components.
+        """
+        logger.info("Changing pipeline configuration...")
+        
+        # 1.Cleanup current execution
+        await cleanup_pipeline(self, llm_changing=True)
+
+        # 2.Update components
+        await swap_component_in_orchestrator(
+            self, 'stt', stt, 'speech_understanding', 'stt_lock', 
+            register_stt_transcript_listener
+        )
+        await swap_tts(self, tts)
+        await swap_component_in_orchestrator(self, 'vad', vad, 'speech_understanding', 'vad_lock')
+        await swap_component_in_orchestrator(self, 'turn_detector', turn_detector, 'speech_understanding', 'turn_detector_lock')
+        await swap_component_in_orchestrator(self, 'denoise', denoise, 'speech_understanding', 'denoise_lock')
+            
+        if self.avatar and self.avatar != avatar: await self.avatar.aclose()
+        self.avatar = avatar
+
+        # Update configs
+        if eou_config is not None: self.eou_config = eou_config
+        if interrupt_config is not None: self.interrupt_config = interrupt_config
+        if max_context_items is not None: self.max_context_items = max_context_items
+        if voice_mail_detector is not None: self.voice_mail_detector = voice_mail_detector
+        if realtime_config is not None: self.realtime_config = realtime_config   
+        if conversational_graph is not None:
+            self.conversational_graph = conversational_graph
+            if self.conversational_graph and hasattr(self.conversational_graph, 'compile'):
+                self.conversational_graph.compile()
+            
+        # Update LLM / Realtime Model
+        await swap_llm(self, llm)
+
+        # 3. REBOOT: Detect mode and restart
+        self._detect_realtime_configuration()
+        new_mode = self._detect_pipeline_mode()
+        logger.info(f"New pipeline mode: {new_mode}")
+        
+        if self.agent:
+            logger.info("Restarting pipeline with updated components")
+            self.set_agent(self.agent)
+            
+        self._configure_components()
+        await self.start()
+
+    async def change_component(
+        self,
+        stt: STT | None = NO_CHANGE,
+        llm: LLM | RealtimeBaseModel | None = NO_CHANGE,
+        tts: TTS | None = NO_CHANGE,
+        vad: VAD | None = NO_CHANGE,
+        turn_detector: EOU | None = NO_CHANGE,
+        denoise: Denoise | None = NO_CHANGE,
+        ) -> None:
+        """Dynamically change components.
+        This will close the old components and set the new ones.
+        """
+        logger.info("Changing pipeline component(s)...")
+        
+
+        # 0 Change components only if present earlier
+        validation_map = {
+            'STT': (stt, self.stt),
+            'TTS': (tts, self.tts),
+            'LLM': (llm, self.llm),
+            'VAD': (vad, self.vad),
+            'Turn Detector': (turn_detector, self.turn_detector),
+            'Denoise': (denoise, self.denoise)
+        }
+
+        for name, (new_val, current_val) in validation_map.items():
+            if new_val is not NO_CHANGE and current_val is None:
+                raise ValueError(
+                    f"Cannot change component '{name}' because it is not present in the current pipeline. "
+                    "Use change_pipeline() for full reconfiguration."
+                )
+
+        logger.info(f"Performing swap in {self._detect_pipeline_mode()} mode")
+
+        # Detect pipeline mode shift
+        mode_shift = check_mode_shift(self, llm, stt, tts)
+        if mode_shift:
+            logger.info("Component change triggers mode shift. Delegating to change_pipeline for full reconfiguration.")
+            
+            # Resolve sentinels to current values for resettlement
+            target_stt = self.stt if stt is NO_CHANGE else stt
+            target_tts = self.tts if tts is NO_CHANGE else tts
+            target_vad = self.vad if vad is NO_CHANGE else vad
+            target_turn_detector = self.turn_detector if turn_detector is NO_CHANGE else turn_detector
+            target_denoise = self.denoise if denoise is NO_CHANGE else denoise
+
+            if llm is NO_CHANGE:
+                target_llm = self._realtime_model if self._realtime_model else self.llm
+            else:
+                target_llm = llm
+
+            await self.change_pipeline(
+                stt=target_stt,
+                llm=target_llm,
+                tts=target_tts,
+                vad=target_vad,
+                turn_detector=target_turn_detector,
+                denoise=target_denoise
+            )
+            return
+
+        if stt is not NO_CHANGE and self.stt != stt:
+            await swap_component_in_orchestrator(
+                self, 'stt', stt, 'speech_understanding', 'stt_lock', 
+                register_stt_transcript_listener
+            )
+
+        if llm is not NO_CHANGE and self.llm != llm:
+            await swap_llm(self, llm)
+
+        if tts is not NO_CHANGE and self.tts != tts:
+            await swap_tts(self, tts)
+
+
+        if vad is not NO_CHANGE and self.vad != vad:
+            await swap_component_in_orchestrator(self, 'vad', vad, 'speech_understanding', 'vad_lock')
+
+
+        if turn_detector is not NO_CHANGE and self.turn_detector != turn_detector:
+            await swap_component_in_orchestrator(self, 'turn_detector', turn_detector, 'speech_understanding', 'turn_detector_lock')
+
+        if denoise is not NO_CHANGE and self.denoise != denoise:
+            await swap_component_in_orchestrator(self, 'denoise', denoise, 'speech_understanding', 'denoise_lock')
+
+        self._detect_realtime_configuration()
+        new_mode = self._detect_pipeline_mode()
+        logger.info(f"Component change complete. Mode: {new_mode}")
+
+        return
+
     def _configure_components(self) -> None:
         """Configure pipeline components with loop and audio track"""
         if not self.loop:
