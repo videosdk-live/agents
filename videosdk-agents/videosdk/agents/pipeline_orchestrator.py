@@ -159,7 +159,33 @@ class PipelineOrchestrator(EventEmitter[Literal[
         self._preemptive_generation_task: asyncio.Task | None = None
         self._preemptive_authorized = asyncio.Event()
         self._preemptive_cancelled = False
-    
+
+    def set_metrics_collector(self, metrics_collector: Any) -> None:
+        """
+        Inject metrics collector (TurnLifecycleTracker) into all components for direct timing.
+
+        This provides precise, low-latency metrics tracking at the source instead of via hooks.
+
+        Args:
+            metrics_collector: TurnLifecycleTracker instance from UnifiedMetricsCollector
+        """
+        logger.info(f"[ORCHESTRATOR DEBUG] set_metrics_collector called with: {type(metrics_collector).__name__} = {metrics_collector}")
+
+        if self.speech_understanding:
+            logger.info(f"[ORCHESTRATOR DEBUG] BEFORE assignment - speech_understanding.metrics_collector = {self.speech_understanding.metrics_collector}")
+            self.speech_understanding.metrics_collector = metrics_collector
+            logger.info(f"[ORCHESTRATOR DEBUG] AFTER assignment - speech_understanding.metrics_collector = {self.speech_understanding.metrics_collector}")
+            logger.info(f"[ORCHESTRATOR DEBUG] Type check: {type(self.speech_understanding.metrics_collector).__name__}")
+            logger.info("Metrics collector injected into SpeechUnderstanding")
+
+        if self.content_generation:
+            self.content_generation.metrics_collector = metrics_collector
+            logger.info("Metrics collector injected into ContentGeneration")
+
+        if self.speech_generation:
+            self.speech_generation.metrics_collector = metrics_collector
+            logger.info("Metrics collector injected into SpeechGeneration")
+
     def _wrap_async(self, async_func):
         """
         Wrap an async function to be compatible with EventEmitter's sync-only handlers.
