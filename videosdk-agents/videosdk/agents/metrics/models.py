@@ -26,6 +26,18 @@ class CascadingTurnData:
     agent_speech_duration: Optional[float] = None
     agent_speech: Optional[str] = None
     
+    kb_documents: Optional[List[str]] = None
+    kb_scores: Optional[List[float]] = None
+    kb_retrieval_latency: Optional[float] = None
+    kb_start_time: Optional[float] = None
+    kb_end_time: Optional[float] = None
+
+    stt_confidence: Optional[float] = None
+    
+    stt_input_tokens: Optional[int] = 0
+    stt_output_tokens: Optional[int] = 0
+    stt_total_tokens: Optional[int] = 0
+
     stt_latency: Optional[float] = None
     stt_start_time: Optional[float] = None
     stt_end_time: Optional[float] = None
@@ -43,18 +55,18 @@ class CascadingTurnData:
     llm_duration: Optional[float] = None
     llm_first_token_time: Optional[float] = None
     llm_ttft: Optional[float] = None
-    prompt_tokens: Optional[int] = None
-    completion_tokens: Optional[int] = None
-    total_tokens: Optional[int] = None
-    prompt_cached_tokens: Optional[int] = None
-    tokens_per_second: Optional[float] = None
+    prompt_tokens: Optional[int] = 0
+    completion_tokens: Optional[int] = 0
+    total_tokens: Optional[int] = 0
+    prompt_cached_tokens: Optional[int] = 0
+    tokens_per_second: Optional[float] = 0
 
     
     tts_latency: Optional[float] = None 
     tts_start_time: Optional[float] = None
     tts_end_time: Optional[float] = None
     tts_duration: Optional[float] = None
-    tts_characters: Optional[int] = None
+    tts_characters: Optional[int] = 0
     ttfb: Optional[float] = None
     
     eou_latency: Optional[float] = None
@@ -127,8 +139,8 @@ class RealtimeTurnData:
     Turns = one user utterance + one agent response.
     """
     session_id: Optional[str] = None
-    provider_class_name: Optional[str] = None 
-    provider_model_name: Optional[str] = None 
+    realtime_provider_class: Optional[str] = None 
+    realtime_model_name: Optional[str] = None 
     system_instructions: Optional[str] = None 
     function_tools: Optional[List[str]] = None
     mcp_tools: Optional[List[str]] = None
@@ -146,7 +158,29 @@ class RealtimeTurnData:
     realtime_model_errors: List[Dict[str, Any]] = field(default_factory=list)
     is_a2a_enabled: bool = False
     handoff_occurred: bool = False 
+    
+    # Token details
+    realtime_input_tokens: Optional[int] = 0
+    realtime_total_tokens: Optional[int] = 0
+    realtime_output_tokens: Optional[int] = 0
 
+    realtime_input_text_tokens: Optional[int] = 0
+    realtime_input_audio_tokens: Optional[int] = 0
+    realtime_input_image_tokens: Optional[int] = 0
+    realtime_input_cached_tokens: Optional[int] = 0
+
+    realtime_thoughts_tokens: Optional[int] = 0
+
+    realtime_cached_text_tokens: Optional[int] = 0
+    realtime_cached_audio_tokens: Optional[int] = 0
+    realtime_cached_image_tokens: Optional[int] = 0
+
+
+    realtime_output_text_tokens: Optional[int] = 0
+    realtime_output_audio_tokens: Optional[int] = 0
+    realtime_output_image_tokens: Optional[int] = 0
+
+    
     def compute_latencies(self):
         if self.user_speech_start_time and self.agent_speech_start_time:
             self.ttfb = (self.agent_speech_start_time - self.user_speech_start_time) * 1000

@@ -6,10 +6,11 @@ import json
 import os
 import logging
 import time
-from typing import Any, Optional, List
+from typing import Any, Optional, List, Tuple, Dict
 from urllib.parse import urlencode
 import aiohttp
 import numpy as np
+import math
 from videosdk.agents import STT as BaseSTT, STTResponse, SpeechEventType, SpeechData, global_event_emitter
 
 logger = logging.getLogger(__name__)
@@ -136,6 +137,7 @@ class ElevenLabsSTT(BaseSTT):
             "vad_threshold": self.vad_threshold,
             "min_speech_duration_ms": self.min_speech_duration_ms,
             "min_silence_duration_ms": self.min_silence_duration_ms,
+            "include_timestamps": True,
         }
 
         ws_url = f"{self.base_url}?{urlencode(query_params)}"
@@ -261,11 +263,11 @@ class ElevenLabsSTT(BaseSTT):
             global_event_emitter.emit("speech_session_started")
             return responses
 
-        if message_type == "committed_transcript":
-            logger.info("==== Received final transcript event: %s", data)
+        if message_type == "committed_transcript_with_timestamps":
+            logger.debug("==== Received final transcript event: %s", data)
             text = data.get("text", "")
             clean_text = text.strip()
-            confidence = float(data.get("confidence", 0.0))
+            avg_conf, duration = self.get_avg_confidence_and_duration(data)
             now = time.time()
 
             if clean_text == "":
@@ -278,7 +280,8 @@ class ElevenLabsSTT(BaseSTT):
                 event_type=SpeechEventType.FINAL,
                 data=SpeechData(
                     text=clean_text,
-                    confidence=confidence,
+                    confidence=avg_conf,
+                    duration=duration,
                 ),
                 metadata={"model": self.model_id, "raw_event": data},
             )
@@ -308,7 +311,7 @@ class ElevenLabsSTT(BaseSTT):
                 data=SpeechData(
                     text=text,
                     confidence=float(data.get("confidence", 0.0)),
-                ),
+                    ),
                 metadata={"model": self.model_id, "raw_event": data},
             )
             responses.append(resp)
@@ -354,3 +357,40 @@ class ElevenLabsSTT(BaseSTT):
                 self._session = None
 
         await super().aclose()
+    
+    def get_avg_confidence_and_duration(self,payload: Dict) -> Tuple[float, float]:
+        """
+        Computes:
+        - Average confidence from log probabilities
+        - Total transcript duration from last word end timestamp
+
+        Args:
+            payload (dict): Transcript JSON message
+
+        Returns:
+            (avg_confidence, duration)
+        """
+
+        words = payload.get("words", [])
+
+        total_confidence = 0.0
+        word_count = 0
+        last_end_time = 0.0
+
+        for w in words:
+            if w.get("type") != "word":
+                continue
+
+            logprob = w.get("logprob")
+
+            if logprob is not None:
+                total_confidence += math.exp(logprob)
+                word_count += 1
+
+
+            last_end_time = max(last_end_time, w.get("end", 0.0))
+
+
+        avg_confidence = total_confidence / word_count if word_count > 0 else 0.0
+
+        return avg_confidence, last_end_time

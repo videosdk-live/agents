@@ -22,8 +22,8 @@ if TYPE_CHECKING:
 class RealtimeMetricsCollector:
 
     _agent_info: Dict[str, Any] = {
-        "provider_class_name": None,
-        "provider_model_name": None,
+        "realtime_provider_class": None,
+        "realtime_model_name": None,
         "system_instructions": None,
         "function_tools": [],
         "mcp_tools": []
@@ -60,8 +60,8 @@ class RealtimeMetricsCollector:
 
     async def start_session(self, agent: Agent, pipeline: Pipeline) -> None:
         RealtimeMetricsCollector._agent_info = {
-            "provider_class_name": pipeline.model.__class__.__name__,
-            "provider_model_name": getattr(pipeline.model, "model", None),
+            "realtime_provider_class": pipeline.model.__class__.__name__,
+            "realtime_model_name": getattr(pipeline.model, "model", None),
             "system_instructions": agent.instructions,
             "function_tools": [
                 getattr(tool, "name", tool.__name__ if callable(tool) else str(tool))
@@ -191,11 +191,19 @@ class RealtimeMetricsCollector:
             self.traces_flow_manager.create_realtime_turn_trace(self.current_turn)
         interaction_data = asdict(self.current_turn)
         
-        fields_to_remove = ["realtime_model_errors","is_a2a_enabled","session_id","agent_speech_duration","agent_speech_start_time","agent_speech_end_time","thinking_time","function_tools","mcp_tools"]
+        fields_to_remove = [
+            "realtime_model_errors",
+            "is_a2a_enabled",
+            "session_id",
+            "agent_speech_duration",
+            "agent_speech_start_time",
+            "agent_speech_end_time",
+            "thinking_time",
+            "function_tools",
+            "mcp_tools"]
         
         if len(self.turns) > 1:
-            fields_to_remove.extend([
-                "provider_class_name", "provider_model_name", "system_instructions","function_tools", "mcp_tools"])
+            fields_to_remove.extend(["system_instructions","function_tools", "mcp_tools"])
        
         if not self.current_turn.is_a2a_enabled: 
             fields_to_remove.extend(["handoff_occurred"])
@@ -285,4 +293,23 @@ class RealtimeMetricsCollector:
         self.playground = True
         self.playground_manager = manager
 
+    def set_token_details(self, token_details: Dict[str, Any]):
+        if self.current_turn:
+            self.current_turn.realtime_input_tokens = token_details.get("input_tokens")
+            self.current_turn.realtime_total_tokens = token_details.get("total_tokens")
+            self.current_turn.realtime_output_tokens = token_details.get("output_tokens")
+
+            self.current_turn.realtime_input_text_tokens = token_details.get("input_text_tokens")
+            self.current_turn.realtime_input_audio_tokens = token_details.get("input_audio_tokens")
+            self.current_turn.realtime_input_image_tokens = token_details.get("input_image_tokens")
+
+            self.current_turn.realtime_input_cached_tokens = token_details.get("input_cached_tokens")
+            self.current_turn.realtime_cached_text_tokens = token_details.get("cached_text_tokens")
+            self.current_turn.realtime_cached_audio_tokens = token_details.get("cached_audio_tokens")
+            self.current_turn.realtime_cached_image_tokens = token_details.get("cached_image_tokens")
+
+            self.current_turn.realtime_output_text_tokens = token_details.get("output_text_tokens")
+            self.current_turn.realtime_output_audio_tokens = token_details.get("output_audio_tokens")
+            self.current_turn.realtime_output_image_tokens = token_details.get("output_image_tokens")
+        
 realtime_metrics_collector = RealtimeMetricsCollector() 

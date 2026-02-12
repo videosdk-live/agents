@@ -544,6 +544,8 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                         accumulated_text += part.text
 
                             if server_content.turn_complete and active_response_id:
+                                usage_metadata = self.get_usage_details(response.usage_metadata)
+                                realtime_metrics_collector.set_token_details(usage_metadata)
                                 if accumulated_input_text:
                                     await realtime_metrics_collector.set_user_transcript(
                                         accumulated_input_text
@@ -934,3 +936,64 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
             "gemini-2.5-flash-native-audio-preview-12-2025"
         ]
         return any(indicator in self.model for indicator in native_audio_indicators)
+    
+    def get_usage_details(self,usage_metadata) -> dict:
+        """
+        Flatten Gemini Live UsageMetadata into the same pricing dictionary format.
+
+        Supports TEXT/AUDIO/IMAGE breakdown + thoughts tokens.
+        """
+        total_tokens = getattr(usage_metadata, "total_token_count", 0)
+        input_tokens = getattr(usage_metadata, "prompt_token_count", 0)
+        output_tokens = getattr(usage_metadata, "response_token_count", 0)
+
+        thoughts_tokens = getattr(usage_metadata, "thoughts_token_count", 0)
+
+        prompt_details = getattr(usage_metadata, "prompt_tokens_details", None) or []
+        response_details = getattr(usage_metadata, "response_tokens_details", None) or []
+
+        input_text_tokens = 0
+        input_audio_tokens = 0
+        input_image_tokens = 0
+
+        output_text_tokens = 0
+        output_audio_tokens = 0
+        output_image_tokens = 0
+
+        for item in prompt_details:
+            modality = str(getattr(item, "modality", "")).upper()
+            count = getattr(item, "token_count", 0)
+
+            if "TEXT" in modality:
+                input_text_tokens += count
+            elif "AUDIO" in modality:
+                input_audio_tokens += count
+            elif "IMAGE" in modality:
+                input_image_tokens += count
+
+        for item in response_details:
+            modality = str(getattr(item, "modality", "")).upper()
+            count = getattr(item, "token_count", 0)
+
+            if "TEXT" in modality:
+                output_text_tokens += count
+            elif "AUDIO" in modality:
+                output_audio_tokens += count
+            elif "IMAGE" in modality:
+                output_image_tokens += count
+
+        return {
+            "total_tokens": total_tokens,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+
+            "input_text_tokens": input_text_tokens,
+            "input_audio_tokens": input_audio_tokens,
+            "input_image_tokens": input_image_tokens,
+
+            "output_text_tokens": output_text_tokens,
+            "output_audio_tokens": output_audio_tokens,
+            "output_image_tokens": output_image_tokens,
+
+            "thoughts_tokens": thoughts_tokens,
+        }
