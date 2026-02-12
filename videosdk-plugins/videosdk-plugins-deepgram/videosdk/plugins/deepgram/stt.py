@@ -37,7 +37,7 @@ class DeepgramSTT(BaseSTT):
             punctuate (bool): Whether to add punctuation. Defaults to True.
             smart_format (bool): Whether to use smart formatting. Defaults to True.
             sample_rate (int): Sample rate to use for the STT plugin. Defaults to 48000.
-            endpointing (int): Endpointing threshold. Defaults to 50.
+            endpointing (int): Endpointing threshold. Defaults to 50, set 0 to make false.
             filler_words (bool): Whether to include filler words. Defaults to True.
             base_url (str): The base URL to use for the STT plugin. Defaults to "wss://api.deepgram.com/v1/listen".
         """
@@ -119,6 +119,11 @@ class DeepgramSTT(BaseSTT):
         if not self._session:
             self._session = aiohttp.ClientSession()
 
+        if self.endpointing < 0:
+            endpointing = "false"
+        else:
+            endpointing = self.endpointing
+
         query_params = {
             "model": self.model,
             "language": self.language,
@@ -128,7 +133,7 @@ class DeepgramSTT(BaseSTT):
             "encoding": "linear16",
             "sample_rate": str(self.sample_rate),
             "channels": 2,
-            "endpointing": self.endpointing,
+            "endpointing": endpointing,
             "filler_words": str(self.filler_words).lower(),
             "vad_events": "true",
             "no_delay": "true",
