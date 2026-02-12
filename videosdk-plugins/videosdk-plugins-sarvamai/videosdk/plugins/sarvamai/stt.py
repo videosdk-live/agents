@@ -134,6 +134,7 @@ class SarvamAISTT(STT):
             transcript_data = data.get("data", {})
             transcript_text = transcript_data.get("transcript", "")
             language = transcript_data.get("language_code", self.language)
+            duration = transcript_data.get("metrics", {}).get("audio_duration", 0.0)
             
             if transcript_text and self._transcript_callback:
                 event = STTResponse(
@@ -141,7 +142,8 @@ class SarvamAISTT(STT):
                     data=SpeechData(
                         text=transcript_text,
                         language=language,
-                        confidence=1.0
+                        confidence=1.0,
+                        duration=duration
                     )
                 )
                 await self._transcript_callback(event)

@@ -63,6 +63,7 @@ class NvidiaSTT(BaseSTT):
         self._asr_service = None
         self._recognition_thread = None
         self._stop_event = threading.Event()
+        self._last_audio_processed = 0.0
 
         self._initialize_client()
 
@@ -176,30 +177,67 @@ class NvidiaSTT(BaseSTT):
                 )
 
     async def _dispatch_response(self, text: str, is_final: bool, raw_result: Any):
-        event_type = SpeechEventType.FINAL if is_final else SpeechEventType.INTERIM
-        
-        if event_type == SpeechEventType.INTERIM:
+        if is_final:
             global_event_emitter.emit("speech_started")
-        elif event_type == SpeechEventType.FINAL:
+            event_type = SpeechEventType.FINAL
+            metrics = self.extract(raw_result)
+            response = STTResponse(
+                event_type=event_type,
+                data=SpeechData(
+                    text=text,
+                    confidence=metrics['overall_confidence'],
+                    language=self.language_code,
+                    start_time=0.0,
+                    end_time=0.0,
+                    duration=metrics['duration_sec'],
+                ),
+                metadata={
+                    "model": "nvidia-riva",
+                    "stability": getattr(raw_result, "stability", 0.0),
+                }
+            )
+        else:
             global_event_emitter.emit("speech_stopped")
+            event_type = SpeechEventType.INTERIM
 
-        response = STTResponse(
-            event_type=event_type,
-            data=SpeechData(
-                text=text,
-                confidence=raw_result.alternatives[0].confidence,
-                language=self.language_code,
-                start_time=0.0,
-                end_time=0.0,
-            ),
-            metadata={
-                "model": "nvidia-riva",
-                "stability": getattr(raw_result, "stability", 0.0),
-            }
-        )
+            response = STTResponse(
+                event_type=event_type,
+                data=SpeechData(
+                    text=text,
+                    confidence=raw_result.alternatives[0].confidence,
+                    language=self.language_code,
+                    start_time=0.0,
+                    end_time=0.0,
+                ),
+                metadata={
+                    "model": "nvidia-riva",
+                    "stability": getattr(raw_result, "stability", 0.0),
+                }
+            )
         
         if self._transcript_callback:
             await self._transcript_callback(response)
+
+    def extract(self, response: Any) -> Dict:
+        """
+        Extract duration + confidence from one final NVIDIA transcript response.
+        """
+
+        current_processed = getattr(response, "audio_processed", 0.0)
+
+        turn_duration_sec = max(
+            0.0, current_processed - self._last_audio_processed
+        )
+
+        self._last_audio_processed = current_processed
+        alt = response.alternatives[0]
+
+        overall_confidence = getattr(alt, "confidence", 0.0)
+
+        return {
+            "duration_sec": turn_duration_sec,
+            "overall_confidence": overall_confidence,
+        }
 
     async def aclose(self) -> None:
         """Cleanup resources"""
