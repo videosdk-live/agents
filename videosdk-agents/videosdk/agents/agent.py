@@ -4,12 +4,12 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Literal, Optional
 import inspect
 from .event_emitter import EventEmitter
-from .llm.chat_context import ChatContext
+from .llm.chat_context import ChatContext, ChatRole, ChatMessage
+from .llm.llm import LLM
 from .utils import FunctionTool, is_function_tool
 from .a2a.protocol import A2AProtocol
 from .a2a.card import AgentCard
 import uuid
-from .llm.chat_context import ChatContext, ChatRole
 from .mcp.mcp_manager import MCPToolManager
 from .mcp.mcp_server import MCPServiceProvider
 from .background_audio import BackgroundAudioHandlerConfig
@@ -140,6 +140,50 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
         await self.mcp_manager.add_mcp_server(mcp_server)
         self._tools.extend(self.mcp_manager.tools)
     
+    async def get_summary(self, llm: LLM | None = None) -> str:
+        """
+        Generate a summary of the current session.
+        
+        Args:
+            llm: The LLM instance to use for generating the summary. 
+                 If None, tries to use the pipeline's LLM (Cascading only).
+        
+        Returns:
+            str: The generated summary.
+        """
+        if not llm:
+             pipeline = getattr(getattr(self, 'session', None), 'pipeline', None)
+             if pipeline and hasattr(pipeline, 'llm') and pipeline.llm:
+                 llm = pipeline.llm
+        
+        if not llm:
+            raise ValueError("An LLM instance is required to generate a summary. Please pass an LLM instance to get_summary().")
+            
+        prompt = "Please summarize the following conversation:\n\n"
+        for item in self.chat_context.items:
+             if isinstance(item, ChatMessage):
+                 role = item.role.value
+                 content = item.content
+                 if isinstance(content, list):
+                     text_parts = []
+                     for c in content:
+                         if isinstance(c, str):
+                             text_parts.append(c)
+                     content = " ".join(text_parts)
+                 
+                 if content:
+                    prompt += f"{role}: {content}\n"
+        
+        summary_context = ChatContext()
+        summary_context.add_message(role=ChatRole.USER, content=prompt)
+        
+        summary = ""
+        async for chunk in llm.chat(summary_context):
+             if chunk.content:
+                summary += chunk.content
+             
+        return summary
+
     @abstractmethod
     async def on_enter(self) -> None:
         """Called when session starts, to be implemented in your custom agent implementation."""
