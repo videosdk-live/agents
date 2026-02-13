@@ -4,6 +4,8 @@ import base64
 import json
 import os
 from typing import Any, AsyncIterator, List, Optional, Union
+from dataclasses import dataclass, asdict
+
 
 import aiohttp
 
@@ -15,6 +17,11 @@ DEFAULT_MODEL = "sonic-2"
 DEFAULT_VOICE_ID = "f786b574-daa5-4673-aa0c-cbe3e8534c02"
 API_VERSION = "2024-06-10"
 
+@dataclass
+class GenerationConfig:
+    volume: float = 1.0
+    speed: float = 1.0
+    emotion: str = "neutral"
 
 class CartesiaTTS(TTS):
     def __init__(
@@ -25,6 +32,7 @@ class CartesiaTTS(TTS):
         voice_id: Union[str, List[float]] = DEFAULT_VOICE_ID,
         language: str = "en",
         base_url: str = "https://api.cartesia.ai",
+        generation_config: GenerationConfig = GenerationConfig(),
     ) -> None:
         """Initialize the Cartesia TTS plugin
         Args:
@@ -34,6 +42,7 @@ class CartesiaTTS(TTS):
             api_key (str | None, optional): Cartesia API key. Uses CARTESIA_API_KEY environment variable if not provided. Defaults to None.
             language (str): The language to use for the TTS plugin. Defaults to "en".
             base_url (str): The base URL to use for the TTS plugin. Defaults to "https://api.cartesia.ai".
+            generation_config (GenerationConfig): The generation config to use for the TTS plugin. Defaults to GenerationConfig().
         """
         super().__init__(sample_rate=CARTESIA_SAMPLE_RATE, num_channels=CARTESIA_CHANNELS)
 
@@ -43,6 +52,7 @@ class CartesiaTTS(TTS):
         self._voice = voice_id
         self._first_chunk_sent = False
         self._interrupted = False
+        self._generation_config = generation_config
 
         api_key = api_key or os.getenv("CARTESIA_API_KEY")
         if not api_key:
@@ -116,6 +126,7 @@ class CartesiaTTS(TTS):
                 "voice": voice_payload,
                 "output_format": {"container": "raw", "encoding": "pcm_s16le", "sample_rate": self.sample_rate},
                 "add_timestamps": True, "context_id": context_id,
+                "generation_config": asdict(self._generation_config),
             }
 
             async for text_chunk in text_iterator:

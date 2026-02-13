@@ -20,7 +20,7 @@ classifiers = [
     "Topic :: Multimedia :: Video",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-dependencies = ["videosdk-agents>=0.0.59"]
+dependencies = ["videosdk-agents>=0.0.63"]
 
 [tool.hatch.version]
 path = "videosdk/plugins/elevenlabs/version.py"

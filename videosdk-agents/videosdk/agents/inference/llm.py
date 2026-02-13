@@ -280,6 +280,7 @@ class LLM(BaseLLM):
             ) as response:
                 if response.status != 200:
                     error_text = await response.text()
+
                     raise Exception(f"HTTP {response.status}: {error_text}")
 
                 # Process SSE stream

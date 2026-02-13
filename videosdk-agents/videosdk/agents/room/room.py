@@ -125,6 +125,7 @@ class VideoSDKHandler(BaseTransportHandler):
         # Meeting and event handling
         self.meeting = None
         self.participants_data = {}
+        self.recorded_participants = set()
         self.audio_listener_tasks = {}
         self.video_listener_tasks = {}
 
@@ -208,7 +209,7 @@ class VideoSDKHandler(BaseTransportHandler):
         self._left: bool = False
         self.sdk_metadata = {
             "sdk": "agents",
-            "sdk_version": "0.0.59"
+            "sdk_version": "0.0.63"
         }
         self.videosdk_meeting_meta_data= {
             "agent_id": self.agent_id,
@@ -285,6 +286,7 @@ class VideoSDKHandler(BaseTransportHandler):
         asyncio.create_task(self._collect_session_id())
         asyncio.create_task(self._collect_meeting_attributes())
         if self.recording:
+            self.recorded_participants.add(self.meeting.local_participant.id)
             asyncio.create_task(
                 self.start_participant_recording(
                     self.meeting.local_participant.id)
@@ -539,6 +541,7 @@ class VideoSDKHandler(BaseTransportHandler):
         logger.info(f"Participant joined: {peer_name}")
 
         if self.recording and len(self.participants_data) == 1:
+            self.recorded_participants.add(participant.id)
             asyncio.create_task(
                 self.start_participant_recording(participant.id))
 
@@ -625,6 +628,11 @@ class VideoSDKHandler(BaseTransportHandler):
         # Update participant count and check if session should end
         self._update_non_agent_participant_count()
         
+        if participant.id in self.recorded_participants:
+            logger.info(f"Recorded participant {participant.display_name} left, ending session")
+            asyncio.create_task(self._end_session("recorded_participant_left"))
+            return
+
         if self._non_agent_participant_count == 0 and self.auto_end_session:
             if self.session_timeout_seconds is not None and self.session_timeout_seconds > 0:
                 logger.info(
@@ -803,6 +811,7 @@ class VideoSDKHandler(BaseTransportHandler):
             cascading_metrics_collector.set_traces_flow_manager(None)
         
         self.participants_data.clear()
+        self.recorded_participants.clear()
         self._participant_joined_events.clear()
         self.meeting = None
         self.pipeline = None
@@ -884,10 +893,8 @@ class VideoSDKHandler(BaseTransportHandler):
         """
         Stop recording for all participants.
         """
-        await self.stop_participant_recording(self.meeting.local_participant.id)
-        for participant_id in self.participants_data.keys():
-            logger.info("stopping participant recording for id",
-                        participant_id)
+        for participant_id in list(self.recorded_participants):
+            logger.info(f"stopping participant recording for id {participant_id}")
             await self.stop_participant_recording(participant_id)
 
     async def start_participant_recording(self, id: str):
@@ -928,6 +935,9 @@ class VideoSDKHandler(BaseTransportHandler):
         """
         Merge recordings from all participants.
         """
+        remote_recorded_ids = [pid for pid in self.recorded_participants 
+                               if pid != self.meeting.local_participant.id]
+
         headers = {"Authorization": self.auth_token,
                    "Content-Type": "application/json"}
         response = requests.request(
@@ -938,7 +948,7 @@ class VideoSDKHandler(BaseTransportHandler):
                 "channel1": [{"participantId": self.meeting.local_participant.id}],
                 "channel2": [
                     {"participantId": participant_id}
-                    for participant_id in self.participants_data.keys()
+                    for participant_id in remote_recorded_ids
                 ],
             },
             headers=headers,

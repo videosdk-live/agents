@@ -22,12 +22,11 @@ classifiers = [
 ]
 dependencies = [
     "uvicorn",
-    "videosdk>=0.2.5",
+    "videosdk>=0.2.9",
     "numpy",
     "httpx",
     "aiohttp",
     "openai",
-    "av>=14.0.0,<15.0.0",
     "python-dotenv",
     "pyee>=13.0.0",
     "grpcio",
@@ -55,38 +54,38 @@ dependencies = [
 videosdk = "videosdk.agents.cli:main"
 
 [project.optional-dependencies]
-anthropic = ["videosdk-plugins-anthropic>=0.0.59"]
-assemblyai = ["videosdk-plugins-assemblyai>=0.0.59"]
-aws = ["videosdk-plugins-aws>=0.0.59"]
-azure = ["videosdk-plugins-azure>=0.0.59"]
-cartesia = ["videosdk-plugins-cartesia>=0.0.59"]
-cerebras = ["videosdk-plugins-cerebras>=0.0.59"]
-cometapi = ["videosdk-plugins-cometapi>=0.0.59"]
-deepgram = ["videosdk-plugins-deepgram>=0.0.59"]
-elevenlabs = ["videosdk-plugins-elevenlabs>=0.0.59"]
-google = ["videosdk-plugins-google>=0.0.59"]
-groq = ["videosdk-plugins-groq>=0.0.59"]
-gladia = ["videosdk-plugins-gladia>=0.0.59"]
-humeai = ["videosdk-plugins-humeai>=0.0.59"]
-inworldai = ["videosdk-plugins-inworldai>=0.0.59"]
-lmnt = ["videosdk-plugins-lmnt>=0.0.59"]
-murfai = ["videosdk-plugins-murfai>=0.0.59"]
-navana = ["videosdk-plugins-navana>=0.0.59"]
-neuphonic = ["videosdk-plugins-neuphonic>=0.0.59"]
-nvidia = ["videosdk-plugins-nvidia>=0.0.59"]
-openai = ["videosdk-plugins-openai>=0.0.59"]
-papla = ["videosdk-plugins-papla>=0.0.59"]
-resemble = ["videosdk-plugins-resemble>=0.0.59"]
-rime = ["videosdk-plugins-rime>=0.0.59"]
-rnnoise = ["videosdk-plugins-rnnoise>=0.0.59"]
-sarvamai = ["videosdk-plugins-sarvamai>=0.0.59"]
-silero = ["videosdk-plugins-silero>=0.0.59"]
-simli = ["videosdk-plugins-simli>=0.0.59"]
-smallestai = ["videosdk-plugins-smallestai>=0.0.59"]
-speechify = ["videosdk-plugins-speechify>=0.0.59"]
-turn-detector = ["videosdk-plugins-turn-detector>=0.0.59"]
-ultravox = ["videosdk-plugins-ultravox>=0.0.59"]
-xai = ["videosdk-plugins-xai>=0.0.59"]
+anthropic = ["videosdk-plugins-anthropic>=0.0.63"]
+assemblyai = ["videosdk-plugins-assemblyai>=0.0.63"]
+aws = ["videosdk-plugins-aws>=0.0.63"]
+azure = ["videosdk-plugins-azure>=0.0.63"]
+cartesia = ["videosdk-plugins-cartesia>=0.0.63"]
+cerebras = ["videosdk-plugins-cerebras>=0.0.63"]
+cometapi = ["videosdk-plugins-cometapi>=0.0.63"]
+deepgram = ["videosdk-plugins-deepgram>=0.0.63"]
+elevenlabs = ["videosdk-plugins-elevenlabs>=0.0.63"]
+google = ["videosdk-plugins-google>=0.0.63"]
+groq = ["videosdk-plugins-groq>=0.0.63"]
+gladia = ["videosdk-plugins-gladia>=0.0.63"]
+humeai = ["videosdk-plugins-humeai>=0.0.63"]
+inworldai = ["videosdk-plugins-inworldai>=0.0.63"]
+lmnt = ["videosdk-plugins-lmnt>=0.0.63"]
+murfai = ["videosdk-plugins-murfai>=0.0.63"]
+navana = ["videosdk-plugins-navana>=0.0.63"]
+neuphonic = ["videosdk-plugins-neuphonic>=0.0.63"]
+nvidia = ["videosdk-plugins-nvidia>=0.0.63"]
+openai = ["videosdk-plugins-openai>=0.0.63"]
+papla = ["videosdk-plugins-papla>=0.0.63"]
+resemble = ["videosdk-plugins-resemble>=0.0.63"]
+rime = ["videosdk-plugins-rime>=0.0.63"]
+rnnoise = ["videosdk-plugins-rnnoise>=0.0.63"]
+sarvamai = ["videosdk-plugins-sarvamai>=0.0.63"]
+silero = ["videosdk-plugins-silero>=0.0.63"]
+simli = ["videosdk-plugins-simli>=0.0.63"]
+smallestai = ["videosdk-plugins-smallestai>=0.0.63"]
+speechify = ["videosdk-plugins-speechify>=0.0.63"]
+turn-detector = ["videosdk-plugins-turn-detector>=0.0.63"]
+ultravox = ["videosdk-plugins-ultravox>=0.0.63"]
+xai = ["videosdk-plugins-xai>=0.0.63"]
 videosdk-conversational-graph = ["videosdk-conversational-graph>=0.0.1"]
 
 [tool.hatch.version]

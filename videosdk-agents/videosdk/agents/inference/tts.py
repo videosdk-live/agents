@@ -7,6 +7,7 @@ import os
 import logging
 from typing import Any, AsyncIterator, Optional, Dict, Union, List
 
+
 import aiohttp
 
 from videosdk.agents import TTS as BaseTTS
@@ -28,11 +29,13 @@ class TTS(BaseTTS):
     A lightweight Text-to-Speech client that connects to VideoSDK's Inference Gateway.
     Supports multiple providers (Google, Sarvam, Deepgram) through a unified interface.
 
+
     Example:
         # Using factory methods (recommended)
         tts = TTS.google(voice_id="Achernar")
         tts = TTS.sarvam(speaker="anushka")
         tts = TTS.deepgram(model_id="aura-asteria-en")
+
 
         # Using generic constructor
         tts = TTS(provider="google", model_id="Chirp3-HD", config={"voice_name": "en-US-Chirp3-HD-Achernar"})
@@ -55,6 +58,7 @@ class TTS(BaseTTS):
 
         Args:
             provider: TTS provider name (e.g., "google", "sarvamai", "deepgram")
+
             model_id: Model identifier for the provider
             voice_id: Voice identifier
             language: Language code (default: "en-US")
@@ -506,6 +510,7 @@ class TTS(BaseTTS):
     async def _handle_message(self, raw_message: str) -> None:
         """Handle incoming messages from the inference server."""
         try:
+
             # Skip empty messages
             if not raw_message or not raw_message.strip():
                 logger.debug("[InferenceTTS] Received empty message, skipping")
@@ -550,6 +555,9 @@ class TTS(BaseTTS):
                 logger.error(f"[InferenceTTS] Server error: {error_msg}")
                 self.emit("error", error_msg)
 
+        except json.JSONDecodeError as e:
+            logger.error(f"[InferenceTTS] Failed to parse message: {e}")
+
         except Exception as e:
             logger.error(f"[InferenceTTS] Error handling message: {e}")
 
@@ -570,7 +578,9 @@ class TTS(BaseTTS):
             audio_bytes = self._remove_wav_header(audio_bytes)
 
             # Trigger first audio callback for TTFB metrics
+
             if not self._first_chunk_sent and self._first_audio_callback:
+
                 self._first_chunk_sent = True
                 asyncio.create_task(self._first_audio_callback())
 
@@ -587,6 +597,7 @@ class TTS(BaseTTS):
             data_pos = audio_bytes.find(b"data")
             if data_pos != -1:
                 return audio_bytes[data_pos + 8 :]
+
         return audio_bytes
 
     async def interrupt(self) -> None:
