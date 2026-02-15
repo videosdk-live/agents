@@ -1285,6 +1285,9 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 self.agent.session._emit_user_state(UserState.LISTENING)
 
         async def on_last_audio_byte():
+            # If the TTS task is still running, this is likely a buffer underrun, not true end of speech.
+            if self._current_tts_task and not self._current_tts_task.done():
+                return
             if self.agent and self.agent.session:
                 self.agent.session._emit_agent_state(AgentState.IDLE)
                 self.agent.session._emit_user_state(UserState.IDLE)
