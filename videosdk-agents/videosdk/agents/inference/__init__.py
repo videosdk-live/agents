@@ -23,11 +23,13 @@ from .stt import STT
 from .tts import TTS
 from .realtime import Realtime
 from .llm import LLM
+from .denoise import Denoise
 
 __all__ = [
     "STT",
     "TTS",
     "Realtime",
-    "LLM"
+    "LLM",
+    "Denoise"
 ]
 
