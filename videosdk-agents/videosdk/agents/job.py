@@ -70,7 +70,7 @@ class RoomOptions:
     auto_end_session: bool = True
     session_timeout_seconds: Optional[int] = 5
     # VideoSDK connection options
-    signaling_base_url: Optional[str] = None
+    signaling_base_url: Optional[str] = "api.videosdk.live"
     background_audio: bool = False
 
     # New Configuration Fields
