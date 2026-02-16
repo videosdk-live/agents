@@ -40,10 +40,6 @@ class AnamAudioTrack(CustomAudioTrack):
             except asyncio.QueueEmpty:
                 break
 
-    # def on_last_audio_byte(self):
-    #     """Called when the last byte of audio for a response has been consumed."""
-    #     pass
-
     @property
     def readyState(self):
         return self._readyState
@@ -230,14 +226,15 @@ class AnamAvatar:
         """Interrupt the avatar."""
         if self.session:
             try:
+                logger.info("Interrupting Anam Avatar")
+                if self.audio_track:
+                    self.audio_track.interrupt()
+
                 await self.session.interrupt()
 
                 if self._input_stream is not None:
                     await self._input_stream.end_sequence()
                     
-                if self.audio_track:
-                    self.audio_track.interrupt()
-
             except Exception as e:
                 logger.error(f"Error interrupting Anam: {e}")
 
