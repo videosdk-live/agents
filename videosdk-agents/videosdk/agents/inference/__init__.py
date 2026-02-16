@@ -11,11 +11,11 @@ Usage:
     stt = STT.google()
     tts = TTS.sarvam(speaker="anushka")
     realtime = Realtime.gemini(model="gemini-2.0-flash-exp")
-
-
+    denoise = Denoise.sanas()
+    
     # Use with CascadingPipeline
-    pipeline = CascadingPipeline(stt=stt, llm=llm, tts=tts)
-
+    pipeline = CascadingPipeline(stt=stt, llm=llm, tts=tts,denoise=denoise)
+    
     # Use with RealTimePipeline
     pipeline = RealTimePipeline(model=realtime)
 """
