@@ -29,6 +29,8 @@ class DeepgramSTTV2(BaseSTT):
         eager_eot_threshold:float=0.6,
         eot_threshold:float=0.8,
         eot_timeout_ms:int=7000,
+        keyterm: list[str] | None = None,
+        language: str = "en",
         base_url: str = "wss://api.deepgram.com/v2/listen",
         enable_preemptive_generation: bool = False,
     ) -> None:
@@ -42,6 +44,10 @@ class DeepgramSTTV2(BaseSTT):
             eager_eot_threshold (float): Eager end-of-turn threshold. Defaults to 0.6.
             eot_threshold (float): End-of-turn threshold. Defaults to 0.8.
             eot_timeout_ms (int): End-of-turn timeout in milliseconds. Defaults to 7000.
+            keyterm (list[str] | None): Optional list of keyterms/phrases to improve recognition (Keyterm Prompting).
+                Each entry is a keyterm or multi-word phrase (e.g. "tretinoin", "customer service").
+                Formatting is preserved (e.g. "Deepgram", "iPhone"). Max 500 tokens total across all keyterms. Defaults to None.
+            language (str): Language code for transcription. Defaults to "en" (Flux currently supports English).
             base_url (str): The base URL to use for the STT plugin. Defaults to "wss://api.deepgram.com/v2/listen".
             enable_preemptive_generation (bool): Enable preemptive generation based on EagerEndOfTurn events. Defaults to False.
         """
@@ -58,6 +64,8 @@ class DeepgramSTTV2(BaseSTT):
         self.eager_eot_threshold = eager_eot_threshold
         self.eot_threshold=eot_threshold
         self.eot_timeout_ms = eot_timeout_ms
+        self.keyterm = keyterm
+        self.language = language
         self.base_url = base_url
         self.enable_preemptive_generation = enable_preemptive_generation
 
@@ -139,14 +147,20 @@ class DeepgramSTTV2(BaseSTT):
 
         query_params = {
             "model": self.model,
+            "language": self.language,
             "encoding": "linear16",
             "sample_rate": self.target_sample_rate,
             "eot_threshold": self.eot_threshold,
             "eot_timeout_ms": self.eot_timeout_ms,
             "eager_eot_threshold": self.eager_eot_threshold,
         }
+        params_list = list(query_params.items())
+        if self.keyterm:
+            for t in self.keyterm:
+                if t.strip():
+                    params_list.append(("keyterm", t.strip()))
         headers = {"Authorization": f"Token {self.api_key}"}
-        ws_url = f"{self.base_url}?{urlencode(query_params)}"
+        ws_url = f"{self.base_url}?{urlencode(params_list)}"
 
         try:
             self._ws = await self._session.ws_connect(ws_url, headers=headers)
@@ -169,7 +183,8 @@ class DeepgramSTTV2(BaseSTT):
             start_time = msg.get("audio_window_start", 0.0)
             end_time = msg.get("audio_window_end", 0.0)
             confidence = msg.get("end_of_turn_confidence", 0.0)
-
+            duration = end_time - start_time
+            
             self._last_transcript = transcript
             # Emit turn-related events
             if event == "StartOfTurn":
@@ -185,6 +200,7 @@ class DeepgramSTTV2(BaseSTT):
                                 confidence=confidence,
                                 start_time=start_time,
                                 end_time=end_time,
+                                duration=duration,
                             ),
                             metadata={"model": self.model},
                         )
@@ -201,6 +217,7 @@ class DeepgramSTTV2(BaseSTT):
                                 confidence=confidence,
                                 start_time=start_time,
                                 end_time=end_time,
+                                duration=duration,
                             ),
                             metadata={"model": self.model},
                         )
@@ -216,6 +233,7 @@ class DeepgramSTTV2(BaseSTT):
                                     confidence=confidence,
                                     start_time=start_time,
                                     end_time=end_time,
+                                    duration=duration,
                                 ),
                                 metadata={"model": self.model, "turn_resumed": True},
                             )
