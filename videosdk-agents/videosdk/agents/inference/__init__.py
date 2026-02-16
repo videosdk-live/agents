@@ -6,7 +6,7 @@ All heavy lifting (API connections, resampling, etc.) is handled server-side.
 
 Usage:
     from videosdk.inference import STT, TTS, LLM, Realtime
-    
+
     # Quick start with factory methods
     stt = STT.google()
     tts = TTS.sarvam(speaker="anushka")
@@ -26,11 +26,5 @@ from .realtime import Realtime
 from .llm import LLM
 from .denoise import Denoise
 
-__all__ = [
-    "STT",
-    "TTS",
-    "Realtime",
-    "LLM",
-    "Denoise"
-]
 
+__all__ = ["STT", "TTS", "Realtime", "LLM", "Denoise"]

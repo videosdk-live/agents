@@ -187,23 +187,6 @@ class Denoise(BaseDenoise):
             channels=channels,
             base_url=base_url or "ws://localhost:8000",
         )
-    
-    @staticmethod
-    def sanas(
-        *,
-        model_id: str = "VI_G_NC3.0",
-        sample_rate: int = 16000,
-        channels: int = 1,
-        base_url: str | None = None,
-    ) -> "Denoise":
-
-        return Denoise(
-            provider="sanas",
-            model_id=model_id,
-            sample_rate=sample_rate,
-            channels=channels,
-            base_url=base_url or "ws://localhost:8000",
-        )
 
     # ==================== Core Denoise Methods ====================
 
