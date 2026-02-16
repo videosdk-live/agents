@@ -400,11 +400,15 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
     async def say(self, message: str, interruptible: bool = True) -> UtteranceHandle:
         """
         Send an initial message to the agent and return a handle to track it.
+        When called from inside a function tool (_is_executing_tool), the current
+        turn's utterance is not interrupted or replaced, so the LLM stream can
+        continue after the tool returns.
         """
-        if self.current_utterance and not self.current_utterance.done():
-            self.current_utterance.interrupt()
         handle = UtteranceHandle(utterance_id=f"utt_{uuid.uuid4().hex[:8]}", interruptible=interruptible)
-        self.current_utterance = handle
+        if not self._is_executing_tool:
+            if self.current_utterance and not self.current_utterance.done():
+                self.current_utterance.interrupt()
+            self.current_utterance = handle
 
         if not isinstance(self.pipeline, RealTimePipeline):
             traces_flow_manager = cascading_metrics_collector.traces_flow_manager
