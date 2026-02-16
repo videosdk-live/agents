@@ -169,7 +169,8 @@ class DeepgramSTTV2(BaseSTT):
             start_time = msg.get("audio_window_start", 0.0)
             end_time = msg.get("audio_window_end", 0.0)
             confidence = msg.get("end_of_turn_confidence", 0.0)
-
+            duration = end_time - start_time
+            
             self._last_transcript = transcript
             # Emit turn-related events
             if event == "StartOfTurn":
@@ -185,6 +186,7 @@ class DeepgramSTTV2(BaseSTT):
                                 confidence=confidence,
                                 start_time=start_time,
                                 end_time=end_time,
+                                duration=duration,
                             ),
                             metadata={"model": self.model},
                         )
@@ -201,6 +203,7 @@ class DeepgramSTTV2(BaseSTT):
                                 confidence=confidence,
                                 start_time=start_time,
                                 end_time=end_time,
+                                duration=duration,
                             ),
                             metadata={"model": self.model},
                         )
@@ -216,6 +219,7 @@ class DeepgramSTTV2(BaseSTT):
                                     confidence=confidence,
                                     start_time=start_time,
                                     end_time=end_time,
+                                    duration=duration,
                                 ),
                                 metadata={"model": self.model, "turn_resumed": True},
                             )

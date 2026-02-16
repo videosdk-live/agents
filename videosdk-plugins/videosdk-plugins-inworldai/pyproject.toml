@@ -19,7 +19,7 @@ classifiers = [
     "Topic :: Multimedia :: Video",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-dependencies = ["videosdk-agents>=0.0.62", "httpx>=0.24.0"]
+dependencies = ["videosdk-agents>=0.0.63", "httpx>=0.24.0"]
 
 [tool.hatch.version]
 path = "videosdk/plugins/inworldai/version.py"

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from typing import Any, Optional, Literal
+from typing import Any, Optional, Literal, Dict, Tuple
 from urllib.parse import urlencode
 import logging
 import numpy as np
@@ -197,30 +197,36 @@ class AssemblyAISTT(BaseSTT):
         
         try:
             msg_type = msg.get('type')
-            logger.info(f"[AssemblyAI] Message type: {msg_type}")
 
             if msg_type == "Begin":
                 session_id = msg.get('id')
-                logger.info(f"[AssemblyAI] Session began: ID={session_id}")
                 
             elif msg_type == "Turn":
                 transcript = msg.get('transcript', '')
                 formatted = msg.get('turn_is_formatted', False)
-                confidence = msg.get('confidence', 1.0)
                 
                 if transcript and transcript.strip():
                     self._last_transcript = transcript.strip()
                     
-                    event_type = SpeechEventType.FINAL if formatted else SpeechEventType.INTERIM
-                    
-                    response = STTResponse(
-                        event_type=event_type,
-                        data=SpeechData(
-                            text=transcript.strip(),
-                            confidence=confidence
+                    if formatted:
+                        event_type = SpeechEventType.FINAL 
+                        avg_confidence, duration_ms = self.get_avg_confidence_and_duration_ms(msg)
+                        response = STTResponse(
+                            event_type=event_type,
+                            data=SpeechData(
+                                text=transcript.strip(),
+                                confidence=avg_confidence,
+                                duration=duration_ms
+                            )
                         )
-                    )
-                    
+                    else:
+                        event_type = SpeechEventType.INTERIM
+                        response = STTResponse(
+                            event_type=event_type,
+                            data=SpeechData(
+                                text=transcript.strip(),
+                            )
+                        )
                     responses.append(response)
                     
                     if not self._is_speaking:
@@ -237,7 +243,6 @@ class AssemblyAISTT(BaseSTT):
                         event_type=SpeechEventType.FINAL,
                         data=SpeechData(
                             text=self._last_transcript,
-                            confidence=1.0
                         )
                     )
                     responses.append(final_response)
@@ -281,6 +286,49 @@ class AssemblyAISTT(BaseSTT):
         except Exception as e:
             logger.error(f"Error resampling audio: {e}")
             return b''
+
+    def get_avg_confidence_and_duration_ms(self, turn: Dict) -> Tuple[float, int]:
+        """
+        Extracts:
+        - Average confidence across words
+        - Turn duration in milliseconds using (max_end - min_start)
+
+        Args:
+            turn (dict): Turn JSON message
+
+        Returns:
+            (avg_confidence, duration_ms)
+        """
+
+        words = turn.get("words", [])
+
+        total_conf = 0.0
+        count = 0
+
+        min_start = None
+        max_end = None
+
+        for w in words:
+            # only consider final words (optional but recommended)
+            if not w.get("word_is_final", True):
+                continue
+
+            conf = w.get("confidence")
+
+            # confidence average
+            if conf is not None:
+                total_conf += conf
+                count += 1
+
+            # duration bounds
+            min_start = words[0].get("start")
+            max_end = words[-1].get("end")
+
+        avg_confidence = total_conf / count if count > 0 else 0.0
+        duration_ms = (max_end - min_start) if (min_start is not None and max_end is not None) else 0
+
+        return avg_confidence, duration_ms
+
 
     async def aclose(self) -> None:
         """Cleanup resources"""
