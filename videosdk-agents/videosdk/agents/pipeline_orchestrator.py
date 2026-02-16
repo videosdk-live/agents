@@ -266,6 +266,9 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 self.emit("content_generated", {"text": full_response})
                 
                 if self.speech_generation:
+                    # Store response text for agent_speech timeline tracking
+                    if self.speech_generation.metrics_collector:
+                        self.speech_generation.metrics_collector._pending_say_text = full_response
                     await self.speech_generation.synthesize(full_response)
                 
                 self.emit("synthesis_complete", {})
@@ -610,6 +613,9 @@ class PipelineOrchestrator(EventEmitter[Literal[
         """
         if self.speech_generation:
             try:
+                # Store say text so the turn captures it for timeline tracking
+                if self.speech_generation.metrics_collector:
+                    self.speech_generation.metrics_collector._pending_say_text = message
                 await self.speech_generation.synthesize(message)
             finally:
                 handle._mark_done()

@@ -281,7 +281,7 @@ class VideoSDKHandler(BaseTransportHandler):
         """
         logger.info(f"Agent joined the meeting")
         self._meeting_joined_data = data
-        # asyncio.create_task(self._collect_session_id())
+        asyncio.create_task(self._collect_session_id())
         # asyncio.create_task(self._collect_meeting_attributes())
         if self.recording:
             asyncio.create_task(
@@ -671,18 +671,21 @@ class VideoSDKHandler(BaseTransportHandler):
 
     async def _collect_session_id(self) -> None:
         """
-        Internal method: Collect session ID from room and set it in metrics.
+        Internal method: Collect session ID from room and set it on the
+        AnalyticsClient singleton so all analytics use the real session ID.
         """
         if self.meeting and not self._session_id_collected:
             try:
                 session_id = getattr(self.meeting, "session_id", None)
                 if session_id:
                     self._session_id = session_id
-                    # cascading_metrics_collector.set_session_id(session_id)
-                    # realtime_metrics_collector.set_session_id(session_id)
+                    # Set session ID on the singleton AnalyticsClient
+                    from ..metrics.analytics import AnalyticsClient
+                    AnalyticsClient().set_session_id(session_id)
                     self._session_id_collected = True
                     if self.traces_flow_manager:
                         self.traces_flow_manager.set_session_id(session_id)
+                    logger.info(f"Session ID collected and set: {session_id}")
             except Exception as e:
                 logger.error(f"Error collecting session ID: {e}")
 
