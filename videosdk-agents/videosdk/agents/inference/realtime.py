@@ -210,7 +210,7 @@ class Realtime(RealtimeBaseModel[RealtimeEventTypes]):
 
         return Realtime(
             provider="google",
-            model=model,
+            model_id=model,
             config=config,
             base_url=base_url,
         )
@@ -258,8 +258,13 @@ class Realtime(RealtimeBaseModel[RealtimeEventTypes]):
             ):
                 self.audio_track = CustomAudioStreamTrack(self.loop)
             elif not self.loop and "AUDIO" in self.config.response_modalities:
-                self.emit("error", "Event loop not initialized. Audio playback will not work.")
-                raise RuntimeError("Event loop not initialized. Audio playback will not work.")
+
+                self.emit(
+                    "error", "Event loop not initialized. Audio playback will not work."
+                )
+                raise RuntimeError(
+                    "Event loop not initialized. Audio playback will not work."
+                )
 
             # Connect to WebSocket
             await self._connect_ws()
@@ -270,7 +275,9 @@ class Realtime(RealtimeBaseModel[RealtimeEventTypes]):
                     self._listen_for_responses(), name="inference-realtime-listener"
                 )
 
-            logger.info(f"[InferenceRealtime] Connected to inference gateway (provider={self.provider})")
+            logger.info(
+                f"[InferenceRealtime] Connected to inference gateway (provider={self.provider})"
+            )
 
         except Exception as e:
             self.emit("error", f"Error connecting to inference gateway: {e}")
@@ -305,7 +312,11 @@ class Realtime(RealtimeBaseModel[RealtimeEventTypes]):
             return
 
         config_data = {
-            "model": f"models/{self.model}" if not self.model.startswith("models/") else self.model,
+            "model": (
+                f"models/{self.model}"
+                if not self.model.startswith("models/")
+                else self.model
+            ),
             "instructions": self._instructions,
             "voice": self.config.voice,
             "language_code": self.config.language_code,
@@ -331,7 +342,10 @@ class Realtime(RealtimeBaseModel[RealtimeEventTypes]):
         try:
             await self._ws.send_str(json.dumps(config_message))
             self._config_sent = True
-            logger.info(f"[InferenceRealtime] Config sent: voice={self.config.voice}, modalities={self.config.response_modalities}")
+            logger.info(
+                f"[InferenceRealtime] Config sent: voice={self.config.voice}, modalities={self.config.response_modalities}"
+            )
+
         except Exception as e:
             logger.error(f"[InferenceRealtime] Failed to send config: {e}")
             raise
@@ -363,7 +377,9 @@ class Realtime(RealtimeBaseModel[RealtimeEventTypes]):
             audio_array = np.frombuffer(audio_data, dtype=np.int16)
             audio_array = signal.resample(
                 audio_array,
-                int(len(audio_array) * self.target_sample_rate / self.input_sample_rate),
+                int(
+                    len(audio_array) * self.target_sample_rate / self.input_sample_rate
+                ),
             )
             audio_data = audio_array.astype(np.int16).tobytes()
 
@@ -390,7 +406,12 @@ class Realtime(RealtimeBaseModel[RealtimeEventTypes]):
 
             # Rate limit video frames
             now = time.monotonic()
-            if hasattr(self, "_last_video_frame") and (now - self._last_video_frame) < 0.5:
+
+            if (
+                hasattr(self, "_last_video_frame")
+                and (now - self._last_video_frame) < 0.5
+            ):
+
                 return
             self._last_video_frame = now
 
@@ -456,11 +477,14 @@ class Realtime(RealtimeBaseModel[RealtimeEventTypes]):
             logger.error(f"[InferenceRealtime] Error sending text message: {e}")
             self.emit("error", str(e))
 
-    async def send_message_with_frames(self, message: str, frames: List[av.VideoFrame]) -> None:
+    async def send_message_with_frames(
+        self, message: str, frames: List[av.VideoFrame]
+    ) -> None:
         """Send a text message with video frames for vision-enabled communication."""
         if not self._ws or self._closing:
-            logger.warning("[InferenceRealtime] Cannot send message with frames: not connected")
-            return
+            logger.warning(
+                "[InferenceRealtime] Cannot send message with frames: not connected"
+            )
 
         try:
             if not self._config_sent:
@@ -472,7 +496,10 @@ class Realtime(RealtimeBaseModel[RealtimeEventTypes]):
                 try:
                     processed_jpeg = encode_image(frame, DEFAULT_IMAGE_ENCODE_OPTIONS)
                     if processed_jpeg and len(processed_jpeg) >= 100:
-                        encoded_frames.append(base64.b64encode(processed_jpeg).decode("utf-8"))
+                        encoded_frames.append(
+                            base64.b64encode(processed_jpeg).decode("utf-8")
+                        )
+
                 except Exception as e:
                     logger.error(f"[InferenceRealtime] Error encoding frame: {e}")
 
@@ -499,7 +526,9 @@ class Realtime(RealtimeBaseModel[RealtimeEventTypes]):
             return
 
         if self.current_utterance and not self.current_utterance.is_interruptible:
-            logger.info("[InferenceRealtime] Utterance not interruptible, skipping interrupt")
+            logger.info(
+                "[InferenceRealtime] Utterance not interruptible, skipping interrupt"
+            )
             return
 
         try:
@@ -534,11 +563,16 @@ class Realtime(RealtimeBaseModel[RealtimeEventTypes]):
                     break
 
                 if msg.type == aiohttp.WSMsgType.TEXT:
-                    accumulated_input_text, accumulated_output_text = await self._handle_message(
-                        msg.data, accumulated_input_text, accumulated_output_text
+
+                    accumulated_input_text, accumulated_output_text = (
+                        await self._handle_message(
+                            msg.data, accumulated_input_text, accumulated_output_text
+                        )
                     )
                 elif msg.type == aiohttp.WSMsgType.ERROR:
-                    logger.error(f"[InferenceRealtime] WebSocket error: {self._ws.exception()}")
+                    logger.error(
+                        f"[InferenceRealtime] WebSocket error: {self._ws.exception()}"
+                    )
                     self.emit("error", f"WebSocket error: {self._ws.exception()}")
                     break
                 elif msg.type == aiohttp.WSMsgType.CLOSED:
@@ -569,12 +603,18 @@ class Realtime(RealtimeBaseModel[RealtimeEventTypes]):
 
             elif msg_type == "event":
                 event_data = data.get("data", {})
-                accumulated_input_text, accumulated_output_text = await self._handle_event(
-                    event_data, accumulated_input_text, accumulated_output_text
+
+                accumulated_input_text, accumulated_output_text = (
+                    await self._handle_event(
+                        event_data, accumulated_input_text, accumulated_output_text
+                    )
                 )
 
             elif msg_type == "error":
-                error_msg = data.get("data", {}).get("error") or data.get("message", "Unknown error")
+                error_msg = data.get("data", {}).get("error") or data.get(
+                    "message", "Unknown error"
+                )
+
                 logger.error(f"[InferenceRealtime] Server error: {error_msg}")
                 self.emit("error", error_msg)
 
@@ -682,7 +722,11 @@ class Realtime(RealtimeBaseModel[RealtimeEventTypes]):
                     "realtime_model_transcription",
                     {"role": "agent", "text": text, "is_final": True},
                 )
-                global_event_emitter.emit("text_response", {"type": "done", "text": text})
+
+                global_event_emitter.emit(
+                    "text_response", {"type": "done", "text": text}
+                )
+
                 accumulated_output_text = ""
 
         elif event_type == "response_interrupted":
@@ -749,4 +793,3 @@ class Realtime(RealtimeBaseModel[RealtimeEventTypes]):
     def label(self) -> str:
         """Get a descriptive label for this Realtime instance."""
         return f"videosdk.inference.Realtime.{self.provider}.{self.model_id}"
-
