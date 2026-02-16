@@ -231,7 +231,10 @@ class AnamAvatar:
         if self.session:
             try:
                 await self.session.interrupt()
-                
+
+                if self._input_stream is not None:
+                    await self._input_stream.end_sequence()
+                    
                 if self.audio_track:
                     self.audio_track.interrupt()
 
