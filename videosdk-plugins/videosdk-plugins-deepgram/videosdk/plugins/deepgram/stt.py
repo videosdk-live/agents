@@ -25,13 +25,15 @@ class DeepgramSTT(BaseSTT):
         sample_rate: int = 48000,
         endpointing: int = 50,
         filler_words: bool = True,
+        keywords: list[str] | None = None,
+        keyterm: list[str] | None = None,
         base_url: str = "wss://api.deepgram.com/v1/listen",
     ) -> None:
         """Initialize the Deepgram STT plugin
 
         Args:
             api_key (str | None, optional): Deepgram API key. Uses DEEPGRAM_API_KEY environment variable if not provided. Defaults to None.
-            model (str): The model to use for the STT plugin. Defaults to "nova-2".
+            model (str): The model to use for the STT plugin. Defaults to "nova-2". Use "nova-3" or "nova-3-general" for Nova-3.
             language (str): The language to use for the STT plugin. Defaults to "en-US".
             interim_results (bool): Whether to return interim results. Defaults to True.
             punctuate (bool): Whether to add punctuation. Defaults to True.
@@ -39,6 +41,10 @@ class DeepgramSTT(BaseSTT):
             sample_rate (int): Sample rate to use for the STT plugin. Defaults to 48000.
             endpointing (int): Endpointing threshold. Defaults to 50, set 0 to make false.
             filler_words (bool): Whether to include filler words. Defaults to True.
+            keywords (list[str] | None): Optional keywords for boosting/suppression. Only for Nova-2, Nova-1, Enhanced, Base.
+                Each entry is a keyword or "keyword:intensifier" (e.g. "snuffleupagus:5", "kansas:-10"). Max 100. Defaults to None.
+            keyterm (list[str] | None): Optional keyterms/phrases for Keyterm Prompting. Only for Nova-3 (e.g. model="nova-3").
+                Each entry is a keyterm or phrase (e.g. "tretinoin", "customer service"). Max 500 tokens total. Defaults to None.
             base_url (str): The base URL to use for the STT plugin. Defaults to "wss://api.deepgram.com/v1/listen".
         """
         super().__init__()
@@ -49,6 +55,11 @@ class DeepgramSTT(BaseSTT):
                 "Deepgram API key must be provided either through api_key parameter or DEEPGRAM_API_KEY environment variable")
 
         self.model = model
+        _is_nova3 = model == "nova-3" or model.startswith("nova-3-")
+        if _is_nova3 and keywords:
+            raise ValueError(
+                "Keywords are not supported for Nova-3. Use keyterm=... for Keyterm Prompting instead."
+            )
         self.language = language
         self.sample_rate = sample_rate
         self.interim_results = interim_results
@@ -56,6 +67,8 @@ class DeepgramSTT(BaseSTT):
         self.smart_format = smart_format
         self.endpointing = endpointing
         self.filler_words = filler_words
+        self.keywords = keywords
+        self.keyterm = keyterm
         self.base_url = base_url
         self._session: Optional[aiohttp.ClientSession] = None
         self._ws: Optional[aiohttp.ClientWebSocketResponse] = None
@@ -138,11 +151,20 @@ class DeepgramSTT(BaseSTT):
             "vad_events": "true",
             "no_delay": "true",
         }
+        params_list = list(query_params.items())
+        _is_nova3 = self.model == "nova-3" or self.model.startswith("nova-3-")
+        if _is_nova3 and self.keyterm:
+            for t in self.keyterm:
+                if t.strip():
+                    params_list.append(("keyterm", t.strip()))
+        elif not _is_nova3 and self.keywords:
+            for kw in self.keywords[:100]:
+                params_list.append(("keywords", kw))
         headers = {
             "Authorization": f"Token {self.api_key}",
         }
 
-        ws_url = f"{self.base_url}?{urlencode(query_params)}"
+        ws_url = f"{self.base_url}?{urlencode(params_list)}"
 
         try:
             self._ws = await self._session.ws_connect(ws_url, headers=headers)
