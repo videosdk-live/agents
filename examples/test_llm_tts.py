@@ -40,8 +40,11 @@ async def entrypoint(ctx: JobContext):
     async def on_pubsub_message(message):
         """Handle incoming text messages from pubsub"""
         text = message.get('message', '') if isinstance(message, dict) else str(message)
+        if isinstance(message, dict) and message.get("message") == "interrupt":
+            print("Interrupting...")
+            session.interrupt()
+            return
         print(f"Received text: {text}")
-        
         if text.strip():
             await pipeline.process_text(text)
     
