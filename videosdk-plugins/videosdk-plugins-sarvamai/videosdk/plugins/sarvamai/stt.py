@@ -4,7 +4,7 @@ import asyncio
 import json
 import os
 import base64
-from typing import Any
+from typing import Any, Literal
 
 import aiohttp
 import numpy as np
@@ -30,6 +30,7 @@ class SarvamAISTT(STT):
         language: str = "en-IN",
         input_sample_rate: int = 48000,
         output_sample_rate: int = 16000,
+        mode: Literal["transcribe", "translate", "verbatim", "translit", "codemix"] | None = None,
     ) -> None:
         """Initialize the SarvamAI STT plugin with WebSocket support.
 
@@ -39,6 +40,7 @@ class SarvamAISTT(STT):
             language: The language code (default: "en-IN")
             input_sample_rate: Input sample rate (default: 48000)
             output_sample_rate: Output sample rate (default: 16000)
+            mode: Mode of operation. Only applicable when using the ``saaras:v3``
         """
         super().__init__()
         if not SCIPY_AVAILABLE:
@@ -52,6 +54,7 @@ class SarvamAISTT(STT):
         self.language = language
         self.input_sample_rate = input_sample_rate
         self.output_sample_rate = output_sample_rate
+        self.mode = mode
 
         # WebSocket related
         self._session: aiohttp.ClientSession | None = None
@@ -75,8 +78,11 @@ class SarvamAISTT(STT):
         if self._session is None:
             self._session = aiohttp.ClientSession()
 
+        resolved_mode = self.validate_mode_for_model()
+
         ws_url = f"{SARVAM_STT_STREAMING_URL}?language-code={self.language}&model={self.model}&vad_signals=true"
-        
+        if resolved_mode is not None:
+            ws_url += f"&mode={resolved_mode}"
         headers = {"api-subscription-key": self.api_key}
         
         self._ws = await self._session.ws_connect(ws_url, headers=headers)
@@ -198,6 +204,14 @@ class SarvamAISTT(STT):
         except Exception as e:
             logger.error(f"Error resampling audio: {e}")
             return b''
+
+    def validate_mode_for_model(self) -> str | None:
+        """Validate and resolve the mode for the current model."""
+        if self.model in ["saaras:v3"]:
+            print("Mode: ", self.mode)
+            return self.mode if self.mode is not None else "transcribe"
+        return None
+
 
     async def aclose(self) -> None:
         """Close WebSocket connection and cleanup."""
