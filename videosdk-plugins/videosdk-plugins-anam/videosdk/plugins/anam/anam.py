@@ -1,5 +1,4 @@
 import asyncio
-import time
 import traceback
 import logging
 from typing import Optional
@@ -120,7 +119,6 @@ class AnamAvatar:
             self.persona_config = PersonaConfig(
                 avatar_id=avatar_id or DEFAULT_AVATAR_ID,
                 enable_audio_passthrough=True,
-                llm_id="CUSTOMER_CLIENT_V1",
             )
 
         self.client: Optional[AnamClient] = None
@@ -132,6 +130,8 @@ class AnamAvatar:
         self._stopping = False
         self._input_stream = None
         self._tasks = []
+        self._end_sequence_task: Optional[asyncio.Task] = None
+        self._end_sequence_debounce = 0.3
 
     async def connect(self):
         """Connect to Anam and start processing streams."""
@@ -197,6 +197,24 @@ class AnamAvatar:
         finally:
             logger.info("Anam audio processing stopped")
 
+    async def _schedule_end_sequence(self):
+        """
+        Debounced call to end the current TTS sequence.
+
+        Anam expects end_sequence() once all TTS audio has been sent so it can
+        move the avatar back into "listening" mode. We debounce this so short
+        gaps between audio chunks don't prematurely end the sequence.
+        """
+        try:
+            await asyncio.sleep(self._end_sequence_debounce)
+            if not self.run or self._stopping or self._input_stream is None:
+                return
+            await self._input_stream.end_sequence()
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"Error sending end_sequence to Anam: {e}")
+
     async def handle_audio_input(self, audio_data: bytes):
         """Handle audio input from VideoSDK pipeline and send to Anam."""
         if not self.run or self._stopping or not self._input_stream:
@@ -219,6 +237,10 @@ class AnamAvatar:
                 resampled_data = frame.to_ndarray().tobytes()
                 await self._input_stream.send_audio_chunk(resampled_data)
 
+            if self._end_sequence_task is not None:
+                self._end_sequence_task.cancel()
+            self._end_sequence_task = asyncio.create_task(self._schedule_end_sequence())
+
         except Exception as e:
             logger.error(f"Error processing/sending Anam audio data: {e}")
 
@@ -227,6 +249,8 @@ class AnamAvatar:
         if self.session:
             try:
                 logger.info("Interrupting Anam Avatar")
+                if self._end_sequence_task is not None:
+                    self._end_sequence_task.cancel()
                 if self.audio_track:
                     self.audio_track.interrupt()
 
@@ -247,6 +271,9 @@ class AnamAvatar:
 
         for task in self._tasks:
             task.cancel()
+
+        if self._end_sequence_task is not None:
+            self._end_sequence_task.cancel()
         
         if self.session:
             try:
