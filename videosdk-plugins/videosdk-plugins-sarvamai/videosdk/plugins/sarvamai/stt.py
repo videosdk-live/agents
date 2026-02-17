@@ -208,7 +208,6 @@ class SarvamAISTT(STT):
     def validate_mode_for_model(self) -> str | None:
         """Validate and resolve the mode for the current model."""
         if self.model in ["saaras:v3"]:
-            print("Mode: ", self.mode)
             return self.mode if self.mode is not None else "transcribe"
         return None
 
