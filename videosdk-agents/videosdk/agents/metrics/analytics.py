@@ -26,6 +26,10 @@ class AnalyticsClient:
         self.base_url = "https://api.videosdk.live"
         self._initialized = True
 
+    def set_base_url(self, base_url: str) -> None:
+        """Set the base URL for analytics tracking"""
+        self.base_url = f"https://{base_url}"
+
     def set_session_id(self, session_id: str) -> None:
         """Set the session ID for analytics tracking"""
         self.session_id = session_id

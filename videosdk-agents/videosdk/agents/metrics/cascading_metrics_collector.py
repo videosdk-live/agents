@@ -26,6 +26,11 @@ class CascadingMetricsCollector:
     def set_traces_flow_manager(self, manager: TracesFlowManager):
         """Set the TracesFlowManager instance"""
         self.traces_flow_manager = manager
+    
+    def set_analytics_url(self, url: str):
+        """Set the analytics URL"""
+        if self.analytics_client:
+            self.analytics_client.set_base_url(url)
 
     def _generate_interaction_id(self) -> str:
         """Generate a hash-based turn ID"""

@@ -138,6 +138,7 @@ class VideoSDKHandler(BaseTransportHandler):
         self.traces_flow_manager = TracesFlowManager(room_id=self.meeting_id)
         cascading_metrics_collector.set_traces_flow_manager(
             self.traces_flow_manager)
+        cascading_metrics_collector.set_analytics_url(self.signaling_base_url)
 
 
         if custom_microphone_audio_track:
@@ -809,6 +810,7 @@ class VideoSDKHandler(BaseTransportHandler):
                 logger.error(f"Error ending traces flow manager: {e}")
             self.traces_flow_manager = None
             cascading_metrics_collector.set_traces_flow_manager(None)
+            cascading_metrics_collector.set_analytics_url(None)
         
         self.participants_data.clear()
         self.recorded_participants.clear()
