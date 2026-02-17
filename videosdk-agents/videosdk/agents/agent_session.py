@@ -315,18 +315,43 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
 
             if self.pipeline.__class__.__name__ == "CascadingPipeline":
                 configs = self.pipeline.get_component_configs() if hasattr(self.pipeline, 'get_component_configs') else {}
+                
+                # Helper to get the actual provider class name (unwrap FallbackBase)
+                from .fallback_base import FallbackBase
+                def get_provider_class(component):
+                    if component is None:
+                        return ""
+                    if isinstance(component, FallbackBase):
+                        return component.active_provider_class
+                    return component.__class__.__name__
+                
                 cascading_metrics_collector.set_provider_info(
-                    llm_provider=self.pipeline.llm.__class__.__name__ if self.pipeline.llm else "",
+                    llm_provider=get_provider_class(self.pipeline.llm),
                     llm_model=configs.get('llm', {}).get('model', "") if self.pipeline.llm else "",
-                    stt_provider=self.pipeline.stt.__class__.__name__ if self.pipeline.stt else "",
+                    stt_provider=get_provider_class(self.pipeline.stt),
                     stt_model=configs.get('stt', {}).get('model', "") if self.pipeline.stt else "",
-                    tts_provider=self.pipeline.tts.__class__.__name__ if self.pipeline.tts else "",
+                    tts_provider=get_provider_class(self.pipeline.tts),
                     tts_model=configs.get('tts', {}).get('model', "") if self.pipeline.tts else "",
                     vad_provider=self.pipeline.vad.__class__.__name__ if hasattr(self.pipeline, 'vad') and self.pipeline.vad else "",
                     vad_model=configs.get('vad', {}).get('model', "") if hasattr(self.pipeline, 'vad') and self.pipeline.vad else "",
                     eou_provider=self.pipeline.turn_detector.__class__.__name__ if hasattr(self.pipeline, 'turn_detector') and self.pipeline.turn_detector else "",
                     eou_model=configs.get('eou', {}).get('model', "") if hasattr(self.pipeline, 'turn_detector') and self.pipeline.turn_detector else ""
                 )
+                
+                # Configure VAD parameters for metrics tracking
+                if hasattr(self.pipeline, 'vad') and self.pipeline.vad:
+                    vad = self.pipeline.vad
+                    cascading_metrics_collector.config_vad(
+                        min_silence_duration=getattr(vad, '_min_silence_duration', None),
+                        min_speech_duration=getattr(vad, '_min_speech_duration', None),
+                        threshold=getattr(vad, '_threshold', None)
+                    )
+                
+                # Wire up metrics collector to fallback adapters for fallback tracing
+                from .fallback_base import FallbackBase
+                for component in [self.pipeline.stt, self.pipeline.llm, self.pipeline.tts]:
+                    if component and isinstance(component, FallbackBase):
+                        component.set_metrics_collector(cascading_metrics_collector)
         
         if hasattr(self.pipeline, 'set_agent'):
             self.pipeline.set_agent(self.agent)
@@ -375,11 +400,15 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
     async def say(self, message: str, interruptible: bool = True) -> UtteranceHandle:
         """
         Send an initial message to the agent and return a handle to track it.
+        When called from inside a function tool (_is_executing_tool), the current
+        turn's utterance is not interrupted or replaced, so the LLM stream can
+        continue after the tool returns.
         """
-        if self.current_utterance and not self.current_utterance.done():
-            self.current_utterance.interrupt()
         handle = UtteranceHandle(utterance_id=f"utt_{uuid.uuid4().hex[:8]}", interruptible=interruptible)
-        self.current_utterance = handle
+        if not self._is_executing_tool:
+            if self.current_utterance and not self.current_utterance.done():
+                self.current_utterance.interrupt()
+            self.current_utterance = handle
 
         if not isinstance(self.pipeline, RealTimePipeline):
             traces_flow_manager = cascading_metrics_collector.traces_flow_manager
@@ -411,6 +440,11 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             self._background_audio_player = BackgroundAudioHandler(config, audio_track)
             
             await self._background_audio_player.start()
+            # Track background audio start for metrics
+            cascading_metrics_collector.on_background_audio_start(
+                file_path=config.file_path,
+                looping=config.looping
+            )
 
 
     async def stop_background_audio(self) -> None:
@@ -418,6 +452,8 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         if self._background_audio_player:
             await self._background_audio_player.stop()
             self._background_audio_player = None
+            # Track background audio stop for metrics
+            cascading_metrics_collector.on_background_audio_stop()
 
         if self._thinking_was_playing:
             await self.start_thinking_audio()
@@ -447,12 +483,19 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         if self.agent._thinking_background_config and audio_track:
             self._thinking_audio_player = BackgroundAudioHandler(self.agent._thinking_background_config, audio_track)
             await self._thinking_audio_player.start()
+            # Track thinking audio start for metrics
+            cascading_metrics_collector.on_thinking_audio_start(
+                file_path=self.agent._thinking_background_config.file_path,
+                looping=self.agent._thinking_background_config.looping
+            )
 
     async def stop_thinking_audio(self):
         """Stop thinking audio"""
         if self._thinking_audio_player:
             await self._thinking_audio_player.stop()
             self._thinking_audio_player = None
+            # Track thinking audio stop for metrics
+            cascading_metrics_collector.on_thinking_audio_stop()
     
 
     async def reply(self, instructions: str, wait_for_playback: bool = True, frames: list[av.VideoFrame] | None = None, interruptible: bool = True) -> UtteranceHandle:
