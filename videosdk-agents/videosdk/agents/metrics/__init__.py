@@ -17,7 +17,9 @@ from .metrics_schema import (
     FunctionToolMetrics,
     McpToolMetrics,
     ParticipantMetrics,
+    ParticipantMetrics,
     BaseComponentMetrics,
+    KbMetrics,
 )
 
 # Integration utilities (telemetry, logs, spans)
@@ -54,6 +56,7 @@ __all__ = [
     'McpToolMetrics',
     'ParticipantMetrics',
     'BaseComponentMetrics',
+    'KbMetrics',
 
     # Integration utilities
     'auto_initialize_telemetry_and_logs',

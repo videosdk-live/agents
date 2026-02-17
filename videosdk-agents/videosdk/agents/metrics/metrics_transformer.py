@@ -157,10 +157,14 @@ def transform_turn(turn: TurnMetrics) -> Dict[str, Any]:
     if kb_list:
         # Take last KB result
         last_kb = kb_list[-1]
+        result["kbProviderClass"] = last_kb.provider_class or ""
+        result["kbModelName"] = last_kb.model_name or ""
         result["kbDocuments"] = last_kb.kb_documents or []
         result["kbScores"] = last_kb.kb_scores or []
         result["kbRetrievalLatency"] = _to_ms(last_kb.kb_retrieval_latency)
     else:
+        result["kbProviderClass"] = ""
+        result["kbModelName"] = ""
         result["kbDocuments"] = []
         result["kbScores"] = []
         result["kbRetrievalLatency"] = 0

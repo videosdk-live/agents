@@ -5,8 +5,10 @@ from typing import List, Optional
 import logging
 import aiohttp
 import os
+import time
 
 from .config import KnowledgeBaseConfig
+from ..metrics import turn_lifecycle_tracker
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +89,8 @@ class KnowledgeBase(ABC):
             logger.warning("VIDEOSDK_AUTH_TOKEN not set, skipping KB retrieval")
             return []
         
+        documents = []
+        scores = []
         try:
             url = f"{api_base_url}/knowledge-bases/{self.config.id}/search"
             headers = {
@@ -98,6 +102,8 @@ class KnowledgeBase(ABC):
                 "topK": self.config.top_k
             }
             
+            turn_lifecycle_tracker.on_knowledge_base_start(timestamp=time.perf_counter())
+
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, json=payload, headers=headers) as response:
                     if response.status == 200:
@@ -105,7 +111,7 @@ class KnowledgeBase(ABC):
                         results = data.get("results", [])
                         
                         # Extract text from each result's payload
-                        documents = []
+                        # record_ids = [] # Unused for now
                         for result in results:
                             if isinstance(result, dict):
                                 payload = result.get("payload", {})
@@ -113,6 +119,9 @@ class KnowledgeBase(ABC):
                                     text = payload.get("text", "")
                                     if text and text.strip():  # Only add non-empty text
                                         documents.append(text.strip())
+                                        scores.append(result.get("score", 0))
+                                        # record_ids.append(result.get("recordId", ""))
+
                         logger.debug(f"Retrieved {len(documents)} documents from knowledge base")
                         
                         return documents
@@ -125,6 +134,12 @@ class KnowledgeBase(ABC):
         except Exception as e:
             logger.error(f"Error retrieving KB documents: {e}")
             return []
+        finally:
+             turn_lifecycle_tracker.on_knowledge_base_complete(
+                timestamp=time.perf_counter(),
+                documents=documents,
+                scores=scores
+            )
     
     async def process_query(self, transcript: str) -> Optional[str]:
         """

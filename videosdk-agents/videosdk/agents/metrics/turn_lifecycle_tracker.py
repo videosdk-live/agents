@@ -106,6 +106,8 @@ class TurnLifecycleTracker:
                 turn.tts_metrics.append(metrics)
             elif component_type == 'realtime':
                 turn.realtime_metrics.append(metrics)
+            elif component_type == 'kb':
+                turn.kb_metrics.append(metrics)
 
     def complete_turn(self) -> Optional[TurnMetrics]:
         """
@@ -266,6 +268,8 @@ class TurnLifecycleTracker:
             components.append('tts')
         if turn.realtime_metrics:
             components.append('realtime')
+        if turn.kb_metrics:
+            components.append('kb')
         return components
 
     # Event handlers for updating turn metrics
@@ -605,6 +609,46 @@ class TurnLifecycleTracker:
             eou.wait_for_additional_speech_duration = wait_duration
             if eou_probability is not None:
                 eou.eou_probability = eou_probability
+
+    def on_knowledge_base_start(self, timestamp: float) -> None:
+        """Called when KB retrieval starts."""
+        if not self.current_turn:
+            # KB usually happens after STT, so turn should exist. If not, start one.
+            logger.info("[METRICS DEBUG] No active turn on knowledge_base_start — starting turn")
+            self.start_turn(trigger="kb_start")
+
+        if self.current_turn:
+            if not self.current_turn.kb_metrics:
+                # Ensure component is active/registered
+                if not self.component_manager.is_component_active('kb'):
+                     self.component_manager.register_component('kb', 'VideoSDK', 'knowledge-base')
+                self._add_component_metric(self.current_turn, 'kb')
+
+            if self.current_turn.kb_metrics:
+                kb = self.current_turn.kb_metrics[-1]
+                kb.kb_start_time = timestamp
+                logger.info(f"[METRICS DEBUG] Set kb_start_time = {timestamp}")
+
+    def on_knowledge_base_complete(
+        self,
+        timestamp: float,
+        documents: List[str] = None,
+        scores: List[float] = None
+    ) -> None:
+        """Called when KB retrieval completes."""
+        if self.current_turn and self.current_turn.kb_metrics:
+            kb = self.current_turn.kb_metrics[-1]
+            kb.kb_end_time = timestamp
+            
+            if documents:
+                kb.kb_documents = documents
+            if scores:
+                kb.kb_scores = scores
+                
+            # Calculate latency
+            if kb.kb_start_time:
+                kb.kb_retrieval_latency = timestamp - kb.kb_start_time
+                logger.info(f"[METRICS DEBUG] Calculated kb_retrieval_latency = {kb.kb_retrieval_latency}")
 
     def _populate_eou_config(self, eou: "EouMetrics", pipeline: Any = None) -> None:
         """Populate EOU config from pipeline or parent component."""

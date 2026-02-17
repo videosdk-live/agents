@@ -10,6 +10,7 @@ from .metrics_schema import (
     LlmMetrics,
     TtsMetrics,
     RealtimeMetrics,
+    KbMetrics,
 )
 
 logger = logging.getLogger(__name__)
@@ -85,6 +86,7 @@ class ComponentMetricsManager:
             'llm': LlmMetrics,
             'tts': TtsMetrics,
             'realtime': RealtimeMetrics,
+            'kb': KbMetrics,
         }
 
         metrics_class = metrics_map.get(component_type)
