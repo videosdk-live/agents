@@ -406,10 +406,14 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
 
     def _get_audio_track(self):
         """Get audio track from pipeline"""
-        if hasattr(self.pipeline, 'tts') and self.pipeline.tts and self.pipeline.tts.audio_track: # Cascading
+        if self.pipeline is None:
+            return None
+        if self.pipeline.config.is_realtime:
+            model = getattr(self.pipeline, '_realtime_model', None)
+            if model and hasattr(model, 'audio_track'):
+                return model.audio_track
+        if self.pipeline.tts and hasattr(self.pipeline.tts, 'audio_track'):
             return self.pipeline.tts.audio_track
-        elif hasattr(self.pipeline, 'model') and self.pipeline.model and self.pipeline.model.audio_track: # Realtime
-            return self.pipeline.model.audio_track
         return None
     
     async def start_thinking_audio(self):

@@ -11,7 +11,6 @@ from .pipeline_hooks import PipelineHooks
 from .realtime_llm_adapter import RealtimeLLMAdapter
 from .realtime_base_model import RealtimeBaseModel
 from .speech_generation import SpeechGeneration
-from .llm.chat_context import ChatRole
 from .stt.stt import STT
 from .llm.llm import LLM
 from .tts.tts import TTS
@@ -20,6 +19,7 @@ from .eou import EOU
 from .denoise import Denoise
 from .voice_mail_detector import VoiceMailDetector
 from .job import get_current_job_context
+from .utils import PipelineMode, RealtimeMode, PipelineComponent, PipelineConfig, build_pipeline_config
 
 logger = logging.getLogger(__name__)
 
@@ -124,19 +124,30 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         
         # Realtime configuration
         self.realtime_config = realtime_config
-        self.realtime_mode: str | None = None
-        
+
         # Detect and handle realtime models
-        self._is_realtime_mode = False
         self.llm: LLM | RealtimeLLMAdapter | None = None
         self._realtime_model: RealtimeBaseModel | None = None
-        
+
         if isinstance(llm, RealtimeBaseModel):
             self._realtime_model = llm
-            self._detect_realtime_configuration()
             self.llm = RealtimeLLMAdapter(llm)
         else:
             self.llm = llm
+
+        self.config: PipelineConfig = build_pipeline_config(
+            stt=self.stt,
+            llm=self.llm,
+            tts=self.tts,
+            vad=self.vad,
+            turn_detector=self.turn_detector,
+            avatar=self.avatar,
+            denoise=self.denoise,
+            realtime_model=self._realtime_model,
+            realtime_config_mode=(
+                self.realtime_config.mode if self.realtime_config and self.realtime_config.mode else None
+            ),
+        )
         
         # Configuration
         self.eou_config = eou_config or EOUConfig()
@@ -168,34 +179,16 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         except Exception:
             pass
     
-    def _detect_realtime_configuration(self) -> None:
-        """Detect which realtime hybrid mode to use based on components"""
-        has_external_stt = self.stt is not None
-        has_external_tts = self.tts is not None
-        
-        if self.realtime_config and self.realtime_config.mode:
-            self.realtime_mode = self.realtime_config.mode
-            self._is_realtime_mode = True
-            logger.info(f"Realtime mode explicitly set to: {self.realtime_mode}")
-            return
-        
-        if has_external_stt and has_external_tts:
-            self.realtime_mode = "llm_only"
-            self._is_realtime_mode = False 
-            logger.info("Realtime configuration: llm_only (external STT + realtime LLM + external TTS)")
-        elif has_external_stt:
-            self.realtime_mode = "hybrid_stt"
-            self._is_realtime_mode = True
-            logger.info("Realtime configuration: hybrid_stt (external STT + KB + realtime LLM+TTS)")
-        elif has_external_tts:
-            self.realtime_mode = "hybrid_tts"
-            self._is_realtime_mode = True
-            logger.info("Realtime configuration: hybrid_tts (realtime STT+LLM + external TTS)")
-        else:
-            self.realtime_mode = "full_s2s"
-            self._is_realtime_mode = True
-            logger.info("Realtime configuration: full_s2s (full speech-to-speech realtime)")
-    
+    @property
+    def realtime_mode(self) -> str | None:
+        """Backwards-compatible alias. Returns the string value or None."""
+        return self.config.realtime_mode.value if self.config.realtime_mode else None
+
+    @property
+    def _is_realtime_mode(self) -> bool:
+        """Backwards-compatible alias."""
+        return self.config.is_realtime
+
     def _configure_text_only_mode(self) -> None:
         """Configure realtime model for text-only output (provider-specific)"""
         if not self._realtime_model or not hasattr(self._realtime_model, 'config'):
@@ -309,7 +302,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         """Setup error handlers for all components"""
         if self.stt:
             self.stt.on("error", lambda *args: self.on_component_error("STT", args[0] if args else "Unknown error"))
-        if self.llm and not self._is_realtime_mode:
+        if self.llm and not self.config.is_realtime:
             self.llm.on("error", lambda *args: self.on_component_error("LLM", args[0] if args else "Unknown error"))
         if self.tts:
             self.tts.on("error", lambda *args: self.on_component_error("TTS", args[0] if args else "Unknown error"))
@@ -323,27 +316,19 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         logger.error(f"[{source}] Component error: {error_data}")
         self.emit("error", {"source": source, "error": str(error_data)})
     
-    def _detect_pipeline_mode(self) -> str:
-        """Detect the pipeline mode based on components"""
-        if self._is_realtime_mode:
-            return "realtime"
-        elif self.stt and self.llm and self.tts and self.vad and self.turn_detector:
-            return "full_cascading"
-        elif self.llm and self.tts and not self.stt:
-            return "llm_tts_only"
-        elif self.stt and self.llm and not self.tts:
-            return "stt_llm_only"
-        elif not self.llm and self.stt and self.tts:
-            return "hybrid"
-        else:
-            return "partial_cascading"
-    
+    def get_session_metrics_snapshot(self) -> dict:
+        """Return dict suitable for populating SessionMetrics fields."""
+        return {
+            "pipeline_type": self.config.pipeline_mode.value,
+            "components": self.config.component_names,
+        }
+
     def set_agent(self, agent: Any) -> None:
         """Set the agent for this pipeline"""
         self.agent = agent
         
-        if self.realtime_mode in ["hybrid_stt", "llm_only"]:
-            logger.info(f"Creating orchestrator for {self.realtime_mode} mode")
+        if self.config.realtime_mode in (RealtimeMode.HYBRID_STT, RealtimeMode.LLM_ONLY):
+            logger.info(f"Creating orchestrator for {self.config.realtime_mode.value} mode")
             self.orchestrator = PipelineOrchestrator(
                 agent=agent,
                 stt=self.stt,
@@ -360,7 +345,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                 interrupt_min_words=self.interrupt_config.interrupt_min_words,
                 false_interrupt_pause_duration=self.interrupt_config.false_interrupt_pause_duration,
                 resume_on_false_interrupt=self.interrupt_config.resume_on_false_interrupt,
-                conversational_graph=None,  # Not used in hybrid mode
+                conversational_graph=None, 
                 max_context_items=self.max_context_items,
                 voice_mail_detector=self.voice_mail_detector,
                 hooks=self.hooks,
@@ -373,7 +358,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
             if isinstance(self.llm, RealtimeLLMAdapter):
                 self.llm.set_agent(agent)
         
-        elif self.realtime_mode == "hybrid_tts":
+        elif self.config.realtime_mode == RealtimeMode.HYBRID_TTS:
             logger.info("Setting up hybrid_tts mode: realtime STT+LLM + external TTS")
             
             if hasattr(self._realtime_model, 'audio_track'):
@@ -397,11 +382,11 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
             if isinstance(self.llm, RealtimeLLMAdapter):
                 self.llm.set_agent(agent)
         
-        elif self.realtime_mode == "full_s2s":
+        elif self.config.realtime_mode == RealtimeMode.FULL_S2S:
             if isinstance(self.llm, RealtimeLLMAdapter):
                 self.llm.set_agent(agent)
         
-        elif not self._is_realtime_mode:
+        elif not self.config.is_realtime:
             if self.conversational_graph:
                 self.conversational_graph.compile()
             self.orchestrator = PipelineOrchestrator(
@@ -448,13 +433,13 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
             requested_vision = getattr(job_context.room, 'vision', False)
             self.vision = requested_vision
             
-            if requested_vision and self._is_realtime_mode:
+            if requested_vision and self.config.is_realtime:
                 model_name = self._realtime_model.__class__.__name__ if self._realtime_model else "Unknown"
                 if model_name not in ["GeminiRealtime", "OpenAIRealtime"]:
                     logger.warning(f"Vision requested but {model_name} doesn't support video input. Disabling vision.")
                     self.vision = False
         
-        if not self._is_realtime_mode and self.tts:
+        if not self.config.is_realtime and self.tts:
             self.tts.loop = self.loop
             
             if self.avatar and job_context and job_context.room:
@@ -471,7 +456,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
             if self.orchestrator:
                 self.orchestrator.set_audio_track(self.tts.audio_track)
         
-        if self._is_realtime_mode and self._realtime_model:
+        if self.config.is_realtime and self._realtime_model:
             self._realtime_model.loop = self.loop
             
             audio_track = None
@@ -480,7 +465,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
             elif self.audio_track:
                 audio_track = self.audio_track
             
-            if self.realtime_mode == "hybrid_tts" and self.tts:
+            if self.config.realtime_mode == RealtimeMode.HYBRID_TTS and self.tts:
                 self._realtime_model.audio_track = None  
                 self.tts.audio_track = audio_track  
                 self.tts.loop = self.loop
@@ -510,10 +495,13 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         Args:
             **kwargs: Additional arguments for pipeline configuration
         """
-        mode = self._detect_pipeline_mode()
-        logger.info(f"Starting pipeline in {mode} mode")
+        logger.info(
+            f"Starting pipeline | mode={self.config.pipeline_mode.value} "
+            f"| realtime={self.config.realtime_mode.value if self.config.realtime_mode else 'none'} "
+            f"| components={self.config.component_names}"
+        )
         
-        if self._is_realtime_mode:
+        if self.config.is_realtime:
             if self._realtime_model:
                 await self._realtime_model.connect()
                 
@@ -523,7 +511,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                     self.llm.on_agent_speech_started(lambda data: asyncio.create_task(self._on_agent_speech_started_realtime(data)))
                     self.llm.on_agent_speech_ended(lambda data: self._on_agent_speech_ended_realtime(data))
                     self.llm.on_transcription(self._on_realtime_transcription)            
-            if self.realtime_mode == "hybrid_stt" and self.orchestrator:
+            if self.config.realtime_mode == RealtimeMode.HYBRID_STT and self.orchestrator:
                 await self.orchestrator.start()
                 logger.info("Started orchestrator for hybrid_stt mode")
         else:
@@ -540,7 +528,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         """
         self._current_utterance_handle = handle
         
-        if self._is_realtime_mode:
+        if self.config.is_realtime:
             if isinstance(self.llm, RealtimeLLMAdapter):
                 self.llm.current_utterance = handle
                 try:
@@ -562,7 +550,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         Args:
             message: Text message to send
         """
-        if self._is_realtime_mode:
+        if self.config.is_realtime:
             if isinstance(self.llm, RealtimeLLMAdapter):
                 await self.llm.send_text_message(message)
         else:
@@ -576,9 +564,9 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         Args:
             audio_data: Raw audio bytes
         """
-        if self.realtime_mode == "hybrid_stt" and self.orchestrator:
+        if self.config.realtime_mode == RealtimeMode.HYBRID_STT and self.orchestrator:
             await self.orchestrator.process_audio(audio_data)
-        elif self._is_realtime_mode:
+        elif self.config.is_realtime:
             if isinstance(self.llm, RealtimeLLMAdapter):
                 await self.llm.handle_audio_input(audio_data)
         else:
@@ -587,9 +575,9 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         
         if not hasattr(self, '_first_audio_logged'):
             self._first_audio_logged = True
-            if self.realtime_mode == "hybrid_stt":
+            if self.config.realtime_mode == RealtimeMode.HYBRID_STT:
                 logger.info("Audio routing: hybrid_stt → orchestrator (external STT)")
-            elif self._is_realtime_mode:
+            elif self.config.is_realtime:
                 logger.info("Audio routing: realtime mode → realtime model")
             else:
                 logger.info("Audio routing: traditional mode → orchestrator")
@@ -620,7 +608,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         if len(self._recent_frames) > self._max_frames_buffer:
             self._recent_frames.pop(0)
         
-        if self._is_realtime_mode:
+        if self.config.is_realtime:
             if isinstance(self.llm, RealtimeLLMAdapter):
                 await self.llm.handle_video_input(video_data)
     
@@ -647,14 +635,14 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
     
     def interrupt(self) -> None:
         """Interrupt the pipeline"""
-        if self._is_realtime_mode:
+        if self.config.is_realtime:
             if self._realtime_model:
                 if self._realtime_model.current_utterance and not self._realtime_model.current_utterance.is_interruptible:
                     logger.info("Interruption disabled for current utterance")
                     return
                 asyncio.create_task(self._realtime_model.interrupt())
             
-            if self.realtime_mode == "hybrid_tts" and self.speech_generation:
+            if self.config.realtime_mode == RealtimeMode.HYBRID_TTS and self.speech_generation:
                 asyncio.create_task(self.speech_generation.interrupt())
             
             if self.avatar and hasattr(self.avatar, 'interrupt'):
@@ -688,7 +676,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         """
         self._current_utterance_handle = handle
         
-        if self._is_realtime_mode:
+        if self.config.is_realtime:
             if isinstance(self.llm, RealtimeLLMAdapter):
                 self.llm.current_utterance = handle
                 
@@ -708,7 +696,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         """Handle user speech started in realtime mode"""
         self._notify_speech_started()
         
-        if self.realtime_mode == "hybrid_tts" and self.speech_generation:
+        if self.config.realtime_mode == RealtimeMode.HYBRID_TTS and self.speech_generation:
             asyncio.create_task(self.speech_generation.interrupt())
             
         if self.agent and self.agent.session:
@@ -757,7 +745,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         Args:
             text: User text input
         """
-        if self._is_realtime_mode:
+        if self.config.is_realtime:
             if isinstance(self.llm, RealtimeLLMAdapter):
                 await self.llm.send_text_message(text)
         else:
@@ -773,7 +761,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         
         for comp_name, comp in [
             ("stt", self.stt),
-            ("llm", self.llm if not self._is_realtime_mode else self._realtime_model),
+            ("llm", self.llm if not self.config.is_realtime else self._realtime_model),
             ("tts", self.tts),
             ("vad", self.vad),
             ("eou", self.turn_detector),
@@ -793,7 +781,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         """Cleanup pipeline resources"""
         logger.info("Cleaning up pipeline")
         
-        if self._is_realtime_mode:
+        if self.config.is_realtime:
             if self._realtime_model:
                 await self._realtime_model.aclose()
                 self._realtime_model = None
