@@ -7,12 +7,13 @@ import logging
 from .event_emitter import EventEmitter
 from .tts.tts import TTS
 from .utils import UserState, AgentState
+from .metrics import turn_lifecycle_tracker
 
 if TYPE_CHECKING:
     from .agent import Agent
     from .room.output_stream import CustomAudioStreamTrack
     from .pipeline_hooks import PipelineHooks
-    from .metrics.unified_metrics_collector import TurnLifecycleTracker
+
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,6 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
         avatar: Any | None = None,
         audio_track: CustomAudioStreamTrack | None = None,
         hooks: "PipelineHooks | None" = None,
-        metrics_collector: "TurnLifecycleTracker | None" = None,
     ) -> None:
         super().__init__()
         self.agent = agent
@@ -45,7 +45,7 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
         self.hooks = hooks
         self.tts_lock = asyncio.Lock()
         self._is_interrupted = False
-        self.metrics_collector = metrics_collector
+        self.turn_tracker = turn_lifecycle_tracker
     
     async def start(self) -> None:
         """Start the speech generation component"""
@@ -79,8 +79,8 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
 
                 # Track TTS start time directly
                 tts_start_time = time.perf_counter()
-                if self.metrics_collector:
-                    self.metrics_collector.on_tts_start(tts_start_time)
+                if self.turn_tracker:
+                    self.turn_tracker.on_tts_start(tts_start_time)
 
                 self.emit("synthesis_started", {})
 
@@ -98,15 +98,15 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
 
                     # Wrap the text iterator to count characters for metrics
                     async def character_counting_wrapper(text_iterator: AsyncIterator[str]):
-                        logger.info(f"[TTS DEBUG] character_counting_wrapper started - metrics_collector: {self.metrics_collector is not None}")
+                        logger.info(f"[TTS DEBUG] character_counting_wrapper started - turn_tracker: {self.turn_tracker is not None}")
                         async for text_chunk in text_iterator:
                             logger.info(f"[TTS DEBUG] Got text chunk: {len(text_chunk) if text_chunk else 0} chars")
-                            if text_chunk and self.metrics_collector:
+                            if text_chunk and self.turn_tracker:
                                 # Count characters in this chunk
                                 logger.info(f"[TTS DEBUG] Calling add_tts_characters({len(text_chunk)})")
-                                self.metrics_collector.add_tts_characters(len(text_chunk))
-                            elif text_chunk and not self.metrics_collector:
-                                logger.warning(f"[TTS DEBUG] metrics_collector is None, cannot count characters")
+                                self.turn_tracker.add_tts_characters(len(text_chunk))
+                            elif text_chunk and not self.turn_tracker:
+                                logger.warning(f"[TTS DEBUG] turn_tracker is None, cannot count characters")
                             yield text_chunk
 
                     first_byte_emitted = False
@@ -114,8 +114,8 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
                     async for audio_chunk in self.hooks.process_tts_stream(character_counting_wrapper(response_iterator)):
                         if not first_byte_emitted:
                             # Track first audio byte time directly
-                            if self.metrics_collector:
-                                self.metrics_collector.on_tts_first_byte(time.perf_counter())
+                            if self.turn_tracker:
+                                self.turn_tracker.on_tts_first_byte(time.perf_counter())
 
                             if self.agent and self.agent.session and self.agent.session.is_background_audio_enabled:
                                 await self.agent.session.stop_thinking_audio()
@@ -138,8 +138,8 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
                         await self.hooks.trigger_agent_turn_end()
 
                     # Track TTS completion directly
-                    if self.metrics_collector:
-                        self.metrics_collector.on_tts_complete(time.perf_counter())
+                    if self.turn_tracker:
+                        self.turn_tracker.on_tts_complete(time.perf_counter())
 
                     logger.info("TTS stream synthesis complete")
                     self.emit("last_audio_byte", {})
@@ -182,8 +182,8 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
             async def on_first_audio_byte():
                 """Called when first audio byte is ready"""
                 # Track first audio byte time directly
-                if self.metrics_collector:
-                    self.metrics_collector.on_tts_first_byte(time.perf_counter())
+                if self.turn_tracker:
+                    self.turn_tracker.on_tts_first_byte(time.perf_counter())
 
                 if self.agent and self.agent.session and self.agent.session.is_background_audio_enabled:
                     await self.agent.session.stop_thinking_audio()
@@ -197,8 +197,8 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
             async def on_last_audio_byte():
                 """Called when synthesis is complete"""
                 # Track TTS completion directly
-                if self.metrics_collector:
-                    self.metrics_collector.on_tts_complete(time.perf_counter())
+                if self.turn_tracker:
+                    self.turn_tracker.on_tts_complete(time.perf_counter())
 
                 if self.agent and self.agent.session:
                     self.agent.session._emit_agent_state(AgentState.IDLE)
@@ -224,8 +224,8 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
             self.tts.reset_first_audio_tracking()
 
             # Track TTS start time directly
-            if self.metrics_collector:
-                self.metrics_collector.on_tts_start(time.perf_counter())
+            if self.turn_tracker:
+                self.turn_tracker.on_tts_start(time.perf_counter())
 
             self.emit("synthesis_started", {})
 
@@ -244,15 +244,15 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
 
                 # Wrap iterator with character counting for metrics
                 async def character_counting_wrapper(text_iterator: AsyncIterator[str]):
-                    logger.info(f"[TTS DEBUG] character_counting_wrapper started (direct path) - metrics_collector: {self.metrics_collector is not None}")
+                    logger.info(f"[TTS DEBUG] character_counting_wrapper started (direct path) - turn_tracker: {self.turn_tracker is not None}")
                     async for text_chunk in text_iterator:
                         logger.info(f"[TTS DEBUG] Got text chunk: {len(text_chunk) if text_chunk else 0} chars")
-                        if text_chunk and self.metrics_collector:
+                        if text_chunk and self.turn_tracker:
                             # Count characters in this chunk
                             logger.info(f"[TTS DEBUG] Calling add_tts_characters({len(text_chunk)})")
-                            self.metrics_collector.add_tts_characters(len(text_chunk))
-                        elif text_chunk and not self.metrics_collector:
-                            logger.warning(f"[TTS DEBUG] metrics_collector is None, cannot count characters")
+                            self.turn_tracker.add_tts_characters(len(text_chunk))
+                        elif text_chunk and not self.turn_tracker:
+                            logger.warning(f"[TTS DEBUG] turn_tracker is None, cannot count characters")
                         yield text_chunk
 
                 await self.tts.synthesize(character_counting_wrapper(response_iterator))

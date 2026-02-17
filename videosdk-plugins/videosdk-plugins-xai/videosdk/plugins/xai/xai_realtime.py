@@ -8,6 +8,7 @@ import traceback
 import base64
 from typing import Any, Dict, Optional, Literal, List
 from dataclasses import dataclass, field
+import time
 
 import aiohttp
 import numpy as np
@@ -23,7 +24,7 @@ from videosdk.agents import (
     RealtimeBaseModel,
     global_event_emitter,
     Agent,
-    realtime_metrics_collector,
+    turn_lifecycle_tracker,
 )
 
 load_dotenv()
@@ -110,6 +111,11 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
         self._session_ready = asyncio.Event()
         self._has_unprocessed_tool_outputs = False
         self._generated_text_in_current_response = False
+        
+        # Metrics and Race Condition Handling
+        self.turn_tracker = turn_lifecycle_tracker
+        self._response_pending = False
+        self._audio_playback_complete_pending = False
 
     def set_agent(self, agent: Agent) -> None:
         if agent.instructions:
@@ -125,6 +131,27 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
         }
 
         self._session = await self._create_session(self.base_url, headers)
+        
+        # Initialize Audio Track if needed (copied logic from other plugins)
+        if (
+            not self.audio_track
+            and self.loop
+            and "audio" in self.config.modalities
+        ):
+            self.audio_track = CustomAudioStreamTrack(self.loop)
+            
+        elif not self.loop and "audio" in self.config.modalities:
+             self.emit(
+                "error", "Event loop not initialized. Audio playback will not work."
+            )
+             raise RuntimeError(
+                "Event loop not initialized. Audio playback will not work."
+            )
+
+        if self.audio_track:
+            # Register audio completion callback
+             self.audio_track.on_last_audio_byte(self._on_audio_complete)
+
         await self._handle_websocket(self._session)
         
         if self.audio_track:
@@ -139,6 +166,40 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
             logger.info("xAI session configuration complete")
         except asyncio.TimeoutError:
             logger.warning("Timeout waiting for xAI session configuration")
+
+    async def _on_audio_complete(self) -> None:
+        """Callback when audio playback completes"""
+        try:
+            if self.turn_tracker:
+                 turn = self.turn_tracker.current_turn
+                 if turn:
+                    # Add User Speech timeline event
+                    if turn.user_speech_start_time:
+                         self.turn_tracker.add_timeline_event(
+                            event_type="user_speech",
+                            start_time=turn.user_speech_start_time,
+                            end_time=turn.user_speech_end_time or turn.user_speech_start_time,
+                            text=turn.user_speech or ""
+                        )
+                    
+                    # Add Agent Speech timeline event
+                    if turn.agent_speech_start_time:
+                        self.turn_tracker.add_timeline_event(
+                            event_type="agent_speech",
+                            start_time=turn.agent_speech_start_time,
+                            end_time=time.perf_counter(),
+                            text=turn.agent_speech or ""
+                        )
+
+                 # End the turn here if response is done, otherwise wait
+                 if self._response_pending:
+                     logger.info("[XAI FIX] Audio complete but response pending. Waiting for response.done.")
+                     self._audio_playback_complete_pending = True
+                 else:
+                     logger.info("[XAI FIX] Audio complete and no response pending. Completing turn.")
+                     self.turn_tracker.complete_turn()
+        except Exception as e:
+            logger.error(f"Error in _on_audio_complete: {e}", exc_info=True)
 
     async def _create_session(self, url: str, headers: dict) -> XAISession:
         if not self._http_session:
@@ -292,14 +353,22 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
         if self._session and not self._closing:
             if self.current_utterance and not self.current_utterance.is_interruptible:
                 return
-            await realtime_metrics_collector.set_interrupted()
+            
+            await self.send_event({"type": "response.cancel"})
+            if self.turn_tracker:
+                 self.turn_tracker.on_interrupted()
             
         if self.audio_track:
             self.audio_track.interrupt()
         
         if self._agent_speaking:
             self.emit("agent_speech_ended", {})
+            if self.turn_tracker:
+                self.turn_tracker.on_agent_speech_end(timestamp=time.perf_counter())
             self._agent_speaking = False
+        
+        self._response_pending = False
+        self._audio_playback_complete_pending = False
 
     async def _handle_websocket(self, session: XAISession) -> None:
         session.tasks.extend([
@@ -358,6 +427,9 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
                 self._session_ready.set()
             elif event_type == "response.created":
                 logger.info(f"Response created: {data.get('response', {}).get('id')}")
+                # Set response pending flag
+                self._response_pending = True
+                self._audio_playback_complete_pending = False
                 self._generated_text_in_current_response = False
             elif event_type == "response.output_item.added":
                 logger.info(f"Output item added: {data.get('item', {}).get('id')}")
@@ -383,7 +455,8 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
     async def _handle_speech_started(self) -> None:
         logger.info("xAI User speech started")
         self.emit("user_speech_started", {"type": "done"})
-        await realtime_metrics_collector.set_user_speech_start()
+        if self.turn_tracker:
+             self.turn_tracker.on_user_speech_start(timestamp=time.perf_counter())
         
         if self.current_utterance and not self.current_utterance.is_interruptible:
             return
@@ -392,7 +465,8 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
 
     async def _handle_speech_stopped(self) -> None:
         logger.info("xAI User speech stopped")
-        await realtime_metrics_collector.set_user_speech_end()
+        if self.turn_tracker:
+             self.turn_tracker.on_user_speech_end(timestamp=time.perf_counter())
         self.emit("user_speech_ended", {})
 
     async def _handle_audio_delta(self, data: dict) -> None:
@@ -401,7 +475,8 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
             return
 
         if not self._agent_speaking:
-            await realtime_metrics_collector.set_agent_speech_start()
+            if self.turn_tracker:
+                self.turn_tracker.on_agent_speech_start(timestamp=time.perf_counter())
             self._agent_speaking = True
             self.emit("agent_speech_started", {})
 
@@ -425,7 +500,8 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
         transcript = data.get("transcript", "")
         if transcript:
             logger.info(f"xAI User transcript: {transcript}")
-            await realtime_metrics_collector.set_user_transcript(transcript)
+            if self.turn_tracker:
+                 self.turn_tracker.on_user_speech_start(timestamp=time.perf_counter(), transcript=transcript)
             try:
                 self.emit(
                     "realtime_model_transcription",
@@ -437,7 +513,12 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
     async def _handle_response_done(self) -> None:
         if hasattr(self, "_current_transcript") and self._current_transcript:
              logger.info(f"xAI Agent response: {self._current_transcript}")
-             await realtime_metrics_collector.set_agent_response(self._current_transcript)
+             
+             if self.turn_tracker:
+                 self.turn_tracker.on_agent_speech_end(
+                     timestamp=time.perf_counter(),
+                     text=self._current_transcript
+                 )
              
              try:
                  self.emit(
@@ -457,7 +538,8 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
 
         logger.info("xAI Agent speech ended")
         self.emit("agent_speech_ended", {})
-        await realtime_metrics_collector.set_agent_speech_end(timeout=1.0)
+        if self.turn_tracker:
+            self.turn_tracker.on_agent_speech_end(timestamp=time.perf_counter())
         self._agent_speaking = False
 
         if self._has_unprocessed_tool_outputs and not self._generated_text_in_current_response:
@@ -466,6 +548,52 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
             await self.create_response()
         else:
             self._has_unprocessed_tool_outputs = False
+        
+        # Race Condition Fix Logic
+        self._response_pending = False
+        if self._audio_playback_complete_pending:
+            logger.info("[XAI FIX] Response done and audio playback was pending. Completing turn.")
+            if self.turn_tracker:
+                turn = self.turn_tracker.current_turn
+                if turn:
+                    if turn.user_speech_start_time:
+                         self.turn_tracker.add_timeline_event(
+                            event_type="user_speech",
+                            start_time=turn.user_speech_start_time,
+                            end_time=turn.user_speech_end_time or turn.user_speech_start_time,
+                            text=turn.user_speech or ""
+                        )
+                    if turn.agent_speech_start_time:
+                         self.turn_tracker.add_timeline_event(
+                            event_type="agent_speech",
+                            start_time=turn.agent_speech_start_time,
+                            end_time=time.perf_counter(),
+                            text=turn.agent_speech or ""
+                        )
+                self.turn_tracker.complete_turn()
+            self._audio_playback_complete_pending = False
+        
+        # Handle text-only completion or if audio track is missing
+        elif "audio" not in self.config.modalities or not self.audio_track:
+             if self.turn_tracker:
+                  turn = self.turn_tracker.current_turn
+                  if turn:
+                    if turn.user_speech_start_time:
+                         self.turn_tracker.add_timeline_event(
+                            event_type="user_speech",
+                            start_time=turn.user_speech_start_time,
+                            end_time=turn.user_speech_end_time or turn.user_speech_start_time,
+                            text=turn.user_speech or ""
+                        )
+                    if turn.agent_speech_start_time:
+                         self.turn_tracker.add_timeline_event(
+                            event_type="agent_speech",
+                            start_time=turn.agent_speech_start_time,
+                            end_time=time.perf_counter(),
+                            text=turn.agent_speech or ""
+                        )
+                  self.turn_tracker.complete_turn()
+
 
     async def _handle_function_call(self, data: dict) -> None:
         """Handle tool execution flow for xAI"""
@@ -479,15 +607,39 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
         try:
             arguments = json.loads(args_str)
             logger.info(f"Executing tool: {name} with args: {arguments}")
-            await realtime_metrics_collector.add_tool_call(name)
+            
+            tool_start = time.perf_counter()
             result = None
             found = False
+            error = None
+            
             for tool in self._tools:
                 info = get_tool_info(tool)
                 if info.name == name:
-                    result = await tool(**arguments)
-                    found = True
+                    try:
+                        result = await tool(**arguments)
+                        found = True
+                    except Exception as e:
+                        error = e
                     break
+            
+            tool_end = time.perf_counter()
+            
+            if self.turn_tracker:
+                if error:
+                     self.turn_tracker.add_error({
+                        "error": str(error),
+                        "tool": name,
+                        "timestamp": tool_end
+                    })
+                else:
+                    self.turn_tracker.add_function_tool_call(
+                        tool_name=name,
+                        params=arguments,
+                        response={"result": str(result)[:500] if result else "Tool not found"},
+                        start_time=tool_start,
+                        end_time=tool_end
+                    )
             
             if not found:
                 logger.warning(f"Tool {name} not found")

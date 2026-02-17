@@ -37,6 +37,11 @@ class RealtimeBaseModel(EventEmitter[Union[BaseEventTypes, TEvent]], Generic[TEv
         """Initialize the realtime model"""
         super().__init__()
         self.current_utterance: UtteranceHandle | None = None
+        self.metrics_collector: Any | None = None
+
+    def set_metrics_collector(self, collector: Any) -> None:
+        """Set the metrics collector for the model"""
+        self.metrics_collector = collector
 
     @abstractmethod
     async def aclose(self) -> None:

@@ -25,7 +25,6 @@ from .component_manager import ComponentMetricsManager
 from .turn_lifecycle_tracker import TurnLifecycleTracker
 from .event_bridge import EventBridge
 from .metrics_transformer import transform_session
-
 if TYPE_CHECKING:
     from ..agent import Agent
     from ..pipeline import Pipeline
@@ -74,10 +73,12 @@ class UnifiedMetricsCollector:
             session_id=session_id,
             session_start_time=time.time()
         )
-
-        # Initialize core components
-        self.component_manager = ComponentMetricsManager()
-        self.turn_tracker = TurnLifecycleTracker(self.component_manager, pipeline)
+        from . import component_metrics_manager, turn_lifecycle_tracker
+        self.component_manager = component_metrics_manager
+        self.turn_tracker = turn_lifecycle_tracker
+        
+        # Configure the global tracker with this session's pipeline
+        self.turn_tracker.set_pipeline_config(pipeline)
         self.event_bridge = EventBridge(
             hooks=pipeline.hooks,
             turn_tracker=self.turn_tracker,
@@ -250,6 +251,25 @@ class UnifiedMetricsCollector:
                     'provider_class': provider_class,
                     'model_name': model_name
                 }
+                
+                # Check for RealtimeLLMAdapter and inject tracker into inner model
+                target_model = llm
+                if hasattr(llm, 'realtime_model'):
+                    target_model = llm.realtime_model
+                
+                if hasattr(target_model, 'set_metrics_collector'):
+                    target_model.set_metrics_collector(self.turn_tracker)
+                    logger.info(f"Injected shared TurnLifecycleTracker into {target_model.__class__.__name__} (via llm)")
+
+                # If this is a realtime model (adapter or direct), also register it as 'realtime' component
+                # This ensures start_turn initializes realtime_metrics, which is required for _validate_turn()
+                if hasattr(llm, 'realtime_model') or hasattr(llm, 'set_metrics_collector'):
+                    self.component_manager.register_component('realtime', provider_class, model_name)
+                    self.session_metrics.provider_per_component['realtime'] = {
+                        'provider_class': provider_class,
+                        'model_name': model_name
+                    }
+                    logger.info(f"Registered {provider_class} as 'realtime' component (derived from llm)")
 
             # Check for TTS directly on pipeline
             tts = getattr(self.pipeline, 'tts', None)
@@ -272,6 +292,11 @@ class UnifiedMetricsCollector:
                 'provider_class': provider_class,
                 'model_name': model_name
             }
+
+            # Inject shared tracker into Realtime component
+            if hasattr(realtime, 'set_metrics_collector'):
+                realtime.set_metrics_collector(self.turn_tracker)
+                logger.info(f"Injected shared TurnLifecycleTracker into {provider_class}")
 
         # Update session metrics components list
         self.session_metrics.components = list(

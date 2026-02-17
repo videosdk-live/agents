@@ -1,5 +1,7 @@
 # New unified metrics system
 from .unified_metrics_collector import UnifiedMetricsCollector
+from .turn_lifecycle_tracker import TurnLifecycleTracker
+from .component_manager import ComponentMetricsManager
 from .metrics_schema import (
     SessionMetrics,
     TurnMetrics,
@@ -26,9 +28,15 @@ from .integration import (
     create_log,
 )
 
+component_metrics_manager = ComponentMetricsManager()
+turn_lifecycle_tracker = TurnLifecycleTracker(component_metrics_manager)
+
+
 __all__ = [
     # Unified metrics collector
     'UnifiedMetricsCollector',
+    'turn_lifecycle_tracker',
+    'component_metrics_manager',
 
     # Metrics schema
     'SessionMetrics',

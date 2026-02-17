@@ -42,7 +42,7 @@ from .pipeline import Pipeline, EOUConfig, InterruptConfig
 from .realtime_base_model import RealtimeBaseModel
 from .realtime_llm_adapter import RealtimeLLMAdapter
 
-from .metrics import realtime_metrics_collector
+from .metrics import turn_lifecycle_tracker
 from .utils import (
     function_tool,
     is_function_tool,

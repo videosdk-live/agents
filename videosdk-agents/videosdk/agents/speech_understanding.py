@@ -10,11 +10,10 @@ from .vad import VAD, VADResponse, VADEventType
 from .eou import EOU
 from .llm.chat_context import ChatRole
 from .denoise import Denoise
-
+from .metrics import turn_lifecycle_tracker
 if TYPE_CHECKING:
     from .agent import Agent
     from .pipeline_hooks import PipelineHooks
-    from .metrics.unified_metrics_collector import TurnLifecycleTracker
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +42,6 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
         max_speech_wait_timeout: float = 0.8,
         eou_certainty_threshold: float = 0.85,
         hooks: "PipelineHooks | None" = None,
-        metrics_collector: "TurnLifecycleTracker | None" = None,
     ) -> None:
         super().__init__()
         self.agent = agent
@@ -51,7 +49,7 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
         self.vad = vad
         self.turn_detector = turn_detector
         self.denoise = denoise
-        self.metrics_collector = metrics_collector
+        self.turn_tracker = turn_lifecycle_tracker
         self.hooks = hooks
         
         # EOU configuration
@@ -77,6 +75,8 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
         # Stream STT state
         self._stt_stream_task: asyncio.Task | None = None
         self._stt_stream_queue: asyncio.Queue | None = None
+        self.turn_tracker = turn_lifecycle_tracker
+
         
         # Setup event handlers
         if self.stt:
@@ -158,16 +158,16 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
 
             # Track STT start time when user starts speaking
             logger.info(f"[VAD DEBUG] START_OF_SPEECH event")
-            logger.info(f"[VAD DEBUG] self.metrics_collector = {self.metrics_collector}")
-            logger.info(f"[VAD DEBUG] Type: {type(self.metrics_collector).__name__ if self.metrics_collector is not None else 'None'}")
-            logger.info(f"[VAD DEBUG] Boolean check (is not None): {self.metrics_collector is not None}")
-            logger.info(f"[VAD DEBUG] Truthiness check (if self.metrics_collector): {bool(self.metrics_collector)}")
+            logger.info(f"[VAD DEBUG] self.turn_tracker = {self.turn_tracker}")
+            logger.info(f"[VAD DEBUG] Type: {type(self.turn_tracker).__name__ if self.turn_tracker is not None else 'None'}")
+            logger.info(f"[VAD DEBUG] Boolean check (is not None): {self.turn_tracker is not None}")
+            logger.info(f"[VAD DEBUG] Truthiness check (if self.turn_tracker): {bool(self.turn_tracker)}")
 
-            if self.metrics_collector:
+            if self.turn_tracker:
                 logger.info(f"[VAD DEBUG] Calling on_stt_start()")
-                self.metrics_collector.on_stt_start(time.perf_counter())
+                self.turn_tracker.on_stt_start(time.perf_counter())
             else:
-                logger.warning(f"[VAD DEBUG] metrics_collector is None, cannot track STT start")
+                logger.warning(f"[VAD DEBUG] turn_tracker is None, cannot track STT start")
 
             self.emit("speech_started")
             
@@ -188,19 +188,19 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
 
         if stt_response.event_type == SpeechEventType.PREFLIGHT:
             # Track preflight transcript timing for preemptive generation
-            if self.metrics_collector:
-                self.metrics_collector.on_stt_preflight_end(timestamp, text)
+            if self.turn_tracker:
+                self.turn_tracker.on_stt_preflight_end(timestamp, text)
 
             await self._handle_preflight_transcript(text)
 
         elif stt_response.event_type == SpeechEventType.FINAL:
             # Track final STT completion with rich metadata
-            if self.metrics_collector:
+            if self.turn_tracker:
                 confidence = stt_response.data.confidence if stt_response.data else None
                 duration = stt_response.data.duration if stt_response.data else None
                 is_preemptive = self._enable_preemptive_generation
 
-                self.metrics_collector.on_stt_complete(
+                self.turn_tracker.on_stt_complete(
                     timestamp=timestamp,
                     transcript=text,
                     confidence=confidence,
@@ -220,8 +220,8 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
 
         elif stt_response.event_type == SpeechEventType.INTERIM:
             # Track interim transcript timing (TTFW)
-            if self.metrics_collector:
-                self.metrics_collector.on_stt_interim_end(timestamp)
+            if self.turn_tracker:
+                self.turn_tracker.on_stt_interim_end(timestamp)
 
             self.emit("transcript_interim", {
                 "text": text,
@@ -254,21 +254,21 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
             if self.mode == 'DEFAULT':
                 if self.turn_detector and self.agent:
                     # Track EOU detection timing
-                    logger.info(f"[EOU DEBUG] About to call EOU metrics - metrics_collector: {self.metrics_collector is not None}")
-                    if self.metrics_collector:
+                    logger.info(f"[EOU DEBUG] About to call EOU metrics - turn_tracker: {self.turn_tracker is not None}")
+                    if self.turn_tracker:
                         logger.info(f"[EOU DEBUG] Calling on_eou_start()")
-                        self.metrics_collector.on_eou_start(time.perf_counter())
+                        self.turn_tracker.on_eou_start(time.perf_counter())
                     else:
-                        logger.warning(f"[EOU DEBUG] metrics_collector is None, cannot track EOU start")
+                        logger.warning(f"[EOU DEBUG] turn_tracker is None, cannot track EOU start")
 
                     eou_probability = self.turn_detector.get_eou_probability(self.agent.chat_context)
                     logger.info(f"EOU probability: {eou_probability}")
 
-                    if self.metrics_collector:
+                    if self.turn_tracker:
                         logger.info(f"[EOU DEBUG] Calling on_eou_complete() with probability={eou_probability}")
-                        self.metrics_collector.on_eou_complete(time.perf_counter(), eou_probability)
+                        self.turn_tracker.on_eou_complete(time.perf_counter(), eou_probability)
                     else:
-                        logger.warning(f"[EOU DEBUG] metrics_collector is None, cannot track EOU complete")
+                        logger.warning(f"[EOU DEBUG] turn_tracker is None, cannot track EOU complete")
 
                     if eou_probability < self.eou_certainty_threshold:
                         delay = self.max_speech_wait_timeout
@@ -276,29 +276,29 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
             elif self.mode == 'ADAPTIVE':
                 if self.turn_detector and self.agent:
                     # Track EOU detection timing
-                    logger.info(f"[EOU DEBUG] ADAPTIVE mode - metrics_collector: {self.metrics_collector is not None}")
-                    if self.metrics_collector:
+                    logger.info(f"[EOU DEBUG] ADAPTIVE mode - turn_tracker: {self.turn_tracker is not None}")
+                    if self.turn_tracker:
                         logger.info(f"[EOU DEBUG] Calling on_eou_start()")
-                        self.metrics_collector.on_eou_start(time.perf_counter())
+                        self.turn_tracker.on_eou_start(time.perf_counter())
                     else:
-                        logger.warning(f"[EOU DEBUG] metrics_collector is None, cannot track EOU start")
+                        logger.warning(f"[EOU DEBUG] turn_tracker is None, cannot track EOU start")
 
                     eou_probability = self.turn_detector.get_eou_probability(self.agent.chat_context)
                     logger.info(f"EOU probability: {eou_probability}")
 
-                    if self.metrics_collector:
+                    if self.turn_tracker:
                         logger.info(f"[EOU DEBUG] Calling on_eou_complete() with probability={eou_probability}")
-                        self.metrics_collector.on_eou_complete(time.perf_counter(), eou_probability)
+                        self.turn_tracker.on_eou_complete(time.perf_counter(), eou_probability)
                     else:
-                        logger.warning(f"[EOU DEBUG] metrics_collector is None, cannot track EOU complete")
+                        logger.warning(f"[EOU DEBUG] turn_tracker is None, cannot track EOU complete")
 
                     delay_range = self.max_speech_wait_timeout - self.min_speech_wait_timeout
                     wait_factor = 1.0 - eou_probability
                     delay = self.min_speech_wait_timeout + (delay_range * wait_factor)
 
             # Track wait for additional speech
-            if self.metrics_collector and eou_probability is not None:
-                self.metrics_collector.on_wait_for_additional_speech(delay, eou_probability)
+            if self.turn_tracker and eou_probability is not None:
+                self.turn_tracker.on_wait_for_additional_speech(delay, eou_probability)
 
             logger.info(f"Using delay: {delay} seconds")
             await self._wait_for_additional_speech(delay)

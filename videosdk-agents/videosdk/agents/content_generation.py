@@ -13,7 +13,7 @@ from .agent import Agent
 
 if TYPE_CHECKING:
     from .knowledge_base.base import KnowledgeBase
-    from .metrics.unified_metrics_collector import TurnLifecycleTracker
+    from .metrics.unified_turn_tracker import TurnLifecycleTracker
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
         llm: LLM | None = None,
         conversational_graph: Any | None = None,
         max_context_items: int | None = None,
-        metrics_collector: "TurnLifecycleTracker | None" = None,
+        turn_tracker: "TurnLifecycleTracker | None" = None,
     ) -> None:
         super().__init__()
         self.agent = agent
@@ -45,7 +45,7 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
         self.max_context_items = max_context_items
         self.llm_lock = asyncio.Lock()
         self._is_interrupted = False
-        self.metrics_collector = metrics_collector
+        self.turn_tracker = turn_tracker
     
     async def start(self) -> None:
         """Start the content generation component"""
@@ -83,8 +83,8 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
             
             # Track LLM start time directly
             llm_start_time = time.perf_counter()
-            if self.metrics_collector:
-                self.metrics_collector.on_llm_start(llm_start_time, user_text)
+            if self.turn_tracker:
+                self.turn_tracker.on_llm_start(llm_start_time, user_text)
 
             self.emit("generation_started", {
                 "user_text": user_text,
@@ -105,7 +105,7 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
             ):
                 if llm_chunk_resp.metadata and "usage" in llm_chunk_resp.metadata:
                     # Track token usage directly
-                    if self.metrics_collector:
+                    if self.turn_tracker:
                         usage = llm_chunk_resp.metadata["usage"]
                         # This will be captured in on_llm_complete, but we can also track it here
                         # for real-time updates
@@ -123,8 +123,8 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                     first_chunk_received = True
                     # Track first token time directly
                     first_token_time = time.perf_counter()
-                    if self.metrics_collector:
-                        self.metrics_collector.on_llm_first_token(first_token_time)
+                    if self.turn_tracker:
+                        self.turn_tracker.on_llm_first_token(first_token_time)
 
                     self.emit("first_chunk", {})
                 
@@ -173,8 +173,8 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                             tool_end_time = time.perf_counter()
 
                             # Track function tool call with complete metrics
-                            if self.metrics_collector:
-                                self.metrics_collector.add_function_tool_call(
+                            if self.turn_tracker:
+                                self.turn_tracker.add_function_tool_call(
                                     tool_name=func_call["name"],
                                     params=func_call["arguments"],
                                     response={"result": str(result)[:500] if result else None},  # Limit response size
@@ -257,9 +257,9 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
             if not self._is_interrupted:
                 # Track LLM completion directly
                 llm_end_time = time.perf_counter()
-                if self.metrics_collector:
+                if self.turn_tracker:
                     # Token usage is already tracked via usage_tracked event above
-                    self.metrics_collector.on_llm_complete(llm_end_time)
+                    self.turn_tracker.on_llm_complete(llm_end_time)
 
                 self.emit("generation_complete", {})
     

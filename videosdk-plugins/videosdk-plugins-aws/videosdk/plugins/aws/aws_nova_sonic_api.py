@@ -5,6 +5,7 @@ import asyncio
 import base64
 import json
 import uuid
+import time
 from typing import Optional, Literal, List, Dict, Any
 from dataclasses import dataclass
 import numpy as np
@@ -35,10 +36,11 @@ from videosdk.agents import (
     get_tool_info,
     is_function_tool,
     FunctionTool,
-    realtime_metrics_collector,
+    turn_lifecycle_tracker,
+    CustomAudioStreamTrack,
 )
 
-from videosdk.agents import realtime_metrics_collector
+# from videosdk.agents import realtime_metrics_collector
 
 NOVA_INPUT_SAMPLE_RATE = 16000
 NOVA_OUTPUT_SAMPLE_RATE = 24000
@@ -122,7 +124,7 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
         self._tools = []
         self.tools_formatted = []
         self.loop = asyncio.get_event_loop()
-        self.audio_track = None
+        self.audio_track: Optional[CustomAudioStreamTrack] = None
         self.prompt_name = str(uuid.uuid4())
         self.system_content_name = f"system_{str(uuid.uuid4())}"
         self.audio_content_name = f"audio_{str(uuid.uuid4())}"
@@ -132,6 +134,12 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
         self._initialize_bedrock_client()
         self.input_sample_rate = 48000
         self.target_sample_rate = 16000
+
+        # Metrics and Race Condition Handling
+        self.turn_tracker = turn_lifecycle_tracker
+        self._response_pending = False
+        self._audio_playback_complete_pending = False
+        self._current_transcript = ""
 
     def set_agent(self, agent: Agent) -> None:
         self._instructions = agent.instructions
@@ -172,6 +180,14 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
 
         try:
             self.loop = asyncio.get_event_loop()
+            
+            # Initialize Audio Track if needed
+            if not self.audio_track and self.loop:
+                self.audio_track = CustomAudioStreamTrack(self.loop)
+            
+            if self.audio_track:
+                 self.audio_track.on_last_audio_byte(self._on_audio_complete)
+
             self.stream = (
                 await self.bedrock_client.invoke_model_with_bidirectional_stream(
                     InvokeModelWithBidirectionalStreamOperationInput(
@@ -264,10 +280,53 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             self.response_task = asyncio.create_task(self._process_responses())
 
             await self._start_audio_input()
+            
+            if self.audio_track:
+                # AWS Nova output is 24kHz
+                from fractions import Fraction
+                self.audio_track.sample_rate = NOVA_OUTPUT_SAMPLE_RATE
+                self.audio_track.time_base_fraction = Fraction(1, NOVA_OUTPUT_SAMPLE_RATE)
+                self.audio_track.samples = int(0.02 * NOVA_OUTPUT_SAMPLE_RATE)
+                self.audio_track.chunk_size = int(self.audio_track.samples * getattr(self.audio_track, "channels", 1) * getattr(self.audio_track, "sample_width", 2))
+
 
         except Exception as e:
             await self._cleanup()
             raise
+
+    async def _on_audio_complete(self) -> None:
+        """Callback when audio playback completes"""
+        try:
+            if self.turn_tracker:
+                 turn = self.turn_tracker.current_turn
+                 if turn:
+                    # Add User Speech timeline event
+                    if turn.user_speech_start_time:
+                         self.turn_tracker.add_timeline_event(
+                            event_type="user_speech",
+                            start_time=turn.user_speech_start_time,
+                            end_time=turn.user_speech_end_time or turn.user_speech_start_time,
+                            text=turn.user_speech or ""
+                        )
+                    
+                    # Add Agent Speech timeline event
+                    if turn.agent_speech_start_time:
+                        self.turn_tracker.add_timeline_event(
+                            event_type="agent_speech",
+                            start_time=turn.agent_speech_start_time,
+                            end_time=time.perf_counter(),
+                            text=turn.agent_speech or ""
+                        )
+
+                 # End the turn here if response is done, otherwise wait
+                 if self._response_pending:
+                     print("[AWS FIX] Audio complete but response pending. Waiting for completionEnd.")
+                     self._audio_playback_complete_pending = True
+                 else:
+                     print("[AWS FIX] Audio complete and no response pending. Completing turn.")
+                     self.turn_tracker.complete_turn()
+        except Exception as e:
+            print(f"Error in _on_audio_complete: {e}")
 
     async def _send_event(self, event_json: str):
         """Send an event to the bidirectional stream"""
@@ -370,6 +429,9 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                 event_keys = list(json_data["event"].keys())
 
                                 if "completionStart" in json_data["event"]:
+                                    self._response_pending = True
+                                    self._audio_playback_complete_pending = False
+                                    self._current_transcript = ""
                                     completion_start = json_data["event"][
                                         "completionStart"
                                     ]
@@ -394,11 +456,10 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                         role = text_output.get(
                                             "role", "UNKNOWN")
                                         if role == "USER":
-                                            await realtime_metrics_collector.set_user_speech_start()
-                                            await realtime_metrics_collector.set_user_transcript(
-                                                transcript
-                                            )
-                                            await realtime_metrics_collector.set_user_speech_end()
+                                            if self.turn_tracker:
+                                                self.turn_tracker.on_user_speech_start(timestamp=time.perf_counter(), transcript=transcript)
+                                                self.turn_tracker.on_user_speech_end(timestamp=time.perf_counter())
+                                            
                                             await self.emit("user_speech_ended", {})
                                             try:
                                                 await self.emit(
@@ -424,9 +485,10 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                             except Exception:
                                                 pass
                                             if not skip_emit:
-                                                await realtime_metrics_collector.set_agent_response(
-                                                    transcript
-                                                )
+                                                self._current_transcript = transcript # For simple text, might need accumulation if streaming chunks
+                                                # Nova textOutput seems to be chunks or full? Assuming chunks effectively but 
+                                                # for now logic below uses it as full
+                                                
                                                 try:
                                                     await self.emit(
                                                         "realtime_model_transcription",
@@ -453,7 +515,8 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                             audio_content)
                                         if not self._agent_speaking:
                                             await self.emit("agent_speech_started", {})
-                                            await realtime_metrics_collector.set_agent_speech_start()
+                                            if self.turn_tracker:
+                                                self.turn_tracker.on_agent_speech_start(timestamp=time.perf_counter())
                                             self._agent_speaking = True
 
                                         if (
@@ -479,20 +542,52 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                             "stopReason", "") == "END_TURN"
                                         and self._agent_speaking
                                     ):
-                                        await realtime_metrics_collector.set_agent_speech_end(
-                                            timeout=1.0
-                                        )
+                                        if self.turn_tracker:
+                                             self.turn_tracker.on_agent_speech_end(
+                                                timestamp=time.perf_counter(),
+                                                text=self._current_transcript
+                                             )
                                         self._agent_speaking = False
                                         await self.emit("agent_speech_ended", {})
+                                    
+                                    # Race Condition Check
+                                    if content_end.get("stopReason") == "END_TURN":
+                                         self._response_pending = False
+                                         if self._audio_playback_complete_pending:
+                                             print("[AWS FIX] END_TURN received and audio playback was pending. Completing turn.")
+                                             if self.turn_tracker:
+                                                 turn = self.turn_tracker.current_turn
+                                                 if turn:
+                                                     if turn.user_speech_start_time:
+                                                         self.turn_tracker.add_timeline_event(
+                                                            event_type="user_speech",
+                                                            start_time=turn.user_speech_start_time,
+                                                            end_time=turn.user_speech_end_time or turn.user_speech_start_time,
+                                                            text=turn.user_speech or ""
+                                                         )
+                                                     if turn.agent_speech_start_time:
+                                                         self.turn_tracker.add_timeline_event(
+                                                            event_type="agent_speech",
+                                                            start_time=turn.agent_speech_start_time,
+                                                            end_time=time.perf_counter(),
+                                                            text=turn.agent_speech or ""
+                                                         )
+                                                 self.turn_tracker.complete_turn()
+                                             self._audio_playback_complete_pending = False
+                                         
+                                         # If no audio (text only), complete here?
+                                         elif not self.audio_track and self.turn_tracker:
+                                             self.turn_tracker.complete_turn()
 
                                 elif "usageEvent" in json_data["event"]:
                                     pass
 
                                 elif "toolUse" in json_data["event"]:
                                     tool_use = json_data["event"]["toolUse"]
-                                    await realtime_metrics_collector.add_tool_call(
-                                        tool_use["toolName"]
-                                    )
+                                    # We don't have result yet, but we track the call
+                                    # turn lifecycle tracker usually tracks on completion with result
+                                    # But we can assume we'll track it in _execute_tool_and_send_result
+                                    
                                     asyncio.create_task(
                                         self._execute_tool_and_send_result(
                                             tool_use)
@@ -503,10 +598,13 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                     print(
                                         f"Nova completionEnd received: {json.dumps(completion_end, indent=2)}"
                                     )
-                                    await realtime_metrics_collector.set_agent_speech_end(
-                                        timeout=1.0
-                                    )
-                                    self._agent_speaking = False
+                                    if self._agent_speaking:
+                                         if self.turn_tracker:
+                                             self.turn_tracker.on_agent_speech_end(
+                                                timestamp=time.perf_counter(),
+                                                text=self._current_transcript
+                                             )
+                                         self._agent_speaking = False
 
                                 else:
                                     print(
@@ -593,12 +691,18 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             self.audio_track.interrupt()
         print("Interrupting user speech, calling set_agent_speech_end")
         await self.emit("user_speech_ended", {})
-        await realtime_metrics_collector.set_agent_speech_end(timeout=1.0)
-        await realtime_metrics_collector.set_interrupted()
+        
+        if self.turn_tracker:
+             self.turn_tracker.on_interrupted()
+        
         if self._agent_speaking:
             print("Interrupting agent speech, calling set_agent_speech_end")
-            await realtime_metrics_collector.set_agent_speech_end(timeout=1.0)
+            if self.turn_tracker:
+                self.turn_tracker.on_agent_speech_end(timestamp=time.perf_counter())
             self._agent_speaking = False
+        
+        self._response_pending = False
+        self._audio_playback_complete_pending = False
 
         content_end_payload = {
             "event": {
@@ -711,7 +815,19 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             return
 
         try:
+            tool_start = time.perf_counter()
             result = await target_tool(**tool_input_args)
+            tool_end = time.perf_counter()
+            
+            if self.turn_tracker:
+                 self.turn_tracker.add_function_tool_call(
+                     tool_name=tool_name,
+                     params=tool_input_args,
+                     response={"result": str(result)[:500] if result else ""},
+                     start_time=tool_start,
+                     end_time=tool_end
+                 )
+            
             result_content_str = json.dumps(result)
 
             tool_content_name = f"tool_result_{str(uuid.uuid4())}"
@@ -759,3 +875,9 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             await self.emit(
                 "error", f"Error executing tool {tool_name} or sending result: {e}"
             )
+            if self.turn_tracker:
+                 self.turn_tracker.add_error({
+                     "error": str(e),
+                     "tool": tool_name,
+                     "timestamp": time.perf_counter()
+                 })

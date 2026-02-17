@@ -160,32 +160,6 @@ class PipelineOrchestrator(EventEmitter[Literal[
         self._preemptive_authorized = asyncio.Event()
         self._preemptive_cancelled = False
 
-    def set_metrics_collector(self, metrics_collector: Any) -> None:
-        """
-        Inject metrics collector (TurnLifecycleTracker) into all components for direct timing.
-
-        This provides precise, low-latency metrics tracking at the source instead of via hooks.
-
-        Args:
-            metrics_collector: TurnLifecycleTracker instance from UnifiedMetricsCollector
-        """
-        logger.info(f"[ORCHESTRATOR DEBUG] set_metrics_collector called with: {type(metrics_collector).__name__} = {metrics_collector}")
-
-        if self.speech_understanding:
-            logger.info(f"[ORCHESTRATOR DEBUG] BEFORE assignment - speech_understanding.metrics_collector = {self.speech_understanding.metrics_collector}")
-            self.speech_understanding.metrics_collector = metrics_collector
-            logger.info(f"[ORCHESTRATOR DEBUG] AFTER assignment - speech_understanding.metrics_collector = {self.speech_understanding.metrics_collector}")
-            logger.info(f"[ORCHESTRATOR DEBUG] Type check: {type(self.speech_understanding.metrics_collector).__name__}")
-            logger.info("Metrics collector injected into SpeechUnderstanding")
-
-        if self.content_generation:
-            self.content_generation.metrics_collector = metrics_collector
-            logger.info("Metrics collector injected into ContentGeneration")
-
-        if self.speech_generation:
-            self.speech_generation.metrics_collector = metrics_collector
-            logger.info("Metrics collector injected into SpeechGeneration")
-
     def _wrap_async(self, async_func):
         """
         Wrap an async function to be compatible with EventEmitter's sync-only handlers.
@@ -267,8 +241,8 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 
                 if self.speech_generation:
                     # Store response text for agent_speech timeline tracking
-                    if self.speech_generation.metrics_collector:
-                        self.speech_generation.metrics_collector._pending_say_text = full_response
+                    if self.speech_generation.turn_tracker:
+                        self.speech_generation.turn_tracker._pending_say_text = full_response
                     await self.speech_generation.synthesize(full_response)
                 
                 self.emit("synthesis_complete", {})
@@ -614,8 +588,8 @@ class PipelineOrchestrator(EventEmitter[Literal[
         if self.speech_generation:
             try:
                 # Store say text so the turn captures it for timeline tracking
-                if self.speech_generation.metrics_collector:
-                    self.speech_generation.metrics_collector._pending_say_text = message
+                if self.speech_generation.turn_tracker:
+                    self.speech_generation.turn_tracker._pending_say_text = message
                 await self.speech_generation.synthesize(message)
             finally:
                 handle._mark_done()

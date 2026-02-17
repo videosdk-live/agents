@@ -13,6 +13,8 @@ from .metrics_schema import (
     EouMetrics,
 )
 from .component_manager import ComponentMetricsManager
+import asyncio
+from typing import Callable, Awaitable
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +41,17 @@ class TurnLifecycleTracker:
 
         # Buffer for timestamps that arrive before turn is created
         self._buffered_stt_start_time: Optional[float] = None
+
+        # Callbacks for turn completion
+        self._completion_callbacks: List[Callable[[TurnMetrics], Awaitable[None]]] = []
+
+    def set_pipeline_config(self, pipeline: Any) -> None:
+        """Set the pipeline configuration for accessing component configs."""
+        self._pipeline_config = pipeline
+
+    def register_turn_completion_callback(self, callback: Callable[[TurnMetrics], Awaitable[None]]) -> None:
+        """Register a callback to be awaited when a turn is completed."""
+        self._completion_callbacks.append(callback)
 
     def start_turn(self, trigger: str = "user_speech") -> TurnMetrics:
         """
@@ -120,6 +133,23 @@ class TurnLifecycleTracker:
         self.completed_turns.append(turn)
         self.current_turn = None
 
+        # Trigger callbacks
+        for callback in self._completion_callbacks:
+            try:
+                # We assume callbacks are async as per type hint
+                if asyncio.iscoroutinefunction(callback):
+                    asyncio.create_task(callback(turn))
+                else:
+                    # Best effort for sync callbacks if any
+                    try:
+                        result = callback(turn)
+                        if asyncio.iscoroutine(result):
+                            asyncio.create_task(result)
+                    except Exception as e:
+                        logger.error(f"Error in sync turn callback: {e}")
+            except Exception as e:
+                logger.error(f"Error in turn completion callback: {e}", exc_info=True)
+
         logger.info(
             f"Completed turn: {turn.turn_id} "
             f"(e2e={turn.e2e_latency}ms, components={self._get_turn_components(turn)})"
@@ -133,8 +163,26 @@ class TurnLifecycleTracker:
         Only includes latencies from components that are present.
 
         E2E = sum([STT_latency, EOU_latency, LLM_TTFT, TTS_latency])
+        OR E2E = Realtime Latency (using turn timestamps)
         """
         total_ms = 0.0
+        
+        # Check Realtime latency first (if it exists, it might be the only one or main one)
+        # Use turn-level timestamps for realtime latency: agent_speech_start - user_speech_end (or start?)
+        # Usually E2E for realtime is user_speech_end -> agent_audio_start
+        if turn.realtime_metrics:
+            if turn.agent_speech_start_time and turn.user_speech_end_time:
+                 latency = turn.agent_speech_start_time - turn.user_speech_end_time
+                 # Clamp to 0 if negative (shouldn't happen unless clocks weird or overlap)
+                 latency = max(0, latency)
+                 turn.e2e_latency = self._to_milliseconds(latency)
+                 return
+
+            # Fallback if we only have user start (e.g. streaming e2e)
+            if turn.agent_speech_start_time and turn.user_speech_start_time:
+                 latency = turn.agent_speech_start_time - turn.user_speech_start_time
+                 turn.e2e_latency = self._to_milliseconds(latency)
+                 return
 
         # STT latency (use the first one that has latency, or sum? usually E2E is linear path)
         # We'll use the LAST STT event if multiple exist, assuming the last one triggered the response.
@@ -505,10 +553,10 @@ class TurnLifecycleTracker:
             
             # Check if we need a new EOU metric (if last one is finished or has end time)
             if self.current_turn.eou_metrics:
-                 last_eou = self.current_turn.eou_metrics[-1]
-                 if last_eou.eou_end_time is not None:
-                     logger.info("[METRICS DEBUG] Last EOU finished, creating new active EOU metric")
-                     self._add_component_metric(self.current_turn, 'eou')
+                last_eou = self.current_turn.eou_metrics[-1]
+                if last_eou.eou_end_time is not None:
+                    logger.info("[METRICS DEBUG] Last EOU finished, creating new active EOU metric")
+                    self._add_component_metric(self.current_turn, 'eou')
 
         if self.current_turn and self.current_turn.eou_metrics:
             eou = self.current_turn.eou_metrics[-1]
@@ -839,19 +887,57 @@ class TurnLifecycleTracker:
 
         self.current_turn.timeline_event_metrics.append(event)
 
+
+    def set_token_details(self, token_details: Dict[str, Any]):
+        """Set token usage details for realtime metrics."""
+        if not self.current_turn:
+            return
+
+        # Ensure we have realtime metrics instance
+        if not self.current_turn.realtime_metrics:
+            self._add_component_metric(self.current_turn, 'realtime')
+        
+        metrics = self.current_turn.realtime_metrics[-1]
+
+        # Map token details to RealtimeMetrics fields
+        metrics.realtime_input_tokens = token_details.get("input_tokens")
+        metrics.realtime_total_tokens = token_details.get("total_tokens")
+        metrics.realtime_output_tokens = token_details.get("output_tokens")
+        
+        metrics.realtime_input_text_tokens = token_details.get("input_text_tokens")
+        metrics.realtime_input_audio_tokens = token_details.get("input_audio_tokens")
+        metrics.realtime_input_image_tokens = token_details.get("input_image_tokens")
+        
+        metrics.realtime_input_cached_tokens = token_details.get("input_cached_tokens")
+        metrics.realtime_cached_text_tokens = token_details.get("cached_text_tokens")
+        metrics.realtime_cached_audio_tokens = token_details.get("cached_audio_tokens")
+        metrics.realtime_cached_image_tokens = token_details.get("cached_image_tokens")
+        
+        metrics.realtime_output_text_tokens = token_details.get("output_text_tokens")
+        metrics.realtime_output_audio_tokens = token_details.get("output_audio_tokens")
+        metrics.realtime_output_image_tokens = token_details.get("output_image_tokens")
+        metrics.realtime_thoughts_tokens = token_details.get("thoughts_tokens")
+
+    def add_usage_metadata(self, usage_metadata: Dict[str, Any]) -> None:
+        """Alias for set_token_details to match user code usage."""
+        self.set_token_details(usage_metadata)
+
     def add_function_tool_call(
         self,
         tool_name: str,
         params: Dict[str, Any],
         response: Dict[str, Any],
         start_time: float,
-        end_time: float
+        end_time: float,
+        error: Optional[str] = None
     ) -> None:
-        """Add function tool call metrics to current turn."""
-        logger.info(f"[METRICS DEBUG] add_function_tool_call called - tool_name: {tool_name}, current_turn exists: {self.current_turn is not None}")
+        """Add a function tool call metric."""
+        logger.info(f"[METRICS DEBUG] add_function_tool_call called - tool_name: {tool_name}, error: {error}, current_turn exists: {self.current_turn is not None}")
 
         if not self.current_turn:
-            logger.warning(f" [METRICS DEBUG] Cannot add function tool call - no current turn")
+            # Even if no turn, we should probably start one? Or just log warning?
+            # For function tools, usually happens within a turn.
+            logger.warning(f"[METRICS DEBUG] add_function_tool_call called without current_turn")
             return
 
         tool_metric = FunctionToolMetrics(
@@ -862,12 +948,26 @@ class TurnLifecycleTracker:
             end_time=end_time,
             latency=end_time - start_time
         )
-
         self.current_turn.function_tool_metrics.append(tool_metric)
+        
+        # Also append to the summary lists in TurnMetrics for backward compatibility/ease of access
         self.current_turn.function_tools_called.append(tool_name)
+        self.current_turn.function_tool_timestamps.append({
+            "name": tool_name,
+            "start": start_time,
+            "end": end_time
+        })
+
+        if error:
+            self.current_turn.errors.append(error)
+
         logger.info(f"[METRICS DEBUG] Added function tool call: {tool_name}, total tools: {len(self.current_turn.function_tools_called)}")
 
     def add_error(self, error: Dict[str, Any]) -> None:
-        """Add error to current turn."""
-        if self.current_turn:
-            self.current_turn.errors.append(error)
+        """Add an error to the current turn."""
+        if not self.current_turn:
+            logger.warning(f"[METRICS DEBUG] add_error called without current_turn: {error}")
+            return
+            
+        self.current_turn.errors.append(str(error))
+        logger.info(f"[METRICS DEBUG] Added error to turn: {error}")

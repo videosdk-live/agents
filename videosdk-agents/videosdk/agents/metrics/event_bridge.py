@@ -42,6 +42,9 @@ class EventBridge:
             logger.warning("EventBridge already attached")
             return
 
+        # Register analytics callback
+        self.turn_tracker.register_turn_completion_callback(self._send_turn_analytics)
+
         # Register basic lifecycle hooks
         @self.hooks.on("user_turn_start")
         async def on_user_turn_start(transcript: str) -> None:
@@ -73,10 +76,7 @@ class EventBridge:
                         text=self.turn_tracker.current_turn.agent_speech or ""
                     )
             # Complete turn when agent finishes speaking
-            completed_turn = self.turn_tracker.complete_turn()
-            if completed_turn:
-                logger.info(f"Turn completed: {completed_turn.turn_id}")
-                await self._send_turn_analytics(completed_turn)
+            self.turn_tracker.complete_turn()
 
         @self.hooks.on("content_generated")
         async def on_content_generated(data: dict) -> None:
@@ -281,10 +281,7 @@ class EventBridge:
                                     end_time=timestamp,
                                     text=self.turn_tracker.current_turn.agent_speech or ""
                                 )
-                            completed_turn = self.turn_tracker.complete_turn()
-                            if completed_turn:
-                                logger.info(f"TTS-only turn completed (say): {completed_turn.turn_id}")
-                                asyncio.create_task(self._send_turn_analytics(completed_turn))
+                            self.turn_tracker.complete_turn()
 
                     speech_gen.on("synthesis_started", on_synthesis_started)
                     speech_gen.on("first_audio_byte", on_first_audio_byte)
@@ -308,16 +305,14 @@ class EventBridge:
 
                     def on_agent_speech_started_rt(data: dict):
                         timestamp = time.perf_counter()
+                        if not self.turn_tracker.current_turn:
+                             self.turn_tracker.start_turn(trigger="agent_speech")
                         self.turn_tracker.on_agent_speech_start(timestamp)
 
                     def on_agent_speech_ended_rt(data: dict):
-                        timestamp = time.perf_counter()
-                        self.turn_tracker.on_agent_speech_end(timestamp)
-                        # Complete turn
-                        completed_turn = self.turn_tracker.complete_turn()
-                        if completed_turn:
-                            logger.info(f"Realtime turn completed: {completed_turn.turn_id}")
-                            asyncio.create_task(self._send_turn_analytics(completed_turn))
+                        # We do NOT complete turn here for realtime. 
+                        # We wait for audio track callback (_on_audio_complete in live_api)
+                        pass
 
                     llm.on("user_speech_started", on_user_speech_started_rt)
                     llm.on("user_speech_ended", on_user_speech_ended_rt)

@@ -20,6 +20,10 @@ from .eou import EOU
 from .denoise import Denoise
 from .voice_mail_detector import VoiceMailDetector
 from .job import get_current_job_context
+from .metrics import (
+    turn_lifecycle_tracker,
+    component_metrics_manager,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -542,6 +546,16 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         
         if self._is_realtime_mode:
             if isinstance(self.llm, RealtimeLLMAdapter):
+                # Ensure turn exists for agent-initiated messages
+                if self.llm.realtime_model.metrics_collector:
+                    collector = self.llm.realtime_model.metrics_collector
+                    # Handle if collector is TurnLifecycleTracker (direct) or UnifiedMetricsCollector (via turn_tracker)
+                    tracker = getattr(collector, "turn_tracker", collector)
+                    
+                    if hasattr(tracker, "current_turn") and hasattr(tracker, "start_turn"):
+                        if not tracker.current_turn:
+                            tracker.start_turn(trigger="agent_message")
+
                 self.llm.current_utterance = handle
                 try:
                     await self.llm.send_message(message)

@@ -5,6 +5,7 @@ import os
 import logging
 import traceback
 import base64
+import time
 from typing import Any, Optional, Literal, List, Union, Dict
 from dataclasses import dataclass, field
 import numpy as np
@@ -15,7 +16,7 @@ from videosdk.agents import (
     Agent,
     CustomAudioStreamTrack,
     RealtimeBaseModel,
-    realtime_metrics_collector,
+    turn_lifecycle_tracker,
 )
 from videosdk.agents.event_bus import global_event_emitter
 
@@ -28,6 +29,7 @@ from azure.ai.voicelive.models import (
     AzureStandardVoice,
     Modality,
     InputAudioFormat,
+    InputAudioBuffer,
     ServerEventType,
 )
 
@@ -145,6 +147,12 @@ class AzureVoiceLive(RealtimeBaseModel[AzureVoiceLiveEventTypes]):
         self._user_speaking = False
         self.session_ready = False
         self._session_ready_event = asyncio.Event()
+        
+        # Metrics and Race Condition Handling
+        self.turn_tracker = turn_lifecycle_tracker
+        self._response_pending = False
+        self._audio_playback_complete_pending = False
+        self._current_text_response = ""
 
     def set_agent(self, agent: Agent) -> None:
         """Set the agent configuration"""
@@ -159,6 +167,8 @@ class AzureVoiceLive(RealtimeBaseModel[AzureVoiceLiveEventTypes]):
         self._closing = False
 
         try:
+            self.loop = asyncio.get_event_loop()
+            
             if (
                 not self.audio_track
                 and self.loop
@@ -172,6 +182,9 @@ class AzureVoiceLive(RealtimeBaseModel[AzureVoiceLiveEventTypes]):
                 raise RuntimeError(
                     "Event loop not initialized. Audio playback will not work."
                 )
+            
+            if self.audio_track:
+                 self.audio_track.on_last_audio_byte(self._on_audio_complete)
 
             session = await self._create_session()
             if session:
@@ -197,6 +210,40 @@ class AzureVoiceLive(RealtimeBaseModel[AzureVoiceLiveEventTypes]):
             self.emit("error", f"Error connecting to Azure Voice Live API: {e}")
             traceback.print_exc()
             raise
+
+    async def _on_audio_complete(self) -> None:
+        """Callback when audio playback completes"""
+        try:
+            if self.turn_tracker:
+                 turn = self.turn_tracker.current_turn
+                 if turn:
+                    # Add User Speech timeline event
+                    if turn.user_speech_start_time:
+                         self.turn_tracker.add_timeline_event(
+                            event_type="user_speech",
+                            start_time=turn.user_speech_start_time,
+                            end_time=turn.user_speech_end_time or turn.user_speech_start_time,
+                            text=turn.user_speech or ""
+                        )
+                    
+                    # Add Agent Speech timeline event
+                    if turn.agent_speech_start_time:
+                        self.turn_tracker.add_timeline_event(
+                            event_type="agent_speech",
+                            start_time=turn.agent_speech_start_time,
+                            end_time=time.perf_counter(),
+                            text=turn.agent_speech or ""
+                        )
+
+                 # End the turn here if response is done, otherwise wait
+                 if self._response_pending:
+                     logger.info("[AZURE FIX] Audio complete but response pending. Waiting for RESPONSE_DONE.")
+                     self._audio_playback_complete_pending = True
+                 else:
+                     logger.info("[AZURE FIX] Audio complete and no response pending. Completing turn.")
+                     self.turn_tracker.complete_turn()
+        except Exception as e:
+            logger.error(f"Error in _on_audio_complete: {e}", exc_info=True)
 
     async def _create_session(self) -> AzureVoiceLiveSession:
         """Create a new Azure Voice Live session"""
@@ -296,7 +343,8 @@ class AzureVoiceLive(RealtimeBaseModel[AzureVoiceLiveEventTypes]):
             elif event.type == ServerEventType.INPUT_AUDIO_BUFFER_SPEECH_STARTED:
                 logger.info("User started speaking")
                 if not self._user_speaking:
-                    await realtime_metrics_collector.set_user_speech_start()
+                    if self.turn_tracker:
+                         self.turn_tracker.on_user_speech_start(timestamp=time.perf_counter())
                     self._user_speaking = True
                 self.emit("user_speech_started", {"type": "done"})
 
@@ -312,18 +360,24 @@ class AzureVoiceLive(RealtimeBaseModel[AzureVoiceLiveEventTypes]):
             elif event.type == ServerEventType.INPUT_AUDIO_BUFFER_SPEECH_STOPPED:
                 logger.info("User stopped speaking")
                 if self._user_speaking:
-                    await realtime_metrics_collector.set_user_speech_end()
+                    if self.turn_tracker:
+                         self.turn_tracker.on_user_speech_end(timestamp=time.perf_counter())
                     self._user_speaking = False
 
             elif event.type == ServerEventType.RESPONSE_CREATED:
                 logger.info("Assistant response created")
+                self._response_pending = True
+                self._audio_playback_complete_pending = False
+                self._current_text_response = ""
 
             elif event.type == ServerEventType.RESPONSE_AUDIO_DELTA:
                 logger.debug("Received audio delta")
                 if Modality.AUDIO in self.config.modalities:
                     if not self._agent_speaking:
-                        await realtime_metrics_collector.set_agent_speech_start()
+                        if self.turn_tracker:
+                             self.turn_tracker.on_agent_speech_start(timestamp=time.perf_counter())
                         self._agent_speaking = True
+                        self.emit("agent_speech_started", {})
 
                     if self.audio_track and self.loop:
                         asyncio.create_task(self.audio_track.add_new_bytes(event.delta))
@@ -331,7 +385,8 @@ class AzureVoiceLive(RealtimeBaseModel[AzureVoiceLiveEventTypes]):
             elif event.type == ServerEventType.RESPONSE_AUDIO_DONE:
                 logger.info("Assistant finished speaking")
                 if self._agent_speaking:
-                    await realtime_metrics_collector.set_agent_speech_end(timeout=1.0)
+                    if self.turn_tracker:
+                         self.turn_tracker.on_agent_speech_end(timestamp=time.perf_counter())
                     self._agent_speaking = False
 
             elif event.type == ServerEventType.RESPONSE_TEXT_DELTA:
@@ -346,9 +401,13 @@ class AzureVoiceLive(RealtimeBaseModel[AzureVoiceLiveEventTypes]):
                         "text_response",
                         {"text": self._current_text_response, "type": "done"},
                     )
-                    await realtime_metrics_collector.set_agent_response(
-                        self._current_text_response
-                    )
+                    
+                    if self.turn_tracker:
+                         self.turn_tracker.on_agent_speech_end(
+                             timestamp=time.perf_counter(),
+                             text=self._current_text_response
+                         )
+
                     try:
                         self.emit(
                             "realtime_model_transcription",
@@ -360,17 +419,52 @@ class AzureVoiceLive(RealtimeBaseModel[AzureVoiceLiveEventTypes]):
                         )
                     except Exception:
                         pass
-                    self._current_text_response = ""
+                    # Don't clear transparent here if we want to use it in RESPONSE_DONE
+                    # self._current_text_response = "" 
 
             elif event.type == ServerEventType.RESPONSE_DONE:
                 logger.info("Response complete")
                 if self._agent_speaking:
-                    await realtime_metrics_collector.set_agent_speech_end(timeout=1.0)
+                    if self.turn_tracker:
+                         self.turn_tracker.on_agent_speech_end(timestamp=time.perf_counter())
                     self._agent_speaking = False
+                
+                # Race Condition Fix
+                self._response_pending = False
+                if self._audio_playback_complete_pending:
+                    logger.info("[AZURE FIX] RESPONSE_DONE received and audio playback was pending. Completing turn.")
+                    if self.turn_tracker:
+                        turn = self.turn_tracker.current_turn
+                        if turn:
+                            if turn.user_speech_start_time:
+                                 self.turn_tracker.add_timeline_event(
+                                    event_type="user_speech",
+                                    start_time=turn.user_speech_start_time,
+                                    end_time=turn.user_speech_end_time or turn.user_speech_start_time,
+                                    text=turn.user_speech or ""
+                                )
+                            if turn.agent_speech_start_time:
+                                 self.turn_tracker.add_timeline_event(
+                                    event_type="agent_speech",
+                                    start_time=turn.agent_speech_start_time,
+                                    end_time=time.perf_counter(),
+                                    text=turn.agent_speech or ""
+                                )
+                        self.turn_tracker.complete_turn()
+                    self._audio_playback_complete_pending = False
+                
+                # Check if it was text only (no audio track or modality)
+                elif (Modality.AUDIO not in self.config.modalities or not self.audio_track) and self.turn_tracker:
+                     self.turn_tracker.complete_turn()
 
             elif event.type == ServerEventType.ERROR:
                 logger.error(f"Azure Voice Live error: {event.error.message}")
                 self.emit("error", f"Azure Voice Live error: {event.error.message}")
+                if self.turn_tracker:
+                     self.turn_tracker.add_error({
+                         "error": event.error.message,
+                         "timestamp": time.perf_counter()
+                     })
 
             elif event.type == ServerEventType.CONVERSATION_ITEM_CREATED:
                 logger.debug(f"Conversation item created: {event.item.id}")
@@ -382,7 +476,8 @@ class AzureVoiceLive(RealtimeBaseModel[AzureVoiceLiveEventTypes]):
                 ):
                     transcript = event.item.content[0].transcript
                     if transcript and event.item.role == "user":
-                        await realtime_metrics_collector.set_user_transcript(transcript)
+                        if self.turn_tracker:
+                             self.turn_tracker.on_user_speech_start(timestamp=time.perf_counter(), transcript=transcript)
                         try:
                             self.emit(
                                 "realtime_model_transcription",
@@ -443,11 +538,16 @@ class AzureVoiceLive(RealtimeBaseModel[AzureVoiceLiveEventTypes]):
             if self.audio_track and Modality.AUDIO in self.config.modalities:
                 self.audio_track.interrupt()
 
-            await realtime_metrics_collector.set_interrupted()
+            if self.turn_tracker:
+                 self.turn_tracker.on_interrupted()
 
             if self._agent_speaking:
-                await realtime_metrics_collector.set_agent_speech_end(timeout=1.0)
+                if self.turn_tracker:
+                     self.turn_tracker.on_agent_speech_end(timestamp=time.perf_counter())
                 self._agent_speaking = False
+            
+            self._response_pending = False
+            self._audio_playback_complete_pending = False
 
         except Exception as e:
             self.emit("error", f"Interrupt error: {e}")

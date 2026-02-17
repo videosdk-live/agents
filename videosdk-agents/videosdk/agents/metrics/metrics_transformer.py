@@ -86,6 +86,7 @@ def transform_turn(turn: TurnMetrics) -> Dict[str, Any]:
     result["userSpeechEndTime"] = _safe_val(turn.user_speech_end_time)
     result["agentSpeechStartTime"] = _safe_val(turn.agent_speech_start_time)
     result["agentSpeechEndTime"] = _safe_val(turn.agent_speech_end_time)
+    result["agentSpeech"] = turn.agent_speech or ""
     result["userSpeechDuration"] = _to_ms(turn.user_speech_duration)
     result["agentSpeechDuration"] = _to_ms(turn.agent_speech_duration)
     result["e2eLatency"] = round(max(turn.e2e_latency or 0, 0), 2)  # Already in ms from tracker

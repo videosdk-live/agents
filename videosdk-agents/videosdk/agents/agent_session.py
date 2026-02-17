@@ -103,13 +103,6 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         logger.info(f"[AGENT_SESSION DEBUG] self.metrics_collector.turn_tracker = {self.metrics_collector.turn_tracker}")
         logger.info(f"[AGENT_SESSION DEBUG] Type: {type(self.metrics_collector.turn_tracker).__name__}")
 
-        if hasattr(self.pipeline, 'orchestrator') and self.pipeline.orchestrator:
-            logger.info(f"[AGENT_SESSION DEBUG] Calling orchestrator.set_metrics_collector with turn_tracker")
-            self.pipeline.orchestrator.set_metrics_collector(self.metrics_collector.turn_tracker)
-        elif hasattr(self.pipeline, 'set_metrics_collector'):
-            # Direct pipeline support (for non-orchestrator pipelines)
-            logger.info(f"[AGENT_SESSION DEBUG] Calling pipeline.set_metrics_collector with turn_tracker")
-            self.pipeline.set_metrics_collector(self.metrics_collector.turn_tracker)
 
         # Setup voicemail detection
         if self.voice_mail_detector:
@@ -296,10 +289,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             # CRITICAL: Re-inject metrics collector after set_agent() recreates orchestrator
             # The set_agent() call above recreates the orchestrator, wiping out metrics_collector
             logger.info(f"[AGENT_SESSION DEBUG] Re-injecting metrics collector after set_agent()")
-            if hasattr(self.pipeline, 'orchestrator') and self.pipeline.orchestrator:
-                self.pipeline.orchestrator.set_metrics_collector(self.metrics_collector.turn_tracker)
-            elif hasattr(self.pipeline, 'set_metrics_collector'):
-                self.pipeline.set_metrics_collector(self.metrics_collector.turn_tracker)
+
 
         await self.pipeline.start()
 
