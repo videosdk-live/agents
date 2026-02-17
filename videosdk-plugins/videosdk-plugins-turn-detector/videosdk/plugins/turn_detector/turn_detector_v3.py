@@ -8,6 +8,8 @@ from huggingface_hub import hf_hub_download
 
 logger = logging.getLogger(__name__)
 
+NAMO_ONNX_FILENAME = "model_quant.onnx"
+
 def _get_hf_model_repo(language: Optional[str] = None) -> str:
     """
     Get the appropriate Hugging Face model repository based on language.
@@ -44,8 +46,13 @@ def _get_hf_model_repo(language: Optional[str] = None) -> str:
         return f"videosdk-live/Namo-Turn-Detector-v1-{lang_name}"
 
 def pre_download_namo_turn_v1_model(overwrite_existing: bool = False, language: Optional[str] = None):
+    """Pre-download tokenizer for the given language. Skips if quantized ONNX is already in cache."""
+    from huggingface_hub import try_to_load_from_cache
+
     hf_repo = _get_hf_model_repo(language)
-    
+    if not overwrite_existing and try_to_load_from_cache(repo_id=hf_repo, filename=NAMO_ONNX_FILENAME) is not None:
+        return
+
     if language is None:
         AutoTokenizer.from_pretrained(hf_repo)
     else:
@@ -57,7 +64,6 @@ class NamoTurnDetectorV1(EOU):
     """
     
     def __init__(self, threshold: float = 0.7, language: Optional[str] = None, **kwargs):
-
         super().__init__(threshold=threshold, **kwargs)
         self.language = language
         self.session = None
@@ -79,7 +85,7 @@ class NamoTurnDetectorV1(EOU):
                 self.max_length = 512
                         
 
-            model_path = hf_hub_download(repo_id=hf_repo, filename="model_quant.onnx")
+            model_path = hf_hub_download(repo_id=hf_repo, filename=NAMO_ONNX_FILENAME)
             
             self.session = ort.InferenceSession(model_path)
             print(f"Model loaded successfully from {hf_repo}.")
