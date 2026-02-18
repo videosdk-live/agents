@@ -95,6 +95,7 @@ class EouMetrics(BaseComponentMetrics):
 @dataclass
 class KbMetrics(BaseComponentMetrics):
     """Knowledge base retrieval metrics."""
+    kb_id: Optional[str] = None
     kb_documents: Optional[List[str]] = None
     kb_scores: Optional[List[float]] = None
     kb_retrieval_latency: Optional[float] = None
