@@ -79,17 +79,17 @@ class VAD(EventEmitter[Literal["error", "info"]]):
 
     async def aclose(self) -> None:
         """Cleanup resources"""
-        logger.info(f"Cleaning up VAD: {self.label}")
+        logger.debug(f"[aclose] Cleaning up VAD: {self.label}")
         
         self._vad_callback = None        
         try:
             import gc
             gc.collect()
-            logger.info(f"VAD garbage collection completed: {self.label}")
+            logger.debug(f"[aclose] VAD garbage collection completed: {self.label}")
         except Exception as e:
-            logger.error(f"Error during VAD garbage collection: {e}")
+            logger.error(f"[aclose] Error during VAD garbage collection: {e}")
         
-        logger.info(f"VAD cleanup completed: {self.label}")
+        logger.info(f"[aclose] VAD cleanup completed: {self.label}")
     
     async def __aenter__(self) -> VAD:
         return self

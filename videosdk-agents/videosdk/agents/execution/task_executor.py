@@ -40,18 +40,18 @@ class TaskExecutor:
 
     async def start(self):
         """Start the task executor."""
-        logger.info("Starting task executor")
+        logger.info("[start] Starting task executor")
         await self.resource_manager.start()
-        logger.info("Task executor started")
+        logger.info("[start] Task executor started")
 
     async def stop(self):
         """Stop the task executor."""
-        logger.info("Stopping task executor")
+        logger.info("[stop] Stopping task executor")
         self._shutdown = True
 
         # Stop resource manager
         await self.resource_manager.stop()
-        logger.info("Task executor stopped")
+        logger.info("[stop] Task executor stopped")
 
     async def execute(
         self,
@@ -102,7 +102,7 @@ class TaskExecutor:
 
             except Exception as e:
                 last_error = str(e)
-                logger.warning(f"Task execution attempt {attempt + 1} failed: {e}")
+                logger.warning(f"[execute] Task execution attempt {attempt + 1} failed: {e}")
 
                 if attempt < retry_count:
                     await asyncio.sleep(1.0 * (attempt + 1))  # Exponential backoff

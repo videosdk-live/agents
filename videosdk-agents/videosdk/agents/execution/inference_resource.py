@@ -50,7 +50,7 @@ class DedicatedInferenceResource(BaseResource):
 
     async def _initialize_impl(self) -> None:
         """Initialize the dedicated inference process."""
-        logger.info(f"Initializing dedicated inference process: {self.resource_id}")
+        logger.info(f"[_initialize_impl] Initializing dedicated inference process: {self.resource_id}")
 
         # Create pipe for communication
         self.parent_conn, self.child_conn = Pipe()
@@ -77,20 +77,20 @@ class DedicatedInferenceResource(BaseResource):
                         break
                     elif message.get("type") == "error":
                         raise Exception(
-                            f"Inference process error: {message.get('error')}"
+                            f"[_initialize_impl] Inference process error: {message.get('error')}"
                         )
 
                 await asyncio.sleep(0.1)
             except Exception as e:
-                logger.warning(f"Error checking inference process readiness: {e}")
+                logger.warning(f"[_initialize_impl] Error checking inference process readiness: {e}")
 
         if not self._process_ready:
             raise TimeoutError(
-                f"Inference process {self.resource_id} failed to initialize within {self.initialize_timeout}s"
+                f"[_initialize_impl] Inference process {self.resource_id} failed to initialize within {self.initialize_timeout}s"
             )
 
         logger.info(
-            f"Dedicated inference process initialized: {self.resource_id} (PID: {self.process.pid})"
+            f"[_initialize_impl] Dedicated inference process initialized: {self.resource_id} (PID: {self.process.pid})"
         )
 
     async def _execute_task_impl(
@@ -98,7 +98,7 @@ class DedicatedInferenceResource(BaseResource):
     ) -> Any:
         """Execute inference task in the dedicated process."""
         if not self._process_ready:
-            raise RuntimeError(f"Inference process {self.resource_id} is not ready")
+            raise RuntimeError(f"[_execute_task_impl] Inference process {self.resource_id} is not ready")
 
         # Prepare inference data
         inference_data = {
@@ -135,10 +135,10 @@ class DedicatedInferenceResource(BaseResource):
 
                 await asyncio.sleep(0.1)
             except Exception as e:
-                logger.warning(f"Error checking inference result: {e}")
+                logger.warning(f"[_execute_task_impl] Error checking inference result: {e}")
 
         raise TimeoutError(
-            f"Inference task {task_id} timed out after {config.timeout}s"
+            f"[_execute_task_impl] Inference task {task_id} timed out after {config.timeout}s"
         )
 
     async def _shutdown_impl(self) -> None:
@@ -157,7 +157,7 @@ class DedicatedInferenceResource(BaseResource):
             # Force terminate if still alive
             if self.process.is_alive():
                 logger.warning(
-                    f"Force terminating inference process {self.resource_id}"
+                    f"[_shutdown_impl] Force terminating inference process {self.resource_id}"
                 )
                 self.process.terminate()
                 self.process.join(timeout=5.0)
@@ -188,21 +188,21 @@ class DedicatedInferenceResource(BaseResource):
                             return True
                         elif message.get("type") == "error":
                             logger.error(
-                                f"Inference process error: {message.get('error')}"
+                                f"[health_check] Inference process error: {message.get('error')}"
                             )
                             return False
 
                     await asyncio.sleep(0.1)
                 except Exception as e:
-                    logger.warning(f"Error checking inference process health: {e}")
+                    logger.warning(f"[health_check] Error checking inference process health: {e}")
 
             # Timeout - process is unresponsive
-            logger.warning(f"Inference process {self.resource_id} health check timeout")
+            logger.warning(f"[health_check] Inference process {self.resource_id} health check timeout")
             return False
 
         except Exception as e:
             logger.error(
-                f"Health check failed for inference process {self.resource_id}: {e}"
+                f"[health_check] Health check failed for inference process {self.resource_id}: {e}"
             )
             return False
 
@@ -215,12 +215,12 @@ class DedicatedInferenceResource(BaseResource):
             # Set up logging
             logging.basicConfig(level=logging.INFO)
             logger.info(
-                f"Inference process started: {resource_id} (PID: {os.getpid()})"
+                f"[_run_inference_process] Inference process started: {resource_id} (PID: {os.getpid()})"
             )
 
             # Set up signal handlers
             def signal_handler(signum, frame):
-                logger.info("Received shutdown signal")
+                logger.info("[_run_inference_process] Received shutdown signal")
                 conn.send({"type": "shutdown_ack"})
                 sys.exit(0)
 
@@ -247,13 +247,13 @@ class DedicatedInferenceResource(BaseResource):
                             elif message_type == "ping":
                                 await _handle_ping(conn)
                             elif message_type == "shutdown":
-                                logger.info("Received shutdown request")
+                                logger.info("[_run_inference_process] Received shutdown request")
                                 conn.send({"type": "shutdown_ack"})
                                 break
                             else:
-                                logger.warning(f"Unknown message type: {message_type}")
+                                logger.warning(f"[_run_inference_process] Unknown message type: {message_type}")
                     except Exception as e:
-                        logger.error(f"Error in inference process main loop: {e}")
+                        logger.error(f"[_run_inference_process] Error in inference process main loop: {e}")
                         conn.send({"type": "error", "error": str(e)})
 
             asyncio.run(main_loop())
@@ -263,7 +263,7 @@ class DedicatedInferenceResource(BaseResource):
             conn.send({"type": "error", "error": str(e)})
             sys.exit(1)
         finally:
-            logger.info("Inference process shutting down")
+            logger.info("[_run_inference_process] Inference process shutting down")
             conn.close()
 
 
@@ -277,13 +277,13 @@ async def _handle_inference(
         model_config = inference_data.get("model_config", {})
         input_data = inference_data.get("input_data", {})
 
-        logger.info(f"Executing inference: {task_id} ({task_type})")
+        logger.info(f"[_handle_inference] Executing inference: {task_id} ({task_type})")
 
         # Get or create model
         model_key = f"{task_type}_{model_config.get('model_name', 'default')}"
 
         if model_key not in models_cache:
-            logger.info(f"Loading model: {model_key}")
+            logger.info(f"[_handle_inference] Loading model: {model_key}")
             models_cache[model_key] = await _load_model(task_type, model_config)
 
         model = models_cache[model_key]
@@ -302,7 +302,7 @@ async def _handle_inference(
         )
 
     except Exception as e:
-        logger.error(f"Error in inference: {e}")
+        logger.error(f"[_handle_inference] Error in inference: {e}")
         conn.send(
             {
                 "type": "result",
@@ -318,19 +318,19 @@ async def _load_model(task_type: str, model_config: Dict[str, Any]) -> Any:
     try:
         if task_type == "stt":
             # Load STT model (Deepgram, OpenAI Whisper, etc.)
-            logger.info(f"Loading STT model: {model_config}")
+            logger.info(f"[_load_model] Loading STT model: {model_config}")
             # Placeholder - in real implementation, load actual STT model
             return {"type": "stt", "model": model_config.get("model_name", "deepgram")}
 
         elif task_type == "llm":
             # Load LLM model (OpenAI GPT, Anthropic Claude, etc.)
-            logger.info(f"Loading LLM model: {model_config}")
+            logger.info(f"[_load_model] Loading LLM model: {model_config}")
             # Placeholder - in real implementation, load actual LLM model
             return {"type": "llm", "model": model_config.get("model_name", "gpt-4")}
 
         elif task_type == "tts":
             # Load TTS model (ElevenLabs, OpenAI TTS, etc.)
-            logger.info(f"Loading TTS model: {model_config}")
+            logger.info(f"[_load_model] Loading TTS model: {model_config}")
             # Placeholder - in real implementation, load actual TTS model
             return {
                 "type": "tts",
@@ -339,12 +339,12 @@ async def _load_model(task_type: str, model_config: Dict[str, Any]) -> Any:
 
         elif task_type == "vad":
             # Load VAD model (Silero, etc.)
-            logger.info(f"Loading VAD model: {model_config}")
+            logger.info(f"[_load_model] Loading VAD model: {model_config}")
             # Placeholder - in real implementation, load actual VAD model
             return {"type": "vad", "model": model_config.get("model_name", "silero")}
 
         else:
-            raise ValueError(f"Unsupported task type: {task_type}")
+            raise ValueError(f"[_load_model] Unsupported task type: {task_type}")
 
     except Exception as e:
         logger.error(f"Error loading model: {e}")
@@ -384,7 +384,7 @@ async def _execute_inference(
             raise ValueError(f"Unsupported task type: {task_type}")
 
     except Exception as e:
-        logger.error(f"Error executing inference: {e}")
+        logger.error(f"[_execute_inference] Error executing inference: {e}")
         raise
 
 
@@ -405,5 +405,5 @@ async def _handle_ping(conn: Connection):
             }
         )
     except Exception as e:
-        logger.error(f"Error in ping: {e}")
+        logger.error(f"[_handle_ping] Error in ping: {e}")
         conn.send({"type": "error", "error": str(e)})

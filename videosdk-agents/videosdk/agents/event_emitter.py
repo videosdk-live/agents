@@ -45,7 +45,7 @@ class EventEmitter(Generic[T]):
             try:
                 self._invoke(cb, arguments)
             except Exception as ex:
-                logger.error(f"Handler raised exception on event '{event}': {ex}")
+                logger.error(f"[emit] Handler raised exception on event '{event}': {ex}")
 
     def _invoke(self, func: Callable[..., Any], args: tuple[Any, ...]) -> None:
         code = func.__code__

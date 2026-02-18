@@ -114,18 +114,18 @@ class LLM(EventEmitter[Literal["error"]]):
         """
         Cleanup resources.
         """
-        logger.info(f"Cleaning up LLM: {self.label}")
+        logger.debug(f"[aclose] Cleaning up LLM: {self.label}")
         
         await self.cancel_current_generation()
         
         try:
             import gc
             gc.collect()
-            logger.info(f"LLM garbage collection completed: {self.label}")
+            logger.debug(f"[aclose] LLM garbage collection completed: {self.label}")
         except Exception as e:
-            logger.error(f"Error during LLM garbage collection: {e}")
+            logger.error(f"[aclose] Error during LLM garbage collection: {e}")
         
-        logger.info(f"LLM cleanup completed: {self.label}")
+        logger.info(f"[aclose] LLM cleanup completed: {self.label}")
 
     async def __aenter__(self) -> LLM:
         """

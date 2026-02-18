@@ -95,7 +95,7 @@ class LocalAudioPlayer:
                     else:
                         self.reverse_queue.put(chunk)
             except Exception as e:
-                logger.error(f"[AEC Error] Failed to queue reverse stream audio: {e}")
+                logger.error(f"[handle_audio_input] [AEC Error] Failed to queue reverse stream audio: {e}")
 
         with self._lock:
             self._buffer.extend(audio_bytes)
@@ -176,7 +176,7 @@ class MicrophoneStreamer:
         except asyncio.QueueFull:
             pass
         except Exception as e:
-            logger.error(f"Error in mic callback: {e}")
+            logger.error(f"[_callback] Error in mic callback: {e}")
 
 
     def start(self):
@@ -391,7 +391,7 @@ async def setup_console_voice_for_ctx(
     )
     mic.start()
 
-    logger.info(f"Using microphone: {mic._input_device_name}")
+    logger.info(f"[setup_console_voice_for_ctx] Using microphone: {mic._input_device_name}")
 
     stt_agent = getattr(ctx._pipeline, 'stt', None)
     needs_stereo = False

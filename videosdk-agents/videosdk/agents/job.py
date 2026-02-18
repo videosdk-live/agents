@@ -3,12 +3,13 @@ from typing import Callable, Coroutine, Optional, Any, TYPE_CHECKING
 import os
 import asyncio
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from enum import Enum, unique
 import logging
 import requests
 import sys
 from .playground_manager import PlaygroundManager
+from .metrics.log_handler import JobLogger
 
 if TYPE_CHECKING:
     from .pipeline import Pipeline
@@ -71,7 +72,7 @@ class RoomOptions:
     # VideoSDK connection options
     signaling_base_url: Optional[str] = None
     background_audio: bool = False
-
+    send_logs_to_dashboard: bool = False
     # New Configuration Fields
     _transport_mode: TransportMode = field(default=TransportMode.VIDEOSDK, init=False, repr=False)
 
@@ -167,9 +168,6 @@ class Options:
     load_threshold: float = 0.75
     """Load threshold above which worker is marked as unavailable."""
 
-    register: bool = False
-    """Whether to register with the backend. Defaults to False for local development."""
-
     signaling_base_url: str = "api.videosdk.live"
     """Signaling base URL for VideoSDK services. Defaults to api.videosdk.live."""
 
@@ -229,43 +227,24 @@ class WorkerJob:
             permissions=self.options.permissions,
             max_retry=self.options.max_retry,
             load_threshold=self.options.load_threshold,
-            register=self.options.register,
             signaling_base_url=self.options.signaling_base_url,
             host=self.options.host,
             port=self.options.port,
             log_level=self.options.log_level,
         )
 
-        # If register=True, run the worker in backend mode (don't execute entrypoint immediately)
-        if self.options.register:
-            default_room_options = None
-            if self.jobctx:
-                if callable(self.jobctx):
-                    job_context = self.jobctx()
-                else:
-                    job_context = self.jobctx
-                default_room_options = job_context.room_options
-            # Run the worker normally (for backend registration mode)
-            Worker.run_worker(
-                options=worker_options, default_room_options=default_room_options
-            )
-        else:
-            # Direct mode - run entrypoint immediately if we have a job context
-            if self.jobctx:
-                if callable(self.jobctx):
-                    job_context = self.jobctx()
-                else:
-                    job_context = self.jobctx
 
-                # Set the current job context and run the entrypoint
-                token = _set_current_job_context(job_context)
-                try:
-                    asyncio.run(self.entrypoint(job_context))
-                finally:
-                    _reset_current_job_context(token)
+        default_room_options = None
+        if self.jobctx:
+            if callable(self.jobctx):
+                job_context = self.jobctx()
             else:
-                # No job context provided, run worker normally
-                Worker.run_worker(worker_options)
+                job_context = self.jobctx
+            default_room_options = job_context.room_options
+        # Run the worker normally (for backend registration mode)
+        Worker.run_worker(
+            options=worker_options, default_room_options=default_room_options
+        )
 
 
 class JobContext:
@@ -275,6 +254,7 @@ class JobContext:
         room_options: RoomOptions,
         metadata: Optional[dict] = None,
         loop: Optional[asyncio.AbstractEventLoop] = None,
+        log_queue=None,
     ) -> None:
         self.room_options = room_options
         self.metadata = metadata or {}
@@ -288,6 +268,23 @@ class JobContext:
         self._is_shutting_down: bool = False
         self.want_console = len(sys.argv) > 1 and sys.argv[1].lower() == "console"
         self.playground_manager: Optional["PlaygroundManager"] = None
+        self.send_logs_to_dashboard = self.room_options.send_logs_to_dashboard
+        # Job-scoped logger (Producer)
+        self._log_queue = log_queue
+        if log_queue is not None:
+            dashboard_level = (metadata or {}).get("dashboard_log_level", "INFO")
+            self.logger = JobLogger(
+                queue=log_queue,
+                room_id=self.room_options.room_id or "",
+                peer_id=self.room_options.agent_participant_id or "",
+                auth_token=self.videosdk_auth or "",
+                dashboard_log_level=dashboard_level,
+                send_logs_to_dashboard=self.send_logs_to_dashboard,
+            )
+        else:
+            self.logger = None
+        print("JobContext initialized", self.room_options)
+    
     def _set_pipeline_internal(self, pipeline: Any) -> None:
         """Internal method called by pipeline constructors"""
         self._pipeline = pipeline
@@ -369,7 +366,7 @@ class JobContext:
                         raise ValueError("WebSocket configuration (websocket) is required when mode is WEBSOCKET")
                     
                     if self.room_options.webrtc and (self.room_options.webrtc.signaling_url or self.room_options.webrtc.ice_servers != [{"urls": "stun:stun.l.google.com:19302"}]):
-                        logger.warning("WebRTC configuration provided but transport mode is set to WEBSOCKET. WebRTC config will be ignored.")
+                        logger.warning("[connect] WebRTC configuration provided but transport mode is set to WEBSOCKET. WebRTC config will be ignored.")
 
                     from .transports.websocket_handler import WebSocketTransportHandler
                     self.room = WebSocketTransportHandler(
@@ -380,13 +377,13 @@ class JobContext:
                     )
                 elif self.room_options.transport_mode == TransportMode.WEBRTC:
                     if not self.room_options.webrtc:
-                        raise ValueError("WebRTC configuration (webrtc) is required when mode is WEBRTC")
+                        raise ValueError("[connect] WebRTC configuration (webrtc) is required when mode is WEBRTC")
                     
                     if not self.room_options.webrtc.signaling_url:
-                        raise ValueError("WebRTC signaling_url is required when mode is WEBRTC")
+                        raise ValueError("[connect] WebRTC signaling_url is required when mode is WEBRTC")
 
                     if self.room_options.websocket and (self.room_options.websocket.port != 8080 or self.room_options.websocket.path != "/ws"):
-                        logger.warning("WebSocket configuration provided but connection mode is set to WEBRTC. WebSocket config will be ignored.")
+                        logger.warning("[connect] WebSocket configuration provided but connection mode is set to WEBRTC. WebSocket config will be ignored.")
 
                     from .transports.webrtc_handler import WebRTCTransportHandler
                     self.room = WebRTCTransportHandler(
@@ -398,9 +395,9 @@ class JobContext:
                 
                 elif self.room_options.transport_mode == TransportMode.VIDEOSDK:
                     if self.room_options.websocket and (self.room_options.websocket.port != 8080 or self.room_options.websocket.path != "/ws"):
-                         logger.warning("WebSocket configuration provided but transport mode is VIDEOSDK. WebSocket config will be ignored.")
+                         logger.warning("[connect] WebSocket configuration provided but transport mode is VIDEOSDK. WebSocket config will be ignored.")
                     if self.room_options.webrtc and (self.room_options.webrtc.signaling_url or self.room_options.webrtc.ice_servers != [{"urls": "stun:stun.l.google.com:19302"}]):
-                         logger.warning("WebRTC configuration provided but transport mode is VIDEOSDK. WebRTC config will be ignored.")
+                         logger.warning("[connect] WebRTC configuration provided but transport mode is VIDEOSDK. WebRTC config will be ignored.")
 
         if self.room:
             await self.room.connect()
@@ -427,26 +424,26 @@ class JobContext:
                 print("\033[1;75m" + "Interact with agent here at:" + "\033[0m")
                 print("\033[1;4;94m" + playground_url + "\033[0m")
             else:
-                raise ValueError("VIDEOSDK_AUTH_TOKEN environment variable not found")
+                raise ValueError("[connect] VIDEOSDK_AUTH_TOKEN environment variable not found")
 
     async def shutdown(self) -> None:
         """Called by Worker during graceful shutdown"""
         if self._is_shutting_down:
-            logger.info("JobContext already shutting down")
+            logger.debug("[shutdown] JobContext already shutting down")
             return
         self._is_shutting_down = True
-        logger.info("JobContext shutting down")
+        logger.debug("[shutdown] JobContext shutting down")
         for callback in self._shutdown_callbacks:
             try:
                 await callback()
             except Exception as e:
-                logger.error(f"Error in shutdown callback: {e}")
+                logger.error(f"[shutdown] Error in shutdown callback: {e}")
 
         if self._pipeline:
             try:
                 await self._pipeline.cleanup()
             except Exception as e:
-                logger.error(f"Error during pipeline cleanup: {e}")
+                logger.error(f"[shutdown] Error during pipeline cleanup: {e}")
             self._pipeline = None
 
         if self.room:
@@ -454,21 +451,27 @@ class JobContext:
                 if not getattr(self.room, "_left", False):
                     await self.room.leave()
                 else:
-                    logger.info("Room already left, skipping room.leave()")
+                    logger.debug("[shutdown] Room already left, skipping room.leave()")
             except Exception as e:
-                logger.error(f"Error during room leave: {e}")
+                logger.error(f"[shutdown] Error during room leave: {e}")
             try:
                 if hasattr(self.room, "cleanup"):
                     await self.room.cleanup()
             except Exception as e:
-                logger.error(f"Error during room cleanup: {e}")
+                logger.error(f"[shutdown] Error during room cleanup: {e}")
             self.room = None
 
         self.room_options = None
         self._loop = None
         self.videosdk_auth = None
         self._shutdown_callbacks.clear()
-        logger.info("JobContext cleaned up")
+
+        # Clean up job-scoped logger (remove QueueHandler from parent logger)
+        if self.logger:
+            self.logger.cleanup()
+            self.logger = None
+
+        logger.info("[shutdown] JobContext cleaned up")
 
     def add_shutdown_callback(
         self, callback: Callable[[], Coroutine[None, None, None]]
@@ -514,24 +517,24 @@ class JobContext:
         if session:
 
             async def cleanup_session():
-                logger.info("Cleaning up session...")
+                logger.debug("[run_until_shutdown] Cleaning up session...")
                 try:
                     await session.close()
                 except Exception as e:
-                    logger.error(f"Error closing session in cleanup: {e}")
+                    logger.error(f"[run_until_shutdown] Error closing session in cleanup: {e}")
                 shutdown_event.set()
 
             self.add_shutdown_callback(cleanup_session)
         else:
 
             async def cleanup_no_session():
-                logger.info("Shutdown called, no session to clean up")
+                logger.debug("[run_until_shutdown] Shutdown called, no session to clean up")
                 shutdown_event.set()
 
             self.add_shutdown_callback(cleanup_no_session)
 
         def on_session_end(reason: str):
-            logger.info(f"Session ended: {reason}")
+            logger.info(f"[run_until_shutdown] Session ended: {reason}")
             asyncio.create_task(self.shutdown())
 
         try:
@@ -544,53 +547,53 @@ class JobContext:
             if self.room:
                 try:
                     self.room.setup_session_end_callback(on_session_end)
-                    logger.info("Session end callback configured")
+                    logger.debug("[run_until_shutdown] Session end callback configured")
                 except Exception as e:
-                    logger.warning(f"Error setting up session end callback: {e}")
+                    logger.warning(f"[run_until_shutdown] Error setting up session end callback: {e}")
             else:
                 logger.warning(
-                    "Room not available, session end callback not configured"
+                    "[run_until_shutdown] Room not available, session end callback not configured"
                 )
 
             if wait_for_participant and self.room:
                 try:
-                    logger.info("Waiting for participant...")
+                    logger.info("[run_until_shutdown] Waiting for participant...")
                     await self.room.wait_for_participant()
-                    logger.info("Participant joined")
+                    logger.info("[run_until_shutdown] Participant joined")
                 except Exception as e:
-                    logger.error(f"Error waiting for participant: {e}")
+                    logger.error(f"[run_until_shutdown] Error waiting for participant: {e}")
                     raise
 
             if session:
                 try:
                     await session.start()
-                    logger.info("Agent session started")
+                    logger.info("[run_until_shutdown] Agent session started")
                 except Exception as e:
-                    logger.error(f"Error starting session: {e}")
+                    logger.error(f"[run_until_shutdown] Error starting session: {e}")
                     raise
 
             logger.info(
-                "Agent is running... (will exit when session ends or on interrupt)"
+                "[run_until_shutdown] Agent is running... (will exit when session ends or on interrupt)"
             )
             await shutdown_event.wait()
-            logger.info("Shutdown event received, exiting gracefully...")
+            logger.info("[run_until_shutdown] Shutdown event received, exiting gracefully...")
 
         except KeyboardInterrupt:
-            logger.info("Keyboard interrupt received, shutting down...")
+            logger.info("[run_until_shutdown] Keyboard interrupt received, shutting down...")
         except Exception as e:
-            logger.error(f"Unexpected error in run_until_shutdown: {e}")
+            logger.error(f"[run_until_shutdown] Unexpected error in run_until_shutdown: {e}")
             raise
         finally:
             if session:
                 try:
                     await session.close()
                 except Exception as e:
-                    logger.error(f"Error closing session in finally: {e}")
+                    logger.error(f"[run_until_shutdown] Error closing session in finally: {e}")
 
             try:
                 await self.shutdown()
             except Exception as e:
-                logger.error(f"Error in ctx.shutdown: {e}")
+                logger.error(f"[run_until_shutdown] Error in ctx.shutdown: {e}")
 
     def get_room_id(self) -> str:
         """

@@ -148,13 +148,13 @@ class STT(EventEmitter[Literal["error"]]):
     
     async def aclose(self) -> None:
         """Cleanup resources"""
-        logger.info(f"Cleaning up STT: {self.label}")
+        logger.info(f"[aclose] Cleaning up STT: {self.label}")
         self._transcript_callback = None
         try:
             import gc
             gc.collect()
-            logger.info(f"STT garbage collection completed: {self.label}")
+            logger.info(f"[aclose] STT garbage collection completed: {self.label}")
         except Exception as e:
-            logger.error(f"Error during STT garbage collection: {e}")
+            logger.error(f"[aclose] Error during STT garbage collection: {e}")
         
-        logger.info(f"STT cleanup completed: {self.label}")
+        logger.info(f"[aclose] STT cleanup completed: {self.label}")

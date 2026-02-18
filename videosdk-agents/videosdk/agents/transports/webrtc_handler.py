@@ -51,7 +51,7 @@ class WebRTCOutputTrack(MediaStreamTrack):
         
     def interrupt(self):
         """Clear all buffers"""
-        logger.info("WebRTCOutputTrack interrupted")
+        logger.info("[interrupt] WebRTCOutputTrack interrupted")
         self.audio_buffer = bytearray()
         while not self.frame_queue.empty():
             try:
@@ -77,7 +77,7 @@ class WebRTCOutputTrack(MediaStreamTrack):
                 frame = self._create_audio_frame(chunk)
                 await self.frame_queue.put(frame)
             except Exception as e:
-                logger.error(f"Error creating audio frame: {e}")
+                logger.error(f"[add_new_bytes] Error creating audio frame: {e}")
 
     def _create_audio_frame(self, data_bytes):
         data_np = np.frombuffer(data_bytes, dtype=np.int16)
@@ -145,8 +145,8 @@ class WebRTCTransportHandler(BaseTransportHandler):
         if not RTCPeerConnection:
              raise ImportError("aiortc and aiohttp are required for WebRTCConnectionHandler. Install with `pip install aiortc aiohttp`.")
              
-        logger.info(f"Connecting to Signaling Server: {self.signaling_url}")
-        logger.info(f"Using ICE servers: {self.ice_servers}")
+        logger.info(f"[connect] Connecting to Signaling Server: {self.signaling_url}")
+        logger.info(f"[connect] Using ICE servers: {self.ice_servers}")
         
         from aiortc import RTCConfiguration, RTCIceServer
         
@@ -175,27 +175,27 @@ class WebRTCTransportHandler(BaseTransportHandler):
         @self.pc.on("track")
         def on_track(track):
             if track.kind == "audio":
-                logger.info("WebRTC Audio Track received")
+                logger.info("[connect] WebRTC Audio Track received")
                 asyncio.create_task(self._consume_audio_track(track))
             
             @track.on("ended")
             async def on_ended():
-                logger.info("Track ended")
+                logger.info("[connect] Track ended")
                 
         @self.pc.on("connectionstatechange")
         async def on_connectionstatechange():
-            logger.info(f"Connection state is {self.pc.connectionState}")
+            logger.info(f"[connect] Connection state is {self.pc.connectionState}")
             if self.pc.connectionState in ["failed", "closed", "disconnected"]:
                 if self._on_session_end:
                     try:
                         self._on_session_end(f"webrtc_{self.pc.connectionState}")
                     except Exception as e:
-                        logger.error(f"Error in session end callback: {e}")
+                        logger.error(f"[connect] Error in session end callback: {e}")
 
         if self.signaling_url:
             self._signaling_task = asyncio.create_task(self._run_signaling())
         else:
-            logger.warning("No signaling URL provided for WebRTC connection")
+            logger.warning("[connect] No signaling URL provided for WebRTC connection")
 
     async def _consume_audio_track(self, track):
         self._participant_joined.set()
@@ -206,7 +206,7 @@ class WebRTCTransportHandler(BaseTransportHandler):
                 if self.pipeline:
                     await self.pipeline.on_audio_delta(audio_bytes)
             except Exception as e:
-                logger.warning(f"Error receiving audio frame: {e}")
+                logger.warning(f"[consume_audio_track] Error receiving audio frame: {e}")
                 break
 
     async def _run_signaling(self):
@@ -234,7 +234,7 @@ class WebRTCTransportHandler(BaseTransportHandler):
                                 candidate = data["candidate"]
                                 pass
         except Exception as e:
-            logger.error(f"Signaling error: {e}")
+            logger.error(f"[run_signaling] Signaling error: {e}")
 
     async def wait_for_participant(self, participant_id=None):
         await self._participant_joined.wait()

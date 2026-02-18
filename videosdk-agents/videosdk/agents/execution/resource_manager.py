@@ -50,7 +50,7 @@ class ResourceManager:
 
     async def start(self):
         """Start the resource manager."""
-        logger.info("Starting resource manager")
+        logger.info("[start] Starting resource manager")
 
         # Create dedicated inference resource if enabled
         if self.config.use_dedicated_inference_process:
@@ -67,11 +67,11 @@ class ResourceManager:
         # Initialize initial resources
         await self._create_initial_resources()
 
-        logger.info("Resource manager started")
+        logger.info("[start] Resource manager started")
 
     async def stop(self):
         """Stop the resource manager."""
-        logger.info("Stopping resource manager")
+        logger.info("[stop] Stopping resource manager")
         self._shutdown = True
 
         # Cancel background tasks
@@ -92,11 +92,11 @@ class ResourceManager:
         if shutdown_tasks:
             await asyncio.gather(*shutdown_tasks, return_exceptions=True)
 
-        logger.info("Resource manager stopped")
+        logger.info("[stop] Resource manager stopped")
 
     async def _create_dedicated_inference_resource(self):
         """Create the dedicated inference resource (legacy IPC compatibility)."""
-        logger.info("Creating dedicated inference resource")
+        logger.info("[_create_dedicated_inference_resource] Creating dedicated inference resource")
 
         inference_config = {
             "inference_process_timeout": self.config.inference_process_timeout,
@@ -110,13 +110,13 @@ class ResourceManager:
         )
 
         await self.dedicated_inference_resource.initialize()
-        logger.info("Dedicated inference resource created")
+        logger.info("[_create_dedicated_inference_resource] Dedicated inference resource created")
 
     async def _create_initial_resources(self):
         """Create initial resources based on configuration."""
         initial_count = self.config.num_idle_resources
         logger.info(
-            f"Creating {initial_count} initial {self.config.resource_type.value} resources"
+            f"[_create_initial_resources] Creating {initial_count} initial {self.config.resource_type.value} resources"
         )
 
         for i in range(initial_count):
@@ -146,7 +146,7 @@ class ResourceManager:
         # Add to resources list
         self.resources.append(resource)
 
-        logger.info(f"Created {resource_type.value} resource: {resource_id}")
+        logger.info(f"[_create_resource] Created {resource_type.value} resource: {resource_id}")
         return resource
 
     async def _resource_lifecycle_loop(self):
@@ -170,8 +170,8 @@ class ResourceManager:
                     and total_count < self.config.max_resources
                 ):
                     logger.info(
-                        f"Scaling up: Creating additional {self.config.resource_type.value} resource. "
-                        f"Available: {available_count}, Target Idle: {self.config.num_idle_resources}"
+                        f"[_resource_lifecycle_loop] Scaling up: Creating additional {self.config.resource_type.value} resource. "
+                        f"[_resource_lifecycle_loop] Available: {available_count}, Target Idle: {self.config.num_idle_resources}"
                     )
                     await self._create_resource(self.config.resource_type)
 
@@ -189,8 +189,8 @@ class ResourceManager:
                     
                     if resources_to_remove:
                         logger.info(
-                            f"Scaling down: Removing {len(resources_to_remove)} excess idle resources. "
-                            f"Available: {available_count}, Target Idle: {self.config.num_idle_resources}"
+                            f"[_resource_lifecycle_loop] Scaling down: Removing {len(resources_to_remove)} excess idle resources. "
+                            f"[_resource_lifecycle_loop] Available: {available_count}, Target Idle: {self.config.num_idle_resources}"
                         )
                         
                         for resource in resources_to_remove:
@@ -202,7 +202,7 @@ class ResourceManager:
                 await asyncio.sleep(5.0)  # Check every 5 seconds
 
             except Exception as e:
-                logger.error(f"Error in resource lifecycle loop: {e}")
+                logger.error(f"[_resource_lifecycle_loop] Error in resource lifecycle loop: {e}")
                 await asyncio.sleep(5.0)
 
     async def _health_check_loop(self):
@@ -217,7 +217,7 @@ class ResourceManager:
                         is_healthy = await resource.health_check()
                         if not is_healthy:
                             logger.warning(
-                                f"Unhealthy resource detected: {resource.resource_id}"
+                                f"[_health_check_loop] Unhealthy resource detected: {resource.resource_id}"
                             )
                             # Remove unhealthy resource
                             self.resources.remove(resource)
@@ -229,7 +229,7 @@ class ResourceManager:
 
                     except Exception as e:
                         logger.error(
-                            f"Health check failed for {resource.resource_id}: {e}"
+                            f"[_health_check_loop] Health check failed for {resource.resource_id}: {e}"
                         )
 
                 # Check dedicated inference resource
@@ -240,20 +240,20 @@ class ResourceManager:
                         )
                         if not is_healthy:
                             logger.warning(
-                                "Unhealthy dedicated inference resource detected"
+                                "[_health_check_loop] Unhealthy dedicated inference resource detected"
                             )
                             # Recreate inference resource
                             await self.dedicated_inference_resource.shutdown()
                             await self._create_dedicated_inference_resource()
                     except Exception as e:
                         logger.error(
-                            f"Health check failed for dedicated inference resource: {e}"
+                            f"[_health_check_loop] Health check failed for dedicated inference resource: {e}"
                         )
 
                 await asyncio.sleep(self.config.health_check_interval)
 
             except Exception as e:
-                logger.error(f"Error in health check loop: {e}")
+                logger.error(f"[_health_check_loop] Error in health check loop: {e}")
                 await asyncio.sleep(5.0)
 
     async def execute_task(
@@ -268,7 +268,7 @@ class ResourceManager:
             and self.dedicated_inference_resource
         ):
             logger.info(
-                f"Routing inference task {task_id} to dedicated inference resource"
+                f"[execute_task] Routing inference task {task_id} to dedicated inference resource"
             )
             return await self.dedicated_inference_resource.execute_task(
                 task_id, task_config, entrypoint, args, kwargs

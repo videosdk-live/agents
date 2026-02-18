@@ -61,16 +61,16 @@ class EOU(EventEmitter[Literal["error"]]):
     
     async def aclose(self) -> None:
         """Cleanup resources - should be overridden by subclasses to cleanup models"""
-        logger.info(f"Cleaning up EOU: {self._label}")
+        logger.debug(f"[aclose] Cleaning up EOU: {self._label}")
         
         try:
             import gc
             gc.collect()
-            logger.info(f"EOU garbage collection completed: {self._label}")
+            logger.debug(f"[aclose] EOU garbage collection completed: {self._label}")
         except Exception as e:
-            logger.error(f"Error during EOU garbage collection: {e}")
+            logger.error(f"[aclose] Error during EOU garbage collection: {e}")
         
-        logger.info(f"EOU cleanup completed: {self._label}")
+        logger.info(f"[aclose] EOU cleanup completed: {self._label}")
     
     async def cleanup(self) -> None:
         """Cleanup resources - calls aclose for compatibility"""

@@ -99,7 +99,7 @@ class BackendConnection:
         env_key = self._get_worker_id_env_key()
         env_worker_id = os.environ.get(env_key)
         if env_worker_id and len(env_worker_id.strip()) > 0:
-            logger.info(f"Loaded worker ID from memory: {env_worker_id}")
+            logger.info(f"[_load_memory_worker_id] Loaded worker ID from memory: {env_worker_id}")
             return env_worker_id.strip()
         return None
 
@@ -107,7 +107,7 @@ class BackendConnection:
         """Save worker ID to memory only (environment variable)."""
         env_key = self._get_worker_id_env_key()
         os.environ[env_key] = worker_id
-        logger.info(f"Saved worker ID to memory: {worker_id}")
+        logger.info(f"[_save_memory_worker_id] Saved worker ID to memory: {worker_id}")
 
     def _load_persistent_worker_id(self) -> Optional[str]:
         """Load worker ID from persistent storage (alias for memory-based method)."""
@@ -126,12 +126,12 @@ class BackendConnection:
         # Try to load existing worker ID
         existing_worker_id = self._load_persistent_worker_id()
         if existing_worker_id:
-            logger.info(f"Using existing worker ID: {existing_worker_id}")
+            logger.info(f"[_generate_or_recover_worker_id] Using existing worker ID: {existing_worker_id}")
             return existing_worker_id
 
         # Generate new worker ID
         new_worker_id = str(uuid.uuid4())
-        logger.info(f"Generated new worker ID: {new_worker_id}")
+        logger.info(f"[_generate_or_recover_worker_id] Generated new worker ID: {new_worker_id}")
 
         # Save the new worker ID
         self._save_persistent_worker_id(new_worker_id)
@@ -176,22 +176,22 @@ class BackendConnection:
 
     async def disconnect(self):
         """Disconnect from backend server."""
-        logger.info("Disconnecting from backend server")
+        logger.info("[disconnect] Disconnecting from backend server")
         self._closed = True
 
         # Cancel connection task FIRST to prevent reconnection
         if self._connection_task and not self._connection_task.done():
-            logger.info("Cancelling connection task to prevent reconnection")
+            logger.info("[disconnect] Cancelling connection task to prevent reconnection")
             self._connection_task.cancel()
             try:
                 await self._connection_task
-                logger.info("Connection task cancelled successfully")
+                logger.info("[disconnect] Connection task cancelled successfully")
             except asyncio.CancelledError:
-                logger.info("Connection task was cancelled as expected")
+                logger.info("[disconnect] Connection task was cancelled as expected")
             except Exception as e:
-                logger.error(f"Error cancelling connection task: {e}")
+                logger.error(f"[disconnect] Error cancelling connection task: {e}")
         else:
-            logger.info("Connection task was already done or doesn't exist")
+            logger.info("[disconnect] Connection task was already done or doesn't exist")
 
         # Send final status update to inform registry of shutdown
         if self._ws and not self._ws.closed:
@@ -205,18 +205,18 @@ class BackendConnection:
                 )
                 await self._ws.send_str(json.dumps(shutdown_msg.dict()))
                 logger.info(
-                    f"Sent shutdown notification to registry for worker: {self._worker_id}"
+                    f"[disconnect] Sent shutdown notification to registry for worker: {self._worker_id}"
                 )
             except Exception as e:
-                logger.warning(f"Failed to send shutdown notification: {e}")
+                logger.warning(f"[disconnect] Failed to send shutdown notification: {e}")
 
         # Close WebSocket connection properly
         if self._ws and not self._ws.closed:
             try:
                 await self._ws.close()
-                logger.info("WebSocket connection closed")
+                logger.info("[disconnect] WebSocket connection closed")
             except Exception as e:
-                logger.warning(f"Error closing WebSocket: {e}")
+                logger.warning(f"[disconnect] Error closing WebSocket: {e}")
 
         # Cancel other tasks
         for task in [
@@ -235,7 +235,7 @@ class BackendConnection:
         if self._http_session:
             await self._http_session.close()
 
-        logger.info("Backend disconnection complete")
+        logger.info("[disconnect] Backend disconnection complete")
 
     async def send_message(self, message: WorkerMessage):
         """Send a message to the backend."""
@@ -246,10 +246,10 @@ class BackendConnection:
 
     async def _connection_loop(self):
         """Main connection loop with retry logic."""
-        logger.info("Connection loop started")
+        logger.info("[_connection_loop] Connection loop started")
         while not self._closed:
             try:
-                logger.debug("Attempting to establish connection")
+                logger.debug("[_connection_loop] Attempting to establish connection")
                 self._connecting = True
                 await self._establish_connection()
                 self._connecting = False
@@ -276,36 +276,36 @@ class BackendConnection:
 
                 # Check if we should exit the loop
                 if self._closed:
-                    logger.info("Connection loop exiting due to shutdown")
+                    logger.info("[_connection_loop] Connection loop exiting due to shutdown")
                     break
 
             except asyncio.CancelledError:
-                logger.info("Connection loop cancelled")
+                logger.info("[_connection_loop] Connection loop cancelled")
                 break
             except Exception as e:
                 if self._closed:
                     logger.info(
-                        "Connection loop exiting due to shutdown during exception"
+                        "[_connection_loop] Connection loop exiting due to shutdown during exception"
                     )
                     break
 
                 if self._retry_count >= self.max_retry:
                     logger.error(
-                        f"Failed to connect after {self._retry_count} attempts"
+                        f"[_connection_loop] Failed to connect after {self._retry_count} attempts"
                     )
                     raise RuntimeError(
-                        f"Failed to connect to backend after {self._retry_count} attempts"
+                        f"[_connection_loop] Failed to connect to backend after {self._retry_count} attempts"
                     ) from e
 
                 retry_delay = min(self._retry_count * 2, 10)
                 self._retry_count += 1
 
-                logger.warning(f"Connection failed, retrying in {retry_delay}s: {e}")
+                logger.warning(f"[_connection_loop] Connection failed, retrying in {retry_delay}s: {e}")
                 await asyncio.sleep(retry_delay)
 
     async def _establish_connection(self):
         """Establish connection to the backend registry server."""
-        logger.debug("Establishing connection to backend")
+        logger.debug("[_establish_connection] Establishing connection to backend")
 
         if not self._http_session:
             self._http_session = aiohttp.ClientSession()
@@ -322,22 +322,22 @@ class BackendConnection:
         # Connect to WebSocket
         headers = {"Authorization": f"Bearer {self.auth_token}"}
 
-        logger.debug(f"Connecting to WebSocket: {agent_url}")
+        logger.debug(f"[_establish_connection] Connecting to WebSocket: {agent_url}")
         self._ws = await self._http_session.ws_connect(
             agent_url,
             headers=headers,
             autoping=True,
             proxy=self.http_proxy or None,
         )
-        logger.debug("WebSocket connection established")
+        logger.debug("[_establish_connection] WebSocket connection established")
 
         # Get previously assigned worker ID from registry (if any)
         worker_id = self._get_registry_assigned_worker_id()
         if worker_id:
-            logger.info(f"Using previously assigned worker ID: {worker_id}")
+            logger.info(f"[_establish_connection] Using previously assigned worker ID: {worker_id}")
         else:
             logger.info(
-                "No previously assigned worker ID found, requesting new assignment from registry"
+                "[_establish_connection] No previously assigned worker ID found, requesting new assignment from registry"
             )
             worker_id = ""  # Empty string tells registry to assign a new ID
 
@@ -356,10 +356,10 @@ class BackendConnection:
         )
 
         logger.debug(
-            f"Sending registration message for worker: {worker_id or 'NEW_ASSIGNMENT'}"
+            f"[_establish_connection] Sending registration message for worker: {worker_id or 'NEW_ASSIGNMENT'}"
         )
-        logger.debug(f"Registration message: {register_msg.dict()}")
-        logger.debug(f"Agent ID: '{self.agent_id}', Worker type: '{self.worker_type}'")
+        logger.debug(f"[_establish_connection] Registration message: {register_msg.dict()}")
+        logger.debug(f"[_establish_connection] Agent ID: '{self.agent_id}', Worker type: '{self.worker_type}'")
 
         await self._ws.send_str(json.dumps(register_msg.dict()))
 
@@ -370,29 +370,29 @@ class BackendConnection:
             if data.get("type") == "register" and data.get("success"):
                 assigned_worker_id = data.get("worker_id")
                 self._worker_id = assigned_worker_id
-                logger.info(f"Worker registered with backend: {self._worker_id}")
+                logger.info(f"[_establish_connection] Worker registered with backend: {self._worker_id}")
 
                 # Store the assigned worker ID in memory for future use
                 if assigned_worker_id and assigned_worker_id != worker_id:
                     logger.info(
-                        f"Registry assigned new worker ID: {assigned_worker_id}"
+                        f"[_establish_connection] Registry assigned new worker ID: {assigned_worker_id}"
                     )
                     self._save_memory_worker_id(assigned_worker_id)
                 elif assigned_worker_id == worker_id:
                     logger.info(
-                        f"Registry confirmed existing worker ID: {assigned_worker_id}"
+                        f"[_establish_connection] Registry confirmed existing worker ID: {assigned_worker_id}"
                     )
                 else:
-                    logger.warning("Registry did not provide a worker ID")
+                    logger.warning("[_establish_connection] Registry did not provide a worker ID")
 
                 if self._on_register:
                     self._on_register(self._worker_id, data.get("payload", {}))
             else:
                 raise RuntimeError(
-                    f"Registration failed: {data.get('message', 'Unknown error')}"
+                    f"[_establish_connection] Registration failed: {data.get('message', 'Unknown error')}"
                 )
         else:
-            raise RuntimeError("Unexpected message type during registration")
+            raise RuntimeError("[_establish_connection] Unexpected message type during registration")
 
     async def _send_loop(self):
         """Send messages to the backend."""
@@ -403,7 +403,7 @@ class BackendConnection:
             except asyncio.TimeoutError:
                 continue
             except Exception as e:
-                logger.error(f"Error sending message: {e}")
+                logger.error(f"[_send_loop] Error sending message: {e}")
                 break
 
     async def _recv_loop(self):
@@ -417,18 +417,18 @@ class BackendConnection:
                     aiohttp.WSMsgType.CLOSED,
                     aiohttp.WSMsgType.CLOSING,
                 ):
-                    logger.info("WebSocket connection closed")
+                    logger.info("[_recv_loop] WebSocket connection closed")
                     break
 
                 if msg.type != aiohttp.WSMsgType.TEXT:
-                    logger.warning(f"Unexpected message type: {msg.type}")
+                    logger.warning(f"[_recv_loop] Unexpected message type: {msg.type}")
                     continue
 
                 data = json.loads(msg.data)
                 await self._handle_server_message(data)
 
             except Exception as e:
-                logger.error(f"Error receiving message: {e}")
+                logger.error(f"[_recv_loop] Error receiving message: {e}")
                 break
 
     async def _handle_server_message(self, data: Dict[str, Any]):
@@ -456,7 +456,7 @@ class BackendConnection:
                 self._on_pong(pong)
 
         else:
-            logger.warning(f"Unknown message type: {msg_type}")
+            logger.warning(f"[_handle_server_message] Unknown message type: {msg_type}")
 
     async def _status_loop(self):
         """Send periodic status updates."""
@@ -467,7 +467,7 @@ class BackendConnection:
                 await asyncio.sleep(30)  # Just keep the loop alive
                 # No status updates sent from here - worker handles them
             except Exception as e:
-                logger.error(f"Error in status loop: {e}")
+                logger.error(f"[_status_loop] Error in status loop: {e}")
                 break
 
     async def wait_for_assignment(

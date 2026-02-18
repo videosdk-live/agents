@@ -297,7 +297,7 @@ class A2AProtocol:
         target_agent = self.registry.get_agent_instance(to_agent)
 
         if not target_agent:
-            logger.warning(f"Target agent {to_agent} not found in registry.")
+            logger.warning(f"[send_message] Target agent {to_agent} not found in registry.")
             return
 
         message = A2AMessage(
@@ -325,7 +325,7 @@ class A2AProtocol:
                     attributes
                 )
             except Exception as e:
-                print(f"Failed to create sender A2A trace: {e}")
+                logger.error(f"[send_message] Failed to create sender A2A trace: {e}")
 
         if hasattr(target_agent, 'a2a'):
             target_agent.a2a._last_sender = self.agent.id
@@ -379,7 +379,7 @@ class A2AProtocol:
                     await handler_func(message)
                 except Exception as e:
                     logger.error(
-                        f"Error in message handler for {message_type} on agent {to_agent}: {e}")
+                        f"[send_message] Error in message handler for {message_type} on agent {to_agent}: {e}")
 
         elif message_type == "specialist_query" and hasattr(target_agent, 'session') and hasattr(target_agent.session, 'pipeline'):
             if hasattr(target_agent.session.pipeline, 'model'):

@@ -87,7 +87,7 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
     async def start(self) -> None:
         """Start the speech understanding component"""
         self.update_preemptive_generation_flag()
-        logger.info("SpeechUnderstanding started")
+        logger.info("[start] SpeechUnderstanding started")
     
     async def process_audio(self, audio_data: bytes) -> None:
         """
@@ -118,7 +118,7 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
                 await self.vad.process_audio(audio_data)
                 
         except Exception as e:
-            logger.error(f"Audio processing failed: {str(e)}")
+            logger.error(f"[process_audio] Audio processing failed: {str(e)}")
             self.emit("error", f"Audio processing failed: {str(e)}")
 
     async def _run_stt_stream(self) -> None:
@@ -138,7 +138,7 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
                 if hasattr(event, "event_type"):
                     await self._on_stt_transcript(event)
         except Exception as e:
-            logger.error(f"Error in STT stream task: {e}", exc_info=True)
+            logger.error(f"[process_audio] Error in STT stream task: {e}", exc_info=True)
         finally:
             self._stt_stream_task = None
             self._stt_stream_queue = None
@@ -149,7 +149,7 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
             self._is_user_speaking = True
             
             if self._waiting_for_more_speech:
-                logger.debug("User continued speaking, cancelling wait timer")
+                logger.debug("[process_audio] User continued speaking, cancelling wait timer")
                 await self._handle_continued_speech()
             
             self.emit("speech_started")
@@ -212,19 +212,19 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
             if self.mode == 'DEFAULT':
                 if self.turn_detector and self.agent:
                     eou_probability = self.turn_detector.get_eou_probability(self.agent.chat_context)
-                    logger.info(f"EOU probability: {eou_probability}")
+                    logger.info(f"[_process_transcript_with_eou] EOU probability: {eou_probability}")
                     if eou_probability < self.eou_certainty_threshold:
                         delay = self.max_speech_wait_timeout
                         
             elif self.mode == 'ADAPTIVE':
                 if self.turn_detector and self.agent:
                     eou_probability = self.turn_detector.get_eou_probability(self.agent.chat_context)
-                    logger.info(f"EOU probability: {eou_probability}")
+                    logger.info(f"[_process_transcript_with_eou] EOU probability: {eou_probability}")
                     delay_range = self.max_speech_wait_timeout - self.min_speech_wait_timeout
                     wait_factor = 1.0 - eou_probability
                     delay = self.min_speech_wait_timeout + (delay_range * wait_factor)
             
-            logger.info(f"Using delay: {delay} seconds")
+
             await self._wait_for_additional_speech(delay)
     
     async def _wait_for_additional_speech(self, delay: float) -> None:
@@ -234,7 +234,7 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
                 self._wait_timer.cancel()
         
         self._waiting_for_more_speech = True
-        
+        logger.info(f"[_wait_for_additional_speech] Using delay: {delay} seconds")
         loop = asyncio.get_event_loop()
         self._wait_timer = loop.call_later(
             delay,
@@ -258,7 +258,7 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
             return
         
         final_transcript = self._accumulated_transcript.strip()
-        logger.info(f"Finalizing transcript: '{final_transcript}'")
+        logger.debug(f"[_finalize_transcript] Finalizing transcript: '{final_transcript}'")
         
         self._accumulated_transcript = ""
         
@@ -312,7 +312,7 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
     
     async def cleanup(self) -> None:
         """Cleanup speech understanding resources"""
-        logger.info("Cleaning up speech understanding")
+        logger.debug("[cleanup] Cleaning up speech understanding")
         
         if self._stt_stream_queue:
             await self._stt_stream_queue.put(None)
@@ -339,4 +339,4 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
         self.denoise = None
         self.agent = None
         
-        logger.info("Speech understanding cleaned up")
+        logger.info("[cleanup] Speech understanding cleaned up")

@@ -46,7 +46,7 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
     
     async def start(self) -> None:
         """Start the content generation component"""
-        logger.info("ContentGeneration started")
+        logger.info("[start] ContentGeneration started")
     
     async def generate(self, user_text: str) -> AsyncIterator[ResponseChunk]:
         """
@@ -61,22 +61,22 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
         """
         async with self.llm_lock:
             if not self.llm:
-                logger.warning("No LLM available for content generation")
+                logger.warning("[generate] No LLM available for content generation")
                 return
             
             if not self.agent or not getattr(self.agent, "chat_context", None):
-                logger.warning("Agent not available for LLM processing")
+                logger.warning("[generate] Agent not available for LLM processing")
                 return
             
             if self.max_context_items:
                 current_items = len(self.agent.chat_context.items)
                 if current_items > self.max_context_items:
                     try:
-                        logger.info(f"Truncating context from {current_items} to {self.max_context_items} items")
+                        logger.info(f"[generate] Truncating context from {current_items} to {self.max_context_items} items")
                         self.agent.chat_context.truncate(self.max_context_items)
-                        logger.info(f"Truncation complete. Final size: {len(self.agent.chat_context.items)} items")
+                        logger.info(f"[generate] Truncation complete. Final size: {len(self.agent.chat_context.items)} items")
                     except Exception as e:
-                        logger.error(f"Error during truncation: {e}", exc_info=True)
+                        logger.error(f"[generate] Error during truncation: {e}", exc_info=True)
             
             self.emit("generation_started", {
                 "user_text": user_text,
@@ -99,11 +99,11 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                     self.emit("usage_tracked", llm_chunk_resp.metadata["usage"])
                 
                 if self._is_interrupted:
-                    logger.info("LLM processing interrupted")
+                    logger.info("[generate][CONTENT_GENERATION] - LLM processing interrupted")
                     break
                 
                 if not self.agent or not getattr(self.agent, "chat_context", None):
-                    logger.warning("Agent context unavailable, stopping LLM processing")
+                    logger.warning("[generate][CONTENT_GENERATION] Agent context unavailable, stopping LLM processing")
                     break
                 
                 if not first_chunk_received:
@@ -120,7 +120,7 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                     
                     chat_context = getattr(self.agent, "chat_context", None)
                     if not chat_context:
-                        logger.warning("Chat context missing while handling function call")
+                        logger.warning("[generate] Chat context missing while handling function call")
                         return
                     
                     chat_context.add_function_call(
@@ -131,7 +131,7 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                     
                     try:
                         if not self.agent:
-                            logger.warning("Agent cleaned up before selecting tool")
+                            logger.warning("[generate] Agent cleaned up before selecting tool")
                             return
                         
                         tool = next(
@@ -154,10 +154,10 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                                 new_agent = result
                                 current_session = self.agent.session
                                 
-                                logger.info(f"Switching from {type(self.agent).__name__} to {type(new_agent).__name__}")
+                                logger.info(f"[generate] Switching from {type(self.agent).__name__} to {type(new_agent).__name__}")
                                 
                                 if getattr(new_agent, 'inherit_context', True):
-                                    logger.info(f"Inheriting context from {type(self.agent).__name__}")
+                                    logger.info(f"[generate] Inheriting context from {type(self.agent).__name__}")
                                     new_agent.chat_context = self.agent.chat_context
                                     new_agent.chat_context.add_message(
                                         role=ChatRole.SYSTEM,
@@ -184,7 +184,7 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                             
                             chat_context = getattr(self.agent, "chat_context", None)
                             if not chat_context:
-                                logger.warning("Chat context missing after tool execution")
+                                logger.warning("[generate] Chat context missing after tool execution")
                                 return
                             
                             chat_context.add_function_output(
@@ -208,7 +208,7 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                                     yield ResponseChunk(new_resp.content, new_resp.metadata, new_resp.role)
                         
                         except Exception as e:
-                            logger.error(f"Error executing function {func_call['name']}: {e}")
+                            logger.error(f"[generate] Error executing function {func_call['name']}: {e}")
                             continue
                         
                         finally:
@@ -243,10 +243,10 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
     
     async def cleanup(self) -> None:
         """Cleanup content generation resources"""
-        logger.info("Cleaning up content generation")
+        logger.debug("[cleanup] Cleaning up content generation")
         
         self.llm = None
         self.agent = None
         self.conversational_graph = None
         
-        logger.info("Content generation cleaned up")
+        logger.info("[cleanup] Content generation cleaned up")

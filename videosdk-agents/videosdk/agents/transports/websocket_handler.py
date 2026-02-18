@@ -28,7 +28,7 @@ class WebSocketAudioTrack(TeeCustomAudioStreamTrack):
                     self.loop
                 )
             except Exception as e:
-                logger.error(f"Error sending interruption signal: {e}")
+                logger.error(f"[interrupt] Error sending interruption signal: {e}")
 
     async def add_new_bytes(self, audio_data: bytes):
         if self._ignore_packets:
@@ -55,11 +55,11 @@ class WebSocketTransportHandler(BaseTransportHandler):
         if not websockets:
             raise ImportError("websockets library is required for WebSocketConnectionHandler. Install it with `pip install websockets`.")
             
-        logger.info(f"Starting WebSocket server on port {self.port} at {self.path}")
+        logger.info(f"[connect] Starting WebSocket server on port {self.port} at {self.path}")
         self.server = await websockets.serve(self._handle_connection, "0.0.0.0", self.port)
 
     async def _handle_connection(self, websocket):        
-        logger.info("New WebSocket connection established")
+        logger.info("[connect] New WebSocket connection established")
         self.active_connection = websocket
 
         self._participant_joined_event.set()
@@ -87,10 +87,10 @@ class WebSocketTransportHandler(BaseTransportHandler):
                     if self.pipeline:
                         await self.pipeline.on_audio_delta(message)
                 elif isinstance(message, str):
-                    logger.debug(f"Ignored text message: {message[:50]}...")
+                    logger.debug(f"[connect] Ignored text message: {message[:50]}...")
                     
         except websockets.exceptions.ConnectionClosed:
-            logger.info("WebSocket connection closed")
+            logger.info("[connect] WebSocket connection closed")
         finally:
             if self.pipeline and hasattr(self.pipeline, 'audio_track'):
                 if hasattr(self.pipeline.audio_track, 'remove_sink'):
@@ -104,10 +104,10 @@ class WebSocketTransportHandler(BaseTransportHandler):
                 try:
                     self._on_session_end("websocket_disconnected")
                 except Exception as e:
-                    logger.error(f"Error in session end callback: {e}")
+                    logger.error(f"[connect] Error in session end callback: {e}")
 
     async def wait_for_participant(self, participant_id=None):
-        logger.info("Waiting for WebSocket client...")
+        logger.info("[connect] Waiting for WebSocket client...")
         await self._participant_joined_event.wait()
         return "ws_client"
 

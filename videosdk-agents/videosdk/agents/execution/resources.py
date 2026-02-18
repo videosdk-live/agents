@@ -59,7 +59,7 @@ class ProcessResource(BaseResource):
         self.process.start()
         child_pid = self.process.pid
         logger.info(
-            f"New process started | resource_id={self.resource_id} | pid={self.process.pid}"
+            f"[_initialize_impl] New process started | resource_id={self.resource_id} | pid={self.process.pid}"
         )
 
         # Wait for process to be ready
@@ -77,11 +77,11 @@ class ProcessResource(BaseResource):
 
                 await asyncio.sleep(0.1)
             except Exception as e:
-                logger.warning(f"Error checking process readiness: {e}")
+                logger.warning(f"[_initialize_impl] Error checking process readiness: {e}")
 
         if not self._process_ready:
             raise TimeoutError(
-                f"Process {self.resource_id} failed to initialize within {timeout}s"
+                f"[_initialize_impl] Process {self.resource_id} failed to initialize within {timeout}s"
             )
 
     async def _execute_task_impl(
@@ -89,7 +89,7 @@ class ProcessResource(BaseResource):
     ) -> Any:
         """Execute task in the process."""
         if not self._process_ready:
-            raise RuntimeError(f"Process {self.resource_id} is not ready")
+            raise RuntimeError(f"[_execute_task_impl] Process {self.resource_id} is not ready")
 
         # Send task to process
         # Note: entrypoint and args must be picklable
@@ -121,9 +121,9 @@ class ProcessResource(BaseResource):
 
                 await asyncio.sleep(0.1)
             except Exception as e:
-                logger.warning(f"Error checking task result: {e}")
+                logger.warning(f"[_execute_task_impl] Error checking task result: {e}")
 
-        raise TimeoutError(f"Task {task_id} timed out after {timeout}s")
+        raise TimeoutError(f"[_execute_task_impl] Task {task_id} timed out after {timeout}s")
 
     async def _shutdown_impl(self) -> None:
         """Shutdown the process resource."""
@@ -140,7 +140,7 @@ class ProcessResource(BaseResource):
 
             # Force terminate if still alive
             if self.process.is_alive():
-                logger.warning(f"Force terminating process {self.resource_id}")
+                logger.warning(f"[_shutdown_impl] Force terminating process {self.resource_id}")
                 self.process.terminate()
                 self.process.join(timeout=5.0)
 
@@ -161,7 +161,7 @@ class ProcessResource(BaseResource):
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             
-            logger.info(f"Process worker {resource_id} started")
+            logger.info(f"[_process_worker] Process worker {resource_id} started")
 
             # Signal ready
             control_queue.put({"type": "ready"})
@@ -183,7 +183,7 @@ class ProcessResource(BaseResource):
                         args = task_data.get("args", ())
                         kwargs = task_data.get("kwargs", {})
 
-                        logger.info(f"Executing task {task_id} on resource {resource_id}")
+                        logger.info(f"[_process_worker] Executing task {task_id} on resource {resource_id}")
 
                         try:
                             # Execute the task
@@ -200,7 +200,7 @@ class ProcessResource(BaseResource):
                                 }
                             )
                         except Exception as e:
-                            logger.error(f"Task execution failed: {e}")
+                            logger.error(f"[_process_worker] Task execution failed: {e}")
                             result_queue.put(
                                 {"task_id": task_id, "status": "error", "error": str(e)}
                             )
@@ -208,10 +208,10 @@ class ProcessResource(BaseResource):
                         time.sleep(0.1)
 
                 except Exception as e:
-                    logger.error(f"Error in process worker {resource_id}: {e}")
+                    logger.error(f"[_process_worker] Error in process worker {resource_id}: {e}")
                     time.sleep(1.0)
             
-            logger.info(f"Process worker {resource_id} shutting down")
+            logger.info(f"[_process_worker] Process worker {resource_id} shutting down")
             
             # Clean up tasks
             if loop and not loop.is_closed():
@@ -227,10 +227,10 @@ class ProcessResource(BaseResource):
                         
                     loop.close()
                 except Exception as e:
-                    logger.error(f"Error closing process worker loop: {e}")
+                    logger.error(f"[_process_worker] Error closing process worker loop: {e}")
 
         except Exception as e:
-            logger.error(f"Fatal error in process worker {resource_id}: {e}")
+            logger.error(f"[_process_worker] Fatal error in process worker {resource_id}: {e}")
 
 
 class ThreadResource(BaseResource):
@@ -314,9 +314,9 @@ class ThreadResource(BaseResource):
 
                 await asyncio.sleep(0.1)
             except Exception as e:
-                logger.warning(f"Error checking task result: {e}")
+                logger.warning(f"[_execute_task_impl] Error checking task result: {e}")
 
-        raise TimeoutError(f"Task {task_id} timed out after {timeout}s")
+        raise TimeoutError(f"[_execute_task_impl] Task {task_id} timed out after {timeout}s")
 
     async def _shutdown_impl(self) -> None:
         """Shutdown the thread resource."""
@@ -345,7 +345,7 @@ class ThreadResource(BaseResource):
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
 
-            logger.info(f"Thread worker {resource_id} started")
+            logger.info(f"[_thread_worker] Thread worker {resource_id} started")
 
             async def worker_main():
                 # Main task processing loop
@@ -391,16 +391,16 @@ class ThreadResource(BaseResource):
                             await asyncio.sleep(0.1)
 
                     except Exception as e:
-                        logger.error(f"Error in thread worker {resource_id}: {e}")
+                        logger.error(f"[_thread_worker] Error in thread worker {resource_id}: {e}")
                         await asyncio.sleep(1.0)
 
-                logger.info(f"Thread worker {resource_id} shutting down")
+                logger.info(f"[_thread_worker] Thread worker {resource_id} shutting down")
 
             # Run the worker
             loop.run_until_complete(worker_main())
 
         except Exception as e:
-            logger.error(f"Fatal error in thread worker {resource_id}: {e}")
+            logger.error(f"[_thread_worker] Fatal error in thread worker {resource_id}: {e}")
         finally:
             if loop and not loop.is_closed():
                 loop.close()

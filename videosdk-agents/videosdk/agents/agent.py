@@ -158,13 +158,13 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
 
     async def cleanup(self) -> None:
         """Internal Method: Cleanup agent resources"""
-        logger.info("Cleaning up agent resources")        
+        logger.debug("[cleanup] Cleaning up agent resources")        
         if self.mcp_manager:
             try:
                 await self.mcp_manager.cleanup()
-                logger.info("MCP manager cleaned up")
+                logger.debug("[cleanup] MCP manager cleaned up")
             except Exception as e:
-                logger.error(f"Error cleaning up MCP manager: {e}")
+                logger.error(f"[cleanup] Error cleaning up MCP manager: {e}")
             self.mcp_manager = None
 
         self._tools = []
@@ -173,7 +173,7 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
         self._agent_card = None        
         if hasattr(self, 'session'):
             self.session = None        
-        logger.info("Agent cleanup completed")
+        logger.info("[cleanup] Agent cleanup completed")
     
     @abstractmethod
     async def on_exit(self) -> None:

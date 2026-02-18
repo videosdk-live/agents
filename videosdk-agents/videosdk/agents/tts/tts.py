@@ -153,15 +153,15 @@ class TTS(EventEmitter[Literal["error"]]):
 
     async def aclose(self) -> None:
         """Cleanup resources"""
-        logger.info(f"Cleaning up TTS: {self.label}")
+        logger.debug(f"[aclose] [TTS] Cleaning up TTS: {self.label}")
         self._first_audio_callback = None
         try:
             import gc
             gc.collect()
         except Exception as e:
-            logger.error(f"Error during TTS garbage collection: {e}")
+            logger.error(f"[aclose] [TTS] Error during TTS garbage collection: {e}")
         
-        logger.info(f"TTS cleanup completed: {self.label}")
+        logger.info(f"[aclose] [TTS] TTS cleanup completed: {self.label}")
     
     async def __aenter__(self) -> TTS:
         return self

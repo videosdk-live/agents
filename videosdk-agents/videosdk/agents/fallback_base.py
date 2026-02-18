@@ -34,10 +34,10 @@ class FallbackBase:
         """
         async with self._switch_lock:
             if failed_provider and failed_provider != self.active_provider:
-                logger.info(f"[{self._component_name}] Provider {getattr(failed_provider, 'label', 'Unknown')} already switched. Current: {self.active_provider.label}")
+                logger.info(f"[_switch_provider][{self._component_name}] Provider {getattr(failed_provider, 'label', 'Unknown')} already switched. Current: {self.active_provider.label}")
                 return True
 
-            logger.warning(f"[{self._component_name}] Provider {self.active_provider.label} failed: {reason}")
+            logger.warning(f"[_switch_provider][{self._component_name}] Provider {self.active_provider.label} failed: {reason}")
             try:
                 failed_idx = self._current_index
                 if self.providers[failed_idx] == self.active_provider:
@@ -46,23 +46,23 @@ class FallbackBase:
                      current_attempts = self._recovery_attempts.get(failed_idx, 0)
                      self._recovery_attempts[failed_idx] = current_attempts + 1
                      
-                     logger.warning(f"[{self._component_name}] Provider {failed_idx} failed. Recovery attempt {self._recovery_attempts[failed_idx]}/{self.permanent_disable_after_attempts}")
+                     logger.warning(f"[_switch_provider][{self._component_name}] Provider {failed_idx} failed. Recovery attempt {self._recovery_attempts[failed_idx]}/{self.permanent_disable_after_attempts}")
 
             except Exception as e:
-                logger.warning(f"[{self._component_name}] Error recording failure timestamp: {e}")
+                logger.warning(f"[_switch_provider][{self._component_name}] Error recording failure timestamp: {e}")
 
             try:
                 if hasattr(self.active_provider, "aclose"):
                     await self.active_provider.aclose()
             except Exception as e:
-                logger.warning(f"[{self._component_name}] Error closing failed provider: {e}")
+                logger.warning(f"[_switch_provider][{self._component_name}] Error closing failed provider: {e}")
 
             if self._current_index >= len(self.providers) - 1:
-                logger.error(f"[{self._component_name}] All providers failed. No fallback available.")
+                logger.error(f"[_switch_provider][{self._component_name}] All providers failed. No fallback available.")
                 return False
 
             self._current_index += 1
-            logger.info(f"[{self._component_name}] Switched to backup: {self.active_provider.label}")
+            logger.info(f"[_switch_provider][{self._component_name}] Switched to backup: {self.active_provider.label}")
             return True
 
     def check_recovery(self):
@@ -81,7 +81,7 @@ class FallbackBase:
             if i in self._failed_providers:
                 elapsed = now - self._failed_providers[i]
                 if elapsed > self.temporary_disable_sec:
-                    logger.info(f"[{self._component_name}] Provider {i} (Label: {self.providers[i].label}) cooldown expired ({elapsed:.1f}s > {self.temporary_disable_sec}s). Attempting recovery.")
+                    logger.info(f"[_check_recovery][{self._component_name}] Provider {i} (Label: {self.providers[i].label}) cooldown expired ({elapsed:.1f}s > {self.temporary_disable_sec}s). Attempting recovery.")
                     del self._failed_providers[i]
                     best_ready_index = i
                     break
@@ -89,7 +89,7 @@ class FallbackBase:
                 pass
         
         if best_ready_index < self._current_index:
-             logger.info(f"[{self._component_name}] Restoring primary/higher priority provider: {self.providers[best_ready_index].label}")
+             logger.info(f"[_check_recovery][{self._component_name}] Restoring primary/higher priority provider: {self.providers[best_ready_index].label}")
              self._current_index = best_ready_index
              return True
         return False

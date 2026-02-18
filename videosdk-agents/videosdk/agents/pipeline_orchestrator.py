@@ -134,9 +134,9 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 max_context_items=max_context_items,
             )
             # Setup event listeners
-            self.content_generation.on("generation_started", lambda data: logger.info("Content generation started"))
+            self.content_generation.on("generation_started", lambda data: logger.info("[on_generation_started] Content generation started"))
             self.content_generation.on("generation_chunk", lambda data: None)
-            self.content_generation.on("generation_complete", lambda data: logger.info("Content generation complete"))
+            self.content_generation.on("generation_complete", lambda data: logger.info("[on_generation_complete] Content generation complete"))
         
         if tts:
             self.speech_generation = SpeechGeneration(
@@ -146,10 +146,10 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 hooks=hooks,
             )
             # Setup event listeners
-            self.speech_generation.on("synthesis_started", lambda data: logger.info("Speech synthesis started"))
-            self.speech_generation.on("first_audio_byte", lambda data: logger.info("First audio byte ready"))
-            self.speech_generation.on("last_audio_byte", lambda data: logger.info("Synthesis complete"))
-            self.speech_generation.on("synthesis_interrupted", lambda data: logger.info("Synthesis interrupted"))
+            self.speech_generation.on("synthesis_started", lambda data: logger.info("[on_synthesis_started] Speech synthesis started"))
+            self.speech_generation.on("first_audio_byte", lambda data: logger.info("[on_first_audio_byte] First audio byte ready"))
+            self.speech_generation.on("last_audio_byte", lambda data: logger.info("[on_last_audio_byte] Synthesis complete"))
+            self.speech_generation.on("synthesis_interrupted", lambda data: logger.info("[on_synthesis_interrupted] Synthesis interrupted"))
         
         # Generation tasks
         self._current_generation_task: asyncio.Task | None = None
@@ -194,7 +194,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
         if self.speech_generation:
             await self.speech_generation.start()
         
-        logger.info("PipelineOrchestrator started")
+        logger.info("[start] PipelineOrchestrator started")
     
     async def process_audio(self, audio_data: bytes) -> None:
         """
@@ -214,7 +214,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
             text: User text input
         """
         if not self.agent:
-            logger.warning("No agent available for text processing")
+            logger.warning("[process_text] No agent available for text processing")
             return
         
         self.agent.chat_context.add_message(
@@ -258,7 +258,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
         if self.voice_mail_detector and not self.voice_mail_detection_done and text.strip():
             self._vmd_buffer += f" {text}"
             if not self._vmd_check_task:
-                logger.info("Starting Voice Mail Detection Timer")
+                logger.info("[on_transcript_final] Starting Voice Mail Detection Timer")
                 self._vmd_check_task = asyncio.create_task(self._run_vmd_check())
         
         self.emit("transcript_ready", {
@@ -311,20 +311,20 @@ class PipelineOrchestrator(EventEmitter[Literal[
             return
         
         if self.speech_understanding.check_preemptive_match(final_text):
-            logger.info("Preemptive generation MATCH - authorizing playback")
+            logger.info("[_handler_preemptive_final] Preemptive generation MATCH - authorizing playback")
             
             self._preemptive_authorized.set()
             
             if self._preemptive_generation_task:
                 try:
                     await asyncio.wait_for(self._preemptive_generation_task, timeout=30.0)
-                    logger.info("Preemptive generation completed successfully")
+                    logger.info("[_handle_preemptive_final] Preemptive generation completed successfully")
                 except asyncio.TimeoutError:
-                    logger.error("Preemptive playback timeout")
+                    logger.error("[_handle_preemptive_final] Preemptive playback timeout")
                 except Exception as e:
-                    logger.error(f"Error in preemptive playback: {e}")
+                    logger.error(f"[_handle_preemptive_final] Error in preemptive playback: {e}")
         else:
-            logger.info("Preemptive generation MISMATCH - cancelling")
+            logger.info("[_handle_preemptive_final] Preemptive generation MISMATCH - cancelling")
             
             await self._cancel_preemptive_generation()
             
@@ -347,7 +347,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
         
         if self.agent and self.agent.session and self.agent.session.agent_state == AgentState.SPEAKING:
             if self._interruption_check_task is None or self._interruption_check_task.done():
-                logger.info("User started speaking during agent response, initiating interruption monitoring")
+                logger.info("[_on_speech_started] User started speaking during agent response, initiating interruption monitoring")
                 self._interruption_check_task = asyncio.create_task(
                     self._monitor_interruption_duration()
                 )
@@ -357,7 +357,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
         self._is_user_speaking = False
         
         if self._interruption_check_task is not None and not self._interruption_check_task.done():
-            logger.info("User stopped speaking, cancelling interruption check")
+            logger.info("[_on_speech_stopped] User stopped speaking, cancelling interruption check")
             self._interruption_check_task.cancel()
     
     async def _on_turn_resumed(self, data: dict) -> None:
@@ -367,7 +367,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
     async def _process_final_transcript(self, user_text: str) -> None:
         """Process final transcript through the full pipeline"""
         if not self.agent:
-            logger.warning("No agent available")
+            logger.warning("[_process_final_transcript] No agent available")
             return
         
         if self.hooks and self.hooks.has_user_turn_start_hooks():
@@ -381,7 +381,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
             direct_response = await self.hooks.process_llm_gate(processed_text)
             
             if direct_response is not None:
-                logger.info("llm hook is bypassing LLM - using direct response")
+                logger.info("[_process_final_transcript] llm hook is bypassing LLM - using direct response")
                 
                 if self.agent.session:
                     if self.agent.session.current_utterance and not self.agent.session.current_utterance.done():
@@ -426,7 +426,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 if self.agent.session.current_utterance.is_interruptible:
                     self.agent.session.current_utterance.interrupt()
                 else:
-                    logger.info("Current utterance is not interruptible")
+                    logger.info("[_process_final_transcript] Current utterance is not interruptible")
             
             handle = UtteranceHandle(utterance_id=f"utt_{uuid.uuid4().hex[:8]}")
             self.agent.session.current_utterance = handle
@@ -458,7 +458,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 self.speech_generation.reset_interrupt()    
             
             if not self.content_generation:
-                logger.warning("No content generation available")
+                logger.error("[_generate_and_synthesize] No content generation available")
                 return
             
             llm_stream = self.content_generation.generate(user_text)
@@ -471,7 +471,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 try:
                     async for chunk in llm_stream:
                         if handle.interrupted or (wait_for_authorization and self._preemptive_cancelled):
-                            logger.info("LLM collection interrupted")
+                            logger.info("[_generate_and_synthesize] LLM collection interrupted")
                             await q.put(None)
                             return "".join(response_parts)
                         
@@ -493,7 +493,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
                     return "".join(response_parts)
                 
                 except asyncio.CancelledError:
-                    logger.info("LLM collection cancelled")
+                    logger.info("[_generate_and_synthesize] LLM collection cancelled")
                     await q.put(None)
                     return "".join(response_parts)
             
@@ -507,11 +507,11 @@ class PipelineOrchestrator(EventEmitter[Literal[
                         )
                         
                         if self._preemptive_cancelled:
-                            logger.info("Preemptive generation cancelled during authorization wait")
+                            logger.info("[_generate_and_synthesize] Preemptive generation cancelled during authorization wait")
                             return
                     
                     except asyncio.TimeoutError:
-                        logger.error("Authorization timeout - cancelling preemptive generation")
+                        logger.error("[_generate_and_synthesize] Authorization timeout - cancelling preemptive generation")
                         self._preemptive_cancelled = True
                         return
                 
@@ -525,7 +525,6 @@ class PipelineOrchestrator(EventEmitter[Literal[
                             chunk = await asyncio.wait_for(q.get(), timeout=0.1)
                             if chunk is None:
                                 break
-                            print(f"chunk: at the tts consumer at pipline orchestrator  {chunk}")
                             yield chunk
                             
                         except asyncio.TimeoutError:
@@ -658,11 +657,11 @@ class PipelineOrchestrator(EventEmitter[Literal[
             
             if self.agent and self.agent.session and self.agent.session.current_utterance:
                 if self.agent.session.current_utterance.is_interruptible:
-                    logger.info(f"User speech duration exceeded {self.interrupt_min_duration}s threshold, triggering interruption")
+                    logger.info(f"[_monitor_interruption_duration] User speech duration exceeded {self.interrupt_min_duration}s threshold, triggering interruption")
                     await self._trigger_interruption()
         
         except asyncio.CancelledError:
-            logger.debug("Interruption monitoring cancelled")
+            logger.debug("[_monitor_interruption_duration] Interruption monitoring cancelled")
     
     async def handle_stt_event(self, text: str) -> None:
         """Handle STT event for interruption (word-based)"""
@@ -672,7 +671,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
         word_count = len(text.strip().split())
         
         if self.resume_on_false_interrupt and self._is_in_false_interrupt_pause and word_count >= self.interrupt_min_words:
-            logger.info(f"STT transcript received while in paused state, confirming real interruption")
+            logger.info(f"[handle_stt_event] STT transcript received while in paused state, confirming real interruption")
             self._cancel_false_interrupt_timer()
             self._is_in_false_interrupt_pause = False
             self._false_interrupt_paused_speech = False
@@ -692,7 +691,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
         
         if self.agent and self.agent.session and self.agent.session.current_utterance:
             if not self.agent.session.current_utterance.is_interruptible:
-                logger.info("Interruption disabled for current utterance")
+                logger.info("[trigger_interruption] Interruption disabled for current utterance")
                 return
         
         self._is_interrupted = True
@@ -700,14 +699,14 @@ class PipelineOrchestrator(EventEmitter[Literal[
         can_resume = self.resume_on_false_interrupt and self.speech_generation and self.speech_generation.can_pause()
         
         if can_resume:
-            logger.info("Pausing TTS for potential resume")
+            logger.info("[trigger_interruption] Pausing TTS for potential resume")
             self._false_interrupt_paused_speech = True
             self._is_in_false_interrupt_pause = True
             if self.speech_generation:
                 await self.speech_generation.pause()
             self._start_false_interrupt_timer()
         else:
-            logger.info("Performing full interruption")
+            logger.info("[trigger_interruption] Performing full interruption")
             await self._interrupt_pipeline()
     
     def _start_false_interrupt_timer(self):
@@ -718,7 +717,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
         if self.false_interrupt_pause_duration is None:
             return
         
-        logger.info(f"Starting false interrupt timer for {self.false_interrupt_pause_duration}s")
+        logger.info(f"[_start_false_interrupt_timer] Starting false interrupt timer for {self.false_interrupt_pause_duration}s")
         loop = asyncio.get_event_loop()
         self._false_interrupt_timer = loop.call_later(
             self.false_interrupt_pause_duration,
@@ -728,24 +727,24 @@ class PipelineOrchestrator(EventEmitter[Literal[
     def _cancel_false_interrupt_timer(self):
         """Cancel false interrupt timer"""
         if self._false_interrupt_timer:
-            logger.info("Cancelling false interrupt timer")
+            logger.info("[_cancel_false_interrupt_timer] Cancelling false interrupt timer")
             self._false_interrupt_timer.cancel()
             self._false_interrupt_timer = None
     
     async def _on_false_interrupt_timeout(self):
         """Handle false interrupt timeout"""
-        logger.info(f"False interrupt timeout reached after {self.false_interrupt_pause_duration}s")
+        logger.info(f"[_on_false_interrupt_timeout] False interrupt timeout reached after {self.false_interrupt_pause_duration}s")
         self._false_interrupt_timer = None
         
         if self._is_user_speaking:
-            logger.info("User still speaking - confirming real interruption")
+            logger.info("[_on_false_interrupt_timeout] User still speaking - confirming real interruption")
             self._is_in_false_interrupt_pause = False
             self._false_interrupt_paused_speech = False
             await self._interrupt_pipeline()
             return
         
         if self._is_in_false_interrupt_pause and self.speech_generation and self.speech_generation.can_pause():
-            logger.info("Resuming agent speech - false interruption detected")
+            logger.info("[_on_false_interrupt_timeout] Resuming agent speech - false interruption detected")
             self._is_interrupted = False
             self._is_in_false_interrupt_pause = False
             self._false_interrupt_paused_speech = False
@@ -776,6 +775,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
         
         self._partial_response = ""
         self._is_interrupted = False
+        logger.info("[_interrupt_pipeline] Interrupted all components")
     
     async def interrupt(self) -> None:
         """Public method to interrupt the pipeline"""
@@ -783,7 +783,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
     
     async def _cancel_preemptive_generation(self) -> None:
         """Cancel preemptive generation"""
-        logger.info("Cancelling preemptive generation")
+        logger.info("[cancel_preemptive_generation] Cancelling preemptive generation")
         self._preemptive_cancelled = True
         self._preemptive_authorized.set() 
         
@@ -792,7 +792,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
             try:
                 await self._preemptive_generation_task
             except asyncio.CancelledError:
-                logger.info("Preemptive task cancelled successfully")
+                logger.info("[cancel_preemptive_generation] Preemptive task cancelled successfully")
 
         self._preemptive_generation_task = None
         
@@ -808,7 +808,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
         if self.speech_understanding:
             self.speech_understanding.clear_preemptive_state()
         
-        logger.info("Preemptive generation cancelled")
+        logger.info("[cancel_preemptive_generation] Preemptive generation cancelled")
     
     async def _run_vmd_check(self) -> None:
         """Run voicemail detection check"""
@@ -827,7 +827,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
             self.emit("voicemail_result", {"is_voicemail": is_voicemail})
         
         except Exception as e:
-            logger.error(f"Error in VMD check: {e}")
+            logger.error(f"[_run_vmd_check] Error in VMD check: {e}")
             self.voice_mail_detection_done = True
             self.emit("voicemail_result", {"is_voicemail": False})
         
@@ -837,7 +837,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
     
     async def cleanup(self) -> None:
         """Cleanup all components"""
-        logger.info("Cleaning up pipeline orchestrator")
+        logger.debug("[cleanup] Cleaning up pipeline orchestrator")
         
         if self._vmd_check_task and not self._vmd_check_task.done():
             self._vmd_check_task.cancel()
@@ -859,4 +859,4 @@ class PipelineOrchestrator(EventEmitter[Literal[
         self.conversational_graph = None
         self.voice_mail_detector = None
         
-        logger.info("Pipeline orchestrator cleaned up")
+        logger.info("[cleanup] Pipeline orchestrator cleaned up")

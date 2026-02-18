@@ -56,7 +56,7 @@ class CustomAudioStreamTrack(CustomAudioTrack):
 
     def interrupt(self):
         """Clear all buffers and reset state"""
-        logger.info("Audio track interrupted, clearing buffers.")
+        logger.info("[interrupt] Audio track interrupted, clearing buffers.")
         self.frame_buffer.clear()
         self.audio_data_buffer.clear()
         self._paused_frames.clear()
@@ -75,10 +75,10 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         This approach keeps the audio flow simple for avatars.
         """
         if self._is_paused:
-            logger.warning("Audio track already paused")
+            logger.warning("[pause] Audio track already paused")
             return
             
-        logger.info("Audio track paused - preserving current buffer state.")
+        logger.info("[pause] Audio track paused - preserving current buffer state.")
         self._is_paused = True
         
         # Move current frames to paused buffer for later resume
@@ -91,10 +91,10 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         Restores frames that were saved when paused.
         """
         if not self._is_paused:
-            logger.warning("Audio track not paused, nothing to resume")
+            logger.warning("[resume] Audio track not paused, nothing to resume")
             return
             
-        logger.info("Audio track resumed - restoring paused buffer.")
+        logger.info("[resume] Audio track resumed - restoring paused buffer.")
         self._is_paused = False
         
         # Restore frames from paused buffer
@@ -110,11 +110,11 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         """
         self._manual_audio_control = manual_control
         self._accepting_audio = True
-        logger.debug(f"Audio input enabled (manual_control={manual_control})")
+        logger.debug(f"[enable_audio_input] Audio input enabled (manual_control={manual_control})")
 
     def on_last_audio_byte(self, callback: Callable[[], Awaitable[None]]) -> None:
         """Set callback for when the final audio byte of synthesis is produced"""
-        logger.info("on last audio callback")
+        logger.info("[on_last_audio_byte] on last audio callback")
         self._last_audio_callback = callback
     
             
@@ -124,9 +124,9 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         for manual audio control mode.
         """
         if not self._accepting_audio:
-            logger.debug("Audio input currently disabled, dropping audio data")
+            logger.debug("[add_new_bytes] Audio input currently disabled, dropping audio data")
             return
-        
+        log_sent = False
         self.audio_data_buffer += audio_data
 
         while len(self.audio_data_buffer) >= self.chunk_size:
@@ -138,27 +138,31 @@ class CustomAudioStreamTrack(CustomAudioTrack):
                 # If paused, add to paused buffer instead
                 if self._is_paused:
                     self._paused_frames.append(audio_frame)
-                    logger.debug("Added frame to paused buffer")
+                    if not log_sent:
+                        logger.debug("[add_new_bytes] Added frame to paused buffer")
+                        log_sent = True
                 else:
                     self.frame_buffer.append(audio_frame)
-                    logger.debug(
-                        f"Added audio frame to buffer, total frames: {len(self.frame_buffer)}"
-                    )
+                    if not log_sent:
+                        logger.debug(
+                            f"[add_new_bytes] Added audio frame to buffer, total frames: {len(self.frame_buffer)}"
+                        )
+                        log_sent = True
             except Exception as e:
-                logger.error(f"Error building audio frame: {e}")
+                logger.error(f"[add_new_bytes] Error building audio frame: {e}")
                 break
 
     def buildAudioFrames(self, chunk: bytes) -> AudioFrame:
         if len(chunk) != self.chunk_size:
             logger.warning(
-                f"Incorrect chunk size received {len(chunk)}, expected {self.chunk_size}"
+                f"[buildAudioFrames] Incorrect chunk size received {len(chunk)}, expected {self.chunk_size}"
             )
 
         data = np.frombuffer(chunk, dtype=np.int16)
         expected_samples = self.samples * self.channels
         if len(data) != expected_samples:
             logger.warning(
-                f"Incorrect number of samples in chunk {len(data)}, expected {expected_samples}"
+                f"[buildAudioFrames] Incorrect number of samples in chunk {len(data)}, expected {expected_samples}"
             )
 
         data = data.reshape(-1, self.channels)
@@ -207,7 +211,7 @@ class CustomAudioStreamTrack(CustomAudioTrack):
             else:
                 # No audio data available — silence
                 if getattr(self, "_is_speaking", False):
-                    logger.info("[AudioTrack] Agent finished speaking — triggering last_audio_callback.")
+                    logger.info("[recv] Agent finished speaking — triggering last_audio_callback.")
                     self._is_speaking = False
 
                     if hasattr(self, "_last_audio_callback") and self._last_audio_callback:
@@ -224,7 +228,7 @@ class CustomAudioStreamTrack(CustomAudioTrack):
             return frame
         except Exception as e:
             traceback.print_exc()
-            logger.error(f"Error while creating tts->rtc frame: {e}")
+            logger.error(f"[recv] Error while creating tts->rtc frame: {e}")
 
     async def cleanup(self):
         self.interrupt()
@@ -268,7 +272,7 @@ class MixingCustomAudioStreamTrack(CustomAudioStreamTrack):
 
     def on_last_audio_byte(self, callback: Callable[[], Awaitable[None]]) -> None:
         """Set callback for when the final audio byte of synthesis is produced"""
-        logger.info("on last audio callback")
+        logger.info("[on_last_audio_byte] on last audio callback")
         self._last_audio_callback = callback
 
     async def recv(self) -> AudioFrame:
@@ -298,7 +302,7 @@ class MixingCustomAudioStreamTrack(CustomAudioStreamTrack):
                 self.audio_data_buffer = self.audio_data_buffer[self.chunk_size :]
                 self._is_speaking = True
             elif getattr(self, "_is_speaking", False):
-                logger.info("[AudioTrack] Agent finished speaking — triggering last_audio_callback.")
+                logger.info("[recv] Agent finished speaking — triggering last_audio_callback.")
                 self._is_speaking = False
 
                 if hasattr(self, "_last_audio_callback") and self._last_audio_callback:
@@ -329,7 +333,7 @@ class MixingCustomAudioStreamTrack(CustomAudioStreamTrack):
             return frame
         except Exception as e:
             traceback.print_exc()
-            logger.error(f"Error while creating tts->rtc frame: {e}")
+            logger.error(f"[recv] Error while creating tts->rtc frame: {e}")
 
 class TeeCustomAudioStreamTrack(CustomAudioStreamTrack):
     def __init__(self, loop, sinks=None, pipeline=None):

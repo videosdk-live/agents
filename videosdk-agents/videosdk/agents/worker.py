@@ -36,6 +36,7 @@ from .backend import (
     JobUpdate,
 )
 from .debug import HttpServer, Tracing
+from .metrics.log_handler import LogManager
 
 logger = logging.getLogger(__name__)
 
@@ -52,10 +53,11 @@ async def _execute_job_entrypoint(
     entrypoint: Callable,
     room_options: RoomOptions,
     metadata: Dict[str, Any],
+    log_queue=None,
 ):
     """Execute job entrypoint in a separate process/thread."""
     # Create job context
-    ctx = JobContext(room_options=room_options, metadata=metadata)
+    ctx = JobContext(room_options=room_options, metadata=metadata, log_queue=log_queue)
 
     # Set context var
     token = _set_current_job_context(ctx)
@@ -138,9 +140,6 @@ class WorkerOptions:
     load_threshold: float = 0.75
     """Load threshold above which worker is marked as unavailable."""
 
-    register: bool = False
-    """Whether to register with the backend. Defaults to False for local development."""
-
     signaling_base_url: str = "api.videosdk.live"
     """Signaling base URL for VideoSDK services. Defaults to api.videosdk.live."""
 
@@ -199,6 +198,9 @@ class Worker:
             None  # Changed from ProcessManager
         )
         self._http_server: Optional[HttpServer] = None
+
+        # Log manager (consumer side of Producer-Consumer logging)
+        self._log_manager = LogManager()
 
         # Add debounce mechanism for status updates
         self._last_status_update = 0.0
@@ -261,18 +263,12 @@ class Worker:
         async def main_task():
             try:
                 await worker.initialize()
-                if options.register:
-                    # Backend registration mode
-                    await worker._run_backend_mode()
-                else:
-                    # Default mode - just keep alive
-                    while not worker._shutdown:
-                        await asyncio.sleep(1)
+                await worker._run_backend_mode()
 
             except asyncio.CancelledError:
-                logger.info("Main task cancelled")
+                logger.info("[run_worker] Main task cancelled")
             except Exception as e:
-                logger.error(f"Worker error: {e}")
+                logger.error(f"[run_worker] Worker error: {e}")
                 raise
             finally:
                 await worker.shutdown()
@@ -288,7 +284,7 @@ class Worker:
                     task.cancel()
                 return
             shutting_down = True
-            logger.info(f"Received signal {signum}. Initiating graceful shutdown...")
+            logger.info(f"[signal_handler] Received signal {signum}. Initiating graceful shutdown...")
             # Cancel the main task
             loop.call_soon_threadsafe(main_future.cancel)
             # Set a timeout for graceful shutdown
@@ -302,7 +298,7 @@ class Worker:
 
             loop.run_until_complete(main_future)
         except KeyboardInterrupt:
-            logger.info("Keyboard interrupt received")
+            logger.info("[KeyboardInterrupt] Keyboard interrupt received")
             if not shutting_down:
                 shutting_down = True
                 if not main_future.done():
@@ -312,14 +308,14 @@ class Worker:
             try:
                 loop.close()
             except Exception as e:
-                logger.error(f"Error closing event loop: {e}")
+                logger.error(f"[run_worker] Error closing event loop: {e}")
 
         if loop.is_closed():
-            logger.info("Event loop closed successfully")
+            logger.info("[run_worker] Event loop closed successfully")
 
     async def initialize(self, default_room_options: Optional[RoomOptions] = None):
         """Initialize the worker."""
-        logger.info("Initializing VideoSDK worker")
+        logger.info("[initialize] Initializing VideoSDK worker")
 
         # Initialize task executor with new execution architecture
         # Convert ExecutorType to ResourceType
@@ -351,8 +347,8 @@ class Worker:
         await self.process_manager.start()
 
         # Initialize backend connection if registering
-        if self.options.register:
-            await self._initialize_backend_connection()
+
+        await self._initialize_backend_connection()
 
         # Initialize and start debug HTTP server
         self._http_server = HttpServer(
@@ -362,23 +358,25 @@ class Worker:
         self._http_server.set_worker(self)
         await self._http_server.start()
 
-        logger.info("VideoSDK worker initialized successfully")
+        # Start the log manager consumer thread
+        self._log_manager.start(
+            auth_token=self.options.auth_token or "",
+        )
+
+        logger.info("[initialize] VideoSDK worker initialized successfully")
 
     async def _initialize_backend_connection(self):
         """Initialize connection to the backend registry."""
-        if not self.options.register:
-            return
-
         # Fetch agent init config to get registry URL
         try:
-            logger.info("Fetching agent init config...")
+            logger.info("[_initialize_backend_connection] Fetching agent init config...")
             registry_url = await fetch_agent_init_config(
                 auth_token=self.options.auth_token,
                 api_base_url=f"https://{self.options.signaling_base_url}",
             )
-            logger.info(f"Using registry URL: {registry_url}")
+            logger.info(f"[_initialize_backend_connection] Using registry URL: {registry_url}")
         except Exception as e:
-            logger.error(f"Failed to fetch agent init config: {e}")
+            logger.error(f"[_initialize_backend_connection] Failed to fetch agent init config: {e}")
             raise RuntimeError(f"Agent init config is mandatory. Error: {e}")
 
         self.backend_connection = BackendConnection(
@@ -403,7 +401,7 @@ class Worker:
 
     async def _run_backend_mode(self):
         """Run the worker in backend registration mode."""
-        logger.info("Running in backend registration mode")
+        logger.info("[_run_backend_mode] Running in backend registration mode")
 
         # Start status update loop
         status_task = asyncio.create_task(self._status_update_loop())
@@ -419,12 +417,12 @@ class Worker:
 
     def _handle_register(self, worker_id: str, server_info: Dict[str, Any]):
         """Handle registration response from backend."""
-        logger.info(f"Registered with backend: {worker_id}")
-        logger.info(f"Server info: {server_info}")
+        logger.info(f"[_handle_register] Registered with backend: {worker_id}")
+        logger.info(f"[_handle_register] Server info: {server_info}")
 
     def _handle_availability(self, request: AvailabilityRequest):
         """Handle availability request from backend."""
-        logger.info(f"Received availability request for job {request.job_id}")
+        logger.info(f"[_handle_availability] Received availability request for job {request.job_id}")
         asyncio.create_task(self._answer_availability(request))
 
     async def _answer_availability(self, request: AvailabilityRequest):
@@ -444,7 +442,7 @@ class Worker:
                     available=True,
                     token=self.options.auth_token,  # Provide worker's auth token
                 )
-                logger.info(f"Accepting job {request.job_id}")
+                logger.info(f"[_answer_availability] Accepting job {request.job_id}")
             else:
                 # Reject the job
                 response = AvailabilityResponse(
@@ -452,13 +450,13 @@ class Worker:
                     available=False,
                     error="Worker at capacity or draining",
                 )
-                logger.info(f"Rejecting job {request.job_id}")
+                logger.info(f"[_answer_availability] Rejecting job {request.job_id}")
 
             # Send response
             await self.backend_connection.send_message(response)
 
         except Exception as e:
-            logger.error(f"Error handling availability request: {e}")
+            logger.error(f"[_answer_availability] Error handling availability request: {e}")
             # Send rejection on error
             response = AvailabilityResponse(
                 job_id=request.job_id,
@@ -469,7 +467,7 @@ class Worker:
 
     def _handle_assignment(self, assignment: JobAssignment):
         """Handle job assignment from backend."""
-        logger.info(f"Received job assignment: {assignment.job_id}")
+        logger.info(f"[_handle_assignment] Received job assignment: {assignment.job_id}")
         asyncio.create_task(self._handle_job_assignment(assignment))
 
     async def _handle_job_assignment(self, assignment: JobAssignment):
@@ -486,7 +484,7 @@ class Worker:
             await self._launch_job_from_assignment(assignment, args)
 
         except Exception as e:
-            logger.error(f"Error handling job assignment: {e}")
+            logger.error(f"[_handle_job_assignment] Error handling job assignment: {e}")
             # Send job update with error
             job_update = JobUpdate(
                 job_id=assignment.job_id,
@@ -497,21 +495,21 @@ class Worker:
 
     async def _handle_termination(self, termination: JobTermination):
         """Handle job termination request."""
-        logger.info(f"Received job termination: {termination.job_id}")
+        logger.info(f"[_handle_termination] Received job termination: {termination.job_id}")
 
         if termination.job_id in self._current_jobs:
             job_info = self._current_jobs[termination.job_id]
 
             try:
                 await job_info.job.shutdown()
-                logger.info(f"Successfully terminated job {termination.job_id}")
+                logger.info(f"[_handle_termination] Successfully terminated job {termination.job_id}")
             except Exception as e:
-                logger.error(f"Error terminating job {termination.job_id}: {e}")
+                logger.error(f"[_handle_termination] Error terminating job {termination.job_id}: {e}")
 
             # Remove job from current jobs
             del self._current_jobs[termination.job_id]
             logger.info(
-                f"Removed job {termination.job_id} from current jobs. Remaining jobs: {len(self._current_jobs)}"
+                f"[_handle_termination] Removed job {termination.job_id} from current jobs. Remaining jobs: {len(self._current_jobs)}"
             )
 
             # Notify registry about job completion
@@ -524,11 +522,11 @@ class Worker:
                     )
                     await self.backend_connection.send_message(job_update)
                     logger.info(
-                        f"Sent job completion update for terminated job {termination.job_id}"
+                        f"[_handle_termination] Sent job completion update for terminated job {termination.job_id}"
                     )
                 except Exception as e:
                     logger.error(
-                        f"Failed to send job completion update for terminated job {termination.job_id}: {e}"
+                        f"[_handle_termination] Failed to send job completion update for terminated job {termination.job_id}: {e}"
                     )
 
             # IMMEDIATELY send status update to reflect reduced job count
@@ -536,16 +534,16 @@ class Worker:
             await self._send_immediate_status_update()
         else:
             logger.warning(
-                f"Job {termination.job_id} not found in current jobs for termination"
+                f"[_handle_termination] Job {termination.job_id} not found in current jobs for termination"
             )
 
     async def _handle_meeting_end(self, job_id: str, reason: str = "meeting_ended"):
         """Handle meeting end/leave events and inform registry."""
-        logger.info(f"Meeting ended for job {job_id}, reason: {reason}")
+        logger.info(f"[_handle_meeting_end] Meeting ended for job {job_id}, reason: {reason}")
         logger.info(
-            f"Checking if job {job_id} is in current_jobs: {job_id in self._current_jobs}"
+            f"[_handle_meeting_end] Checking if job {job_id} is in current_jobs: {job_id in self._current_jobs}"
         )
-        logger.info(f"Current jobs: {list(self._current_jobs.keys())}")
+        logger.info(f"[_handle_meeting_end] Current jobs: {list(self._current_jobs.keys())}")
 
         if job_id in self._current_jobs:
             # Remove job from worker's current jobs
@@ -565,18 +563,18 @@ class Worker:
                     )
                     await self.backend_connection.send_message(job_update)
                     logger.info(
-                        f"Sent job completion update to registry for job {job_id}"
+                        f"[_handle_meeting_end] Sent job completion update to registry for job {job_id}"
                     )
                 except Exception as e:
                     logger.error(
-                        f"Failed to send job completion update to registry: {e}"
+                        f"[_handle_meeting_end] Failed to send job completion update to registry: {e}"
                     )
 
             # IMMEDIATELY send status update to reflect reduced job count
             # This bypasses the debounce mechanism to ensure registry gets correct info
             await self._send_immediate_status_update()
         else:
-            logger.warning(f"Job {job_id} not found in current jobs when meeting ended")
+            logger.warning(f"[_handle_meeting_end] Job {job_id} not found in current jobs when meeting ended")
 
     async def _send_immediate_status_update(self):
         """Send an immediate status update, bypassing debounce mechanism."""
@@ -590,15 +588,15 @@ class Worker:
             self._worker_load = load
 
             logger.info(
-                f"Sending immediate status update - job_count: {job_count}, load: {load}, max_processes: {self.options.max_processes}"
+                f"[_send_immediate_status_update] Sending immediate status update - job_count: {job_count}, load: {load}, max_processes: {self.options.max_processes}"
             )
 
             # Log the actual job IDs for debugging
             if job_count > 0:
                 job_ids = list(self._current_jobs.keys())
-                logger.info(f"Active job IDs: {job_ids}")
+                logger.info(f"[_send_immediate_status_update] Active job IDs: {job_ids}")
             else:
-                logger.info("No active jobs")
+                logger.info("[_send_immediate_status_update] No active jobs")
 
             # Send status update
             status_msg = WorkerMessage(
@@ -611,16 +609,16 @@ class Worker:
             )
 
             await self.backend_connection.send_message(status_msg)
-            logger.info("Immediate status update sent successfully")
+            logger.info("[_send_immediate_status_update] Immediate status update sent successfully")
 
         except Exception as e:
-            logger.error(f"Error sending immediate status update: {e}")
+            logger.error(f"[_send_immediate_status_update] Error sending immediate status update: {e}")
 
     def setup_meeting_event_handlers(self, job_context, job_id: str):
         """Set up meeting event handlers for a specific job."""
         if not job_context.room:
             logger.warning(
-                f"Cannot set up meeting handlers for job {job_id}: room not available"
+                f"[_setup_meeting_event_handlers] Cannot set up meeting handlers for job {job_id}: room not available"
             )
             # Set up a delayed handler setup that will be called when room becomes available
             original_connect = job_context.connect
@@ -630,7 +628,7 @@ class Worker:
                     self._setup_meeting_event_handlers_impl(job_context, job_id)
                 else:
                     logger.warning(
-                        f"Room still not available for job {job_id} after connect"
+                        f"[_setup_meeting_event_handlers] Room still not available for job {job_id} after connect"
                     )
 
             # Override connect method to set up handlers after room is created
@@ -649,7 +647,7 @@ class Worker:
     def _setup_meeting_event_handlers_impl(self, job_context, job_id: str):
         """Internal method to set up the actual meeting event handlers."""
         if not job_context.room:
-            logger.warning(f"Room not available for job {job_id} in handler setup")
+            logger.warning(f"[_setup_meeting_event_handlers_impl] Room not available for job {job_id} in handler setup")
             return
 
         # Store original event handler
@@ -678,15 +676,15 @@ class Worker:
                         else:
                             original_on_meeting_left()
                 except Exception as e:
-                    logger.warning(f"Error calling original on_meeting_left: {e}")
+                    logger.warning(f"[_setup_meeting_event_handlers_impl] Error calling original on_meeting_left: {e}")
 
             # Handle meeting end for this specific job
-            logger.info(f"Meeting left event - triggering job cleanup for {job_id}")
+            logger.info(f"[_setup_meeting_event_handlers_impl] Meeting left event - triggering job cleanup for {job_id}")
             asyncio.create_task(self._handle_meeting_end(job_id, "meeting_left"))
 
         # Replace the handler with our wrapper
         job_context.room.on_meeting_left = on_meeting_left_wrapper
-        logger.info(f"Set up meeting end handler for job {job_id}")
+        logger.info(f"[_setup_meeting_event_handlers_impl] Set up meeting end handler for job {job_id}")
 
     async def _launch_job_from_assignment(
         self, assignment: JobAssignment, args: JobAcceptArguments
@@ -710,51 +708,59 @@ class Worker:
                 join_meeting=self.default_room_options.join_meeting,
                 auto_end_session=self.default_room_options.auto_end_session,
                 session_timeout_seconds=self.default_room_options.session_timeout_seconds,
+                send_logs_to_dashboard=self.default_room_options.send_logs_to_dashboard,
             )
 
             # Apply RoomOptions from assignment if provided
             if assignment.room_options:
-                logger.info(
-                    f"Received room_options from assignment: {assignment.room_options}"
+                logger.debug(
+                    f"[_launch_job_from_assignment] Received room_options from assignment: {assignment.room_options}"
                 )
                 if "auto_end_session" in assignment.room_options:
                     room_options.auto_end_session = assignment.room_options[
                         "auto_end_session"
                     ]
-                    logger.info(
-                        f"Set auto_end_session: {room_options.auto_end_session}"
+                    logger.debug(
+                        f"[_launch_job_from_assignment] Set auto_end_session: {room_options.auto_end_session}"
                     )
                 if "session_timeout_seconds" in assignment.room_options:
                     room_options.session_timeout_seconds = assignment.room_options[
                         "session_timeout_seconds"
                     ]
-                    logger.info(
-                        f"Set session_timeout_seconds: {room_options.session_timeout_seconds}"
+                    logger.debug(
+                        f"[_launch_job_from_assignment] Set session_timeout_seconds: {room_options.session_timeout_seconds}"
                     )
                 if "playground" in assignment.room_options:
                     room_options.playground = assignment.room_options["playground"]
-                    logger.info(f"Set playground: {room_options.playground}")
+                    logger.debug(f"[_launch_job_from_assignment] Set playground: {room_options.playground}")
                 if "vision" in assignment.room_options:
                     room_options.vision = assignment.room_options["vision"]
-                    logger.info(f"Set vision: {room_options.vision}")
+                    logger.debug(f"[_launch_job_from_assignment] Set vision: {room_options.vision}")
                 if "join_meeting" in assignment.room_options:
                     room_options.join_meeting = assignment.room_options["join_meeting"]
-                    logger.info(f"Set join_meeting: {room_options.join_meeting}")
+                    logger.debug(f"[_launch_job_from_assignment] Set join_meeting: {room_options.join_meeting}")
                 if "recording" in assignment.room_options:
                     room_options.recording = assignment.room_options["recording"]
-                    logger.info(f"Set recording: {room_options.recording}")
+                    logger.debug(f"[_launch_job_from_assignment] Set recording: {room_options.recording}")
                 if "background_audio" in assignment.room_options:
                     room_options.background_audio = assignment.room_options["background_audio"]
-                    logger.info(f"Set background_audio: {room_options.background_audio}")
+                    logger.debug(f"[_launch_job_from_assignment] Set background_audio: {room_options.background_audio}")
                 if "agent_participant_id" in assignment.room_options:
                     room_options.agent_participant_id = assignment.room_options[
                         "agent_participant_id"
                     ]
-                    logger.info(
-                        f"Set agent_participant_id: {room_options.agent_participant_id}"
+                    logger.debug(
+                        f"[_launch_job_from_assignment] Set agent_participant_id: {room_options.agent_participant_id}"
                     )
+                if "send_logs_to_dashboard" in assignment.room_options:
+                    print("***"*100)
+                    print("send_logs_to_dashboard: ", assignment.room_options["send_logs_to_dashboard"] )
+                    print("***"*100)
+                    room_options.send_logs_to_dashboard = assignment.room_options[
+                        "send_logs_to_dashboard"
+                    ]
             else:
-                logger.warning("No room_options received from assignment")
+                logger.warning("[_launch_job_from_assignment] No room_options received from assignment")
 
             # Create job context
             job_context = JobContext(
@@ -807,10 +813,14 @@ class Worker:
                     0,                             # priority
                     self.options.entrypoint_fnc,   # arg1
                     room_options,                  # arg2
-                    assignment.metadata,           # arg3
+                    {                              # arg3 - metadata with log level
+                        **(assignment.metadata or {}),
+                        "dashboard_log_level": self.options.log_level or "INFO",
+                    },
+                    self._log_manager.get_queue(), # arg4 - log queue
                 )
 
-                logger.info(f"Job {assignment.job_id} execution completed: {result.status}")
+                logger.info(f"[_launch_job_from_assignment] Job {assignment.job_id} execution completed: {result.status}")
 
                 if result.status.value == "completed":
                     final_update = JobUpdate(
@@ -828,7 +838,7 @@ class Worker:
 
             except Exception as execution_error:
                 logger.error(
-                    f"Execution failed for job {assignment.job_id}: {execution_error}"
+                    f"[_launch_job_from_assignment] Execution failed for job {assignment.job_id}: {execution_error}"
                 )
                 error_update = JobUpdate(
                     job_id=assignment.job_id,
@@ -838,12 +848,12 @@ class Worker:
                 await self.backend_connection.send_message(error_update)
 
             self._current_jobs.pop(assignment.job_id, None)
-            logger.info(f"Removed job {assignment.job_id} from current jobs")
+            logger.info(f"[_launch_job_from_assignment] Removed job {assignment.job_id} from current jobs")
 
             await self._send_immediate_status_update()
 
         except Exception as e:
-            logger.error(f"Error launching job {assignment.job_id}: {e}")
+            logger.error(f"[_launch_job_from_assignment] Error launching job {assignment.job_id}: {e}")
             # Send error update
             job_update = JobUpdate(
                 job_id=assignment.job_id,
@@ -853,7 +863,7 @@ class Worker:
             await self.backend_connection.send_message(job_update)
             # Remove job from current jobs since it failed to launch
             self._current_jobs.pop(assignment.job_id, None)
-            logger.info(f"Removed failed job {assignment.job_id} from current jobs")
+            logger.info(f"[_launch_job_from_assignment] Removed failed job {assignment.job_id} from current jobs")
 
             # Send immediate status update to reflect reduced job count
             await self._send_immediate_status_update()
@@ -862,7 +872,7 @@ class Worker:
         """Set up session end callback for automatic session ending."""
         if not job_context.room:
             logger.warning(
-                f"Cannot set up session end callback for job {job_id}: room not available"
+                f"[setup_session_end_callback] Cannot set up session end callback for job {job_id}: room not available"
             )
             # Set up a delayed callback setup that will be called when room becomes available
             original_connect = job_context.connect
@@ -872,7 +882,7 @@ class Worker:
                     self._setup_session_end_callback_impl(job_context, job_id)
                 else:
                     logger.warning(
-                        f"Room still not available for job {job_id} after connect"
+                        f"[setup_session_end_callback] Room still not available for job {job_id} after connect"
                     )
 
             # Override connect method to set up callback after room is created
@@ -882,7 +892,7 @@ class Worker:
                 return result
 
             job_context.connect = connect_with_callback
-            logger.info(f"Set up delayed session end callback for job {job_id}")
+            logger.info(f"[setup_session_end_callback] Set up delayed session end callback for job {job_id}")
             return
 
         # Room is available, set up callback immediately
@@ -891,23 +901,23 @@ class Worker:
     def _setup_session_end_callback_impl(self, job_context, job_id: str):
         """Internal method to set up the actual session end callback."""
         if not job_context.room:
-            logger.warning(f"Room not available for job {job_id} in callback setup")
+            logger.warning(f"[setup_session_end_callback_impl] Room not available for job {job_id} in callback setup")
             return
 
         # Store original callback if it exists
         original_on_session_end = job_context.room.on_session_end
 
         def on_session_end_wrapper(reason: str):
-            logger.info(f"Session ended for job {job_id}, reason: {reason}")
+            logger.info(f"[setup_session_end_callback_impl] Session ended for job {job_id}, reason: {reason}")
 
             # Call original callback if it exists
             if original_on_session_end:
                 try:
                     original_on_session_end(reason)
                 except Exception as e:
-                    logger.error(f"Error in original session end callback: {e}")
+                    logger.error(f"[setup_session_end_callback_impl] Error in original session end callback: {e}")
 
-            logger.info(f"Calling _handle_meeting_end for job {job_id}")
+            logger.info(f"[setup_session_end_callback_impl] Calling _handle_meeting_end for job {job_id}")
             # Handle meeting end asynchronously
             asyncio.create_task(
                 self._handle_meeting_end(job_id, f"session_ended: {reason}")
@@ -915,7 +925,7 @@ class Worker:
 
         # Set the wrapped session end callback
         job_context.room.on_session_end = on_session_end_wrapper
-        logger.info(f"Session end callback set up for job {job_id}")
+        logger.info(f"[setup_session_end_callback_impl] Session end callback set up for job {job_id}")
 
     async def _status_update_loop(self):
         """Periodic status update loop."""
@@ -924,7 +934,7 @@ class Worker:
                 await self._update_worker_status()
                 await asyncio.sleep(self.options.ping_interval)
             except Exception as e:
-                logger.error(f"Error in status update loop: {e}")
+                logger.error(f"[status_update_loop] Error in status update loop: {e}")
                 await asyncio.sleep(5)  # Wait before retrying
 
     async def _update_worker_status(self):
@@ -938,7 +948,7 @@ class Worker:
             current_time - self._last_status_update
             < self._status_update_debounce_seconds
         ):
-            logger.debug("Skipping status update due to debounce")
+            logger.debug("[_update_worker_status] Skipping status update due to debounce")
             return
 
         try:
@@ -949,15 +959,15 @@ class Worker:
 
             # Add detailed logging to track job count changes
             logger.info(
-                f"Updating worker status - job_count: {job_count}, load: {load}, max_processes: {self.options.max_processes}"
+                f"[_update_worker_status] Updating worker status - job_count: {job_count}, load: {load}, max_processes: {self.options.max_processes}"
             )
 
             # Log the actual job IDs for debugging
             if job_count > 0:
                 job_ids = list(self._current_jobs.keys())
-                logger.info(f"Active job IDs: {job_ids}")
+                logger.info(f"[_update_worker_status] Active job IDs: {job_ids}")
             else:
-                logger.info("No active jobs")
+                logger.info("[_update_worker_status] No active jobs")
 
             # Send status update
             status_msg = WorkerMessage(
@@ -978,7 +988,7 @@ class Worker:
             self._worker_load_graph.add_point(load)
 
         except Exception as e:
-            logger.error(f"Error updating worker status: {e}")
+            logger.error(f"[_update_worker_status] Error updating worker status: {e}")
 
     async def execute_job(self, job_data: Dict[str, Any]) -> Dict[str, Any]:
         """Execute a job using the task executor."""
@@ -1048,7 +1058,6 @@ class Worker:
             "current_jobs": job_count,
             "max_processes": self.options.max_processes,
             "agent_id": self.options.agent_id,
-            "register": self.options.register,
         }
 
         if self.backend_connection:
@@ -1062,12 +1071,12 @@ class Worker:
         if self.process_manager:
             try:
                 process_stats = self.process_manager.get_stats()
-                logger.debug(f"Process manager stats: {process_stats}")
+                logger.debug(f"[get_stats] Process manager stats: {process_stats}")
 
                 # Get current resource stats and dedicated inference status
                 if "resource_stats" in process_stats:
                     stats["resource_stats"] = process_stats["resource_stats"]
-                    logger.debug(f"Resource stats: {process_stats['resource_stats']}")
+                    logger.debug(f"[get_stats] Resource stats: {process_stats['resource_stats']}")
                 if "dedicated_inference" in process_stats:
                     stats["dedicated_inference"] = process_stats["dedicated_inference"]
 
@@ -1075,7 +1084,7 @@ class Worker:
                 try:
                     resource_info = self.process_manager.get_resource_info()
                     logger.debug(
-                        f"Resource info count: {len(resource_info) if resource_info else 0}"
+                        f"[get_stats] Resource info count: {len(resource_info) if resource_info else 0}"
                     )
 
                     if resource_info:
@@ -1111,11 +1120,11 @@ class Worker:
                             ),
                         }
                         stats["resource_summary"] = resource_summary
-                        logger.debug(f"Resource summary: {resource_summary}")
+                        logger.debug(f"[get_stats] Resource summary: {resource_summary}")
                 except Exception as e:
-                    logger.debug(f"Could not get detailed resource info: {e}")
+                    logger.debug(f"[get_stats] Could not get detailed resource info: {e}")
             except Exception as e:
-                logger.error(f"Error getting process manager stats: {e}")
+                logger.error(f"[get_stats] Error getting process manager stats: {e}")
                 stats["resource_stats"] = {"error": str(e)}
                 stats["dedicated_inference"] = None
 
@@ -1126,14 +1135,14 @@ class Worker:
         if self._draining:
             return
 
-        logger.info("Draining VideoSDK worker")
+        logger.info("[drain] Draining VideoSDK worker")
         self._draining = True
         await self._update_worker_status()
 
         # Wait for current jobs to complete
         if self._current_jobs:
             logger.info(
-                f"Waiting for {len(self._current_jobs)} active jobs to complete"
+                f"[drain] Waiting for {len(self._current_jobs)} active jobs to complete"
             )
 
             if timeout:
@@ -1141,7 +1150,7 @@ class Worker:
                     await asyncio.wait_for(self._wait_for_jobs(), timeout)
                 except asyncio.TimeoutError:
                     logger.warning(
-                        f"Timeout waiting for jobs to complete after {timeout}s"
+                        f"[drain] Timeout waiting for jobs to complete after {timeout}s"
                     )
             else:
                 await self._wait_for_jobs()
@@ -1151,25 +1160,25 @@ class Worker:
         while self._current_jobs:
             # Wait a bit and check again
             await asyncio.sleep(1)
-            logger.info(f"Still waiting for {len(self._current_jobs)} jobs to complete")
+            logger.info(f"[drain] Still waiting for {len(self._current_jobs)} jobs to complete")
 
     async def _cleanup_all_jobs(self):
         """Clean up all current jobs and notify registry."""
         if not self._current_jobs:
             return
 
-        logger.info(f"Cleaning up {len(self._current_jobs)} jobs during shutdown")
+        logger.info(f"[drain] Cleaning up {len(self._current_jobs)} jobs during shutdown")
 
         # Create a copy of jobs to iterate over, as they will be modified
         jobs_to_clean = list(self._current_jobs.items())
 
         for job_id, job_info in jobs_to_clean:
             try:
-                logger.info(f"Terminating job {job_id}...")
+                logger.info(f"[drain] Terminating job {job_id}...")
                 await job_info.job.shutdown()  # This calls job.shutdown()
-                logger.info(f"Job {job_id} terminated successfully.")
+                logger.info(f"[drain] Job {job_id} terminated successfully.")
             except Exception as e:
-                logger.error(f"Error terminating job {job_id}: {e}")
+                logger.error(f"[drain] Error terminating job {job_id}: {e}")
 
             try:
                 if self.backend_connection and self.backend_connection.is_connected:
@@ -1180,14 +1189,14 @@ class Worker:
                     )
                     await self.backend_connection.send_message(job_update)
                     logger.info(
-                        f"Sent job completion update for job {job_id} during shutdown"
+                        f"[drain] Sent job completion update for job {job_id} during shutdown"
                     )
             except Exception as e:
-                logger.error(f"Failed to send job completion update for {job_id}: {e}")
+                logger.error(f"[drain] Failed to send job completion update for {job_id}: {e}")
 
         # Clear all jobs from the worker's state
         self._current_jobs.clear()
-        logger.info("All jobs cleared from worker")
+        logger.info("[drain] All jobs cleared from worker")
 
         # Send a final status update reflecting zero jobs
         if self.backend_connection and self.backend_connection.is_connected:
@@ -1195,7 +1204,7 @@ class Worker:
 
     async def shutdown(self):
         """Shutdown the worker."""
-        logger.info("Shutting down VideoSDK worker")
+        logger.debug("[shutdown] Shutting down VideoSDK worker")
         self._shutdown = True
         self._draining = True
 
@@ -1203,23 +1212,31 @@ class Worker:
             # Clean up all jobs first to ensure proper room cleanup
             await self._cleanup_all_jobs()
         except Exception as e:
-            logger.error(f"Error during job cleanup: {e}")
+            logger.error(f"[shutdown] Error during job cleanup: {e}")
 
         try:
             # Send final status update to registry
             if self.backend_connection and self.backend_connection.is_connected:
                 try:
                     await self._update_worker_status()
-                    logger.info("Sent final status update to registry")
+                    logger.info("[shutdown] Sent final status update to registry")
                 except Exception as e:
-                    logger.warning(f"Failed to send final status update: {e}")
+                    logger.warning(f"[shutdown] Failed to send final status update: {e}")
 
             # Disconnect from backend
             if self.backend_connection:
-                logger.info("Disconnecting from backend")
+                logger.info("[shutdown] Disconnecting from backend")
                 await self.backend_connection.disconnect()
         except Exception as e:
-            logger.error(f"Error during backend cleanup: {e}")
+            logger.error(f"[shutdown] Error during backend cleanup: {e}")
+
+        try:
+            # Stop log manager (consumer) — stop BEFORE process manager
+            # so the daemon thread exits cleanly before processes die
+            if self._log_manager:
+                self._log_manager.stop()
+        except (Exception, asyncio.CancelledError) as e:
+            logger.error(f"[shutdown] Error stopping log manager: {e}")
 
         try:
             # Cancel all tasks
@@ -1233,23 +1250,23 @@ class Worker:
                 for task in pending:
                     task.cancel()
         except Exception as e:
-            logger.error(f"Error during task cleanup: {e}")
+            logger.error(f"[shutdown] Error during task cleanup: {e}")
 
         try:
             # Shutdown task executor
             if self.process_manager:
                 await self.process_manager.stop()
         except Exception as e:
-            logger.error(f"Error stopping process manager: {e}")
+            logger.error(f"[shutdown] Error stopping process manager: {e}")
 
         try:
             # Stop debug HTTP server
             if self._http_server:
                 await self._http_server.aclose()
         except Exception as e:
-            logger.error(f"Error stopping HTTP server: {e}")
+            logger.error(f"[shutdown] Error stopping HTTP server: {e}")
 
-        logger.info("VideoSDK worker shutdown complete")
+        logger.info("[shutdown] VideoSDK worker shutdown complete")
 
     async def __aenter__(self):
         """Async context manager entry."""

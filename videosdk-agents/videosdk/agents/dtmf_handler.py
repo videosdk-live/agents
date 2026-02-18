@@ -38,6 +38,7 @@ class DTMFHandler:
         Allows developers to attach or update callback.
         """
         self._callback = callback
+        logger.debug("[set_callback][DTMFHandler] Callback set")
 
     async def _on_pubsub_event(self, message):
         """
@@ -45,7 +46,7 @@ class DTMFHandler:
         """
         try:
             digit = message.get("payload", {}).get("number")
-            logger.info(f"[DTMFHandler] Received: {digit}")
+            logger.info(f"[_on_pubsub_event][DTMFHandler] Received: {digit}")
 
             if not digit or not self._callback:
                 return
@@ -56,4 +57,4 @@ class DTMFHandler:
                 self._callback(digit)
 
         except Exception as e:
-            logger.error(f"[DTMFHandler] Error processing message: {e}")
+            logger.error(f"[_on_pubsub_event][DTMFHandler] Error processing message: {e}")

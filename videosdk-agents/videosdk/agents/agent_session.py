@@ -98,7 +98,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
                 self._send_analytics_to_pubsub = job_ctx.room_options.send_analytics_to_pubsub
 
         except Exception as e:
-            logger.error(f"AgentSession: Error in session initialization: {e}")
+            logger.error(f"[AgentSession] Error in session initialization: {e}")
             self._job_context = None
 
     @property
@@ -115,7 +115,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         self._is_voicemail_detected = is_vm
         
         if is_vm:
-            logger.info("AgentSession: Voicemail confirmed. Executing callback.")
+            logger.info("[_handle_voicemail_result] Voicemail confirmed. Executing callback.")
             if self.voice_mail_detector.callback:
                 asyncio.create_task(self._safe_execute_vmd_callback())
 
@@ -125,7 +125,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             if self.voice_mail_detector.callback:
                 await self.voice_mail_detector.callback()
         except Exception as e:
-            logger.error(f"Error executing voicemail callback: {e}")
+            logger.error(f"[_safe_execute_vmd_callback] Error executing voicemail callback: {e}")
 
 
     def _start_wake_up_timer(self) -> None:
@@ -225,7 +225,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             try:
                 ctx = get_current_job_context()
                 if ctx:
-                    logger.info("Starting session with full lifecycle management")
+                    logger.info("[start] Starting session with full lifecycle management")
                     await ctx.run_until_shutdown(
                         session=self,
                         wait_for_participant=wait_for_participant
@@ -233,13 +233,13 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
                     return
                 else:
                     logger.warning(
-                        "run_until_shutdown=True requires a JobContext, "
-                        "falling back to normal start()"
+                        "[start] run_until_shutdown=True requires a JobContext, "
+                        "[start] falling back to normal start()"
                     )
             except Exception as e:
                 logger.warning(
-                    f"Failed to get JobContext for run_until_shutdown: {e}, "
-                    "falling back to normal start()"
+                    f"[start] Failed to get JobContext for run_until_shutdown: {e}, "
+                    "[start] falling back to normal start()"
                 )
         
         self._emit_agent_state(AgentState.STARTING)
@@ -318,14 +318,14 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         await self.pipeline.start()
 
         if self._should_delay_for_sip_user():
-            logger.info("SIP user detected, waiting for audio stream to be enabled before calling on_enter")
+            logger.info("[_should_delay_for_sip_user] SIP user detected, waiting for audio stream to be enabled before calling on_enter")
             audio_stream_enabled = asyncio.Event()
 
             def on_audio_stream_enabled(data):
                 stream = data.get("stream")
                 participant = data.get("participant")
                 if stream and stream.kind == "audio" and participant and participant.meta_data.get("sipUser"):
-                    logger.info(f"SIP user audio stream enabled for participant {participant.id}")
+                    logger.info(f"[on_audio_stream_enabled] SIP user audio stream enabled for participant {participant.id}")
                     audio_stream_enabled.set()
 
             global_event_emitter.on("AUDIO_STREAM_ENABLED", on_audio_stream_enabled)
@@ -333,14 +333,14 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             async def wait_and_start():
                 try:
                     await audio_stream_enabled.wait()
-                    logger.info("SIP user audio stream enabled, proceeding with on_enter")
+                    logger.info("[wait_and_start] SIP user audio stream enabled, proceeding with on_enter")
                     await self.agent.on_enter()
                     global_event_emitter.emit("AGENT_STARTED", {"session": self})
                     if self.on_wake_up is not None:
                         self._start_wake_up_timer()
                     self._emit_agent_state(AgentState.IDLE)
                 except Exception as e:
-                    logger.error(f"Error in wait_and_start: {e}")
+                    logger.error(f"[wait_and_start] Error in wait_and_start: {e}")
                 finally:
                     global_event_emitter.off("AUDIO_STREAM_ENABLED", on_audio_stream_enabled)
 
@@ -383,8 +383,8 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         audio_track = self._get_audio_track()
         if not hasattr(audio_track, 'add_background_bytes'):
             logger.warning(
-                "Cannot play background audio. This feature requires the mixing audio track. "
-                "Enable it by setting `background_audio=True` in RoomOptions."
+                "[play_background_audio] Cannot play background audio. This feature requires the mixing audio track. "
+                "[play_background_audio] Enable it by setting `background_audio=True` in RoomOptions."
             )
             return
 
@@ -420,8 +420,8 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         audio_track = self._get_audio_track()
         if not hasattr(audio_track, 'add_background_bytes'):
             logger.warning(
-                "Cannot play 'thinking' audio. This feature requires the mixing audio track. "
-                "Enable it by setting `background_audio=True` in RoomOptions."
+                "[start_thinking_audio] Cannot play 'thinking' audio. This feature requires the mixing audio track. "
+                "[start_thinking_audio] Enable it by setting `background_audio=True` in RoomOptions."
             )
             return
 
@@ -501,7 +501,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             try:
                 self.current_utterance.interrupt(force=force) 
             except RuntimeError as e:
-                logger.warning(f"Could not interrupt utterance: {e}")
+                logger.warning(f"[interrupt] Could not interrupt utterance: {e}")
                 return
         
         if hasattr(self.pipeline, 'interrupt'):
@@ -511,9 +511,9 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         """
         Close the agent session.
         """
-        logger.info("Closing agent session")
+        logger.info("[close] Closing agent session")
         if self._closed:
-            logger.info("Agent session already closed")
+            logger.info("[close] Agent session already closed")
             return
         self._closed = True
         self._emit_agent_state(AgentState.CLOSING)
@@ -534,11 +534,11 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         self._cancel_wake_up_timer()
         
 
-        logger.info("Cleaning up agent session")
+        logger.debug("[close] Cleaning up agent session")
         try:
             await self.agent.on_exit()
         except Exception as e:
-            logger.error(f"Error in agent.on_exit(): {e}")
+            logger.error(f"[close] Error in agent.on_exit(): {e}")
         
         if self._thinking_audio_player:
             await self._thinking_audio_player.stop()
@@ -549,18 +549,18 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         try:
             await self.pipeline.cleanup()
         except Exception as e:
-            logger.error(f"Error cleaning up pipeline: {e}")
+            logger.error(f"[close] Error cleaning up pipeline: {e}")
         
         try:
             await self.agent.cleanup()
         except Exception as e:
-            logger.error(f"Error cleaning up agent: {e}")
+            logger.error(f"[close] Error cleaning up agent: {e}")
         
         self.agent = None
         self.pipeline = None
         self.on_wake_up = None
         self._wake_up_task = None
-        logger.info("Agent session cleaned up")
+        logger.info("[close] Agent session cleaned up")
 
     async def leave(self) -> None:
         """
@@ -586,7 +586,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
                 await room.force_end_session(reason)
                 return
             except Exception as exc:
-                logger.error(f"Error forcing room to end session: {exc}")
+                logger.error(f"[hangup] Error forcing room to end session: {exc}")
 
         await self.close()
      
@@ -609,7 +609,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
                 await room.call_transfer(token, transfer_to)
                 return
             except Exception as exc:
-                logger.error(f"Error calling call_transfer: {exc}")
+                logger.error(f"[call_transfer] Error calling call_transfer: {exc}")
 
     def _should_delay_for_sip_user(self) -> bool:
         """Check if there are SIP users in the room that need audio stream initialization"""

@@ -31,12 +31,12 @@ class InputStreamManager:
                 if self.pipeline:
                     await self.pipeline.on_audio_delta(pcm_frame)
                 else:
-                    logger.warning("No pipeline available for audio processing")
+                    logger.error("[add_audio_listener] No pipeline available for audio processing")
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"Audio processing error: {e}")
+                logger.error(f"[add_audio_listener] Audio processing error: {e}")
                 break
 
     async def add_video_listener(self, stream: Stream):
@@ -51,12 +51,12 @@ class InputStreamManager:
                 if self.pipeline:
                     await self.pipeline.on_video_delta(frame)
                 else:
-                    logger.warning("No pipeline available for video processing")
+                    logger.error("[add_video_listener] No pipeline available for video processing")
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"Video processing error: {e}")
+                logger.error(f"[add_video_listener] Video processing error: {e}")
                 break
 
     def cancel_tasks(self):
@@ -72,3 +72,4 @@ class InputStreamManager:
             if not task.done():
                 task.cancel()
         self.video_listener_tasks.clear()
+        logger.debug("[cancel_tasks] All listener tasks cancelled")

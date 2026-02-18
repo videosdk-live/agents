@@ -114,18 +114,19 @@ class PipelineHooks:
         def decorator(func: Callable) -> Callable:
             if event == "stt":
                 if self._stt_stream_hook:
-                    logger.warning("STT stream hook already registered, overwriting")
+                    logger.warning("[on][PipelineHooks]STT stream hook already registered, overwriting")
                 self._stt_stream_hook = func
-                logger.info("Registered STT stream hook")
+                logger.info("[on][PipelineHooks]Registered STT stream hook")
             elif event == "tts":
                 if self._tts_stream_hook:
-                    logger.warning("TTS stream hook already registered, overwriting")
+                    logger.warning("[on][PipelineHooks]TTS stream hook already registered, overwriting")
                 self._tts_stream_hook = func
-                logger.info("Registered TTS stream hook")
+                logger.info("[on][PipelineHooks]Registered TTS stream hook")
             elif event == "llm":
                 if self._llm_hook is not None:
-                    logger.warning("llm hook already registered, overwriting")
+                    logger.warning("[on][PipelineHooks]llm hook already registered, overwriting")
                 self._llm_hook = func
+                logger.info("[on][PipelineHooks]Registered llm hook")
             elif event == "agent_response":
                 self._agent_response_hooks.append(func)     
             elif event == "vision_frame":
@@ -141,9 +142,9 @@ class PipelineHooks:
             elif event == "content_generated":
                 self._content_generated_hooks.append(func)
             else:
-                raise ValueError(f"Unknown event: {event}")
+                raise ValueError(f"[on][PipelineHooks]Unknown event: {event}")
             
-            logger.info(f"Registered hook for event: {event}")
+            logger.info(f"[on][PipelineHooks]Registered hook for event: {event}")
             return func
         
         return decorator
@@ -169,7 +170,7 @@ class PipelineHooks:
             try:
                 current_stream = hook(current_stream)
             except Exception as e:
-                logger.error(f"Error in vision_frame hook: {e}", exc_info=True)
+                logger.error(f"[process_vision_frame] Error in vision_frame hook: {e}", exc_info=True)
         
         async for frame in current_stream:
             yield frame
@@ -185,7 +186,7 @@ class PipelineHooks:
             try:
                 await hook(transcript)
             except Exception as e:
-                logger.error(f"Error in user_turn_start hook: {e}", exc_info=True)
+                logger.error(f"[trigger_user_turn_start] Error in user_turn_start hook: {e}", exc_info=True)
     
     async def trigger_user_turn_end(self) -> None:
         """
@@ -195,7 +196,7 @@ class PipelineHooks:
             try:
                 await hook()
             except Exception as e:
-                logger.error(f"Error in user_turn_end hook: {e}", exc_info=True)
+                logger.error(f"[trigger_user_turn_end] Error in user_turn_end hook: {e}", exc_info=True)
     
     async def trigger_agent_turn_start(self) -> None:
         """
@@ -205,7 +206,7 @@ class PipelineHooks:
             try:
                 await hook()
             except Exception as e:
-                logger.error(f"Error in agent_turn_start hook: {e}", exc_info=True)
+                logger.error(f"[trigger_agent_turn_start] Error in agent_turn_start hook: {e}", exc_info=True)
     
     async def trigger_agent_turn_end(self) -> None:
         """
@@ -215,7 +216,7 @@ class PipelineHooks:
             try:
                 await hook()
             except Exception as e:
-                logger.error(f"Error in agent_turn_end hook: {e}", exc_info=True)
+                logger.error(f"[trigger_agent_turn_end] Error in agent_turn_end hook: {e}", exc_info=True)
     
     def has_vision_frame_hooks(self) -> bool:
         """Check if any vision_frame hooks are registered."""
@@ -260,7 +261,7 @@ class PipelineHooks:
             try:
                 await hook(data)
             except Exception as e:
-                logger.error(f"Error in content_generated hook: {e}", exc_info=True)
+                logger.error(f"[trigger_content_generated] Error in content_generated hook: {e}", exc_info=True)
     
     async def process_llm_gate(self, transcript: str) -> AsyncIterator[str] | None:
         """
@@ -310,7 +311,7 @@ class PipelineHooks:
                 return None
                 
         except Exception as e:
-            logger.error(f"Error in llm hook: {e}", exc_info=True)
+            logger.error(f"[process_llm_gate] Error in llm hook: {e}", exc_info=True)
             return None
     
     def has_stt_stream_hook(self) -> bool:
@@ -339,7 +340,7 @@ class PipelineHooks:
             async for event in result:
                 yield event
         except Exception as e:
-            logger.error(f"Error in STT stream hook: {e}", exc_info=True)
+            logger.error(f"[process_stt_stream] Error in STT stream hook: {e}", exc_info=True)
 
     async def process_tts_stream(self, text_stream: AsyncIterator[str]) -> AsyncIterator[bytes]:
         """
@@ -359,7 +360,7 @@ class PipelineHooks:
             async for frame in result:
                 yield frame
         except Exception as e:
-            logger.error(f"Error in TTS stream hook: {e}", exc_info=True)
+            logger.error(f"[process_tts_stream] Error in TTS stream hook: {e}", exc_info=True)
 
     def clear_all_hooks(self) -> None:
         """Clear all registered hooks."""
@@ -373,4 +374,4 @@ class PipelineHooks:
         self._agent_turn_start_hooks.clear()
         self._agent_turn_end_hooks.clear()
         self._content_generated_hooks.clear()
-        logger.info("Cleared all pipeline hooks")
+        logger.info("[clear_all_hooks] Cleared all pipeline hooks")

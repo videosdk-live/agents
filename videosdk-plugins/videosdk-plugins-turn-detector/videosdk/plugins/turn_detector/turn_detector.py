@@ -48,11 +48,12 @@ def _download_from_hf_hub(repo_id, filename, cache_dir=None, **kwargs):
 
 
 def pre_download_model():
-    from transformers import AutoTokenizer
-    AutoTokenizer.from_pretrained(HG_MODEL)
-    _download_from_hf_hub(
-        repo_id=HG_MODEL,
-        filename=ONNX_FILENAME,
+    if not os.path.exists(os.path.join(os.path.expanduser("~/.cache/huggingface/hub"), ONNX_FILENAME)):
+        from transformers import AutoTokenizer
+        AutoTokenizer.from_pretrained(HG_MODEL)
+        _download_from_hf_hub(
+            repo_id=HG_MODEL,
+            filename=ONNX_FILENAME,
     )
 
 

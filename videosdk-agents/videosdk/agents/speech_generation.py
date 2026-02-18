@@ -111,15 +111,15 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
                     if self.hooks and self.hooks.has_agent_turn_end_hooks():
                         await self.hooks.trigger_agent_turn_end()
                     
-                    logger.info("TTS stream synthesis complete")
+                    logger.info("[synthesize] TTS stream synthesis complete")
                     self.emit("last_audio_byte", {})
                     
                 except asyncio.CancelledError:
-                    logger.info("Synthesis cancelled")
+                    logger.info("[synthesize] Synthesis cancelled")
                     self.emit("synthesis_interrupted", {})
                     raise
                 except Exception as e:
-                    logger.error(f"Error during synthesis: {e}")
+                    logger.error(f"[synthesize] Error during synthesis: {e}")
                     self.emit("synthesis_error", {"error": str(e)})
                     raise
                 finally:
@@ -133,7 +133,7 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
                 return
 
             if not self.tts:
-                logger.warning("No TTS available for synthesis")
+                logger.error("[synthesize] No TTS available for synthesis")
                 return
             
             if self.agent and self.agent.session:
@@ -144,7 +144,7 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
                     if hasattr(self.agent.session.pipeline, "audio_track"):
                         self.audio_track = self.agent.session.pipeline.audio_track
                     else:
-                        logger.warning("Audio track not found in pipeline - last audio callback will be skipped")
+                        logger.error("[synthesize] Audio track not found in pipeline - last audio callback will be skipped")
             
             if self.audio_track and hasattr(self.audio_track, "enable_audio_input"):
                 self.audio_track.enable_audio_input(manual_control=True)
@@ -170,7 +170,7 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
                 if self.hooks and self.hooks.has_agent_turn_end_hooks():
                     await self.hooks.trigger_agent_turn_end()
                 
-                logger.info("TTS synthesis complete - Agent and User set to IDLE")
+                logger.info("[synthesize] TTS synthesis complete - Agent and User set to IDLE")
                 self.emit("last_audio_byte", {})
             
             self.tts.on_first_audio_byte(on_first_audio_byte)
@@ -179,9 +179,9 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
                 if hasattr(self.audio_track, "on_last_audio_byte"):
                     self.audio_track.on_last_audio_byte(on_last_audio_byte)
                 else:
-                    logger.warning(f"Audio track '{type(self.audio_track).__name__}' does not have 'on_last_audio_byte' method")
+                    logger.warning(f"[synthesize] Audio track '{type(self.audio_track).__name__}' does not have 'on_last_audio_byte' method")
             else:
-                logger.warning("Audio track not initialized - skipping last audio callback registration")
+                logger.warning("[synthesize] Audio track not initialized - skipping last audio callback registration")
             
             self.tts.reset_first_audio_tracking()
             
@@ -203,12 +203,12 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
                 await self.tts.synthesize(response_iterator)
                 
             except asyncio.CancelledError:
-                logger.info("Synthesis cancelled")
+                logger.info("[synthesize] Synthesis cancelled")
                 self.emit("synthesis_interrupted", {})
                 raise
             
             except Exception as e:
-                logger.error(f"Error during synthesis: {e}")
+                logger.error(f"[synthesize] Error during synthesis: {e}")
                 self.emit("synthesis_error", {"error": str(e)})
                 raise
             
@@ -254,11 +254,11 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
     
     async def cleanup(self) -> None:
         """Cleanup speech generation resources"""
-        logger.info("Cleaning up speech generation")
+        logger.debug("[cleanup] Cleaning up speech generation")
         
         self.tts = None
         self.agent = None
         self.avatar = None
         self.audio_track = None
         
-        logger.info("Speech generation cleaned up")
+        logger.info("[cleanup] Speech generation cleaned up")

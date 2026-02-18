@@ -84,7 +84,7 @@ class KnowledgeBase(ABC):
         auth_token = os.getenv("VIDEOSDK_AUTH_TOKEN")
 
         if not auth_token:
-            logger.warning("VIDEOSDK_AUTH_TOKEN not set, skipping KB retrieval")
+            logger.warning("[retrieve_documents] VIDEOSDK_AUTH_TOKEN not set, skipping KB retrieval")
             return []
         
         try:
@@ -113,17 +113,17 @@ class KnowledgeBase(ABC):
                                     text = payload.get("text", "")
                                     if text and text.strip():  # Only add non-empty text
                                         documents.append(text.strip())
-                        logger.debug(f"Retrieved {len(documents)} documents from knowledge base")
+                        logger.debug(f"[retrieve_documents] Retrieved {len(documents)} documents from knowledge base")
                         
                         return documents
                     else:
                         error_text = await response.text()
                         logger.error(
-                            f"KB API error {response.status}: {error_text}"
+                            f"[retrieve_documents] KB API error {response.status}: {error_text}"
                         )
                         return []
         except Exception as e:
-            logger.error(f"Error retrieving KB documents: {e}")
+            logger.error(f"[retrieve_documents] Error retrieving KB documents: {e}")
             return []
     
     async def process_query(self, transcript: str) -> Optional[str]:

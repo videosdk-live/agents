@@ -54,11 +54,11 @@ async def fetch_agent_init_config(
                         "Invalid init config response: missing registryUrl"
                     )
 
-                logger.info(f"Fetched agent init config - Registry: {registry_url}")
+                logger.info(f"[fetch_agent_init_config] Fetched agent init config - Registry: {registry_url}")
 
                 return registry_url
 
     except aiohttp.ClientError as e:
-        raise RuntimeError(f"Network error while fetching agent init config: {e}")
+        raise RuntimeError(f"[fetch_agent_init_config] Network error while fetching agent init config: {e}")
     except Exception as e:
         raise RuntimeError(f"Unexpected error while fetching agent init config: {e}")

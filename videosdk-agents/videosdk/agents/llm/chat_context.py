@@ -406,7 +406,7 @@ class ChatContext:
         """
         Clear all chat context items and references to free memory.
         """
-        logger.info(f"Cleaning up ChatContext with {len(self._items)} items")
+        logger.debug(f"[cleanup] Cleaning up ChatContext with {len(self._items)} items")
         for item in self._items:
             if isinstance(item, ChatMessage):
                 if isinstance(item.content, list):
@@ -422,8 +422,8 @@ class ChatContext:
         try:
             import gc
             gc.collect()
-            logger.info("ChatContext garbage collection completed")
+            logger.debug("[cleanup] ChatContext garbage collection completed")
         except Exception as e:
-            logger.error(f"Error during ChatContext garbage collection: {e}")
+            logger.error(f"[cleanup] Error during ChatContext garbage collection: {e}")
         
-        logger.info("ChatContext cleanup completed")
+        logger.debug("[cleanup] ChatContext cleanup completed")

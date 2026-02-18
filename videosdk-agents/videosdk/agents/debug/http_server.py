@@ -647,7 +647,7 @@ class HttpServer:
                         "register": stats.get("register", False),
                     }
                 except Exception as stats_error:
-                    logger.error(f"Error getting worker stats: {stats_error}")
+                    logger.error(f"[_worker_debug] Error getting worker stats: {stats_error}")
                     tracing_data["kv"] = {
                         "agent_id": getattr(
                             self._worker.options, "agent_id", "Unknown"
@@ -693,11 +693,11 @@ class HttpServer:
                     if graph_data.get("data"):
                         tracing_data["graph"] = [graph_data]
             except Exception as graph_error:
-                logger.error(f"Error getting worker load graph: {graph_error}")
+                logger.error(f"[_worker_debug] Error getting worker load graph: {graph_error}")
 
             return web.json_response({"tracing": tracing_data})
         except Exception as e:
-            logger.error(f"Error in worker debug endpoint: {e}")
+            logger.error(f"[_worker_debug] Error in worker debug endpoint: {e}")
             return web.json_response({"error": str(e)}, status=500)
 
     async def _runners_list(self, request: web.Request) -> web.Response:
@@ -730,7 +730,7 @@ class HttpServer:
                         )
                     except Exception as e:
                         # Log error but continue with other jobs
-                        logger.warning(f"Error processing job {job_id}: {e}")
+                        logger.warning(f"[_runners_list] Error processing job {job_id}: {e}")
                         runners.append(
                             {
                                 "id": job_id,
@@ -765,7 +765,7 @@ class HttpServer:
                                 }
                             )
                 except Exception as e:
-                    logger.warning(f"Error getting process manager stats: {e}")
+                    logger.warning(f"[_runners_list] Error getting process manager stats: {e}")
                     # Add a default runner if we can't get stats
                     runners.append(
                         {
@@ -789,10 +789,10 @@ class HttpServer:
 
             return web.json_response({"runners": runners})
         except Exception as e:
-            logger.error(f"Error in _runners_list: {e}")
+            logger.error(f"[_runners_list] Error in _runners_list: {e}")
             import traceback
 
-            logger.error(f"Traceback: {traceback.format_exc()}")
+            logger.error(f"[_runners_list] Traceback: {traceback.format_exc()}")
             return web.json_response({"error": str(e)}, status=500)
 
     async def _runner_details(self, request: web.Request) -> web.Response:
@@ -831,7 +831,7 @@ class HttpServer:
                     }
                 except Exception as e:
                     logger.warning(
-                        f"Error getting worker stats for runner details: {e}"
+                        f"[_runner_details] Error getting worker stats for runner details: {e}"
                     )
                     tracing_data["kv"] = {
                         "runner_id": runner_id,
@@ -915,10 +915,10 @@ class HttpServer:
 
             return web.json_response({"tracing": tracing_data})
         except Exception as e:
-            logger.error(f"Error in _runner_details: {e}")
+            logger.error(f"[_runner_details] Error in _runner_details: {e}")
             import traceback
 
-            logger.error(f"Traceback: {traceback.format_exc()}")
+            logger.error(f"[_runner_details] Traceback: {traceback.format_exc()}")
             return web.json_response({"error": str(e)}, status=500)
 
     async def _api_status(self, request: web.Request) -> web.Response:
@@ -1038,7 +1038,7 @@ class HttpServer:
                 "worker_load": getattr(self._worker, "_worker_load", 0.0),
             }
         except Exception as e:
-            logger.error(f"Error getting worker status: {e}")
+            logger.error(f"[_worker_status] Error getting worker status: {e}")
             status = {
                 "agent_id": getattr(self._worker.options, "agent_id", "Unknown"),
                 "executor_type": "Unknown",
@@ -1062,7 +1062,7 @@ class HttpServer:
             stats = self._worker.get_stats()
             return web.json_response(stats)
         except Exception as e:
-            logger.error(f"Error getting worker stats: {e}")
+            logger.error(f"[_worker_stats] Error getting worker stats: {e}")
             return web.json_response(
                 {
                     "error": str(e),
@@ -1119,7 +1119,7 @@ class HttpServer:
 
             return web.json_response(debug_info)
         except Exception as e:
-            logger.error(f"Error in debug info endpoint: {e}")
+            logger.error(f"[_debug_info] Error in debug info endpoint: {e}")
             return web.json_response(
                 {
                     "error": str(e),

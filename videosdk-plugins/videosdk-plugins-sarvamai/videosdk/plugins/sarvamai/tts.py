@@ -107,7 +107,7 @@ class SarvamAITTS(TTS):
         """
         try:
             if not self.audio_track or not self.loop:
-                logger.error("error", "Audio track or event loop not initialized")
+                logger.error("Audio track or event loop not initialized")
                 return
 
             self.language = language or self.language
@@ -152,7 +152,7 @@ class SarvamAITTS(TTS):
                             break
 
         except Exception as e:
-            logger.error("error", f"Sarvam TTS synthesis failed: {e}")
+            logger.error(f"Sarvam TTS synthesis failed: {e}")
 
     async def _stream_synthesis(self, text: AsyncIterator[str] | str) -> None:
         """
@@ -173,7 +173,7 @@ class SarvamAITTS(TTS):
 
             await self._send_text_chunks(text_iter)
         except Exception as e:
-            logger.error("error", f"WebSocket streaming failed: {e}. Trying HTTP fallback.")
+            logger.error(f"WebSocket streaming failed: {e}. Trying HTTP fallback.")
             try:
                 full_text = ""
                 if isinstance(text, str):
@@ -185,7 +185,7 @@ class SarvamAITTS(TTS):
                 if full_text.strip():
                     await self._http_synthesis(full_text.strip())
             except Exception as http_e:
-                logger.error("error", f"HTTP fallback also failed: {http_e}")
+                logger.error(f"HTTP fallback also failed: {http_e}")
 
     async def _ensure_ws_connection(self) -> None:
         """Establishes and maintains a persistent WebSocket connection."""
@@ -206,7 +206,7 @@ class SarvamAITTS(TTS):
                 self.ws_count = self.ws_count + 1
                 logger.info(f"WS connection numbers: {self.ws_count}")
             except Exception as e:
-                logger.error("error", f"Failed to connect to WebSocket: {e}")
+                logger.error(f"Failed to connect to WebSocket: {e}")
                 raise
 
     async def _send_initial_config(self) -> None:
@@ -234,6 +234,7 @@ class SarvamAITTS(TTS):
 
             async for text_chunk in text_iterator:
                 if self._interrupted:
+                    logger.info("Sarvam TTS: Interrupted during text chunk iteration - breaking")
                     break
 
                 words = re.findall(r"\b[\w'-]+\b", text_chunk)
@@ -244,10 +245,17 @@ class SarvamAITTS(TTS):
                 now = asyncio.get_event_loop().time()
 
                 if len(buffer) >= MIN_WORDS or (now - last_send_time > MAX_DELAY):
+                    # Check interrupted before sending
+                    if self._interrupted:
+                        logger.info("Sarvam TTS: Interrupted before sending buffered text - breaking")
+                        break
+                    
                     combined_text = " ".join(buffer).strip()
                     if combined_text:
                         payload = {"type": "text", "data": {"text": combined_text}}
-                        await self._ws_connection.send_str(json.dumps(payload))
+                        # Check if connection is still open before sending
+                        if self._ws_connection and not self._ws_connection.closed:
+                            await self._ws_connection.send_str(json.dumps(payload))
                     buffer.clear()
                     last_send_time = now
 
@@ -255,30 +263,43 @@ class SarvamAITTS(TTS):
                 combined_text = " ".join(buffer).strip()
                 if combined_text:
                     payload = {"type": "text", "data": {"text": combined_text}}
-                    await self._ws_connection.send_str(json.dumps(payload))
+                    if self._ws_connection and not self._ws_connection.closed:
+                        await self._ws_connection.send_str(json.dumps(payload))
                     if not self._first_chunk_sent and hasattr(self, '_first_audio_callback') and self._first_audio_callback:
                         self._first_chunk_sent = True
                         asyncio.create_task(self._first_audio_callback())
 
-            if not self._interrupted:
+            if not self._interrupted and self._ws_connection and not self._ws_connection.closed:
                 await self._ws_connection.send_str(json.dumps({"type": "flush"}))
         except Exception as e:
-            logger.error("error", f"Failed to send text chunks via WebSocket: {e}")
+            if self._interrupted:
+                logger.info(f"Sarvam TTS: Exception during interrupted send: {e}")
+            else:
+                logger.error(f"Failed to send text chunks via WebSocket: {e}")
 
     async def _recv_loop(self):
         """Continuously listens for and processes incoming WebSocket messages."""
         try:
-            while self._ws_connection and not self._ws_connection.closed:
+            while self._ws_connection and not self._ws_connection.closed and not self._interrupted:
                 msg = await self._ws_connection.receive()
                 if msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
                     break
                 if msg.type != aiohttp.WSMsgType.TEXT:
                     continue
 
+                # Check interrupted before processing
+                if self._interrupted:
+                    logger.info("Sarvam TTS: Interrupted during receive loop - breaking")
+                    break
+
                 data = json.loads(msg.data)
                 msg_type = data.get("type")
 
                 if msg_type == "audio":
+                    # Check interrupted before handling audio
+                    if self._interrupted:
+                        logger.info("Sarvam TTS: Interrupted before handling audio - skipping")
+                        break
 
                     if not self._first_chunk_sent and hasattr(self, '_first_audio_callback') and self._first_audio_callback:
                         self._first_chunk_sent = True
@@ -291,11 +312,15 @@ class SarvamAITTS(TTS):
                 
                 elif msg_type == "error":
                     error_msg = data.get("data", {}).get("message", "Unknown WS error")
-                    logger.error("error", f"Sarvam WebSocket error: {error_msg}")
+                    logger.error(f"Sarvam WebSocket error: {error_msg}")
         except asyncio.CancelledError:
+            logger.info("Sarvam TTS: Receive loop cancelled")
             pass
         except Exception as e:
-            logger.error("error", f"WebSocket receive loop error: {e}")
+            if self._interrupted:
+                logger.info(f"Sarvam TTS: Exception during interrupted receive: {e}")
+            else:
+                logger.error(f"WebSocket receive loop error: {e}")
 
     async def _handle_audio_data(self, audio_data: Optional[dict[str, Any]]):
         """Processes audio data received from the WebSocket."""
@@ -314,7 +339,7 @@ class SarvamAITTS(TTS):
 
             await self.audio_track.add_new_bytes(audio_bytes)
         except Exception as e:
-            logger.error("error", f"Failed to process WebSocket audio: {e}")
+            logger.error(f"Failed to process WebSocket audio: {e}")
 
 
     async def _reinitialize_http_client(self):
@@ -340,7 +365,7 @@ class SarvamAITTS(TTS):
                 response.raise_for_status()
                 data = response.json()
                 if not data.get("audios"):
-                    logger.error("error", f"No audio data in HTTP response: {data}")
+                    logger.error(f"No audio data in HTTP response: {data}")
                     return
                 audio_b64 = data["audios"][0]
                 audio_bytes = base64.b64decode(audio_b64)
@@ -351,7 +376,7 @@ class SarvamAITTS(TTS):
                 await self._stream_http_audio(audio_bytes)
                 return
             except httpx.HTTPStatusError as e:
-                logger.error("error", f"HTTP error: {e.response.status_code} - {e.response.text}")
+                logger.error(f"HTTP error: {e.response.status_code} - {e.response.text}")
                 logger.info(response)
                 raise e
             except (httpx.NetworkError, httpx.ConnectError, httpx.ReadTimeout) as e:
@@ -360,10 +385,10 @@ class SarvamAITTS(TTS):
                     await self._reinitialize_http_client()
                     continue
                 else:
-                    logger.error("error", f"HTTP synthesis failed after {max_attempts} connection attempts.")
+                    logger.error(f"HTTP synthesis failed after {max_attempts} connection attempts.")
                     raise e
             except Exception as e:
-                logger.error("error", f"An unexpected HTTP synthesis error occurred: {e}")
+                logger.error(f"An unexpected HTTP synthesis error occurred: {e}")
                 raise e
 
     async def _stream_http_audio(self, audio_bytes: bytes) -> None:
@@ -399,10 +424,11 @@ class SarvamAITTS(TTS):
         return audio_bytes
 
     async def interrupt(self) -> None:
-        """Interrupts any ongoing TTS synthesis."""
-        self._interrupted = True
+        """Interrupts any ongoing TTS, stopping audio playback and network activity."""
+        self._interrupted = True        
         if self.audio_track:
             self.audio_track.interrupt()
+        
         
     async def _close_ws_resources(self) -> None:
         """Helper to clean up all WebSocket-related resources."""

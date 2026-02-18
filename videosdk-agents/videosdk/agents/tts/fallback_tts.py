@@ -64,7 +64,7 @@ class FallbackTTS(TTS, FallbackBase):
             else:
                 setattr(provider, name, value)
         except Exception as e:
-            logger.warning(f"[TTS] Failed to propagate settings to {provider.label}: {e}")
+            logger.warning(f"[_propagate_settings] [TTS] Failed to propagate settings to {provider.label}: {e}")
 
     def __setattr__(self, name: str, value: Any) -> None:
         """
@@ -90,7 +90,7 @@ class FallbackTTS(TTS, FallbackBase):
         Optional method for explicit setup (for compatibility).
         Setting these attributes will trigger __setattr__ which propagates to all providers.
         """
-        logger.info(f"[TTS] _set_loop_and_audio_track called on FallbackTTS. loop={loop}, audio_track={audio_track}")
+        logger.info(f"[_set_loop_and_audio_track] [TTS] called on FallbackTTS. loop={loop}, audio_track={audio_track}")
         self.loop = loop  
         self.audio_track = audio_track  
 
@@ -106,17 +106,17 @@ class FallbackTTS(TTS, FallbackBase):
         while True:
             current_provider = self.active_provider
             try:
-                logger.info(f"[TTS] Attempting synthesis with {current_provider.label}")
+                logger.info(f"[synthesize] [TTS] Attempting synthesis with {current_provider.label}")
                 await current_provider.synthesize(text, **kwargs)
-                logger.info(f"[TTS] Synthesis successful with {current_provider.label}")
+                logger.info(f"[synthesize] [TTS] Synthesis successful with {current_provider.label}")
                 return
             except Exception as e:
-                logger.error(f"[TTS] Synthesis failed with {current_provider.label}: {e}")
+                logger.error(f"[synthesize] [TTS] Synthesis failed with {current_provider.label}: {e}")
                 switched = await self._switch_provider(str(e), failed_provider=current_provider)
                 if not switched:
-                    logger.error(f"[TTS] All providers exhausted. Raising error.")
+                    logger.error(f"[synthesize] [TTS] All providers exhausted. Raising error.")
                     raise e
-                logger.info(f"[TTS] Retrying with new provider: {self.active_provider.label}")
+                logger.info(f"[synthesize] [TTS] Retrying with new provider: {self.active_provider.label}")
 
     async def interrupt(self):
         if self.active_provider:

@@ -10,7 +10,11 @@ def auto_initialize_telemetry_and_logs(room_id: str, peer_id: str,
     Auto-initialize telemetry and logs from room attributes
     """
     if not room_attributes:
+        print(f"DEBUG: No room attributes found for {room_id}")
         return
+    
+    print(f"DEBUG: Room attributes: {room_attributes}")
+
     
     observability_jwt = room_attributes.get('observability', '')
     
@@ -40,7 +44,19 @@ def auto_initialize_telemetry_and_logs(room_id: str, peer_id: str,
             session_id=session_id,
             sdk_metadata=sdk_metadata,
         )
-        
+
+        # Wire log endpoint to job-scoped logger (Producer-Consumer pipeline)
+        log_endpoint = logs_config.get('endPoint', '')
+        if log_endpoint:
+            from ..job import get_current_job_context
+            ctx = get_current_job_context()
+            if ctx and ctx.logger:
+                ctx.logger.set_endpoint(log_endpoint, jwt_key=observability_jwt)
+                ctx.logger.update_context(
+                    peerId=peer_id,
+                    sessionId=session_id or "",
+                )
+
 def create_span(span_name: str, attributes: Dict[str, Any] = None, parent_span: Optional[Span] = None, start_time: Optional[float] = None):
     """
     Create a trace span (convenience method)
@@ -77,12 +93,7 @@ def complete_span(span: Optional[Span], status_code, message: str = "", end_time
 
 def create_log(message: str, log_level: str = "INFO", attributes: Dict[str, Any] = None):
     """
-    Create a log entry (convenience method)
-    
-    Args:
-        message: Log message
-        log_level: Log level
-        attributes: Additional attributes
+    Create a log entry (legacy API used by traces_flow).
     """
     logs = get_logs()
     if logs:

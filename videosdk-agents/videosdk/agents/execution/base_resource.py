@@ -74,16 +74,16 @@ class BaseResource(ABC):
         """Initialize the resource."""
         try:
             logger.info(
-                f"Initializing {self.resource_type.value} resource {self.resource_id}"
+                f"[initialize] Initializing {self.resource_type.value} resource {self.resource_id}"
             )
             await self._initialize_impl()
             self.status = ResourceStatus.IDLE
             self.last_heartbeat = time.time()
             logger.info(
-                f"Initialized {self.resource_type.value} resource {self.resource_id}"
+                f"[initialize] Initialized {self.resource_type.value} resource {self.resource_id}"
             )
         except Exception as e:
-            logger.error(f"Failed to initialize resource {self.resource_id}: {e}")
+            logger.error(f"[initialize] Failed to initialize resource {self.resource_id}: {e}")
             self.status = ResourceStatus.ERROR
             raise
 
@@ -111,7 +111,7 @@ class BaseResource(ABC):
             self.status = ResourceStatus.BUSY
             self.current_load = self.current_load_percentage
 
-            logger.info(f"Executing task {task_id} on resource {self.resource_id}")
+            logger.info(f"[execute_task] Executing task {task_id} on resource {self.resource_id}")
             start_time = time.time()
 
             # Execute the task
@@ -135,7 +135,7 @@ class BaseResource(ABC):
             )
 
         except Exception as e:
-            logger.error(f"Task {task_id} failed on resource {self.resource_id}: {e}")
+            logger.error(f"[execute_task] Task {task_id} failed on resource {self.resource_id}: {e}")
             self.error_count += 1
 
             return TaskResult(
@@ -169,17 +169,17 @@ class BaseResource(ABC):
             return
 
         logger.info(
-            f"Shutting down {self.resource_type.value} resource {self.resource_id}"
+            f"[shutdown] Shutting down {self.resource_type.value} resource {self.resource_id}"
         )
         self._shutdown = True
         self.status = ResourceStatus.SHUTTING_DOWN
 
         try:
             await self._shutdown_impl()
-            logger.info(f"Shutdown completed for resource {self.resource_id}")
+            logger.info(f"[shutdown] Shutdown completed for resource {self.resource_id}")
 
         except Exception as e:
-            logger.error(f"Error during shutdown of resource {self.resource_id}: {e}")
+            logger.error(f"[shutdown] Error during shutdown of resource {self.resource_id}: {e}")
             self.status = ResourceStatus.ERROR
             raise
 
@@ -243,7 +243,7 @@ class BaseResource(ABC):
             return True
 
         except Exception as e:
-            logger.error(f"Health check failed for resource {self.resource_id}: {e}")
+            logger.error(f"[health_check] Health check failed for resource {self.resource_id}: {e}")
             return False
 
     def __str__(self) -> str:

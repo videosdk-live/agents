@@ -74,7 +74,7 @@ class BackgroundAudioHandler:
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.error(f"Error playing background audio: {e}")
+            logger.error(f"[_loop_sound] Error playing background audio: {e}")
         finally:
             if not self.config.looping:
                 self.is_playing = False
