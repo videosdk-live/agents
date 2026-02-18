@@ -9,6 +9,8 @@ from .vad import VAD, VADResponse, VADEventType
 from .eou import EOU
 from .llm.chat_context import ChatRole
 from .denoise import Denoise
+from .metrics import metrics_collector
+
 
 if TYPE_CHECKING:
     from .agent import Agent
@@ -151,7 +153,7 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
         logger.info(f"[speech_understanding] _on_vad_event: {vad_response.event_type.value} | confidence={vad_response.data.confidence:.4f} | _is_user_speaking={self._is_user_speaking}")
         if vad_response.event_type == VADEventType.START_OF_SPEECH:
             self._is_user_speaking = True
-
+            metrics_collector.on_user_speech_start()
             if self._waiting_for_more_speech:
                 logger.debug("User continued speaking, cancelling wait timer")
                 await self._handle_continued_speech()
@@ -160,6 +162,8 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
 
         elif vad_response.event_type == VADEventType.END_OF_SPEECH:
             self._is_user_speaking = False
+            metrics_collector.on_user_speech_end()
+            metrics_collector.on_stt_start()
             self.emit("speech_stopped")
 
             if not self._stt_started and self.stt:
@@ -173,9 +177,14 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
         text = stt_response.data.text if stt_response.data else ""
         
         if stt_response.event_type == SpeechEventType.PREFLIGHT:
+            metrics_collector.on_stt_preflight_end()
             await self._handle_preflight_transcript(text)
             
         elif stt_response.event_type == SpeechEventType.FINAL:
+            metrics_collector.set_user_transcript(text)
+            duration = stt_response.data.duration
+            confidence = stt_response.data.confidence
+            metrics_collector.on_stt_complete(text, duration, confidence)
             if self._enable_preemptive_generation:
                 self.emit("transcript_final", {
                     "text": text,
@@ -186,6 +195,7 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
                 await self._process_transcript_with_eou(text)
                 
         elif stt_response.event_type == SpeechEventType.INTERIM:
+            metrics_collector.on_stt_interim_end()
             self.emit("transcript_interim", {
                 "text": text,
                 "metadata": stt_response.metadata
@@ -215,14 +225,18 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
             
             if self.mode == 'DEFAULT':
                 if self.turn_detector and self.agent:
+                    metrics_collector.on_eou_start()
                     eou_probability = self.turn_detector.get_eou_probability(self.agent.chat_context)
+                    metrics_collector.on_eou_complete(eou_probability)
                     logger.info(f"EOU probability: {eou_probability}")
                     if eou_probability < self.eou_certainty_threshold:
                         delay = self.max_speech_wait_timeout
                         
             elif self.mode == 'ADAPTIVE':
                 if self.turn_detector and self.agent:
+                    metrics_collector.on_eou_start()
                     eou_probability = self.turn_detector.get_eou_probability(self.agent.chat_context)
+                    metrics_collector.on_eou_complete(eou_probability)
                     logger.info(f"EOU probability: {eou_probability}")
                     delay_range = self.max_speech_wait_timeout - self.min_speech_wait_timeout
                     wait_factor = 1.0 - eou_probability

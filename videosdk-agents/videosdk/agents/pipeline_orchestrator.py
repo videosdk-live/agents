@@ -270,19 +270,6 @@ class PipelineOrchestrator(EventEmitter[Literal[
             logger.info("[orchestrator] New transcript while generation active — interrupting previous turn")
             await self._interrupt_pipeline()
 
-        # Ensure a fresh turn exists for this transcript.
-        # This fires when: VAD didn't fire, or the previous turn was just completed
-        # by the interruption above.
-        if not metrics_collector.current_turn:
-            logger.info("[orchestrator] No current turn at transcript_final — starting fallback turn")
-            metrics_collector.start_turn()
-            # When VAD didn't fire, on_stt_start() was never called.
-            # Call it now so STT metrics are created and latency can be approximated.
-            metrics_collector.on_stt_start()
-
-        metrics_collector.on_stt_complete(text)
-        metrics_collector.set_user_transcript(text)
-
         if self.voice_mail_detector and not self.voice_mail_detection_done and text.strip():
             self._vmd_buffer += f" {text}"
             if not self._vmd_check_task:
@@ -304,7 +291,6 @@ class PipelineOrchestrator(EventEmitter[Literal[
     async def _on_transcript_preflight(self, data: dict) -> None:
         """Handle preflight transcript for preemptive generation"""
         preflight_text = data["text"]
-        metrics_collector.on_stt_preflight_end()
 
         if self.agent and self.content_generation:
             user_text = preflight_text
@@ -368,7 +354,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
     
     async def _on_transcript_interim(self, data: dict) -> None:
         """Handle interim transcript"""
-        metrics_collector.on_stt_interim_end()
+        pass
     
     async def _on_speech_started(self, data: dict) -> None:
         """Handle speech started event"""
@@ -635,6 +621,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
         """
         if self.speech_generation:
             try:
+                metrics_collector.set_agent_response(message)
                 await self.speech_generation.synthesize(message)
             finally:
                 handle._mark_done()

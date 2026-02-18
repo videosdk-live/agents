@@ -278,7 +278,7 @@ class MetricsCollector:
 
         transformed_data = self._remove_negatives(transformed_data)
 
-        self.analytics_client.send_interaction_analytics_safe({"data": [transformed_data]})
+        self.analytics_client.send_interaction_analytics_safe(transformed_data)
 
         self.current_turn = None
         self._pending_user_start_time = None
@@ -352,13 +352,13 @@ class MetricsCollector:
 
     def on_user_speech_start(self) -> None:
         """Called when user starts speaking (VAD start)."""
+        if not self.current_turn:
+            self.start_turn()
+
         logger.info(f"[metrics] on_user_speech_start() called | _is_user_speaking={self._is_user_speaking} | current_turn={'exists' if self.current_turn else 'None'}")
         if self._is_user_speaking:
             logger.info(f"[metrics] on_user_speech_start() early return — already speaking")
             return
-
-        if not self.current_turn:
-            self.start_turn()
 
         self._is_user_speaking = True
         self._user_input_start_time = time.perf_counter()
@@ -389,6 +389,16 @@ class MetricsCollector:
                     metrics={"user_speech_duration": self.current_turn.user_speech_duration}
                 )
 
+    def set_vad_config(self, vad_config: Dict[str, Any]) -> None:
+        """Set VAD configuration."""
+        if not self.current_turn.vad_metrics:
+            self.current_turn.vad_metrics.append(VadMetrics())
+
+        vad = self.current_turn.vad_metrics[-1]
+        vad.vad_threshold = vad_config.get("threshold")
+        vad.vad_min_speech_duration = vad_config.get("min_speech_duration")
+        vad.vad_min_silence_duration = vad_config.get("min_silence_duration")
+
     # ──────────────────────────────────────────────
     # STT metrics
     # ──────────────────────────────────────────────
@@ -397,13 +407,14 @@ class MetricsCollector:
         """Called when STT processing starts."""
         self._stt_start_time = time.perf_counter()
         if self.current_turn:
+            logger.info(f"[metrics] on_stt_start() called | current_turn={'exists' if self.current_turn else 'None'}")
             # Create STT metrics entry if not present
             if not self.current_turn.stt_metrics:
                 self.current_turn.stt_metrics.append(SttMetrics())
             stt = self.current_turn.stt_metrics[-1]
             stt.stt_start_time = self._stt_start_time
 
-    def on_stt_complete(self, transcript: str = "") -> None:
+    def on_stt_complete(self, transcript: str = "", duration: float = 0.0, confidence: float = 0.0) -> None:
         """Called when STT processing completes."""
         if self.current_turn and self.current_turn.stt_metrics:
             stt = self.current_turn.stt_metrics[-1]
@@ -424,7 +435,9 @@ class MetricsCollector:
         if self._stt_start_time:
             stt_latency = self._round_latency(stt_end_time - self._stt_start_time)
             stt.stt_latency = stt_latency
-            logger.info(f"stt latency: {stt_latency}ms")
+            stt.stt_confidence = confidence
+            stt.stt_duration = duration
+            logger.info(f"stt latency: {stt_latency}ms | stt confidence: {confidence} | stt duration: {duration}ms")
 
             if self.playground and self.playground_manager:
                 self.playground_manager.send_cascading_metrics(metrics={"stt_latency": stt_latency})
@@ -454,7 +467,7 @@ class MetricsCollector:
         """Called when STT interim event is received."""
         if self.current_turn and self.current_turn.stt_metrics:
             stt = self.current_turn.stt_metrics[-1]
-            if stt.stt_start_time:
+            if stt.stt_start_time and not stt.stt_interim_latency:
                 stt.stt_interim_end_time = time.perf_counter()
                 stt.stt_interim_latency = self._round_latency(
                     stt.stt_interim_end_time - stt.stt_start_time
@@ -489,6 +502,8 @@ class MetricsCollector:
 
     def on_eou_start(self) -> None:
         """Called when EOU processing starts."""
+        if not self.current_turn:
+            self.start_turn()
         self._eou_start_time = time.perf_counter()
         if self.current_turn:
             if not self.current_turn.eou_metrics:
@@ -596,6 +611,8 @@ class MetricsCollector:
 
     def on_tts_start(self) -> None:
         """Called when TTS processing starts."""
+        if not self.current_turn:
+            self.start_turn()
         self._tts_start_time = time.perf_counter()
         self._tts_first_byte_time = None
         if self.current_turn:
@@ -621,6 +638,8 @@ class MetricsCollector:
 
     def on_agent_speech_start(self) -> None:
         """Called when agent starts speaking (actual audio output)."""
+        if not self.current_turn:
+            self.start_turn()
         self._is_agent_speaking = True
         self._agent_speech_start_time = time.perf_counter()
 
@@ -821,19 +840,57 @@ class MetricsCollector:
 
     def set_agent_response(self, response: str) -> None:
         """Set the agent response for the current turn."""
+
+        if not self.current_turn:
+            self.start_turn()
+        self.current_turn.agent_speech = response
+        logger.info(f"agent output speech: {response}")
+
+        if not any(ev.event_type == "agent_speech" for ev in self.current_turn.timeline_event_metrics):
+            current_time = time.perf_counter()
+            self._start_timeline_event("agent_speech", current_time)
+
+        self._update_timeline_event_text("agent_speech", response)
+
+        if self.playground and self.playground_manager:
+            self.playground_manager.send_cascading_metrics(
+                metrics={"agent_speech": self.current_turn.agent_speech}
+            )
+
+
+    # ──────────────────────────────────────────────
+    # Knowledge Base
+    # ──────────────────────────────────────────────
+
+    def on_knowledge_base_start(self, kb_id: Optional[str] = None) -> None:
+        """Called when knowledge base processing starts."""
         if self.current_turn:
-            self.current_turn.agent_speech = response
-            logger.info(f"agent output speech: {response}")
+            kb_metric = KbMetrics(
+                kb_id=kb_id,
+                kb_start_time=time.perf_counter(),
+            )
+            self.current_turn.kb_metrics.append(kb_metric)
 
-            if not any(ev.event_type == "agent_speech" for ev in self.current_turn.timeline_event_metrics):
-                current_time = time.perf_counter()
-                self._start_timeline_event("agent_speech", current_time)
+    def on_knowledge_base_complete(self, documents: List[str], scores: List[float]) -> None:
+        """Called when knowledge base processing completes."""
+        if self.current_turn and self.current_turn.kb_metrics:
+            kb = self.current_turn.kb_metrics[-1]
+            kb.kb_documents = documents
+            kb.kb_scores = scores
+            kb.kb_end_time = time.perf_counter()
 
-            self._update_timeline_event_text("agent_speech", response)
+            if kb.kb_start_time:
+                kb.kb_retrieval_latency = self._round_latency(kb.kb_end_time - kb.kb_start_time)
+                logger.info(f"kb retrieval latency: {kb.kb_retrieval_latency}ms")
 
             if self.playground and self.playground_manager:
                 self.playground_manager.send_cascading_metrics(
-                    metrics={"agent_speech": self.current_turn.agent_speech}
+                    metrics={
+                        "kb_id": kb.kb_id,
+                        "kb_retrieval_latency": kb.kb_retrieval_latency,
+                        "kb_documents": kb.kb_documents,
+                        "kb_scores": kb.kb_scores,
+                    }
                 )
 
 
@@ -1088,17 +1145,24 @@ class MetricsCollector:
     def _transform_to_camel_case(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Transform snake_case field names to camelCase for analytics."""
         field_mapping = {
+            # User and agent metrics 
             "user_speech_start_time": "userSpeechStartTime",
             "user_speech_end_time": "userSpeechEndTime",
             "user_speech_duration": "userSpeechDuration",
             "agent_speech_start_time": "agentSpeechStartTime",
             "agent_speech_end_time": "agentSpeechEndTime",
             "agent_speech_duration": "agentSpeechDuration",
+
+            # STT metrics
             "stt_latency": "sttLatency",
             "stt_start_time": "sttStartTime",
             "stt_end_time": "sttEndTime",
             "stt_preflight_latency": "sttPreflightLatency",
             "stt_interim_latency": "sttInterimLatency",
+            "stt_confidence": "sttConfidence",
+            "stt_duration": "sttDuration",
+
+            # LLM metrics
             "llm_duration": "llmDuration",
             "llm_start_time": "llmStartTime",
             "llm_end_time": "llmEndTime",
@@ -1108,12 +1172,16 @@ class MetricsCollector:
             "total_tokens": "totalTokens",
             "prompt_cached_tokens": "promptCachedTokens",
             "tokens_per_second": "tokensPerSecond",
+
+            # TTS metrics
             "tts_start_time": "ttsStartTime",
             "tts_end_time": "ttsEndTime",
             "tts_duration": "ttsDuration",
             "tts_characters": "ttsCharacters",
             "ttfb": "ttfb",
             "tts_latency": "ttsLatency",
+
+            # EOU metrics
             "eou_latency": "eouLatency",
             "eou_start_time": "eouStartTime",
             "eou_end_time": "eouEndTime",
@@ -1121,16 +1189,24 @@ class MetricsCollector:
             "kb_retrieval_latency": "kbRetrievalLatency",
             "kb_documents": "kbDocuments",
             "kb_scores": "kbScores",
+
+            # Provider metrics
             "llm_provider_class": "llmProviderClass",
             "llm_model_name": "llmModelName",
             "stt_provider_class": "sttProviderClass",
             "stt_model_name": "sttModelName",
             "tts_provider_class": "ttsProviderClass",
             "tts_model_name": "ttsModelName",
+
+            # VAD metrics
             "vad_provider_class": "vadProviderClass",
             "vad_model_name": "vadModelName",
+
+            # EOU metrics
             "eou_provider_class": "eouProviderClass",
             "eou_model_name": "eouModelName",
+
+            # Other metrics
             "e2e_latency": "e2eLatency",
             "interrupted": "interrupted",
             "timestamp": "timestamp",
