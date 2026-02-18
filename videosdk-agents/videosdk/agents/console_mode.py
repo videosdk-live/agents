@@ -275,6 +275,7 @@ class ConsoleMode(BaseTransportHandler):
         """Set up logging handlers to display metrics logs in console with colored log levels and shortened names."""
         logger_cascading = logging.getLogger('videosdk.agents.metrics.cascading_metrics_collector')
         logger_realtime = logging.getLogger('videosdk.agents.metrics.realtime_metrics_collector')
+        logger_unified = logging.getLogger('videosdk.agents.metrics.metrics_collector')
         
         console_handler = logging.StreamHandler()
         console_handler.setLevel(logging.INFO)
@@ -303,12 +304,15 @@ class ConsoleMode(BaseTransportHandler):
         
         logger_cascading.addHandler(console_handler)
         logger_realtime.addHandler(console_handler)
-        
+        logger_unified.addHandler(console_handler)
+
         logger_cascading.setLevel(logging.INFO)
         logger_realtime.setLevel(logging.INFO)
+        logger_unified.setLevel(logging.INFO)
 
         logger_cascading.propagate = False
         logger_realtime.propagate = False
+        logger_unified.propagate = False
 
     def init_meeting(self) -> None: return
     async def join(self) -> None: return

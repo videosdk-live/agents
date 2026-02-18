@@ -1,8 +1,9 @@
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 from opentelemetry.trace import Span, StatusCode
 from opentelemetry import trace
 from .integration import create_span, complete_span, create_log
 from .models import CascadingTurnData, RealtimeTurnData
+from .metrics_schema import TurnMetrics
 import asyncio
 import time
 
@@ -339,6 +340,300 @@ class TracesFlowManager:
             turn_end_time = cascading_turn_data.llm_end_time 
         
         self.end_span(turn_span, message="End of Cascading turn trace.", end_time=turn_end_time)
+
+    def create_unified_turn_trace(self, turn: TurnMetrics, session: Any = None) -> None:
+        """
+        Creates a full trace for a single turn from the unified TurnMetrics schema.
+        Handles both cascading and realtime component spans based on what data is present.
+        """
+        if not self.main_turn_span:
+            print("ERROR: Cannot create unified turn trace without a main turn span.")
+            return
+
+        self._turn_count += 1
+        turn_name = f"Turn #{self._turn_count}"
+
+        # Determine turn start time
+        turn_span_start_time = None
+        if self._turn_count == 1 and turn.tts_metrics:
+            tts = turn.tts_metrics[-1]
+            turn_span_start_time = tts.tts_start_time
+        elif turn.user_speech_start_time:
+            turn_span_start_time = turn.user_speech_start_time
+
+        turn_span = create_span(turn_name, parent_span=self.main_turn_span, start_time=turn_span_start_time)
+        if turn_span:
+            with trace.use_span(turn_span):
+                create_log(f"Turn Started: {turn_name}", "INFO")
+
+        if not turn_span:
+            return
+
+        with trace.use_span(turn_span, end_on_exit=False):
+            # --- STT spans ---
+            stt_errors = [e for e in turn.errors if e.get("source") == "STT"]
+            if turn.stt_metrics or stt_errors:
+                stt = turn.stt_metrics[-1] if turn.stt_metrics else None
+                stt_provider = stt.provider_class if stt else "STT"
+                stt_span_name = f"{stt_provider}: Speech to Text Processing"
+                create_log(f"{stt_provider}: Speech to Text Processing Started", "INFO")
+
+                stt_attrs = {}
+                if stt:
+                    if stt.provider_class:
+                        stt_attrs["provider_class"] = stt.provider_class
+                    if stt.model_name:
+                        stt_attrs["model_name"] = stt.model_name
+                    if stt.stt_latency is not None:
+                        stt_attrs["duration_ms"] = stt.stt_latency
+                    if stt.stt_start_time:
+                        stt_attrs["start_timestamp"] = stt.stt_start_time
+                    if stt.stt_end_time:
+                        stt_attrs["end_timestamp"] = stt.stt_end_time
+
+                stt_span = create_span(
+                    stt_span_name, stt_attrs,
+                    parent_span=turn_span,
+                    start_time=stt.stt_start_time if stt else None,
+                )
+                if stt_span:
+                    for error in stt_errors:
+                        stt_span.add_event("error", attributes={
+                            "message": error.get("message", ""),
+                            "timestamp": error.get("timestamp", ""),
+                        })
+                    status = StatusCode.ERROR if stt_errors else StatusCode.OK
+                    create_log(f"{stt_provider}: Speech to Text Processing Ended with status {status}", "INFO")
+                    self.end_span(stt_span, status_code=status, end_time=stt.stt_end_time if stt else None)
+
+            # --- EOU spans ---
+            eou_errors = [e for e in turn.errors if e.get("source") == "TURN-D"]
+            if turn.eou_metrics or eou_errors:
+                eou = turn.eou_metrics[-1] if turn.eou_metrics else None
+                eou_provider = eou.provider_class if eou else "EOU"
+                eou_span_name = f"{eou_provider}: End-Of-Utterance Detection"
+                create_log(f"{eou_provider}: End-Of-Utterance Detection Started", "INFO")
+
+                eou_attrs = {}
+                if eou:
+                    if eou.provider_class:
+                        eou_attrs["provider_class"] = eou.provider_class
+                    if eou.model_name:
+                        eou_attrs["model_name"] = eou.model_name
+                    if eou.eou_latency is not None:
+                        eou_attrs["duration_ms"] = eou.eou_latency
+                    if eou.eou_start_time:
+                        eou_attrs["start_timestamp"] = eou.eou_start_time
+                    if eou.eou_end_time:
+                        eou_attrs["end_timestamp"] = eou.eou_end_time
+
+                eou_span = create_span(
+                    eou_span_name, eou_attrs,
+                    parent_span=turn_span,
+                    start_time=eou.eou_start_time if eou else None,
+                )
+                if eou_span:
+                    for error in eou_errors:
+                        eou_span.add_event("error", attributes={
+                            "message": error.get("message", ""),
+                            "timestamp": error.get("timestamp", ""),
+                        })
+                    eou_status = StatusCode.ERROR if eou_errors else StatusCode.OK
+                    create_log(f"{eou_provider}: End-Of-Utterance Detection Ended with status {eou_status}", "INFO")
+                    self.end_span(eou_span, status_code=eou_status, end_time=eou.eou_end_time if eou else None)
+
+            # --- LLM spans ---
+            llm_errors = [e for e in turn.errors if e.get("source") == "LLM"]
+            if turn.llm_metrics or llm_errors:
+                llm = turn.llm_metrics[-1] if turn.llm_metrics else None
+                llm_provider = llm.provider_class if llm else "LLM"
+                llm_span_name = f"{llm_provider}: LLM Processing"
+                create_log(f"{llm_provider}: LLM Processing Started", "INFO")
+
+                llm_attrs = {}
+                if llm:
+                    if llm.provider_class:
+                        llm_attrs["provider_class"] = llm.provider_class
+                    if llm.model_name:
+                        llm_attrs["model_name"] = llm.model_name
+                    if llm.llm_duration is not None:
+                        llm_attrs["duration_ms"] = llm.llm_duration
+                    if llm.llm_start_time:
+                        llm_attrs["start_timestamp"] = llm.llm_start_time
+                    if llm.llm_end_time:
+                        llm_attrs["end_timestamp"] = llm.llm_end_time
+
+                llm_span = create_span(
+                    llm_span_name, llm_attrs,
+                    parent_span=turn_span,
+                    start_time=llm.llm_start_time if llm else None,
+                )
+                if llm_span:
+                    # Tool call sub-spans
+                    if turn.function_tool_timestamps:
+                        for tool_data in turn.function_tool_timestamps:
+                            tool_timestamp = tool_data.get("timestamp")
+                            tool_span = create_span(
+                                f"Invoked Tool: {tool_data.get('tool_name', 'unknown')}",
+                                parent_span=llm_span,
+                                start_time=tool_timestamp,
+                            )
+                            self.end_span(tool_span, end_time=tool_timestamp)
+
+                    for error in llm_errors:
+                        llm_span.add_event("error", attributes={
+                            "message": error.get("message", ""),
+                            "timestamp": error.get("timestamp", ""),
+                        })
+
+                    # TTFT sub-span
+                    if llm and llm.llm_ttft is not None and llm.llm_start_time is not None:
+                        ttft_span = create_span(
+                            "Time to First Token",
+                            attributes={"llm_ttft": llm.llm_ttft},
+                            parent_span=llm_span,
+                            start_time=llm.llm_start_time,
+                        )
+                        ttft_end = llm.llm_start_time + (llm.llm_ttft / 1000)
+                        self.end_span(ttft_span, end_time=ttft_end)
+
+                    llm_status = StatusCode.ERROR if llm_errors else StatusCode.OK
+                    create_log(f"{llm_provider}: LLM Processing Ended with status {llm_status}", "INFO")
+                    self.end_span(llm_span, status_code=llm_status, end_time=llm.llm_end_time if llm else None)
+
+            # --- TTS spans ---
+            tts_errors = [e for e in turn.errors if e.get("source") == "TTS"]
+            if turn.tts_metrics or tts_errors:
+                tts = turn.tts_metrics[-1] if turn.tts_metrics else None
+                tts_provider = tts.provider_class if tts else "TTS"
+                tts_span_name = f"{tts_provider}: Text to Speech Processing"
+                create_log(f"{tts_provider}: Text to Speech Processing Started", "INFO")
+
+                tts_attrs = {}
+                if tts:
+                    if tts.provider_class:
+                        tts_attrs["provider_class"] = tts.provider_class
+                    if tts.model_name:
+                        tts_attrs["model_name"] = tts.model_name
+
+                tts_span = create_span(
+                    tts_span_name, tts_attrs,
+                    parent_span=turn_span,
+                    start_time=tts.tts_start_time if tts else None,
+                )
+                if tts_span:
+                    # TTFB sub-span
+                    if tts and tts.tts_first_byte_time is not None:
+                        ttfb_span = create_span(
+                            "Time to First Byte",
+                            parent_span=tts_span,
+                            start_time=tts.tts_start_time,
+                        )
+                        self.end_span(ttfb_span, end_time=tts.tts_first_byte_time)
+
+                    for error in tts_errors:
+                        tts_span.add_event("error", attributes={
+                            "message": error.get("message", ""),
+                            "timestamp": error.get("timestamp", ""),
+                        })
+
+                    tts_status = StatusCode.ERROR if tts_errors else StatusCode.OK
+                    create_log(f"{tts_provider}: Text to Speech Processing Ended with status {tts_status}", "INFO")
+                    self.end_span(tts_span, status_code=tts_status, end_time=tts.tts_end_time if tts else None)
+
+            # --- Realtime spans (for S2S modes) ---
+            if turn.realtime_metrics:
+                rt = turn.realtime_metrics[-1]
+                rt_provider = rt.provider_class or "Realtime"
+
+                # Realtime tool calls
+                if turn.function_tools_called:
+                    for tool_name in turn.function_tools_called:
+                        tool_span = create_span(
+                            f"Invoked Tool: {tool_name}",
+                            parent_span=turn_span,
+                            start_time=time.perf_counter(),
+                        )
+                        self.end_span(tool_span, end_time=time.perf_counter())
+
+                # TTFB span for realtime
+                if turn.e2e_latency is not None:
+                    ttfb_span = create_span(
+                        "Time to First Word",
+                        {"duration_ms": turn.e2e_latency},
+                        parent_span=turn_span,
+                        start_time=time.perf_counter(),
+                    )
+                    self.end_span(ttfb_span, end_time=time.perf_counter())
+
+            # --- Realtime model errors ---
+            rt_errors = [e for e in turn.errors if e.get("source") == "REALTIME"]
+            model_status = StatusCode.ERROR if rt_errors else StatusCode.OK
+            if rt_errors:
+                for error in rt_errors:
+                    turn_span.add_event("Errors", attributes={
+                        "message": error.get("message", "Unknown error"),
+                        "timestamp": error.get("timestamp", "N/A"),
+                    })
+
+            # --- Timeline events ---
+            if turn.timeline_event_metrics:
+                for event in turn.timeline_event_metrics:
+                    if event.event_type == "user_speech":
+                        create_log("User Input Speech Detected", "INFO")
+                        user_speech_span = create_span(
+                            "User Input Speech",
+                            {"Transcript": event.text, "duration_ms": event.duration_ms},
+                            parent_span=turn_span,
+                            start_time=event.start_time,
+                        )
+                        self.end_span(user_speech_span, end_time=event.end_time)
+                    elif event.event_type == "agent_speech":
+                        create_log("Agent Output Speech Detected", "INFO")
+                        agent_speech_span = create_span(
+                            "Agent Output Speech",
+                            {"Transcript": event.text, "duration_ms": event.duration_ms},
+                            parent_span=turn_span,
+                            start_time=event.start_time,
+                        )
+                        self.end_span(agent_speech_span, end_time=event.end_time)
+
+            # --- VAD errors ---
+            vad_errors = [e for e in turn.errors if e.get("source") == "VAD"]
+            if vad_errors and turn.vad_metrics:
+                vad = turn.vad_metrics[-1]
+                span_name = f"{vad.provider_class}: VAD Processing Error"
+                vad_attrs = {}
+                if vad.provider_class:
+                    vad_attrs["provider_class"] = vad.provider_class
+                if vad.model_name:
+                    vad_attrs["model_name"] = vad.model_name
+
+                vad_span = create_span(span_name, vad_attrs, parent_span=turn_span)
+                if vad_span:
+                    for error in vad_errors:
+                        vad_span.add_event("error", attributes={
+                            "message": error.get("message", ""),
+                            "timestamp": error.get("timestamp", ""),
+                            "source": error.get("source", ""),
+                        })
+                    self.end_span(vad_span, status_code=StatusCode.ERROR)
+
+            # --- Interruption span ---
+            if turn.is_interrupted:
+                interrupted_span = create_span("Turn Interrupted", parent_span=turn_span)
+                self.end_span(interrupted_span, message="Agent was interrupted")
+
+        # Determine turn end time
+        turn_end_time = None
+        if turn.tts_metrics and turn.tts_metrics[-1].tts_end_time:
+            turn_end_time = turn.tts_metrics[-1].tts_end_time
+        elif turn.llm_metrics and turn.llm_metrics[-1].llm_end_time:
+            turn_end_time = turn.llm_metrics[-1].llm_end_time
+        elif turn.agent_speech_end_time:
+            turn_end_time = turn.agent_speech_end_time
+
+        self.end_span(turn_span, message="End of turn trace.", end_time=turn_end_time)
 
     def end_main_turn(self):
         """Completes the main turn span."""

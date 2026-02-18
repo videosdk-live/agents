@@ -23,7 +23,12 @@ class AnalyticsClient:
             return
 
         self.session_id = session_id
-        self.base_url = "https://api.videosdk.live"
+        # self.dev_mode = os.getenv("METRICS_DEV_MODE", "").lower() in ("true", "1", "yes")
+        # if self.dev_mode:
+        #     self.base_url = os.getenv("METRICS_DEV_URL", "http://localhost:8787")
+        #     logger.info(f"[analytics] DEV MODE enabled → sending to {self.base_url}")
+        # else:
+        self.base_url = "http://localhost:8787"
         self._initialized = True
 
     def set_session_id(self, session_id: str) -> None:
@@ -73,6 +78,7 @@ class AnalyticsClient:
         Creates a task if event loop is running, otherwise ignores.
         """
         try:
+            print(f"Sending analytics: >>>>>>>>>>>> {interaction_data}")
             asyncio.create_task(self.send_interaction_analytics(interaction_data))
             pass
         except RuntimeError:

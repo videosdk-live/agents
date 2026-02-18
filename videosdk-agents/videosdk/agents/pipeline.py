@@ -20,6 +20,7 @@ from .denoise import Denoise
 from .voice_mail_detector import VoiceMailDetector
 from .job import get_current_job_context
 from .utils import PipelineMode, RealtimeMode, PipelineComponent, PipelineConfig, build_pipeline_config
+from .metrics import metrics_collector
 
 logger = logging.getLogger(__name__)
 
@@ -326,7 +327,14 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
     def set_agent(self, agent: Any) -> None:
         """Set the agent for this pipeline"""
         self.agent = agent
-        
+
+        # Configure metrics with pipeline info
+        metrics_collector.configure_pipeline(
+            pipeline_mode=self.config.pipeline_mode,
+            realtime_mode=self.config.realtime_mode,
+            active_components=self.config.active_components,
+        )
+
         if self.config.realtime_mode in (RealtimeMode.HYBRID_STT, RealtimeMode.LLM_ONLY):
             logger.info(f"Creating orchestrator for {self.config.realtime_mode.value} mode")
             self.orchestrator = PipelineOrchestrator(
@@ -695,10 +703,11 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
     def _on_user_speech_started_realtime(self, data: dict) -> None:
         """Handle user speech started in realtime mode"""
         self._notify_speech_started()
-        
+        metrics_collector.on_user_speech_start()
+
         if self.config.realtime_mode == RealtimeMode.HYBRID_TTS and self.speech_generation:
             asyncio.create_task(self.speech_generation.interrupt())
-            
+
         if self.agent and self.agent.session:
             from .utils import UserState, AgentState
             self.agent.session._emit_user_state(UserState.SPEAKING)
@@ -706,22 +715,27 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
     
     async def _on_user_speech_ended_realtime(self, data: dict) -> None:
         """Handle user speech ended in realtime mode"""
+        metrics_collector.on_user_speech_end()
         if self.agent and self.agent.session and self.agent.session.is_background_audio_enabled:
             await self.agent.session.start_thinking_audio()
     
     async def _on_agent_speech_started_realtime(self, data: dict) -> None:
         """Handle agent speech started in realtime mode"""
+        metrics_collector.on_agent_speech_start()
         if self.agent and self.agent.session and self.agent.session.is_background_audio_enabled:
             await self.agent.session.stop_thinking_audio()
     
     def _on_agent_speech_ended_realtime(self, data: dict) -> None:
         """Handle agent speech ended in realtime mode"""
+        metrics_collector.on_agent_speech_end()
+        metrics_collector.schedule_turn_complete(timeout=1.0)
+
         if self._current_utterance_handle and not self._current_utterance_handle.done():
             self._current_utterance_handle._mark_done()
-        
+
         if self._realtime_model:
             self._realtime_model.current_utterance = None
-        
+
         if self.agent and hasattr(self.agent, 'on_agent_speech_ended'):
             self.agent.on_agent_speech_ended(data)
     
