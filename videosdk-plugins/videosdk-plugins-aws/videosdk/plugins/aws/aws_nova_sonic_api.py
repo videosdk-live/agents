@@ -35,10 +35,9 @@ from videosdk.agents import (
     get_tool_info,
     is_function_tool,
     FunctionTool,
-    realtime_metrics_collector,
 )
 
-from videosdk.agents import realtime_metrics_collector
+from videosdk.agents.metrics import metrics_collector
 
 NOVA_INPUT_SAMPLE_RATE = 16000
 NOVA_OUTPUT_SAMPLE_RATE = 24000
@@ -394,11 +393,12 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                         role = text_output.get(
                                             "role", "UNKNOWN")
                                         if role == "USER":
-                                            await realtime_metrics_collector.set_user_speech_start()
-                                            await realtime_metrics_collector.set_user_transcript(
+                                            metrics_collector.on_user_speech_start()
+                                            metrics_collector.start_turn()
+                                            metrics_collector.set_user_transcript(
                                                 transcript
                                             )
-                                            await realtime_metrics_collector.set_user_speech_end()
+                                            metrics_collector.on_user_speech_end()
                                             await self.emit("user_speech_ended", {})
                                             try:
                                                 await self.emit(
@@ -424,7 +424,7 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                             except Exception:
                                                 pass
                                             if not skip_emit:
-                                                await realtime_metrics_collector.set_agent_response(
+                                                metrics_collector.set_agent_response(
                                                     transcript
                                                 )
                                                 try:
@@ -453,7 +453,7 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                             audio_content)
                                         if not self._agent_speaking:
                                             await self.emit("agent_speech_started", {})
-                                            await realtime_metrics_collector.set_agent_speech_start()
+                                            metrics_collector.on_agent_speech_start()
                                             self._agent_speaking = True
 
                                         if (
@@ -479,9 +479,8 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                             "stopReason", "") == "END_TURN"
                                         and self._agent_speaking
                                     ):
-                                        await realtime_metrics_collector.set_agent_speech_end(
-                                            timeout=1.0
-                                        )
+                                        metrics_collector.on_agent_speech_end()
+                                        metrics_collector.schedule_turn_complete(timeout=1.0)
                                         self._agent_speaking = False
                                         await self.emit("agent_speech_ended", {})
 
@@ -490,8 +489,8 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
 
                                 elif "toolUse" in json_data["event"]:
                                     tool_use = json_data["event"]["toolUse"]
-                                    await realtime_metrics_collector.add_tool_call(
-                                        tool_use["toolName"]
+                                    metrics_collector.add_function_tool_call(
+                                        tool_name=tool_use["toolName"]
                                     )
                                     asyncio.create_task(
                                         self._execute_tool_and_send_result(
@@ -503,9 +502,8 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                                     print(
                                         f"Nova completionEnd received: {json.dumps(completion_end, indent=2)}"
                                     )
-                                    await realtime_metrics_collector.set_agent_speech_end(
-                                        timeout=1.0
-                                    )
+                                    metrics_collector.on_agent_speech_end()
+                                    metrics_collector.schedule_turn_complete(timeout=1.0)
                                     self._agent_speaking = False
 
                                 else:
@@ -593,11 +591,13 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
             self.audio_track.interrupt()
         print("Interrupting user speech, calling set_agent_speech_end")
         await self.emit("user_speech_ended", {})
-        await realtime_metrics_collector.set_agent_speech_end(timeout=1.0)
-        await realtime_metrics_collector.set_interrupted()
+        metrics_collector.on_agent_speech_end()
+        metrics_collector.schedule_turn_complete(timeout=1.0)
+        metrics_collector.on_interrupted()
         if self._agent_speaking:
             print("Interrupting agent speech, calling set_agent_speech_end")
-            await realtime_metrics_collector.set_agent_speech_end(timeout=1.0)
+            metrics_collector.on_agent_speech_end()
+            metrics_collector.schedule_turn_complete(timeout=1.0)
             self._agent_speaking = False
 
         content_end_payload = {

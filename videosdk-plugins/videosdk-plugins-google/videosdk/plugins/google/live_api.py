@@ -24,7 +24,7 @@ from videosdk.agents import (
 import av
 import time
 from videosdk.agents.event_bus import global_event_emitter
-from videosdk.agents import realtime_metrics_collector
+from videosdk.agents.metrics import metrics_collector
 from google import genai
 from google.genai.live import AsyncSession
 from google.genai.types import (
@@ -408,13 +408,13 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                     tool_info = get_tool_info(tool)
                     if tool_info.name == tool_call.name:
                         if accumulated_input_text:
-                            await realtime_metrics_collector.set_user_transcript(
+                            metrics_collector.set_user_transcript(
                                 accumulated_input_text
                             )
                             accumulated_input_text = ""
                         try:
-                            await realtime_metrics_collector.add_tool_call(
-                                tool_info.name
+                            metrics_collector.add_function_tool_call(
+                                tool_name=tool_info.name
                             )
                             result = await tool(**tool_call.args)
                             await self.send_tool_response(
@@ -462,7 +462,8 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                 if input_transcription.text:
                                     if not self._user_speaking:
                                         self.emit("user_speech_ended", {})
-                                        await realtime_metrics_collector.set_user_speech_start()
+                                        metrics_collector.on_user_speech_start()
+                                        metrics_collector.start_turn()
                                         self._user_speaking = True
                                     self.emit("user_speech_started", {"type": "done"})
                                     accumulated_input_text += input_transcription.text
@@ -508,10 +509,10 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
 
                             if model_turn := server_content.model_turn:
                                 if self._user_speaking:
-                                    await realtime_metrics_collector.set_user_speech_end()
+                                    metrics_collector.on_user_speech_end()
                                     self._user_speaking = False
                                 if accumulated_input_text:
-                                    await realtime_metrics_collector.set_user_transcript(
+                                    metrics_collector.set_user_transcript(
                                         accumulated_input_text
                                     )
                                     try:
@@ -539,7 +540,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                             chunk_number += 1
                                             if not self._agent_speaking:
                                                 self.emit("agent_speech_started", {})
-                                                await realtime_metrics_collector.set_agent_speech_start()
+                                                metrics_collector.on_agent_speech_start()
                                                 self._agent_speaking = True
 
                                             if self.audio_track and self.loop:
@@ -558,12 +559,12 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
 
                             if server_content.turn_complete and active_response_id:
                                 if accumulated_input_text:
-                                    await realtime_metrics_collector.set_user_transcript(
+                                    metrics_collector.set_user_transcript(
                                         accumulated_input_text
                                     )
                                     accumulated_input_text = ""
                                 if final_transcription:
-                                    await realtime_metrics_collector.set_agent_response(
+                                    metrics_collector.set_agent_response(
                                         final_transcription
                                     )
                                     try:
@@ -605,9 +606,8 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                 accumulated_text = ""
                                 final_transcription = ""
                                 self.emit("agent_speech_ended", {})
-                                await realtime_metrics_collector.set_agent_speech_end(
-                                    timeout=1.0
-                                )
+                                metrics_collector.on_agent_speech_end()
+                                metrics_collector.schedule_turn_complete(timeout=1.0)
                                 self._agent_speaking = False
 
                 except Exception as e:
@@ -739,7 +739,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                 turn_complete=True,
             )
             self.emit("agent_speech_ended", {})
-            await realtime_metrics_collector.set_interrupted()
+            metrics_collector.on_interrupted()
             if self.audio_track and "AUDIO" in self.config.response_modalities:
                 self.audio_track.interrupt()
         except Exception as e:
