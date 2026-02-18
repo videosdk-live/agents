@@ -202,6 +202,7 @@ class McpToolMetrics:
 class ParticipantMetrics:
     """Participant/connection metrics at session level."""
     participant_id: Optional[str] = None
+    kind: Optional[Literal["agent", "user"]] = None
     sip_user: Optional[bool] = None
     join_time: Optional[float] = None
     meta: Optional[Dict[str, Any]] = None
@@ -222,6 +223,8 @@ class SessionMetrics:
     participant_metrics: List[ParticipantMetrics] = field(default_factory=list)
     errors: List[Dict[str, Any]] = field(default_factory=list)
     provider_per_component: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    eou_config: Optional[Dict[str, Any]] = None
+    interrupt_config: Optional[Dict[str, Any]] = None
 
 
 @dataclass

@@ -10,6 +10,7 @@ from dataclasses import asdict
 from .metrics_schema import (
     TurnMetrics,
     SessionMetrics,
+    ParticipantMetrics,
     TimelineEvent,
     VadMetrics,
     SttMetrics,
@@ -126,6 +127,56 @@ class MetricsCollector:
             "provider_class": provider_class,
             "model_name": model_name,
         }
+
+    @staticmethod
+    def _eou_config_to_dict(eou_config: Any) -> Dict[str, Any]:
+        """Convert EOUConfig to a serializable dict for session storage."""
+        if eou_config is None:
+            return {}
+        return {
+            "mode": getattr(eou_config, "mode", None),
+            "min_max_speech_wait_timeout": getattr(eou_config, "min_max_speech_wait_timeout", None),
+        }
+
+    @staticmethod
+    def _interrupt_config_to_dict(interrupt_config: Any) -> Dict[str, Any]:
+        """Convert InterruptConfig to a serializable dict for session storage."""
+        if interrupt_config is None:
+            return {}
+        return {
+            "mode": getattr(interrupt_config, "mode", None),
+            "interrupt_min_duration": getattr(interrupt_config, "interrupt_min_duration", None),
+            "interrupt_min_words": getattr(interrupt_config, "interrupt_min_words", None),
+            "false_interrupt_pause_duration": getattr(interrupt_config, "false_interrupt_pause_duration", None),
+            "resume_on_false_interrupt": getattr(interrupt_config, "resume_on_false_interrupt", None),
+        }
+
+    def set_eou_config(self, eou_config: Any) -> None:
+        """Store EOU config on session for later use (internal tracking, not sent)."""
+        self.session.eou_config = self._eou_config_to_dict(eou_config)
+
+    def set_interrupt_config(self, interrupt_config: Any) -> None:
+        """Store Interrupt config on session for later use (internal tracking, not sent)."""
+        self.session.interrupt_config = self._interrupt_config_to_dict(interrupt_config)
+
+    def add_participant_metrics(
+        self,
+        participant_id: str,
+        kind: Optional[str] = None,
+        sip_user: Optional[bool] = None,
+        join_time: Optional[float] = None,
+        meta: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Append a participant entry (agent or user) into session.participant_metrics."""
+        self.session.participant_metrics.append(
+            ParticipantMetrics(
+                participant_id=participant_id,
+                kind=kind,
+                sip_user=sip_user,
+                join_time=join_time,
+                meta=meta,
+            )
+        )
 
     def set_traces_flow_manager(self, manager: TracesFlowManager) -> None:
         """Set the TracesFlowManager instance."""
