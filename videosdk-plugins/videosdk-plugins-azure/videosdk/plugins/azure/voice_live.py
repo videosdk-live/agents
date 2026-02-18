@@ -15,8 +15,8 @@ from videosdk.agents import (
     Agent,
     CustomAudioStreamTrack,
     RealtimeBaseModel,
-    realtime_metrics_collector,
 )
+from videosdk.agents.metrics import metrics_collector
 from videosdk.agents.event_bus import global_event_emitter
 
 from azure.core.credentials import AzureKeyCredential, TokenCredential
@@ -296,7 +296,8 @@ class AzureVoiceLive(RealtimeBaseModel[AzureVoiceLiveEventTypes]):
             elif event.type == ServerEventType.INPUT_AUDIO_BUFFER_SPEECH_STARTED:
                 logger.info("User started speaking")
                 if not self._user_speaking:
-                    await realtime_metrics_collector.set_user_speech_start()
+                    metrics_collector.on_user_speech_start()
+                    metrics_collector.start_turn()
                     self._user_speaking = True
                 self.emit("user_speech_started", {"type": "done"})
 
@@ -312,7 +313,7 @@ class AzureVoiceLive(RealtimeBaseModel[AzureVoiceLiveEventTypes]):
             elif event.type == ServerEventType.INPUT_AUDIO_BUFFER_SPEECH_STOPPED:
                 logger.info("User stopped speaking")
                 if self._user_speaking:
-                    await realtime_metrics_collector.set_user_speech_end()
+                    metrics_collector.on_user_speech_end()
                     self._user_speaking = False
 
             elif event.type == ServerEventType.RESPONSE_CREATED:
@@ -322,7 +323,7 @@ class AzureVoiceLive(RealtimeBaseModel[AzureVoiceLiveEventTypes]):
                 logger.debug("Received audio delta")
                 if Modality.AUDIO in self.config.modalities:
                     if not self._agent_speaking:
-                        await realtime_metrics_collector.set_agent_speech_start()
+                        metrics_collector.on_agent_speech_start()
                         self._agent_speaking = True
 
                     if self.audio_track and self.loop:
@@ -331,7 +332,8 @@ class AzureVoiceLive(RealtimeBaseModel[AzureVoiceLiveEventTypes]):
             elif event.type == ServerEventType.RESPONSE_AUDIO_DONE:
                 logger.info("Assistant finished speaking")
                 if self._agent_speaking:
-                    await realtime_metrics_collector.set_agent_speech_end(timeout=1.0)
+                    metrics_collector.on_agent_speech_end()
+                    metrics_collector.schedule_turn_complete(timeout=1.0)
                     self._agent_speaking = False
 
             elif event.type == ServerEventType.RESPONSE_TEXT_DELTA:
@@ -346,7 +348,7 @@ class AzureVoiceLive(RealtimeBaseModel[AzureVoiceLiveEventTypes]):
                         "text_response",
                         {"text": self._current_text_response, "type": "done"},
                     )
-                    await realtime_metrics_collector.set_agent_response(
+                    metrics_collector.set_agent_response(
                         self._current_text_response
                     )
                     try:
@@ -365,7 +367,8 @@ class AzureVoiceLive(RealtimeBaseModel[AzureVoiceLiveEventTypes]):
             elif event.type == ServerEventType.RESPONSE_DONE:
                 logger.info("Response complete")
                 if self._agent_speaking:
-                    await realtime_metrics_collector.set_agent_speech_end(timeout=1.0)
+                    metrics_collector.on_agent_speech_end()
+                    metrics_collector.schedule_turn_complete(timeout=1.0)
                     self._agent_speaking = False
 
             elif event.type == ServerEventType.ERROR:
@@ -382,7 +385,7 @@ class AzureVoiceLive(RealtimeBaseModel[AzureVoiceLiveEventTypes]):
                 ):
                     transcript = event.item.content[0].transcript
                     if transcript and event.item.role == "user":
-                        await realtime_metrics_collector.set_user_transcript(transcript)
+                        metrics_collector.set_user_transcript(transcript)
                         try:
                             self.emit(
                                 "realtime_model_transcription",
@@ -443,10 +446,11 @@ class AzureVoiceLive(RealtimeBaseModel[AzureVoiceLiveEventTypes]):
             if self.audio_track and Modality.AUDIO in self.config.modalities:
                 self.audio_track.interrupt()
 
-            await realtime_metrics_collector.set_interrupted()
+            metrics_collector.on_interrupted()
 
             if self._agent_speaking:
-                await realtime_metrics_collector.set_agent_speech_end(timeout=1.0)
+                metrics_collector.on_agent_speech_end()
+                metrics_collector.schedule_turn_complete(timeout=1.0)
                 self._agent_speaking = False
 
         except Exception as e:

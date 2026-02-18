@@ -145,6 +145,7 @@ class SileroVAD(BaseVAD):
                             self._pub_silence_duration = 0.0
                             self._pub_speech_duration = self._speech_threshold_duration
 
+                            logger.info(f"[VAD] START_OF_SPEECH firing | exp_filter={self._exp_filter:.4f} | speech_dur={self._speech_threshold_duration:.4f}")
                             self._send_speech_event(
                                 VADEventType.START_OF_SPEECH)
                 else:
@@ -160,6 +161,7 @@ class SileroVAD(BaseVAD):
                         self._pub_silence_duration = self._silence_threshold_duration
 
                         self._send_speech_event(VADEventType.END_OF_SPEECH)
+                        logger.info(f"[VAD] END_OF_SPEECH fired — resetting model state | exp_filter={self._exp_filter:.4f}")
                         self._reset_model_state()
                         pass
 
