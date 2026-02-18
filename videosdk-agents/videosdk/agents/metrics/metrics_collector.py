@@ -31,6 +31,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+REALTIME_PROVIDER_CLASS_NAMES = frozenset({
+    "GeminiRealtime",
+    "OpenAIRealtime",    
+})
+
 
 class MetricsCollector:
     """Single metrics collector for all pipeline modes.
@@ -967,7 +972,7 @@ class MetricsCollector:
     # ──────────────────────────────────────────────
 
     def set_realtime_usage(self, usage: Dict[str, Any]) -> None:
-        """Set realtime model token usage."""
+        """Set realtime model token usage from a flat dict (input_tokens, total_tokens, cached_*, thoughts_tokens, etc.)."""
         if not self.current_turn or not usage:
             return
 
@@ -1110,11 +1115,37 @@ class MetricsCollector:
             data["tts_duration"] = tts.tts_duration
             data["tts_characters"] = tts.tts_characters
 
-        # Provider info (from session)
+        # Flatten the last realtime (full s2s) metrics entry for analytics
+        if turn.realtime_metrics:
+            rt = turn.realtime_metrics[-1]
+            data["realtime_input_tokens"] = rt.realtime_input_tokens
+            data["realtime_total_tokens"] = rt.realtime_total_tokens
+            data["realtime_output_tokens"] = rt.realtime_output_tokens
+            data["realtime_input_text_tokens"] = rt.realtime_input_text_tokens
+            data["realtime_input_audio_tokens"] = rt.realtime_input_audio_tokens
+            data["realtime_input_image_tokens"] = rt.realtime_input_image_tokens
+            data["realtime_input_cached_tokens"] = rt.realtime_input_cached_tokens
+            data["realtime_thoughts_tokens"] = rt.realtime_thoughts_tokens
+            data["realtime_cached_text_tokens"] = rt.realtime_cached_text_tokens
+            data["realtime_cached_audio_tokens"] = rt.realtime_cached_audio_tokens
+            data["realtime_cached_image_tokens"] = rt.realtime_cached_image_tokens
+            data["realtime_output_text_tokens"] = rt.realtime_output_text_tokens
+            data["realtime_output_audio_tokens"] = rt.realtime_output_audio_tokens
+            data["realtime_output_image_tokens"] = rt.realtime_output_image_tokens
+
+        # Provider info (from session). Use realtime_* keys for known S2S models.
         providers = self.session.provider_per_component
-        if "llm" in providers:
-            data["llm_provider_class"] = providers["llm"]["provider_class"]
-            data["llm_model_name"] = providers["llm"]["model_name"]
+        if "realtime" in providers:
+            data["realtime_provider_class"] = providers["realtime"]["provider_class"]
+            data["realtime_model_name"] = providers["realtime"]["model_name"]
+        elif "llm" in providers:
+            pc = providers["llm"]["provider_class"]
+            if pc in REALTIME_PROVIDER_CLASS_NAMES:
+                data["realtime_provider_class"] = pc
+                data["realtime_model_name"] = providers["llm"]["model_name"]
+            else:
+                data["llm_provider_class"] = pc
+                data["llm_model_name"] = providers["llm"]["model_name"]
         if "stt" in providers:
             data["stt_provider_class"] = providers["stt"]["provider_class"]
             data["stt_model_name"] = providers["stt"]["model_name"]
@@ -1127,9 +1158,6 @@ class MetricsCollector:
         if "eou" in providers:
             data["eou_provider_class"] = providers["eou"]["provider_class"]
             data["eou_model_name"] = providers["eou"]["model_name"]
-        if "realtime" in providers:
-            data["llm_provider_class"] = providers["realtime"]["provider_class"]
-            data["llm_model_name"] = providers["realtime"]["model_name"]
 
         # System instructions (first turn only)
         if self._total_turns == 1 or len(self.turns) == 0:
@@ -1185,6 +1213,23 @@ class MetricsCollector:
             "eou_latency": "eouLatency",
             "eou_start_time": "eouStartTime",
             "eou_end_time": "eouEndTime",
+
+            # Realtime (full s2s) token metrics
+            "realtime_input_tokens": "realtimeInputTokens",
+            "realtime_total_tokens": "realtimeTotalTokens",
+            "realtime_output_tokens": "realtimeOutputTokens",
+            "realtime_input_text_tokens": "realtimeInputTextTokens",
+            "realtime_input_audio_tokens": "realtimeInputAudioTokens",
+            "realtime_input_image_tokens": "realtimeInputImageTokens",
+            "realtime_input_cached_tokens": "realtimeInputCachedTokens",
+            "realtime_thoughts_tokens": "realtimeThoughtsTokens",
+            "realtime_cached_text_tokens": "realtimeCachedTextTokens",
+            "realtime_cached_audio_tokens": "realtimeCachedAudioTokens",
+            "realtime_cached_image_tokens": "realtimeCachedImageTokens",
+            "realtime_output_text_tokens": "realtimeOutputTextTokens",
+            "realtime_output_audio_tokens": "realtimeOutputAudioTokens",
+            "realtime_output_image_tokens": "realtimeOutputImageTokens",
+
             "kb_id": "kbId",
             "kb_retrieval_latency": "kbRetrievalLatency",
             "kb_documents": "kbDocuments",
@@ -1193,6 +1238,8 @@ class MetricsCollector:
             # Provider metrics
             "llm_provider_class": "llmProviderClass",
             "llm_model_name": "llmModelName",
+            "realtime_provider_class": "realtimeProviderClass",
+            "realtime_model_name": "realtimeModelName",
             "stt_provider_class": "sttProviderClass",
             "stt_model_name": "sttModelName",
             "tts_provider_class": "ttsProviderClass",
