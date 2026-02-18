@@ -148,19 +148,20 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
     
     async def _on_vad_event(self, vad_response: VADResponse) -> None:
         """Handle VAD events"""
+        logger.info(f"[speech_understanding] _on_vad_event: {vad_response.event_type.value} | confidence={vad_response.data.confidence:.4f} | _is_user_speaking={self._is_user_speaking}")
         if vad_response.event_type == VADEventType.START_OF_SPEECH:
             self._is_user_speaking = True
-            
+
             if self._waiting_for_more_speech:
                 logger.debug("User continued speaking, cancelling wait timer")
                 await self._handle_continued_speech()
-            
+
             self.emit("speech_started")
-            
+
         elif vad_response.event_type == VADEventType.END_OF_SPEECH:
             self._is_user_speaking = False
             self.emit("speech_stopped")
-            
+
             if not self._stt_started and self.stt:
                 self._stt_started = True
     

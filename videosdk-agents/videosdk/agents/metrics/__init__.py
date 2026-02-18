@@ -1,23 +1,29 @@
 from .models import TimelineEvent, CascadingTurnData, CascadingMetricsData
-from .cascading_metrics_collector import CascadingMetricsCollector
 from .integration import (
     auto_initialize_telemetry_and_logs,
     create_span,
     complete_span,
     create_log,
 )
-from .realtime_metrics_collector import RealtimeMetricsCollector
+from .metrics_collector import MetricsCollector
+from .metrics_schema import TurnMetrics, SessionMetrics
 
-cascading_metrics_collector = CascadingMetricsCollector()
-realtime_metrics_collector = RealtimeMetricsCollector()
+# Single unified metrics collector instance
+metrics_collector = MetricsCollector()
+
+# Backward compatibility aliases (same instance)
+cascading_metrics_collector = metrics_collector
+realtime_metrics_collector = metrics_collector
 
 __all__ = [
+    'metrics_collector',
+    'MetricsCollector',
     'cascading_metrics_collector',
-    'CascadingMetricsCollector',
     'realtime_metrics_collector',
-    'RealtimeMetricsCollector',
+    'TurnMetrics',
+    'SessionMetrics',
     'TimelineEvent',
-    'CascadingTurnData', 
+    'CascadingTurnData',
     'CascadingMetricsData',
     'auto_initialize_telemetry_and_logs',
     'create_span',

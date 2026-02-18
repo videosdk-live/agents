@@ -42,7 +42,7 @@ from .pipeline import Pipeline, EOUConfig, InterruptConfig
 from .realtime_base_model import RealtimeBaseModel
 from .realtime_llm_adapter import RealtimeLLMAdapter
 
-from .metrics import realtime_metrics_collector
+from .metrics import metrics_collector, realtime_metrics_collector
 from .utils import (
     function_tool,
     is_function_tool,
@@ -175,6 +175,7 @@ __all__ = [
     "Options",
     "WebSocketConfig",
     "WebRTCConfig",
+    "metrics_collector",
     "realtime_metrics_collector",
     "ImageContent",
     "segment_text",
