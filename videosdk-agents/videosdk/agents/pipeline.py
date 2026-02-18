@@ -344,6 +344,8 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
             realtime_mode=self.config.realtime_mode,
             active_components=self.config.active_components,
         )
+        metrics_collector.set_eou_config(self.eou_config)
+        metrics_collector.set_interrupt_config(self.interrupt_config)
 
         if self.config.realtime_mode in (RealtimeMode.HYBRID_STT, RealtimeMode.LLM_ONLY):
             logger.info(f"Creating orchestrator for {self.config.realtime_mode.value} mode")

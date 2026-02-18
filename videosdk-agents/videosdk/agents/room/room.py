@@ -443,6 +443,15 @@ class VideoSDKHandler(BaseTransportHandler):
         self.participants_data[participant.id]["sipCallType"] = participant.meta_data.get("callType", False) if participant.meta_data else False
         logger.info(f"Participant joined: {peer_name}")
 
+        sip_user_flag = self.participants_data[participant.id]["sipUser"]
+        metrics_collector.add_participant_metrics(
+            participant_id=participant.id,
+            kind="user",
+            sip_user=sip_user_flag,
+            join_time=time.time(),
+            meta=self.participants_data[participant.id],
+        )
+
         if self.recording and len(self.participants_data) == 1:
             asyncio.create_task(
                 self.start_participant_recording(participant.id))
@@ -679,6 +688,13 @@ class VideoSDKHandler(BaseTransportHandler):
                     self._session_id = session_id
                     print(f"Session ID: >>>>>>>>>>>> {session_id}")
                     metrics_collector.set_session_id(session_id)
+                    metrics_collector.add_participant_metrics(
+                        participant_id=self.meeting.local_participant.id,
+                        kind="agent",
+                        sip_user=False,
+                        join_time=time.time(),
+                        meta={"name": self.name},
+                    )
                     self._session_id_collected = True
                     if self.traces_flow_manager:
                         self.traces_flow_manager.set_session_id(session_id)
