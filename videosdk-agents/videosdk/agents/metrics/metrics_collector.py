@@ -1267,9 +1267,9 @@ class MetricsCollector:
         """Remove provider fields after first turn."""
         provider_fields = [
             "systemInstructions",
-            "llmProviderClass", "llmModelName",
-            "sttProviderClass", "sttModelName",
-            "ttsProviderClass", "ttsModelName",
+            # "llmProviderClass", "llmModelName",
+            # "sttProviderClass", "sttModelName",
+            # "ttsProviderClass", "ttsModelName",
             "vadProviderClass", "vadModelName",
             "eouProviderClass", "eouModelName",
         ]
