@@ -19,7 +19,8 @@ except ImportError:
     SCIPY_AVAILABLE = False
 
 SARVAM_STT_STREAMING_URL = "wss://api.sarvam.ai/speech-to-text/ws"
-DEFAULT_MODEL = "saarika:v2.5"
+SARVAM_STT_TRANSLATE_URL = "wss://api.sarvam.ai/speech-to-text-translate/ws"
+DEFAULT_MODEL = "saaras:v3"
 
 class SarvamAISTT(STT):
     def __init__(
@@ -31,9 +32,12 @@ class SarvamAISTT(STT):
         input_sample_rate: int = 48000,
         output_sample_rate: int = 16000,
         mode: Literal["transcribe", "translate", "verbatim", "translit", "codemix"] | None = None,
+        high_vad_sensitivity:bool|None = None,
+        flush_signal:bool|None = None,
+        translation:bool = False,
+        prompt: str | None = None,
     ) -> None:
         """Initialize the SarvamAI STT plugin with WebSocket support.
-
         Args:
             api_key: SarvamAI API key
             model: The model to use (default: "saarika:v2.5")
@@ -41,6 +45,11 @@ class SarvamAISTT(STT):
             input_sample_rate: Input sample rate (default: 48000)
             output_sample_rate: Output sample rate (default: 16000)
             mode: Mode of operation. Only applicable when using the ``saaras:v3``
+            high_vad_sensitivity: Whether to use high sensitivity VAD (default: False)
+            vad_signal: Whether to send VAD signal (default: False)
+            flush_signal: Whether to send flush signal (default: False)
+            translation: Whether to enable translation (default: False)
+            prompt: Prompt to send to the model (default: None), only applicable when translation is True
         """
         super().__init__()
         if not SCIPY_AVAILABLE:
@@ -55,6 +64,10 @@ class SarvamAISTT(STT):
         self.input_sample_rate = input_sample_rate
         self.output_sample_rate = output_sample_rate
         self.mode = mode
+        self.high_vad_sensitivity = high_vad_sensitivity
+        self.flush_signal = flush_signal
+        self.translation = translation
+        self.prompt = prompt
 
         # WebSocket related
         self._session: aiohttp.ClientSession | None = None
@@ -78,11 +91,21 @@ class SarvamAISTT(STT):
         if self._session is None:
             self._session = aiohttp.ClientSession()
 
+        if self.translation and self.validate_translation_for_model():
+            ws_url = SARVAM_STT_TRANSLATE_URL
+        else:
+            ws_url = SARVAM_STT_STREAMING_URL
         resolved_mode = self.validate_mode_for_model()
-
-        ws_url = f"{SARVAM_STT_STREAMING_URL}?language-code={self.language}&model={self.model}&vad_signals=true"
+        ws_url = f"{ws_url}?language-code={self.language}&model={self.model}&vad_signals=true"
         if resolved_mode is not None:
             ws_url += f"&mode={resolved_mode}"
+        if self.high_vad_sensitivity is not None:
+            ws_url += f"&high_vad_sensitivity={self.high_vad_sensitivity}"
+        if self.flush_signal is not None:
+            ws_url += f"&flush_signals={self.flush_signal}"
+        if self.prompt is not None and self.translation:
+            ws_url += f"&prompt={self.prompt}"
+
         headers = {"api-subscription-key": self.api_key}
         
         self._ws = await self._session.ws_connect(ws_url, headers=headers)
@@ -210,6 +233,11 @@ class SarvamAISTT(STT):
         if self.model in ["saaras:v3"]:
             return self.mode if self.mode is not None else "transcribe"
         return None
+    def validate_translation_for_model(self) -> str | None:
+        """Validate and resolve the translation for the current model."""
+        if self.translation and self.model in ["saaras:v3", "saaras:v2.5"]:
+            return self.translation
+        return False
 
 
     async def aclose(self) -> None:
