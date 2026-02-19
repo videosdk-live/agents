@@ -209,6 +209,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         elif vad_response.event_type == VADEventType.END_OF_SPEECH:
             cascading_metrics_collector.on_vad_end_of_speech()
             self._is_user_speaking = False
+            if self.stt and hasattr(self.stt, 'flush'):
+                await self.stt.flush()
             self.on_speech_stopped()
 
 

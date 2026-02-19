@@ -75,8 +75,7 @@ class SarvamAISTT(STT):
         if self._session is None:
             self._session = aiohttp.ClientSession()
 
-        ws_url = f"{SARVAM_STT_STREAMING_URL}?language-code={self.language}&model={self.model}&vad_signals=true"
-        
+        ws_url = f"{SARVAM_STT_STREAMING_URL}?language-code={self.language}&model={self.model}&vad_signals=false"
         headers = {"api-subscription-key": self.api_key}
         
         self._ws = await self._session.ws_connect(ws_url, headers=headers)
@@ -215,3 +214,9 @@ class SarvamAISTT(STT):
             await self._session.close()
         
         await super().aclose()
+
+    async def flush(self) -> None:
+        """Send flush signal to Sarvam to trigger immediate transcription."""
+        if self._ws and not self._ws.closed:
+            flush_message = {"type": "flush"}
+            await self._ws.send_str(json.dumps(flush_message))

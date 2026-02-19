@@ -103,6 +103,11 @@ class STT(EventEmitter[Literal["error"]]):
     
     async def __aenter__(self) -> STT:
         return self
+
+    @abstractmethod
+    async def flush(self) -> None:
+        """Flush any pending audio data"""
+        raise NotImplementedError
         
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         await self.aclose()
