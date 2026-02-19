@@ -43,6 +43,7 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
         self.hooks = hooks
         self.tts_lock = asyncio.Lock()
         self._is_interrupted = False
+        self.full_transcript = ""
     
     async def start(self) -> None:
         """Start the speech generation component"""
@@ -62,6 +63,31 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
             response_gen: Text generator or string to synthesize
         """
         async with self.tts_lock:
+            # Prepare iterator and wrapper shared logic
+            response_iterator: AsyncIterator[str]
+            if isinstance(response_gen, str):
+                async def string_to_iterator(text: str):
+                    yield text
+                response_iterator = string_to_iterator(response_gen)
+            else:
+                response_iterator = response_gen
+
+            self.full_transcript = ""
+
+            async def character_counting_wrapper(text_iterator: AsyncIterator[str]):
+                async for text_chunk in text_iterator:
+                    logger.info(f"[TTS DEBUG] Got text chunk: {len(text_chunk) if text_chunk else 0} chars")
+                    if text_chunk and metrics_collector:
+                        # Count characters in this chunk
+                        logger.info(f"[TTS DEBUG] Calling add_tts_characters({len(text_chunk)})")
+                        metrics_collector.add_tts_characters(len(text_chunk))
+                    if text_chunk:
+                        self.full_transcript += text_chunk
+                    yield text_chunk
+            
+            # Wrap the iterator
+            response_iterator = character_counting_wrapper(response_iterator)
+
             if self.hooks and self.hooks.has_tts_stream_hook():
                 if self.agent and self.agent.session:
                     self.agent.session._pause_wake_up_timer()
@@ -81,14 +107,6 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
                     await self.hooks.trigger_agent_turn_start()
 
                 try:
-                    response_iterator: AsyncIterator[str]
-                    if isinstance(response_gen, str):
-                        async def string_to_iterator(text: str):
-                            yield text
-                        response_iterator = string_to_iterator(response_gen)
-                    else:
-                        response_iterator = response_gen
-
                     first_byte_emitted = False
 
                     async for audio_chunk in self.hooks.process_tts_stream(response_iterator):
@@ -204,14 +222,6 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
                 await self.hooks.trigger_agent_turn_start()
             
             try:
-                response_iterator: AsyncIterator[str]
-                if isinstance(response_gen, str):
-                    async def string_to_iterator(text: str):
-                        yield text
-                    response_iterator = string_to_iterator(response_gen)
-                else:
-                    response_iterator = response_gen
-                
                 await self.tts.synthesize(response_iterator)
 
                 # Signal that TTS has finished sending all audio data.
