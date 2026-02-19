@@ -22,6 +22,7 @@ from .metrics_schema import (
     FunctionToolMetrics,
     McpToolMetrics,
     KbMetrics,
+    FallbackEvent,
 )
 from .analytics import AnalyticsClient
 
@@ -132,6 +133,17 @@ class MetricsCollector:
             "provider_class": provider_class,
             "model_name": model_name,
         }
+
+    def update_provider_class(self, component_type: str, provider_class: str) -> None:
+        """Update the provider class for a specific component when fallback occurs.
+        
+        Args:
+            component_type: "STT", "LLM", "TTS", etc.
+            provider_class: The new provider class name (e.g., "GoogleLLM")
+        """
+        if component_type in self.session.provider_per_component:
+            self.session.provider_per_component[component_type]["provider_class"] = provider_class
+            logger.info(f"Updated {component_type} provider class to: {provider_class}")
 
     @staticmethod
     def _eou_config_to_dict(eou_config: Any) -> Dict[str, Any]:
@@ -967,6 +979,34 @@ class MetricsCollector:
                     metrics={"errors": self.current_turn.errors}
                 )
 
+    def on_fallback_event(self, event_data: Dict[str, Any]) -> None:
+        """Record a fallback event for the current turn"""
+        if not self.current_turn:
+            self.start_turn()
+        print(f"Received fallback event: {event_data}")
+        if self.current_turn:
+            fallback_event = FallbackEvent(
+                component_type=event_data.get("component_type", ""),
+                temporary_disable_sec=event_data.get("temporary_disable_sec", 0),
+                permanent_disable_after_attempts=event_data.get("permanent_disable_after_attempts", 0),
+                recovery_attempt=event_data.get("recovery_attempt", 0),
+                message=event_data.get("message", ""),
+                start_time=event_data.get("start_time"),
+                end_time=event_data.get("end_time"),
+                duration_ms=event_data.get("duration_ms"),
+                original_provider_label=event_data.get("original_provider_label"),
+                original_connection_start=event_data.get("original_connection_start"),
+                original_connection_end=event_data.get("original_connection_end"),
+                original_connection_duration_ms=event_data.get("original_connection_duration_ms"),
+                new_provider_label=event_data.get("new_provider_label"),
+                new_connection_start=event_data.get("new_connection_start"),
+                new_connection_end=event_data.get("new_connection_end"),
+                new_connection_duration_ms=event_data.get("new_connection_duration_ms"),
+                is_recovery=event_data.get("is_recovery", False),
+            )
+            self.current_turn.fallback_events.append(fallback_event)
+            logger.info(f"Fallback event recorded: {event_data.get('component_type')} - {event_data.get('message')}")
+
     # ──────────────────────────────────────────────
     # Realtime-specific metrics
     # ──────────────────────────────────────────────
@@ -1077,6 +1117,8 @@ class MetricsCollector:
             data["stt_end_time"] = stt.stt_end_time
             data["stt_preflight_latency"] = stt.stt_preflight_latency
             data["stt_interim_latency"] = stt.stt_interim_latency
+            data["stt_confidence"] = stt.stt_confidence
+            data["stt_duration"] = stt.stt_duration
 
         # Flatten the last EOU metrics entry
         if turn.eou_metrics:

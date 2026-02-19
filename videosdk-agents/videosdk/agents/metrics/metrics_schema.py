@@ -129,7 +129,7 @@ class TtsMetrics(BaseComponentMetrics):
     tts_start_time: Optional[float] = None
     tts_end_time: Optional[float] = None
     tts_duration: Optional[float] = None
-    tts_characters: Optional[int] = None
+    tts_characters: Optional[int] = 0
     tts_first_byte_time: Optional[float] = None
     ttfb: Optional[float] = None
 
