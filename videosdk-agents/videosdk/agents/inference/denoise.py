@@ -16,7 +16,8 @@ from videosdk.agents.denoise import Denoise as BaseDenoise
 
 logger = logging.getLogger(__name__)
 
-VIDEOSDK_INFERENCE_URL = "wss://dev-inference.videosdk.live"
+# VIDEOSDK_INFERENCE_URL = "wss://dev-inference.videosdk.live"
+VIDEOSDK_INFERENCE_URL = "wss://inference-gateway.videosdk.live"
 
 _SPARROW_MODELS = frozenset(
     {
@@ -201,6 +202,8 @@ class Denoise(BaseDenoise):
     # ==================== Core Denoise ====================
 
     async def denoise(self, audio_frames: bytes, **kwargs: Any) -> bytes:
+        if getattr(self, "_permanently_failed", False):
+            return b""
         try:
             if not self._ws or self._ws.closed:
                 if self.connecting:
@@ -282,7 +285,20 @@ class Denoise(BaseDenoise):
                 f"[InferenceDenoise] Connecting to {self.base_url} "
                 f"(provider={self.provider}, model={self.model_id})"
             )
-            self._ws = await self._session.ws_connect(ws_url)
+            try:
+
+                self._ws = await self._session.ws_connect(ws_url)
+            except aiohttp.WSServerHandshakeError as e:
+                if e.status == 404:
+                    # Provider not available on this gateway — no point retrying
+                    logger.error(
+                        f"[InferenceDenoise] Provider '{self.provider}' not found on gateway "
+                        f"(404). Check your base_url and provider name. Disabling denoise."
+                    )
+                    self._permanently_failed = True  # new flag
+                    raise
+            raise
+
             logger.info(
                 f"[InferenceDenoise] WS headers: {dict(self._ws._response.headers)}"
             )
