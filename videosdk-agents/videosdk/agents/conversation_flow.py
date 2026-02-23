@@ -398,8 +398,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                     if eou_probability < self.eou_certainty_threshold:
                         logger.info(f"EOU probability is less than the threshold, using max speech wait timeout")
                         delay = self.max_speech_wait_timeout
+                    cascading_metrics_collector.on_wait_for_additional_speech(delay, eou_probability)
                 logger.info(f"Using delay: {delay} seconds")
-                cascading_metrics_collector.on_wait_for_additional_speech(delay, eou_probability)
                 await self._wait_for_additional_speech(delay)
 
             elif self.mode == 'ADAPTIVE':
@@ -416,8 +416,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                     wait_factor = 1.0 - eou_probability  
                     logger.info(f"Wait factor: {wait_factor}")
                     delay = self.min_speech_wait_timeout + (delay_range * wait_factor)
+                    cascading_metrics_collector.on_wait_for_additional_speech(delay, eou_probability)
                     logger.info(f"Calculated delay: {delay}")
-                cascading_metrics_collector.on_wait_for_additional_speech(delay, eou_probability)
                 await self._wait_for_additional_speech(delay)
 
         
