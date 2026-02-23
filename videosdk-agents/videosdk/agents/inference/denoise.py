@@ -7,7 +7,6 @@ import math
 import os
 import time
 import logging
-from collections import deque
 from typing import Any, Optional, Dict
 
 import aiohttp
@@ -30,119 +29,12 @@ _ALL_AICOUSTICS_MODELS = _SPARROW_MODELS
 _EXPECTED_SAMPLE_RATE: dict[str, int] = {**{m: 48000 for m in _SPARROW_MODELS}}
 
 
-class DenoiseLatencyTracker:
-
-    _WINDOW = 500
-
-    def __init__(self, log_every_n_chunks: int = 100) -> None:
-        # FIFO of send timestamps — one entry per sent chunk
-        self._send_times: deque[float] = deque()
-
-        # Rolling latency samples
-        self._samples: deque[float] = deque(maxlen=self._WINDOW)
-
-        self._log_every = log_every_n_chunks
-        self._recv_count = 0
-        self._min_ms = float("inf")
-        self._max_ms = 0.0
-        self._dropped = 0
-
-    def record_send(self) -> None:
-        """
-        Push current timestamp immediately after a chunk is sent to the server.
-        Must be called exactly once per _send_audio() call.
-        """
-        self._send_times.append(time.perf_counter())
-
-    def record_receive(self) -> float | None:
-        """
-        Pop the oldest send timestamp and compute round-trip latency.
-
-        Returns:
-            Latency in milliseconds for this specific chunk, or None if
-            there was no matching send (indicates a bug — log a warning).
-        """
-        if not self._send_times:
-            self._dropped += 1
-            logger.warning(
-                f"[DenoiseLatency] Received chunk with no matching send timestamp "
-                f"(total dropped={self._dropped}). "
-                f"This may happen on reconnect — should resolve automatically."
-            )
-            return None
-
-        sent_at = self._send_times.popleft()  # FIFO: oldest send = this chunk
-        latency_ms = (time.perf_counter() - sent_at) * 1000
-
-        self._samples.append(latency_ms)
-        self._recv_count += 1
-
-        if latency_ms < self._min_ms:
-            self._min_ms = latency_ms
-        if latency_ms > self._max_ms:
-            self._max_ms = latency_ms
-
-        # Periodic rolling log — every N received chunks
-        if self._recv_count % self._log_every == 0:
-            logger.info(
-                f"[Denoise][Latency] "
-                f"chunks_received={self._recv_count} | "
-                f"last={latency_ms:.1f}ms | "
-                f"avg(last {self._WINDOW})={self.avg_ms:.1f}ms | "
-                f"min={self._min_ms:.1f}ms | "
-                f"max={self._max_ms:.1f}ms | "
-                f"queue_depth={self.queue_depth}"
-            )
-
-        return latency_ms
-
-    @property
-    def avg_ms(self) -> float:
-        """Rolling average over the last _WINDOW chunks."""
-        return sum(self._samples) / len(self._samples) if self._samples else 0.0
-
-    @property
-    def last_ms(self) -> float:
-        return self._samples[-1] if self._samples else 0.0
-
-    @property
-    def queue_depth(self) -> int:
-        """
-        Number of sent chunks still waiting for a matching receive.
-        Under normal operation: 0–2.
-        Growing number = server is falling behind or losing chunks.
-        """
-        return len(self._send_times)
-
-    def summary(self) -> dict:
-        return {
-            "recv_count": self._recv_count,
-            "avg_ms": round(self.avg_ms, 2),
-            "min_ms": round(self._min_ms, 2) if self._recv_count else 0,
-            "max_ms": round(self._max_ms, 2),
-            "last_ms": round(self.last_ms, 2),
-            "queue_depth": self.queue_depth,
-            "dropped": self._dropped,
-        }
-
-    def reset(self) -> None:
-        """Clear all state — call after reconnect to avoid stale timestamp mismatches."""
-        self._send_times.clear()
-        self._samples.clear()
-        self._recv_count = 0
-        self._min_ms = float("inf")
-        self._max_ms = 0.0
-        self._dropped = 0
-
-
 class Denoise(BaseDenoise):
     """
-    VideoSDK Inference Gateway Denoise Plugin — with accurate latency tracking.
+    VideoSDK Inference Gateway Denoise Plugin.
 
-    Latency is measured as true per-chunk round-trip time:
-        send_time[chunk_N]  →  receive_time[chunk_N]
-
-    Use get_latency_stats() or get_stats() to read current numbers.
+    Connects to VideoSDK's Inference Gateway for real-time noise cancellation.
+    Supports AI-Coustics, Krisp, and SANAS providers through a unified interface.
     """
 
     def __init__(
@@ -209,8 +101,6 @@ class Denoise(BaseDenoise):
 
         self._audio_buffer: asyncio.Queue = asyncio.Queue(maxsize=50)
 
-        self._latency = DenoiseLatencyTracker(log_every_n_chunks=100)
-
         self._stats = {
             "chunks_sent": 0,
             "bytes_sent": 0,
@@ -224,6 +114,8 @@ class Denoise(BaseDenoise):
             f"[InferenceDenoise] Initialized: provider={provider}, "
             f"model={model_id}, sample_rate={sample_rate}Hz, channels={channels}"
         )
+
+    # ==================== Factory Methods ====================
 
     @staticmethod
     def aicoustics(
@@ -294,6 +186,8 @@ class Denoise(BaseDenoise):
             base_url=base_url if base_url is not None else VIDEOSDK_INFERENCE_URL,
         )
 
+    # ==================== Connection ====================
+
     async def connect(self) -> None:
         """Eagerly establish the WebSocket. Call once at startup."""
         async with self._connect_lock:
@@ -303,6 +197,8 @@ class Denoise(BaseDenoise):
             self.connected = True
             self._ws_task = asyncio.create_task(self._listen_for_responses())
             logger.info("[InferenceDenoise] Ready — eager connection established.")
+
+    # ==================== Core Denoise ====================
 
     async def denoise(self, audio_frames: bytes, **kwargs: Any) -> bytes:
         try:
@@ -334,15 +230,14 @@ class Denoise(BaseDenoise):
                 else audio_frames
             )
 
-            # Chunk, send, record timestamp
+            # Chunk and send
             self._send_buffer.extend(resampled)
             while len(self._send_buffer) >= self._send_chunk_bytes:
                 chunk = bytes(self._send_buffer[: self._send_chunk_bytes])
                 del self._send_buffer[: self._send_chunk_bytes]
                 await self._send_audio(chunk)
 
-                self._latency.record_send()
-
+            # Non-blocking receive
             try:
                 denoised = self._audio_buffer.get_nowait()
                 self._stats["chunks_received"] += 1
@@ -371,20 +266,7 @@ class Denoise(BaseDenoise):
                 asyncio.create_task(self._reconnect())
             return b""
 
-    def get_latency_stats(self) -> dict:
-        """
-        Returns accurate per-chunk round-trip latency stats.
-
-        Keys:
-            recv_count  — number of denoised chunks received so far
-            avg_ms      — rolling average over last 500 received chunks
-            min_ms      — all-time minimum round-trip
-            max_ms      — all-time maximum round-trip
-            last_ms     — latency of the most recently received chunk
-            queue_depth — sent chunks awaiting a receive (0-2 = healthy)
-            dropped     — receives with no matching send (should be 0)
-        """
-        return self._latency.summary()
+    # ==================== WebSocket Communication ====================
 
     async def _connect_ws(self) -> None:
         try:
@@ -428,8 +310,6 @@ class Denoise(BaseDenoise):
                     if self._ws_task:
                         self._ws_task.cancel()
                     self._ws_task = asyncio.create_task(self._listen_for_responses())
-
-                    self._latency.reset()
                     self._stats["reconnections"] += 1
                     self.connected = True
                     logger.info(
@@ -520,16 +400,6 @@ class Denoise(BaseDenoise):
                     audio_data = event_data.get("audio", "")
                     if audio_data:
                         denoised_bytes = base64.b64decode(audio_data)
-
-                        latency_ms = self._latency.record_receive()
-                        if latency_ms is not None and latency_ms > 200:
-                            logger.warning(
-                                f"[InferenceDenoise] High chunk latency detected: "
-                                f"{latency_ms:.1f}ms | "
-                                f"queue_depth={self._latency.queue_depth}"
-                            )
-
-                        # Bounded buffer — drop oldest frame if full
                         try:
                             self._audio_buffer.put_nowait(denoised_bytes)
                         except asyncio.QueueFull:
@@ -543,7 +413,6 @@ class Denoise(BaseDenoise):
                 audio_data = data.get("data", "")
                 if audio_data:
                     denoised_bytes = base64.b64decode(audio_data)
-                    self._latency.record_receive()
                     try:
                         self._audio_buffer.put_nowait(denoised_bytes)
                     except asyncio.QueueFull:
@@ -571,6 +440,8 @@ class Denoise(BaseDenoise):
             )
         except Exception as e:
             logger.error(f"[Denoise] Message handling error: {e}", exc_info=True)
+
+    # ==================== Resampling ====================
 
     def _resample_fast(
         self,
@@ -606,6 +477,8 @@ class Denoise(BaseDenoise):
             audio = resample_poly(audio, up, down, axis=0)
         return np.clip(audio, -32768, 32767).astype(np.int16).tobytes()
 
+    # ==================== Lifecycle ====================
+
     async def _cleanup_connection(self) -> None:
         if self._ws and not self._ws.closed:
             try:
@@ -625,14 +498,12 @@ class Denoise(BaseDenoise):
             "sample_rate": self.sample_rate,
             "channels": self.channels,
             "connected": self._ws is not None and not self._ws.closed,
-            "latency": self._latency.summary(),
         }
 
     async def flush(self) -> None:
         if self._send_buffer and self._ws and not self._ws.closed:
             padded = bytes(self._send_buffer).ljust(self._send_chunk_bytes, b"\x00")
             await self._send_audio(padded)
-            self._latency.record_send()
             self._send_buffer.clear()
         if self._ws and not self._ws.closed:
             try:
