@@ -68,7 +68,7 @@ class VoiceSettings:
 @dataclass
 class OutputConfiguration:
     """Audio output format & pacing options."""
-    format: str = "wav"
+    format: str = "pcm_s16le"
     duration: float | None = None
     sample_rate: int | None = None
 
@@ -114,7 +114,6 @@ class CambAITTS(TTS):
                 "user_instructions is only supported when speech_model='mars-instruct'."
             )
 
-        # Tell the base class we're delivering 24 kHz audio (post-resample)
         super().__init__(sample_rate=OUTPUT_SAMPLE_RATE, num_channels=CAMB_AI_CHANNELS)
 
         self.speech_model = speech_model
@@ -148,19 +147,17 @@ class CambAITTS(TTS):
         )
 
     @staticmethod
-    def _resample_pcm(audio_bytes: bytes) -> bytes:
+    def resample_audio(audio_bytes: bytes) -> bytes:
         """ Resample 48 kHz mono 16-bit PCM to 24 kHz mono 16-bit PCM. """
         if not audio_bytes:
             return b""
 
-        # Decode raw bytes to int16 samples
         samples = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32)
         cutoff = 12000.0 / CAMB_AI_SAMPLE_RATE 
         num_taps = 65 
         n = np.arange(num_taps)
         mid = num_taps // 2
 
-        # Ideal sinc kernel
         with np.errstate(invalid="ignore"):
             h = np.where(
                 n == mid,
@@ -242,9 +239,8 @@ class CambAITTS(TTS):
                     if chunk:
                         audio_data += chunk
 
-            if self.output_configuration.format == "wav":
-                pcm_data = self._extract_pcm_from_wav(audio_data)
-                resampled_pcm = self._resample_pcm(pcm_data)
+            if self.output_configuration.format == "pcm_s16le":
+                resampled_pcm = self.resample_audio(audio_data)
                 await self._stream_audio_chunks(resampled_pcm)
             else:
                 self.emit(
@@ -292,7 +288,6 @@ class CambAITTS(TTS):
             if hasattr(self, "_first_audio_callback") and self._first_audio_callback:
                 asyncio.create_task(self._first_audio_callback())
 
-        # 20 ms frame at 24 kHz mono 16-bit = 24000 × 1 × 2 × 0.02 = 960 bytes
         chunk_size = int(OUTPUT_SAMPLE_RATE * CAMB_AI_CHANNELS * 2 * 20 / 1000)
 
         for i in range(0, len(audio_bytes), chunk_size):
@@ -303,22 +298,6 @@ class CambAITTS(TTS):
             if chunk:
                 asyncio.create_task(self.audio_track.add_new_bytes(chunk))
                 await asyncio.sleep(0.001)
-
-
-    @staticmethod
-    def _extract_pcm_from_wav(self, wav_data: bytes) -> bytes:
-        """Extract PCM data from WAV file format"""
-        if len(wav_data) < 44:
-            return wav_data
-
-        if wav_data[:4] != b"RIFF":
-            return wav_data
-
-        data_pos = wav_data.find(b"data")
-        if data_pos == -1:
-            return wav_data
-
-        return wav_data[data_pos + 8:]
 
     async def aclose(self) -> None:
         """Cleanup resources"""
