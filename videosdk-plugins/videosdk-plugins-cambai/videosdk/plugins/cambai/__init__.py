@@ -1,3 +1,3 @@
-from .tts import CambAITTS
+from .tts import CambAITTS,InferenceOptions,OutputConfiguration,VoiceSettings
 
-__all__ = ["CambAITTS"]
+__all__ = ["CambAITTS","InferenceOptions","OutputConfiguration","VoiceSettings"]
