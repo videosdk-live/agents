@@ -5,8 +5,7 @@ import base64
 import json
 import os
 import re
-import time
-from typing import Any, AsyncIterator, Optional
+from typing import Any, AsyncIterator, Optional,Literal
 
 import aiohttp
 import httpx
@@ -34,14 +33,22 @@ LOUDNESS_DEFAULT = 1.0
 PACE_RANGES = {
     "bulbul:v2": (0.3, 3.0),
     "bulbul:v3": (0.5, 2.0),
+    "bulbul:v3-beta": (0.5, 2.0),
 }
 PACE_DEFAULT_RANGE = (0.5, 2.0)
 PACE_DEFAULT = 1.0
 
+TEMPERATURE_SUPPORTED_MODELS = {"bulbul:v3","bulbul:v3-beta"}
+TEMPERATURE_RANGE = (0.01, 1.0)
+TEMPERATURE_DEFAULT = 0.6
+
 ENABLE_PREPROCESSING_SUPPORTED_MODELS = {"bulbul:v2"}
 ENABLE_PREPROCESSING_DEFAULT = False
 
+SarvamAITTSModel = Literal["bulbul:v2", "bulbul:v3-beta", "bulbul:v3"]
+SarvamTTSOutputAudioBitrate = Literal["32k", "64k", "96k", "128k", "192k"]
 
+ALLOWED_OUTPUT_AUDIO_BITRATES: set[str] = {"32k", "64k", "96k", "128k", "192k"}
 
 def _pace_range(model: str) -> tuple[float, float]:
     return PACE_RANGES.get(model, PACE_DEFAULT_RANGE)
@@ -58,7 +65,7 @@ class SarvamAITTS(TTS):
         self,
         *,
         api_key: str | None = None,
-        model: str = DEFAULT_MODEL,
+        model: SarvamAITTSModel= DEFAULT_MODEL,
         language: str = DEFAULT_LANGUAGE,
         speaker: str = DEFAULT_SPEAKER,
         enable_streaming: bool = True,
@@ -67,6 +74,10 @@ class SarvamAITTS(TTS):
         pitch: float | None = PITCH_DEFAULT,
         pace: float | None = PACE_DEFAULT,
         loudness: float | None = LOUDNESS_DEFAULT,
+        temperature:float| None = 0.6,
+        output_audio_bitrate: SarvamTTSOutputAudioBitrate | str = "128k",
+        min_buffer_size: int = 50,
+        max_chunk_length: int = 150,
         enable_preprocessing: bool = False,
     ) -> None:
         """
@@ -89,6 +100,10 @@ class SarvamAITTS(TTS):
                 Set to ``None`` to omit.
             loudness (float | None): Loudness of the voice. Only for ``bulbul:v2``.
                 Range [0.3, 3.0]. Default 1.0. Set to ``None`` to omit.
+            temperature: Sampling temperature (0.01 to 1.0), used for v3 and v3-beta
+            output_audio_bitrate: Output audio bitrate
+            min_buffer_size: Minimum character length for flushing
+            max_chunk_length: Maximum chunk length for sentence splitting
             enable_preprocessing (bool): Controls whether normalization of English words and numeric entities (e.g., numbers, dates) is performed. 
                 Set to true for better handling of mixed-language text. Default False. Only for ``bulbul:v2``.
         """
@@ -114,7 +129,26 @@ class SarvamAITTS(TTS):
         self.pitch = self._validate_pitch(pitch, model)
         self.pace = self._validate_pace(pace, model)
         self.loudness = self._validate_loudness(loudness, model)
+        self.temperature = self._validate_temperature(temperature, model)
         self.enable_preprocessing = self._validate_enable_preprocessing(enable_preprocessing, model)
+
+        if output_audio_bitrate is not None:
+            if output_audio_bitrate not in ALLOWED_OUTPUT_AUDIO_BITRATES:
+                raise ValueError(
+                    "output_audio_bitrate must be one of "
+                    f"{', '.join(sorted(ALLOWED_OUTPUT_AUDIO_BITRATES))}"
+                )
+            self.output_audio_bitrate = output_audio_bitrate
+
+        if min_buffer_size is not None:
+            if not 30 <= min_buffer_size <= 200:
+                raise ValueError("min_buffer_size must be between 30 and 200")
+            self.min_buffer_size = min_buffer_size
+
+        if max_chunk_length is not None:
+            if not 50 <= max_chunk_length <= 500:
+                raise ValueError("max_chunk_length must be between 50 and 500")
+            self.max_chunk_length = max_chunk_length
 
         self._ws_session: aiohttp.ClientSession | None = None
         self._ws_connection: aiohttp.ClientWebSocketResponse | None = None
@@ -177,6 +211,23 @@ class SarvamAITTS(TTS):
                 f"loudness must be between {lo} and {hi} for model '{model}', got {loudness}."
             )
         return loudness
+    @staticmethod
+    def _validate_temperature(temperature: float | None, model: str) -> float | None:
+        """ Validate temperature for the given model. """
+        if temperature is None:
+            return None
+        if model not in TEMPERATURE_SUPPORTED_MODELS:
+            logger.warning(
+                f"temperature is not supported for model '{model}' "
+                f"(supported: {TEMPERATURE_SUPPORTED_MODELS}). Ignoring temperature value."
+            )
+            return None
+        lo, hi = TEMPERATURE_RANGE
+        if not lo <= temperature <= hi:
+            raise ValueError(
+                f"temperature must be between {lo} and {hi} for model '{model}', got {temperature}."
+            )
+        return temperature
 
     @staticmethod
     def _validate_enable_preprocessing(enable_preprocessing: bool | None, model: str) -> bool | None:
@@ -201,6 +252,8 @@ class SarvamAITTS(TTS):
             params["pace"] = self.pace
         if self.loudness is not None:
             params["loudness"] = self.loudness
+        if self.temperature is not None:
+            params["temperature"] = self.temperature
         if self.enable_preprocessing is not None:
             params["enable_preprocessing"] = self.enable_preprocessing
         return params
@@ -312,9 +365,10 @@ class SarvamAITTS(TTS):
             try:
                 self._ws_session = aiohttp.ClientSession()
                 headers = {"Api-Subscription-Key": self.api_key}
+                base_url = f"{self.base_url_ws}?model={self.model}"
                 self._ws_connection = await asyncio.wait_for(
                     self._ws_session.ws_connect(
-                        self.base_url_ws, headers=headers, heartbeat=20
+                        base_url, headers=headers, heartbeat=20
                     ),
                     timeout=10.0,
                 )
@@ -335,6 +389,9 @@ class SarvamAITTS(TTS):
                 "speaker": self.speaker,
                 "speech_sample_rate": str(self.sample_rate),
                 "output_audio_codec": self.output_audio_codec,
+                "output_audio_bitrate": self.output_audio_bitrate,
+                "min_buffer_size": self.min_buffer_size,
+                "max_chunk_length": self.max_chunk_length,
             },
         }
 
@@ -521,6 +578,7 @@ class SarvamAITTS(TTS):
         self._validate_pitch(self.pitch, self.model)
         self._validate_pace(self.pace, self.model)
         self._validate_loudness(self.loudness, self.model)
+        self._validate_temperature(self.temperature, self.model)
         self._validate_enable_preprocessing(self.enable_preprocessing, self.model)
 
     def _remove_wav_header(self, audio_bytes: bytes) -> bytes:
