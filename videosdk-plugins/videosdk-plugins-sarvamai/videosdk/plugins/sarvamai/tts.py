@@ -45,11 +45,6 @@ TEMPERATURE_DEFAULT = 0.6
 ENABLE_PREPROCESSING_SUPPORTED_MODELS = {"bulbul:v2"}
 ENABLE_PREPROCESSING_DEFAULT = False
 
-SarvamAITTSModel = Literal["bulbul:v2", "bulbul:v3-beta", "bulbul:v3"]
-SarvamTTSOutputAudioBitrate = Literal["32k", "64k", "96k", "128k", "192k"]
-
-ALLOWED_OUTPUT_AUDIO_BITRATES: set[str] = {"32k", "64k", "96k", "128k", "192k"}
-
 def _pace_range(model: str) -> tuple[float, float]:
     return PACE_RANGES.get(model, PACE_DEFAULT_RANGE)
 
@@ -65,7 +60,7 @@ class SarvamAITTS(TTS):
         self,
         *,
         api_key: str | None = None,
-        model: SarvamAITTSModel= DEFAULT_MODEL,
+        model: str= DEFAULT_MODEL,
         language: str = DEFAULT_LANGUAGE,
         speaker: str = DEFAULT_SPEAKER,
         enable_streaming: bool = True,
@@ -75,7 +70,7 @@ class SarvamAITTS(TTS):
         pace: float | None = PACE_DEFAULT,
         loudness: float | None = LOUDNESS_DEFAULT,
         temperature:float| None = 0.6,
-        output_audio_bitrate: SarvamTTSOutputAudioBitrate | str = "128k",
+        output_audio_bitrate: Literal["32k", "64k", "96k", "128k", "192k"] = "128k",
         min_buffer_size: int = 50,
         max_chunk_length: int = 150,
         enable_preprocessing: bool = False,
@@ -100,10 +95,10 @@ class SarvamAITTS(TTS):
                 Set to ``None`` to omit.
             loudness (float | None): Loudness of the voice. Only for ``bulbul:v2``.
                 Range [0.3, 3.0]. Default 1.0. Set to ``None`` to omit.
-            temperature: Sampling temperature (0.01 to 1.0), used for v3 and v3-beta
-            output_audio_bitrate: Output audio bitrate
-            min_buffer_size: Minimum character length for flushing
-            max_chunk_length: Maximum chunk length for sentence splitting
+            temperature (float): Sampling temperature range between 0.01 to 1.0. Only for  for ``bulbul:v3`` and ``bulbul:v3-beta``
+            output_audio_bitrate (Literal|str): Output audio bitrate. Allowed values ["32k", "64k", "96k", "128k", "192k"] 
+            min_buffer_size(int): Minimum character length that trigger buffer flushing
+            max_chunk_length (int): Maximum chunk length for sentence splitting
             enable_preprocessing (bool): Controls whether normalization of English words and numeric entities (e.g., numbers, dates) is performed. 
                 Set to true for better handling of mixed-language text. Default False. Only for ``bulbul:v2``.
         """
@@ -131,24 +126,9 @@ class SarvamAITTS(TTS):
         self.loudness = self._validate_loudness(loudness, model)
         self.temperature = self._validate_temperature(temperature, model)
         self.enable_preprocessing = self._validate_enable_preprocessing(enable_preprocessing, model)
-
-        if output_audio_bitrate is not None:
-            if output_audio_bitrate not in ALLOWED_OUTPUT_AUDIO_BITRATES:
-                raise ValueError(
-                    "output_audio_bitrate must be one of "
-                    f"{', '.join(sorted(ALLOWED_OUTPUT_AUDIO_BITRATES))}"
-                )
-            self.output_audio_bitrate = output_audio_bitrate
-
-        if min_buffer_size is not None:
-            if not 30 <= min_buffer_size <= 200:
-                raise ValueError("min_buffer_size must be between 30 and 200")
-            self.min_buffer_size = min_buffer_size
-
-        if max_chunk_length is not None:
-            if not 50 <= max_chunk_length <= 500:
-                raise ValueError("max_chunk_length must be between 50 and 500")
-            self.max_chunk_length = max_chunk_length
+        self.output_audio_bitrate = output_audio_bitrate
+        self.min_buffer_size = min_buffer_size
+        self.max_chunk_length = max_chunk_length
 
         self._ws_session: aiohttp.ClientSession | None = None
         self._ws_connection: aiohttp.ClientWebSocketResponse | None = None
