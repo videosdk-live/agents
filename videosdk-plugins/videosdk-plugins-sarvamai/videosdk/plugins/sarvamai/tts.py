@@ -23,17 +23,14 @@ DEFAULT_LANGUAGE = "en-IN"
 SARVAM_TTS_URL_STREAMING = "wss://api.sarvam.ai/text-to-speech/ws"
 SARVAM_TTS_URL_HTTP = "https://api.sarvam.ai/text-to-speech"
 
-# pitch: only supported on bulbul:v2
 PITCH_SUPPORTED_MODELS = {"bulbul:v2"}
 PITCH_RANGE = (-0.75, 0.75)
 PITCH_DEFAULT = 0.0
 
-# loudness: only supported on bulbul:v2
 LOUDNESS_SUPPORTED_MODELS = {"bulbul:v2"}
 LOUDNESS_RANGE = (0.3, 3.0)
 LOUDNESS_DEFAULT = 1.0
 
-# pace: supported on all models, but different ranges
 PACE_RANGES = {
     "bulbul:v2": (0.3, 3.0),
     "bulbul:v3": (0.5, 2.0),
@@ -41,7 +38,6 @@ PACE_RANGES = {
 PACE_DEFAULT_RANGE = (0.5, 2.0)
 PACE_DEFAULT = 1.0
 
-# enable_preprocessing: only supported on bulbul:v2
 ENABLE_PREPROCESSING_SUPPORTED_MODELS = {"bulbul:v2"}
 ENABLE_PREPROCESSING_DEFAULT = False
 
