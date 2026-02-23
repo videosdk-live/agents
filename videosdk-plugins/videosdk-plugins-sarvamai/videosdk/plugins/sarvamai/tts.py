@@ -5,8 +5,7 @@ import base64
 import json
 import os
 import re
-import time
-from typing import Any, AsyncIterator, Optional
+from typing import Any, AsyncIterator, Optional,Literal
 
 import aiohttp
 import httpx
@@ -23,6 +22,32 @@ DEFAULT_LANGUAGE = "en-IN"
 SARVAM_TTS_URL_STREAMING = "wss://api.sarvam.ai/text-to-speech/ws"
 SARVAM_TTS_URL_HTTP = "https://api.sarvam.ai/text-to-speech"
 
+PITCH_SUPPORTED_MODELS = {"bulbul:v2"}
+PITCH_RANGE = (-0.75, 0.75)
+PITCH_DEFAULT = 0.0
+
+LOUDNESS_SUPPORTED_MODELS = {"bulbul:v2"}
+LOUDNESS_RANGE = (0.3, 3.0)
+LOUDNESS_DEFAULT = 1.0
+
+PACE_RANGES = {
+    "bulbul:v2": (0.3, 3.0),
+    "bulbul:v3": (0.5, 2.0),
+    "bulbul:v3-beta": (0.5, 2.0),
+}
+PACE_DEFAULT_RANGE = (0.5, 2.0)
+PACE_DEFAULT = 1.0
+
+TEMPERATURE_SUPPORTED_MODELS = {"bulbul:v3","bulbul:v3-beta"}
+TEMPERATURE_RANGE = (0.01, 1.0)
+TEMPERATURE_DEFAULT = 0.6
+
+ENABLE_PREPROCESSING_SUPPORTED_MODELS = {"bulbul:v2"}
+ENABLE_PREPROCESSING_DEFAULT = False
+
+def _pace_range(model: str) -> tuple[float, float]:
+    return PACE_RANGES.get(model, PACE_DEFAULT_RANGE)
+
 
 class SarvamAITTS(TTS):
     """
@@ -35,12 +60,20 @@ class SarvamAITTS(TTS):
         self,
         *,
         api_key: str | None = None,
-        model: str = DEFAULT_MODEL,
+        model: str= DEFAULT_MODEL,
         language: str = DEFAULT_LANGUAGE,
         speaker: str = DEFAULT_SPEAKER,
         enable_streaming: bool = True,
         sample_rate: int = SARVAM_SAMPLE_RATE,
         output_audio_codec: str = "linear16",
+        pitch: float | None = PITCH_DEFAULT,
+        pace: float | None = PACE_DEFAULT,
+        loudness: float | None = LOUDNESS_DEFAULT,
+        temperature:float| None = 0.6,
+        output_audio_bitrate: Literal["32k", "64k", "96k", "128k", "192k"] = "128k",
+        min_buffer_size: int = 50,
+        max_chunk_length: int = 150,
+        enable_preprocessing: bool = False,
     ) -> None:
         """
         Initializes the SarvamAITTS plugin.
@@ -48,13 +81,26 @@ class SarvamAITTS(TTS):
         Args:
             api_key (Optional[str]): The Sarvam.ai API key. If not provided, it will
                 be read from the SARVAMAI_API_KEY environment variable.
-            model (str): The TTS model to use.
+            model (str): The TTS model to use (e.g. ``"bulbul:v2"``, ``"bulbul:v3"``).
             language (str): The target language code (e.g., "en-IN").
             speaker (str): The desired speaker for the voice.
             enable_streaming (bool): If True, uses WebSockets for low-latency streaming.
                 If False, uses HTTP for batch synthesis.
             sample_rate (int): The audio sample rate.
             output_audio_codec (str): The desired output audio codec.
+            pitch (float | None): Pitch of the voice. Only for ``bulbul:v2``.
+                Range [-0.75, 0.75]. Default 0.0. Set to ``None`` to omit.
+            pace (float | None): Pace of the voice.
+                ``bulbul:v2`` → [0.3, 3.0]; ``bulbul:v3`` → [0.5, 2.0]. Default 1.0.
+                Set to ``None`` to omit.
+            loudness (float | None): Loudness of the voice. Only for ``bulbul:v2``.
+                Range [0.3, 3.0]. Default 1.0. Set to ``None`` to omit.
+            temperature (float): Sampling temperature range between 0.01 to 1.0. Only for  for ``bulbul:v3`` and ``bulbul:v3-beta``
+            output_audio_bitrate (Literal|str): Output audio bitrate. Allowed values ["32k", "64k", "96k", "128k", "192k"] 
+            min_buffer_size(int): Minimum character length that trigger buffer flushing
+            max_chunk_length (int): Maximum chunk length for sentence splitting
+            enable_preprocessing (bool): Controls whether normalization of English words and numeric entities (e.g., numbers, dates) is performed. 
+                Set to true for better handling of mixed-language text. Default False. Only for ``bulbul:v2``.
         """
         super().__init__(sample_rate=sample_rate, num_channels=SARVAM_CHANNELS)
 
@@ -74,6 +120,16 @@ class SarvamAITTS(TTS):
         self.base_url_ws = SARVAM_TTS_URL_STREAMING
         self.base_url_http = SARVAM_TTS_URL_HTTP
 
+        # Validate and store speech parameters
+        self.pitch = self._validate_pitch(pitch, model)
+        self.pace = self._validate_pace(pace, model)
+        self.loudness = self._validate_loudness(loudness, model)
+        self.temperature = self._validate_temperature(temperature, model)
+        self.enable_preprocessing = self._validate_enable_preprocessing(enable_preprocessing, model)
+        self.output_audio_bitrate = output_audio_bitrate
+        self.min_buffer_size = min_buffer_size
+        self.max_chunk_length = max_chunk_length
+
         self._ws_session: aiohttp.ClientSession | None = None
         self._ws_connection: aiohttp.ClientWebSocketResponse | None = None
         self._receive_task: asyncio.Task | None = None
@@ -88,6 +144,100 @@ class SarvamAITTS(TTS):
         self._first_chunk_sent = False
         self.ws_count = 0
 
+    @staticmethod
+    def _validate_pitch(pitch: float | None, model: str) -> float | None:
+        """ Validate pitch for the given model. """
+        if pitch is None:
+            return None
+        if model not in PITCH_SUPPORTED_MODELS:
+            logger.warning(
+                f"pitch is not supported for model '{model}' "
+                f"(supported: {PITCH_SUPPORTED_MODELS}). Ignoring pitch value."
+            )
+            return None
+        lo, hi = PITCH_RANGE
+        if not lo <= pitch <= hi:
+            raise ValueError(
+                f"pitch must be between {lo} and {hi} for model '{model}', got {pitch}."
+            )
+        return pitch
+
+    @staticmethod
+    def _validate_pace(pace: float | None, model: str) -> float | None:
+        """ Validate pace for the given model. """
+        if pace is None:
+            return None
+        lo, hi = _pace_range(model)
+        if not lo <= pace <= hi:
+            raise ValueError(
+                f"pace must be between {lo} and {hi} for model '{model}', got {pace}."
+            )
+        return pace
+
+    @staticmethod
+    def _validate_loudness(loudness: float | None, model: str) -> float | None:
+        """ Validate loudness for the given model. """
+        if loudness is None:
+            return None
+        if model not in LOUDNESS_SUPPORTED_MODELS:
+            logger.warning(
+                f"loudness is not supported for model '{model}' "
+                f"(supported: {LOUDNESS_SUPPORTED_MODELS}). Ignoring loudness value."
+            )
+            return None
+        lo, hi = LOUDNESS_RANGE
+        if not lo <= loudness <= hi:
+            raise ValueError(
+                f"loudness must be between {lo} and {hi} for model '{model}', got {loudness}."
+            )
+        return loudness
+    @staticmethod
+    def _validate_temperature(temperature: float | None, model: str) -> float | None:
+        """ Validate temperature for the given model. """
+        if temperature is None:
+            return None
+        if model not in TEMPERATURE_SUPPORTED_MODELS:
+            logger.warning(
+                f"temperature is not supported for model '{model}' "
+                f"(supported: {TEMPERATURE_SUPPORTED_MODELS}). Ignoring temperature value."
+            )
+            return None
+        lo, hi = TEMPERATURE_RANGE
+        if not lo <= temperature <= hi:
+            raise ValueError(
+                f"temperature must be between {lo} and {hi} for model '{model}', got {temperature}."
+            )
+        return temperature
+
+    @staticmethod
+    def _validate_enable_preprocessing(enable_preprocessing: bool | None, model: str) -> bool | None:
+        """ Validate enable_preprocessing for the given model. """
+        if enable_preprocessing is None:
+            return None
+        if model not in ENABLE_PREPROCESSING_SUPPORTED_MODELS:
+            logger.warning(
+                f"enable_preprocessing is not supported for model '{model}' "
+                f"(supported: {ENABLE_PREPROCESSING_SUPPORTED_MODELS}). Ignoring enable_preprocessing value."
+            )
+            return None
+        return enable_preprocessing
+
+    def _build_speech_params(self) -> dict[str, Any]:
+        """ Returns a dict containing only the speech keys whose values are not None """
+        self.validate_parameters()
+        params: dict[str, Any] = {}
+        if self.pitch is not None:
+            params["pitch"] = self.pitch
+        if self.pace is not None:
+            params["pace"] = self.pace
+        if self.loudness is not None:
+            params["loudness"] = self.loudness
+        if self.temperature is not None:
+            params["temperature"] = self.temperature
+        if self.enable_preprocessing is not None:
+            params["enable_preprocessing"] = self.enable_preprocessing
+        return params
+    
     def reset_first_audio_tracking(self) -> None:
         """Resets tracking for the first audio chunk latency."""
         self._first_chunk_sent = False
@@ -195,9 +345,10 @@ class SarvamAITTS(TTS):
             try:
                 self._ws_session = aiohttp.ClientSession()
                 headers = {"Api-Subscription-Key": self.api_key}
+                base_url = f"{self.base_url_ws}?model={self.model}"
                 self._ws_connection = await asyncio.wait_for(
                     self._ws_session.ws_connect(
-                        self.base_url_ws, headers=headers, heartbeat=20
+                        base_url, headers=headers, heartbeat=20
                     ),
                     timeout=10.0,
                 )
@@ -218,8 +369,14 @@ class SarvamAITTS(TTS):
                 "speaker": self.speaker,
                 "speech_sample_rate": str(self.sample_rate),
                 "output_audio_codec": self.output_audio_codec,
+                "output_audio_bitrate": self.output_audio_bitrate,
+                "min_buffer_size": self.min_buffer_size,
+                "max_chunk_length": self.max_chunk_length,
             },
         }
+
+        config_payload["data"].update(self._build_speech_params())
+
         if self._ws_connection:
             await self._ws_connection.send_str(json.dumps(config_payload))
 
@@ -330,6 +487,9 @@ class SarvamAITTS(TTS):
     async def _http_synthesis(self, text: str) -> None:
         """Performs TTS synthesis using HTTP with a retry for connection errors."""
         payload = { "text": text, "target_language_code": self.language, "speaker": self.speaker, "speech_sample_rate": str(self.sample_rate), "model": self.model, "output_audio_codec": self.output_audio_codec }
+        
+        payload.update(self._build_speech_params())
+
         headers = { "Content-Type": "application/json", "api-subscription-key": self.api_key }
         max_attempts = 2
         for attempt in range(max_attempts):
@@ -389,6 +549,17 @@ class SarvamAITTS(TTS):
                 
             if self.audio_track:
                 asyncio.create_task(self.audio_track.add_new_bytes(block))
+
+    def validate_parameters(self, **kwargs: Any) -> None:
+        """
+        Validates a set of TTS parameters against the current model's constraints.
+        Raises ``ValueError`` for any out-of-range value.
+        """
+        self._validate_pitch(self.pitch, self.model)
+        self._validate_pace(self.pace, self.model)
+        self._validate_loudness(self.loudness, self.model)
+        self._validate_temperature(self.temperature, self.model)
+        self._validate_enable_preprocessing(self.enable_preprocessing, self.model)
 
     def _remove_wav_header(self, audio_bytes: bytes) -> bytes:
         """Removes the WAV header if present."""
