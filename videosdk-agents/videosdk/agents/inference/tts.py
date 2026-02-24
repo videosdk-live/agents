@@ -141,7 +141,7 @@ class TTS(BaseTTS):
             model_id = config.get("model_id")
             sample_rate = config.get("sample_rate")
             voice_name = config.get("voice_name")
-            language = config.get("language")
+            language = config.get("language_code")
             speed = config.get("speed")
             pitch = config.get("pitch")
 
@@ -234,20 +234,20 @@ class TTS(BaseTTS):
         config = {
             "model_id": model_id,
             "language": language,
-            "voic_id": voice_id,
+            "voice_id": voice_id,
             "sample_rate": sample_rate,
         }
 
         if config:
             model_id = config.get("model_id")
             sample_rate = config.get("sample_rate")
-            voice_id = config.get("voice")
+            voice_id = config.get("voice_id")
             language = config.get("language")
 
         return TTS(
             provider="cartesia",
             model_id=model_id,
-            voice_id=voice_id if isinstance(voice_id, str) else "embedding",
+            voice_id=voice_id,
             language=language,
             config=config,
             enable_streaming=enable_streaming,
