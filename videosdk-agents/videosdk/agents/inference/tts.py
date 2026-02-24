@@ -107,6 +107,7 @@ class TTS(BaseTTS):
         sample_rate: int = 24000,
         enable_streaming: bool = True,
         base_url: str | None = None,
+        config: Optional[Dict] = None,
     ) -> "TTS":
         """
         Create a TTS instance configured for Google Cloud Text-to-Speech.
@@ -136,6 +137,14 @@ class TTS(BaseTTS):
             "model_id": model_id,
         }
 
+        if config:
+            model_id = config.get("model_id")
+            sample_rate = config.get("sample_rate")
+            voice_name = config.get("voice_name")
+            language = config.get("language")
+            speed = config.get("speed")
+            pitch = config.get("pitch")
+
         return TTS(
             provider="google",
             model_id=model_id,
@@ -156,6 +165,7 @@ class TTS(BaseTTS):
         sample_rate: int = 24000,
         enable_streaming: bool = True,
         base_url: str | None = None,
+        config: Optional[Dict] = None,
     ) -> "TTS":
         """
         Create a TTS instance configured for Sarvam AI.
@@ -178,6 +188,12 @@ class TTS(BaseTTS):
             "sample_rate": sample_rate,
         }
 
+        if config:
+            model_id = config.get("model_id")
+            sample_rate = config.get("sample_rate")
+            speaker = config.get("speaker")
+            language = config.get("language")
+
         return TTS(
             provider="sarvamai",
             model_id=model_id,
@@ -198,6 +214,7 @@ class TTS(BaseTTS):
         sample_rate: int = 24000,
         enable_streaming: bool = True,
         base_url: str | None = None,
+        config: Optional[Dict] = None,
     ) -> "TTS":
         """
         Create a TTS instance configured for Cartesia.
@@ -217,9 +234,15 @@ class TTS(BaseTTS):
         config = {
             "model_id": model_id,
             "language": language,
-            "voice": voice_id,
+            "voic_id": voice_id,
             "sample_rate": sample_rate,
         }
+
+        if config:
+            model_id = config.get("model_id")
+            sample_rate = config.get("sample_rate")
+            voice_id = config.get("voice")
+            language = config.get("language")
 
         return TTS(
             provider="cartesia",
@@ -242,6 +265,7 @@ class TTS(BaseTTS):
         bit_rate: int | None = None,
         enable_streaming: bool = True,
         base_url: str | None = None,
+        config: Optional[Dict] = None,
     ) -> "TTS":
         """
         Create a TTS instance configured for Deepgram Aura.
@@ -303,6 +327,12 @@ class TTS(BaseTTS):
             "sample_rate": sample_rate,
             "container": container,
         }
+
+        if config:
+            model_id = config.get("model_id")
+            sample_rate = config.get("sample_rate")
+            container = config.get("container")
+            encoding = config.get("encoding")
 
         if bit_rate is not None:
             config["bit_rate"] = bit_rate

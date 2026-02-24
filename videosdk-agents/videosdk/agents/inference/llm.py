@@ -120,6 +120,7 @@ class LLM(BaseLLM):
     def google(
         *,
         model: str = "gemini-2.0-flash",
+        config: Optional[Dict] = None,
         temperature: float = 0.7,
         tool_choice: ToolChoice = "auto",
         max_output_tokens: Optional[int] = None,
@@ -134,7 +135,7 @@ class LLM(BaseLLM):
 
         Args:
             model: Gemini model identifier (default: "gemini-2.0-flash")
-                   Options: "gemini-2.0-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro", etc.
+            Options: "gemini-2.0-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro", etc.
             temperature: Controls randomness in responses (0.0 to 1.0)
             tool_choice: Tool calling mode ("auto", "required", "none")
             max_output_tokens: Maximum tokens in model responses
@@ -147,11 +148,14 @@ class LLM(BaseLLM):
         Returns:
             Configured LLM instance for Google Gemini
         """
-        config = {"provider": "google", "model_id": model}
+
+        config = {"model_id": model}
+        if config:
+            model = config.get("model")
 
         return LLM(
             provider="google",
-            model_id=model,
+            model=model,
             temperature=temperature,
             tool_choice=tool_choice,
             max_output_tokens=max_output_tokens,

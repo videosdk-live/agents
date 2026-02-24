@@ -104,6 +104,7 @@ class STT(BaseSTT):
         output_sample_rate: int = 16000,
         enable_streaming: bool = True,
         base_url: str | None = None,
+        config: Optional[Dict] = None,
     ) -> "STT":
         """
         Create an STT instance configured for Google Cloud Speech-to-Text.
@@ -134,6 +135,12 @@ class STT(BaseSTT):
             "location": location,
         }
 
+        if config:
+            model_id = config.get("model_id")
+            language = config.get("languages" or "language")
+            input_sample_rate = config.get("input_sample_rate")
+            output_sample_rate = config.get("output_sample_rate")
+
         return STT(
             provider="google",
             model_id=model_id,
@@ -152,6 +159,7 @@ class STT(BaseSTT):
         output_sample_rate: int = 16000,
         enable_streaming: bool = True,
         base_url: str | None = None,
+        config: Optional[Dict] = None,
     ) -> "STT":
         """
         Create an STT instance configured for Sarvam AI.
@@ -174,6 +182,12 @@ class STT(BaseSTT):
             "output_sample_rate": output_sample_rate,
         }
 
+        if config:
+            model_id = config.get("model_id")
+            language = config.get("languages" or "language")
+            input_sample_rate = config.get("input_smaple_rat")
+            output_sample_rate = config.get("output_sample_rate")
+
         return STT(
             provider="sarvamai",
             model_id=model_id,
@@ -195,6 +209,7 @@ class STT(BaseSTT):
         endpointing: int = 50,
         enable_streaming: bool = True,
         base_url: str | None = None,
+        config: Optional[Dict] = None,
     ) -> "STT":
         """
         Create an STT instance configured for Deepgram.
@@ -222,6 +237,15 @@ class STT(BaseSTT):
             "smart_format": smart_format,
             "endpointing": endpointing,
         }
+
+        if config:
+            model_id = config.get("model_id")
+            language = config.get("language")
+            input_sample_rate = config.get("input_smaple_rat")
+            interim_results = config.get("interim_results")
+            punctuate = config.get("punctuate")
+            smart_format = config.get("smart_format")
+            endpointing = config.get("endpointing")
 
         return STT(
             provider="deepgram",
