@@ -124,7 +124,7 @@ class STT(BaseSTT):
             Configured STT instance for Google
         """
         config = {
-            "model": model_id,
+            "model_id": model_id,
             "language": language,
             "languages": languages or [language],
             "input_sample_rate": input_sample_rate,
@@ -168,7 +168,7 @@ class STT(BaseSTT):
             Configured STT instance for Sarvam AI
         """
         config = {
-            "model": model_id,
+            "model_id": model_id,
             "language": language,
             "input_sample_rate": input_sample_rate,
             "output_sample_rate": output_sample_rate,
@@ -214,7 +214,7 @@ class STT(BaseSTT):
             Configured STT instance for Deepgram
         """
         config = {
-            "model": model_id,
+            "model_id": model_id,
             "language": language,
             "input_sample_rate": input_sample_rate,
             "interim_results": interim_results,

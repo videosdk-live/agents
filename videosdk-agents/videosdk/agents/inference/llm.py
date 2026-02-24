@@ -147,6 +147,8 @@ class LLM(BaseLLM):
         Returns:
             Configured LLM instance for Google Gemini
         """
+        config = {"provider": "google", "model_id": model}
+
         return LLM(
             provider="google",
             model_id=model,
@@ -158,6 +160,7 @@ class LLM(BaseLLM):
             presence_penalty=presence_penalty,
             frequency_penalty=frequency_penalty,
             base_url=base_url,
+            config=config,
         )
 
     # ==================== Core Methods ====================

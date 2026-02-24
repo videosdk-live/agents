@@ -133,6 +133,7 @@ class TTS(BaseTTS):
             "speed": speed,
             "pitch": pitch,
             "sample_rate": sample_rate,
+            "model_id": model_id,
         }
 
         return TTS(
@@ -171,7 +172,7 @@ class TTS(BaseTTS):
             Configured TTS instance for Sarvam AI
         """
         config = {
-            "model": model_id,
+            "model_id": model_id,
             "language": language,
             "speaker": speaker,
             "sample_rate": sample_rate,
@@ -214,7 +215,7 @@ class TTS(BaseTTS):
             Configured TTS instance for Cartesia
         """
         config = {
-            "model": model_id,
+            "model_id": model_id,
             "language": language,
             "voice": voice_id,
             "sample_rate": sample_rate,
@@ -297,7 +298,7 @@ class TTS(BaseTTS):
             )
         """
         config = {
-            "model": model_id,
+            "model_id": model_id,
             "encoding": encoding,
             "sample_rate": sample_rate,
             "container": container,

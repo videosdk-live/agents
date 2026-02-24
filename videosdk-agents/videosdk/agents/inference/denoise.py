@@ -157,7 +157,7 @@ class Denoise(BaseDenoise):
             ... )
         """
         config = {
-            "model": model_id,
+            "model_id": model_id,
             "sample_rate": sample_rate,
             "channels": channels,
         }
@@ -172,51 +172,6 @@ class Denoise(BaseDenoise):
         )
 
     @staticmethod
-    def krisp(
-        *,
-        model_id: str = "krisp-viva-tel-v2",
-        sample_rate: int = 16000,
-        channels: int = 1,
-        base_url: str | None = None,
-    ) -> "Denoise":
-
-        """
-            Create a Denoise instance configured for Krisp.
-
-            Args:
-                model_id: Krisp model (default: "krisp-viva-tel-v2")
-
-                sample_rate: Audio sample rate in Hz
-                    - krisp-viva-tel-v2 - 16000 for noise cancellation
-                channels: Number of audio channels (default: 1 for mono)
-                base_url: Custom inference gateway URL
-
-            Returns:
-                Configured Denoise instance for Krisp
-
-            Example:
-                >>> # Ultra-fast for real-time calls
-                >>> denoise = Denoise.krisp(model_id="krisp-viva-tel-v2")
-                >>>
-                >>> # Best quality for recordings
-                >>> denoise = Denoise.krisp(model_id="krisp-viva-tel-v2")
-                >>>
-                >>> # Voice AI / STT optimization (16kHz)
-                >>> denoise = Denoise.krisp(
-                ...     model_id="krisp-viva-tel-v2",
-                ...     sample_rate=16000
-                ... )
-        """
-
-        return Denoise(
-            provider="krisp",
-            model_id=model_id,
-            sample_rate=sample_rate,
-            channels=channels,
-            base_url=base_url or VIDEOSDK_INFERENCE_URL,
-        )
-    
-    @staticmethod
     def sanas(
         *,
         model_id: str = "VI_G_NC3.0",
@@ -224,34 +179,39 @@ class Denoise(BaseDenoise):
         channels: int = 1,
         base_url: str | None = None,
     ) -> "Denoise":
-
         """
-            Create a Denoise instance configured for Sanas.
+        Create a Denoise instance configured for Sanas.
 
-            Args:
-                model_id: Sanas model (default: "VI_G_NC3.0")
+        Args:
+            model_id: Sanas model (default: "VI_G_NC3.0")
 
-                sample_rate: Audio sample rate in Hz
-                    - VI_G_NC3.0 - 16000 for noise cancellation
-                channels: Number of audio channels (default: 1 for mono)
-                base_url: Custom inference gateway URL
+            sample_rate: Audio sample rate in Hz
+                - VI_G_NC3.0 - 16000 for noise cancellation
+            channels: Number of audio channels (default: 1 for mono)
+            base_url: Custom inference gateway URL
 
-            Returns:
-                Configured Denoise instance for Sanas
+        Returns:
+            Configured Denoise instance for Sanas
 
-            Example:
-                >>> # Ultra-fast for real-time calls
-                >>> denoise = Denoise.aicoustics(model_id="VI_G_NC3.0")
-                >>>
-                >>> # Best quality for recordings
-                >>> denoise = Denoise.aicoustics(model_id="VI_G_NC3.0")
-                >>>
-                >>> # Voice AI / STT optimization (16kHz)
-                >>> denoise = Denoise.sanas(
-                ...     model_id="VI_G_NC3.0",
-                ...     sample_rate=16000
-                ... )
-            """
+        Example:
+            >>> # Ultra-fast for real-time calls
+            >>> denoise = Denoise.aicoustics(model_id="VI_G_NC3.0")
+            >>>
+            >>> # Best quality for recordings
+            >>> denoise = Denoise.aicoustics(model_id="VI_G_NC3.0")
+            >>>
+            >>> # Voice AI / STT optimization (16kHz)
+            >>> denoise = Denoise.sanas(
+            ...     model_id="VI_G_NC3.0",
+            ...     sample_rate=16000
+            ... )
+        """
+
+        config = {
+            "model_id": model_id,
+            "sample_rate": sample_rate,
+            "channels": channels,
+        }
 
         return Denoise(
             provider="sanas",
@@ -259,6 +219,7 @@ class Denoise(BaseDenoise):
             sample_rate=sample_rate,
             channels=channels,
             base_url=base_url or VIDEOSDK_INFERENCE_URL,
+            config=config,
         )
 
     # ==================== Core Denoise Methods ====================
