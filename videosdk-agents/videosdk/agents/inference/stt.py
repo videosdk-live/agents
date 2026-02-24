@@ -269,7 +269,7 @@ class STT(BaseSTT):
         #     **default_config,
         # }
         config = {
-            "model_id": model_id,
+            "model": model_id,
             "language": language,
             "input_sample_rate": input_sample_rate,
             "interim_results": interim_results,
