@@ -258,7 +258,9 @@ class TTS(BaseTTS):
     @staticmethod
     def deepgram(
         *,
-        model_id: str = "aura-2-amalthea-en",
+        model_id: str = "aura-2",
+        voice_id: str = "amalthea",
+        language: str = "en",
         encoding: str = "linear16",
         sample_rate: int = 24000,
         container: str = "none",
@@ -276,18 +278,8 @@ class TTS(BaseTTS):
         Args:
             model_id: Deepgram Aura model (default: "aura-asteria-en")
                      Available models:
-                     - aura-asteria-en (Female, Conversational)
-                     - aura-luna-en (Female, Expressive)
-                     - aura-stella-en (Female, Warm)
-                     - aura-athena-en (Female, Professional)
-                     - aura-hera-en (Female, Clear)
-                     - aura-orion-en (Male, Deep)
-                     - aura-arcas-en (Male, Authoritative)
-                     - aura-perseus-en (Male, Dynamic)
-                     - aura-angus-en (Male, Conversational)
-                     - aura-orpheus-en (Male, Smooth)
-                     - aura-helios-en (Male, Energetic)
-                     - aura-zeus-en (Male, Commanding)
+                     - Aura 2
+
             encoding: Audio encoding format (default: "linear16")
                      Options: linear16, mulaw, alaw, opus, aac, flac
             sample_rate: Audio sample rate in Hz (default: 24000)
@@ -306,16 +298,11 @@ class TTS(BaseTTS):
             # Using default voice
             tts = TTS.deepgram()
 
-            # Using specific voice and settings
-            tts = TTS.deepgram(
-                model_id="aura-orion-en",
-                encoding="linear16",
-                sample_rate=24000
-            )
-
             # Using compressed audio
             tts = TTS.deepgram(
-                model_id="aura-luna-en",
+                model_id: str = "aura-2",
+                voice_id: str = "amalthea",
+                language: str = "en"
                 encoding="opus",
                 container="ogg",
                 bit_rate=64000
@@ -326,6 +313,8 @@ class TTS(BaseTTS):
             "encoding": encoding,
             "sample_rate": sample_rate,
             "container": container,
+            "voice_id": voice_id,
+            "language": language,
         }
 
         if config:
@@ -333,6 +322,8 @@ class TTS(BaseTTS):
             sample_rate = config.get("sample_rate")
             container = config.get("container")
             encoding = config.get("encoding")
+            voice_id = config.get("voice_id")
+            language = config.get("language")
 
         if bit_rate is not None:
             config["bit_rate"] = bit_rate
@@ -340,7 +331,7 @@ class TTS(BaseTTS):
         return TTS(
             provider="deepgram",
             model_id=model_id,
-            voice_id=model_id,  # for Deepgram, model_id includes the voice
+            voice_id=voice_id,  # for Deepgram, model_id includes the voice
             language="en",
             config=config,
             enable_streaming=enable_streaming,
