@@ -75,6 +75,7 @@ class LLM(BaseLLM):
         presence_penalty: Optional[float] = None,
         frequency_penalty: Optional[float] = None,
         base_url: Optional[str] = None,
+        config: Dict[str, Any] | None = None,
     ) -> None:
         """
         Initialize the VideoSDK Inference LLM plugin.
@@ -113,6 +114,7 @@ class LLM(BaseLLM):
         # HTTP session state
         self._session: Optional[aiohttp.ClientSession] = None
         self._cancelled: bool = False
+        self.config = config or {}
 
     # ==================== Factory Methods ====================
 
