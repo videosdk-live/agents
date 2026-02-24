@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from dataclasses import dataclass
+from enum import Enum
 import json
 import os
 import time
 import logging
 from typing import Any, Optional, Dict
+from pydantic import BaseModel, ConfigDict
 
 import aiohttp
 
@@ -22,6 +25,30 @@ logger = logging.getLogger(__name__)
 
 # Default inference gateway URLs
 VIDEOSDK_INFERENCE_URL = "wss://inference-gateway.videosdk.live"
+
+
+class InferenceProvider(str, Enum):
+    DEEPGRAM = "deepgram"
+    SARVAM = "sarvam"
+    GOOGLE = "google"
+    CARTESIA = "cartesia"
+
+
+class BaseInferenceConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+
+class DeepgramSTTInferenceConfig(BaseInferenceConfig):
+    input_sample_rate: int = 48000
+    interim_results: bool = True
+    punctuate: bool = True
+    smart_format: bool = True
+    endpointing: int = 50
+    # v2 flux
+    eager_eot_threshold: float = 0.6
+    eot_threshold: float = 0.8
+    eot_timeout_ms: int = 7000
+    keyterm: list[str] | None = None
 
 
 class STT(BaseSTT):
@@ -43,6 +70,7 @@ class STT(BaseSTT):
     def __init__(
         self,
         *,
+        # provider: InferenceProvider,
         provider: str,
         model_id: str,
         language: str = "en-US",
@@ -125,7 +153,7 @@ class STT(BaseSTT):
             Configured STT instance for Google
         """
         config = {
-            "model_id": model_id,
+            "model": model_id,
             "language": language,
             "languages": languages or [language],
             "input_sample_rate": input_sample_rate,
@@ -136,7 +164,7 @@ class STT(BaseSTT):
         }
 
         if config:
-            model_id = config.get("model_id")
+            model_id = config.get("model")
             language = config.get("languages" or "language")
             input_sample_rate = config.get("input_sample_rate")
             output_sample_rate = config.get("output_sample_rate")
@@ -176,15 +204,15 @@ class STT(BaseSTT):
             Configured STT instance for Sarvam AI
         """
         config = {
-            "model_id": model_id,
+            "model": model_id,
             "language": language,
             "input_sample_rate": input_sample_rate,
             "output_sample_rate": output_sample_rate,
         }
 
         if config:
-            model_id = config.get("model_id")
-            language = config.get("languages" or "language")
+            model_id = config.get("model")
+            language = config.get("language")
             input_sample_rate = config.get("input_smaple_rat")
             output_sample_rate = config.get("output_sample_rate")
 
@@ -210,6 +238,10 @@ class STT(BaseSTT):
         enable_streaming: bool = True,
         base_url: str | None = None,
         config: Optional[Dict] = None,
+        eager_eot_threshold: float = 0.6,
+        eot_threshold: float = 0.8,
+        eot_timeout_ms: int = 7000,
+        keyterm: list[str] | None = None,
     ) -> "STT":
         """
         Create an STT instance configured for Deepgram.
@@ -228,6 +260,14 @@ class STT(BaseSTT):
         Returns:
             Configured STT instance for Deepgram
         """
+        # config = config or DeepgramSTTInferenceConfig()
+
+        # default_config = config.model_dump(exclude_none=True)
+        # _config = {
+        #     "model": model_id,
+        #     "language": language,
+        #     **default_config,
+        # }
         config = {
             "model_id": model_id,
             "language": language,
@@ -236,23 +276,18 @@ class STT(BaseSTT):
             "punctuate": punctuate,
             "smart_format": smart_format,
             "endpointing": endpointing,
+            "eager_eot_threshold": eager_eot_threshold,
+            "eot_threshold": eot_threshold,
+            "eot_timeout_ms": eot_timeout_ms,
+            "keyterm": keyterm,
         }
-
-        if config:
-            model_id = config.get("model_id")
-            language = config.get("language")
-            input_sample_rate = config.get("input_smaple_rat")
-            interim_results = config.get("interim_results")
-            punctuate = config.get("punctuate")
-            smart_format = config.get("smart_format")
-            endpointing = config.get("endpointing")
 
         return STT(
             provider="deepgram",
             model_id=model_id,
             language=language,
-            config=config,
             enable_streaming=enable_streaming,
+            config=config,
             base_url=base_url,
         )
 

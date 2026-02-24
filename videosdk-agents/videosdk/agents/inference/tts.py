@@ -182,14 +182,14 @@ class TTS(BaseTTS):
             Configured TTS instance for Sarvam AI
         """
         config = {
-            "model_id": model_id,
+            "model": model_id,
             "language": language,
             "speaker": speaker,
             "sample_rate": sample_rate,
         }
 
         if config:
-            model_id = config.get("model_id")
+            model_id = config.get("model")
             sample_rate = config.get("sample_rate")
             speaker = config.get("speaker")
             language = config.get("language")
@@ -232,16 +232,16 @@ class TTS(BaseTTS):
             Configured TTS instance for Cartesia
         """
         config = {
-            "model_id": model_id,
+            "model": model_id,
             "language": language,
-            "voice_id": voice_id,
+            "voice": voice_id,
             "sample_rate": sample_rate,
         }
 
         if config:
-            model_id = config.get("model_id")
+            model_id = config.get("model")
             sample_rate = config.get("sample_rate")
-            voice_id = config.get("voice_id")
+            voice_id = config.get("voice")
             language = config.get("language")
 
         return TTS(
@@ -309,16 +309,17 @@ class TTS(BaseTTS):
             )
         """
         config = {
-            "model_id": model_id,
+            "model": model_id,
             "encoding": encoding,
             "sample_rate": sample_rate,
             "container": container,
             "voice_id": voice_id,
             "language": language,
+            "bit_rate": bit_rate,
         }
 
         if config:
-            model_id = config.get("model_id")
+            model_id = config.get("model")
             sample_rate = config.get("sample_rate")
             container = config.get("container")
             encoding = config.get("encoding")
