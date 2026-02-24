@@ -153,7 +153,7 @@ class LLM(BaseLLM):
 
         config = {"model_id": model}
         if config:
-            model = config.get("model")
+            model = config.get("model_id")
 
         return LLM(
             provider="google",
