@@ -37,7 +37,7 @@ def setup_logging(level=logging.INFO):
 
 from .agent import Agent
 from .agent_session import AgentSession
-from .utils import UserState, AgentState
+from .utils import UserState, AgentState, PipelineMode, RealtimeMode, PipelineComponent, PipelineConfig
 from .pipeline import Pipeline, EOUConfig, InterruptConfig
 from .realtime_base_model import RealtimeBaseModel
 from .realtime_llm_adapter import RealtimeLLMAdapter
@@ -120,6 +120,10 @@ __all__ = [
     "AgentSession",
     "UserState",
     "AgentState",
+    "PipelineMode",
+    "RealtimeMode",
+    "PipelineComponent",
+    "PipelineConfig",
     "Pipeline",
     "EOUConfig",
     "InterruptConfig",

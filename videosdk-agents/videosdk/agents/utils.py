@@ -35,6 +35,151 @@ class AgentState(enum.Enum):
     THINKING = "thinking"
     CLOSING = "closing"
 
+@enum.unique
+class PipelineMode(enum.Enum):
+    """The overall pipeline architecture mode based on which components are present."""
+    REALTIME = "realtime"
+    FULL_CASCADING = "full_cascading"
+    LLM_TTS_ONLY = "llm_tts_only"
+    STT_LLM_ONLY = "stt_llm_only"
+    LLM_ONLY = "llm_only"
+    STT_ONLY = "stt_only"
+    TTS_ONLY = "tts_only"
+    STT_TTS_ONLY = "stt_tts_only"
+    HYBRID = "hybrid"
+    PARTIAL_CASCADING = "partial_cascading"
+
+
+@enum.unique
+class RealtimeMode(enum.Enum):
+    """The realtime sub-mode when a RealtimeBaseModel is used as the LLM."""
+    FULL_S2S = "full_s2s"
+    HYBRID_STT = "hybrid_stt"
+    HYBRID_TTS = "hybrid_tts"
+    LLM_ONLY = "llm_only"
+
+
+@enum.unique
+class PipelineComponent(enum.Enum):
+    """Identifiers for each component slot in the pipeline."""
+    STT = "stt"
+    LLM = "llm"
+    TTS = "tts"
+    VAD = "vad"
+    TURN_DETECTOR = "turn_detector"
+    AVATAR = "avatar"
+    DENOISE = "denoise"
+    REALTIME_MODEL = "realtime_model"
+
+
+@dataclass(frozen=True)
+class PipelineConfig:
+    """
+    Immutable snapshot of the pipeline's detected configuration.
+    Computed once during Pipeline.__init__ and accessible everywhere via pipeline.config.
+    """
+    pipeline_mode: PipelineMode
+    realtime_mode: RealtimeMode | None
+    is_realtime: bool
+    active_components: frozenset[PipelineComponent]
+
+    def has_component(self, component: PipelineComponent) -> bool:
+        """Check whether a specific component is present."""
+        return component in self.active_components
+
+    @property
+    def component_names(self) -> list[str]:
+        """Return sorted list of active component value strings (for metrics/logging)."""
+        return sorted(c.value for c in self.active_components)
+
+
+def build_pipeline_config(
+    *,
+    stt: Any | None,
+    llm: Any | None,
+    tts: Any | None,
+    vad: Any | None,
+    turn_detector: Any | None,
+    avatar: Any | None,
+    denoise: Any | None,
+    realtime_model: Any | None,
+    realtime_config_mode: str | None,
+) -> PipelineConfig:
+    """
+    Detect pipeline mode, realtime mode, and active components from
+    the raw component references provided at Pipeline construction.
+    """
+    # Build active component set
+    components: set[PipelineComponent] = set()
+    if stt is not None:
+        components.add(PipelineComponent.STT)
+    if llm is not None:
+        components.add(PipelineComponent.LLM)
+    if tts is not None:
+        components.add(PipelineComponent.TTS)
+    if vad is not None:
+        components.add(PipelineComponent.VAD)
+    if turn_detector is not None:
+        components.add(PipelineComponent.TURN_DETECTOR)
+    if avatar is not None:
+        components.add(PipelineComponent.AVATAR)
+    if denoise is not None:
+        components.add(PipelineComponent.DENOISE)
+    if realtime_model is not None:
+        components.add(PipelineComponent.REALTIME_MODEL)
+
+    # Detect realtime mode
+    realtime_mode: RealtimeMode | None = None
+    is_realtime = False
+
+    if realtime_model is not None:
+        has_external_stt = stt is not None
+        has_external_tts = tts is not None
+
+        if realtime_config_mode:
+            realtime_mode = RealtimeMode(realtime_config_mode)
+            is_realtime = (realtime_mode != RealtimeMode.LLM_ONLY)
+        elif has_external_stt and has_external_tts:
+            realtime_mode = RealtimeMode.LLM_ONLY
+            is_realtime = False
+        elif has_external_stt:
+            realtime_mode = RealtimeMode.HYBRID_STT
+            is_realtime = True
+        elif has_external_tts:
+            realtime_mode = RealtimeMode.HYBRID_TTS
+            is_realtime = True
+        else:
+            realtime_mode = RealtimeMode.FULL_S2S
+            is_realtime = True
+
+    # Detect pipeline mode
+    if is_realtime:
+        pipeline_mode = PipelineMode.REALTIME
+    elif stt and llm and tts and vad and turn_detector:
+        pipeline_mode = PipelineMode.FULL_CASCADING
+    elif llm and tts and not stt:
+        pipeline_mode = PipelineMode.LLM_TTS_ONLY
+    elif stt and llm and not tts:
+        pipeline_mode = PipelineMode.STT_LLM_ONLY
+    elif llm and not stt and not tts:
+        pipeline_mode = PipelineMode.LLM_ONLY
+    elif stt and tts and not llm:
+        pipeline_mode = PipelineMode.STT_TTS_ONLY
+    elif stt and not llm and not tts:
+        pipeline_mode = PipelineMode.STT_ONLY
+    elif tts and not llm and not stt:
+        pipeline_mode = PipelineMode.TTS_ONLY
+    else:
+        pipeline_mode = PipelineMode.PARTIAL_CASCADING
+
+    return PipelineConfig(
+        pipeline_mode=pipeline_mode,
+        realtime_mode=realtime_mode,
+        is_realtime=is_realtime,
+        active_components=frozenset(components),
+    )
+
+
 @runtime_checkable
 class FunctionTool(Protocol):
     @property
