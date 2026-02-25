@@ -487,8 +487,20 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         await swap_llm(self, llm)
 
         # 3. REBOOT: Detect mode and restart
-        self._detect_realtime_configuration()
-        new_mode = self._detect_pipeline_mode()
+        self.config = build_pipeline_config(
+            stt=self.stt,
+            llm=self.llm,
+            tts=self.tts,
+            vad=self.vad,
+            turn_detector=self.turn_detector,
+            avatar=self.avatar,
+            denoise=self.denoise,
+            realtime_model=self._realtime_model,
+            realtime_config_mode=(
+                self.realtime_config.mode if self.realtime_config and self.realtime_config.mode else None
+            ),
+        )
+        new_mode = self.config.pipeline_mode.value
         logger.info(f"New pipeline mode: {new_mode}")
         
         if self.agent:
@@ -530,7 +542,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                     "Use change_pipeline() for full reconfiguration."
                 )
 
-        logger.info(f"Performing swap in {self._detect_pipeline_mode()} mode")
+        logger.info(f"Performing swap in {self.config.pipeline_mode.value} mode")
 
         # Detect pipeline mode shift
         mode_shift = check_mode_shift(self, llm, stt, tts)
@@ -582,9 +594,22 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         if denoise is not NO_CHANGE and self.denoise != denoise:
             await swap_component_in_orchestrator(self, 'denoise', denoise, 'speech_understanding', 'denoise_lock')
 
-        self._detect_realtime_configuration()
-        new_mode = self._detect_pipeline_mode()
-        logger.info(f"Component change complete. Mode: {new_mode}")
+        # 3. REBOOT: Rebuild config with updated components
+        self.config = build_pipeline_config(
+            stt=self.stt,
+            llm=self.llm,
+            tts=self.tts,
+            vad=self.vad,
+            turn_detector=self.turn_detector,
+            avatar=self.avatar,
+            denoise=self.denoise,
+            realtime_model=self._realtime_model,
+            realtime_config_mode=(
+                self.realtime_config.mode if self.realtime_config and self.realtime_config.mode else None
+            ),
+        )
+        new_mode = self.config.pipeline_mode.value
+        logger.info(f"New pipeline mode: {new_mode}")
 
         return
 
