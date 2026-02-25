@@ -6,6 +6,8 @@ from av.audio.resampler import AudioResampler
 import logging
 import numpy as np
 from simli import SimliConfig, SimliClient
+from simli.simli import TransportMode
+from simli.events import SimliEvent
 from videosdk import CustomVideoTrack, CustomAudioTrack
 
 
@@ -35,6 +37,11 @@ class SimliAudioTrack(CustomAudioTrack):
         self._timestamp = 0
         self.simli_client = simli_client
         self.queue = asyncio.Queue()
+        self._readyState = "live"
+
+    @property
+    def readyState(self):
+        return self._readyState
 
     def interrupt(self):
         asyncio.ensure_future(self.simli_client.clearBuffer())
@@ -99,6 +106,8 @@ class SimliAvatar:
     def __init__(
         self,
         config: SimliConfig,
+        api_key: str | None = None,
+        transport_mode: str = "P2P",
         simli_url: str = DEFAULT_SIMLI_HTTP_URL,
         is_trinity_avatar: bool = False,
     ):
@@ -106,11 +115,25 @@ class SimliAvatar:
 
         Args:
             config (SimliConfig): The configuration for the Simli avatar.
+            api_key (str): The Simli API key.
             simli_url (str): The Simli API URL. Defaults to "https://api.simli.ai".
             is_trinity_avatar (bool): Specify if the face id in the simli config is a trinity avatar to ensure synchronization
         """
         super().__init__()
         self.config = config
+        self.api_key = api_key or os.getenv("SIMLI_API_KEY")
+        if isinstance(transport_mode, str):
+            if transport_mode.upper() == "LIVEKIT":
+                self.transport_mode = TransportMode.LIVEKIT
+            elif transport_mode.upper() == "P2P":
+                self.transport_mode = TransportMode.P2P
+            else:
+                logger.warning(
+                    f"Unknown transport mode: {transport_mode}, defaulting to P2P"
+                )
+                self.transport_mode = TransportMode.P2P
+        else:
+            self.transport_mode = transport_mode
         self._stream_start_time = None
         self.video_track: SimliVideoTrack | None = None
         self.video_receiver = None
@@ -127,15 +150,13 @@ class SimliAvatar:
         self.simli_url = simli_url
 
     async def connect(self):
-        loop = asyncio.get_event_loop()
         await self._initialize_connection()
-        self.audio_track = SimliAudioTrack(loop, self.simli_client)
-        self.video_track = SimliVideoTrack(self._is_trinity_avatar)
         if self._stream_start_time is None:
             self._stream_start_time = time.time()
 
         self._last_audio_time = time.time()
         self._keep_alive_task = asyncio.create_task(self._keep_alive_loop())
+        return self.audio_track, self.video_track
 
     async def mark_silent(self):
         self._avatar_speaking = False
@@ -146,61 +167,56 @@ class SimliAvatar:
     async def _initialize_connection(self):
         """Initialize connection with retry logic"""
         self.simli_client = SimliClient(
+            api_key=self.api_key,
             config=self.config,
-            latencyInterval=0,
             simliURL=self.simli_url,
-            enable_logging=True
+            transport_mode=self.transport_mode
         )
-        await self.simli_client.Initialize()
-        while not hasattr(self.simli_client, "audioReceiver") or self.simli_client.audioReceiver is None:
-            await asyncio.sleep(0.001)
-        while not hasattr(self.simli_client, "videoReceiver") or self.simli_client.videoReceiver is None:
-            await asyncio.sleep(0.001)
+
+        async def on_start():
+            self.simli_client.ready.set()
+            asyncio.create_task(self.simli_client.sendSilence(1.0))
+
+        await self.simli_client.start()
         
-        self.audio_receiver = self.simli_client.audioReceiver
-        self.video_receiver = self.simli_client.videoReceiver
+        self.simli_client.registerEventCallback(SimliEvent.START, on_start)
+        self.simli_client.registerEventCallback(SimliEvent.SILENT, self.mark_silent)
+        self.simli_client.registerEventCallback(SimliEvent.SPEAK, self.mark_speaking)
+
+        loop = asyncio.get_event_loop()
+        self.audio_track = SimliAudioTrack(loop, self.simli_client)
+        self.video_track = SimliVideoTrack(self._is_trinity_avatar)
         
         asyncio.ensure_future(self._process_video_frames())
         asyncio.ensure_future(self._process_audio_frames())
-        
-        self.simli_client.registerSilentEventCallback(self.mark_silent)
-        self.simli_client.registerSpeakEventCallback(self.mark_speaking)
+
+        logger.info("Waiting for Simli START event...")
+        await self.simli_client.ready.wait()
+        logger.info("Simli START event received, connection ready")
 
     async def _process_video_frames(self):
         """Simple video frame processing for real-time playback"""
 
-        while self.run and not self._stopping:
-            try:
-                frame: VideoFrame = await self.video_receiver.recv()
-                if frame is None:
-                    continue
-                self.video_track.add_frame(frame)
-            except Exception as e:
-                logger.error(f"Simli: Video processing error: {e}")
-                if not self.run or self._stopping:
-                    break
-                await asyncio.sleep(0.1)
+        async for frame in self.simli_client.getVideoStreamIterator():
+            if not self.run or self._stopping:
+                break
+            if frame is None:
                 continue
+            self.video_track.add_frame(frame)
 
     async def _process_audio_frames(self):
         """Simple audio frame processing for real-time playback"""
 
-        while self.run and not self._stopping:
+        async for frame in self.simli_client.getAudioStreamIterator():
+            if not self.run or self._stopping:
+                break
+            if frame is None:
+                logger.warning("Simli: Received None audio frame, continuing...")
+                continue
             try:
-                frame: AudioFrame = await self.audio_receiver.recv()
-                if frame is None:
-                    logger.warning("Simli: Received None audio frame, continuing...")
-                    continue
-                try:
-                    self.audio_track.add_frame(frame)
-                except Exception as frame_error:
-                    logger.error(f"Simli: Error processing audio frame: {frame_error}")
-                    continue
-            except Exception as e:
-                logger.error(f"Simli: Audio processing error: {e}")
-                if not self.run or self._stopping:
-                    break
-                await asyncio.sleep(0.1)
+                self.audio_track.add_frame(frame)
+            except Exception as frame_error:
+                logger.error(f"Simli: Error processing audio frame: {frame_error}")
                 continue
 
     async def sendSilence(self, duration: float = 0.1875):
