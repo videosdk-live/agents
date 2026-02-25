@@ -138,6 +138,7 @@ class TtsMetrics(BaseComponentMetrics):
 class RealtimeMetrics(BaseComponentMetrics):
     """Realtime model (full s2s) metrics."""
     realtime_config: Optional[Dict[str, Any]] = None
+    realtime_ttfb: Optional[float] = None
     realtime_input_tokens: Optional[int] = None
     realtime_total_tokens: Optional[int] = None
     realtime_output_tokens: Optional[int] = None
@@ -287,7 +288,7 @@ class TurnMetrics:
 
         if self.realtime_metrics:
             rt = self.realtime_metrics[-1]
-            if hasattr(rt, "realtime_ttfb") and getattr(rt, "realtime_ttfb", None) is not None:
+            if rt.realtime_ttfb is not None:
                 e2e_components.append(rt.realtime_ttfb)
 
         if e2e_components:

@@ -348,15 +348,11 @@ class MetricsCollector:
         if not turn:
             return
 
-        if turn.user_speech_start_time and turn.agent_speech_start_time:
-            ttfb = (turn.agent_speech_start_time - turn.user_speech_start_time) * 1000
-            turn.e2e_latency = round(ttfb, 4)  # For realtime, e2e is user_start → agent_start
-
         if turn.user_speech_end_time and turn.agent_speech_start_time:
-            thinking_delay = (turn.agent_speech_start_time - turn.user_speech_end_time) * 1000
-            # Store in realtime metrics if present
+            ttfb = round((turn.agent_speech_start_time - turn.user_speech_end_time) * 1000, 4)
+            turn.e2e_latency = ttfb
             if turn.realtime_metrics:
-                pass  # Will be enhanced if RealtimeMetrics gets thinking_delay field
+                turn.realtime_metrics[-1].realtime_ttfb = ttfb
 
         if turn.agent_speech_start_time and turn.agent_speech_end_time:
             turn.agent_speech_duration = round(
@@ -1131,6 +1127,7 @@ class MetricsCollector:
         # Flatten the last realtime (full s2s) metrics entry for analytics
         if turn.realtime_metrics:
             rt = turn.realtime_metrics[-1]
+            data["realtime_ttfb"] = rt.realtime_ttfb
             data["realtime_input_tokens"] = rt.realtime_input_tokens
             data["realtime_total_tokens"] = rt.realtime_total_tokens
             data["realtime_output_tokens"] = rt.realtime_output_tokens
@@ -1227,7 +1224,8 @@ class MetricsCollector:
             "eou_start_time": "eouStartTime",
             "eou_end_time": "eouEndTime",
 
-            # Realtime (full s2s) token metrics
+            # Realtime (full s2s) metrics
+            "realtime_ttfb": "realtimeTtfb",
             "realtime_input_tokens": "realtimeInputTokens",
             "realtime_total_tokens": "realtimeTotalTokens",
             "realtime_output_tokens": "realtimeOutputTokens",
