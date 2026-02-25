@@ -835,6 +835,14 @@ class MetricsCollector:
     def set_user_transcript(self, transcript: str) -> None:
         """Set the user transcript for the current turn."""
         if self.current_turn:
+            if self._is_agent_speaking and self.current_turn.user_speech:
+                logger.info(
+                    f"[metrics] Skipping set_user_transcript during agent speech "
+                    f"— current turn already has user_speech, new transcript "
+                    f"belongs to the next turn: {transcript}"
+                )
+                return
+
             self.current_turn.user_speech = transcript
             logger.info(f"user input speech: {transcript}")
 
@@ -1065,10 +1073,10 @@ class MetricsCollector:
                     break
 
     def _update_timeline_event_text(self, event_type: str, text: str) -> None:
-        """Update timeline event with text content."""
+        """Update the most recent timeline event of this type with text content."""
         if self.current_turn:
             for event in reversed(self.current_turn.timeline_event_metrics):
-                if event.event_type == event_type and not event.text:
+                if event.event_type == event_type:
                     event.text = text
                     break
 

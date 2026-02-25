@@ -173,9 +173,21 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
         """Handle STT transcript events"""
         if self._waiting_for_more_speech:
             await self._handle_continued_speech()
-        
+
         text = stt_response.data.text if stt_response.data else ""
-        
+
+
+        if not self.vad:
+            if not self._is_user_speaking and stt_response.event_type in (SpeechEventType.INTERIM, SpeechEventType.FINAL):
+                self._is_user_speaking = True
+                metrics_collector.on_user_speech_start()
+                self.emit("speech_started")
+
+            if self._is_user_speaking and stt_response.event_type == SpeechEventType.FINAL:
+                self._is_user_speaking = False
+                metrics_collector.on_user_speech_end()
+                self.emit("speech_stopped")
+
         if stt_response.event_type == SpeechEventType.PREFLIGHT:
             metrics_collector.on_stt_preflight_end()
             await self._handle_preflight_transcript(text)
