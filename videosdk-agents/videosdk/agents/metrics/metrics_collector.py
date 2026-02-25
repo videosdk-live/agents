@@ -882,43 +882,6 @@ class MetricsCollector:
                 metrics={"agent_speech": self.current_turn.agent_speech}
             )
 
-
-    # ──────────────────────────────────────────────
-    # Knowledge Base
-    # ──────────────────────────────────────────────
-
-    def on_knowledge_base_start(self, kb_id: Optional[str] = None) -> None:
-        """Called when knowledge base processing starts."""
-        if self.current_turn:
-            kb_metric = KbMetrics(
-                kb_id=kb_id,
-                kb_start_time=time.perf_counter(),
-            )
-            self.current_turn.kb_metrics.append(kb_metric)
-
-    def on_knowledge_base_complete(self, documents: List[str], scores: List[float]) -> None:
-        """Called when knowledge base processing completes."""
-        if self.current_turn and self.current_turn.kb_metrics:
-            kb = self.current_turn.kb_metrics[-1]
-            kb.kb_documents = documents
-            kb.kb_scores = scores
-            kb.kb_end_time = time.perf_counter()
-
-            if kb.kb_start_time:
-                kb.kb_retrieval_latency = self._round_latency(kb.kb_end_time - kb.kb_start_time)
-                logger.info(f"kb retrieval latency: {kb.kb_retrieval_latency}ms")
-
-            if self.playground and self.playground_manager:
-                self.playground_manager.send_cascading_metrics(
-                    metrics={
-                        "kb_id": kb.kb_id,
-                        "kb_retrieval_latency": kb.kb_retrieval_latency,
-                        "kb_documents": kb.kb_documents,
-                        "kb_scores": kb.kb_scores,
-                    }
-                )
-
-
     # ──────────────────────────────────────────────
     # Knowledge Base
     # ──────────────────────────────────────────────
