@@ -94,6 +94,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
         self.resume_on_false_interrupt = resume_on_false_interrupt
         
         # Interruption state
+        self._generation_id = 0
         self._is_interrupted = False
         self._is_in_false_interrupt_pause = False
         self._false_interrupt_paused_speech = False
@@ -263,12 +264,12 @@ class PipelineOrchestrator(EventEmitter[Literal[
         text = data["text"]
         is_preemptive = data.get("is_preemptive", False)
 
-        # If a generation task is still running, this new transcript means the user
-        # interrupted the agent (or continued speaking). Properly interrupt the old
-        # pipeline so the previous turn is completed before we start a new one.
         if self._current_generation_task and not self._current_generation_task.done():
             logger.info("[orchestrator] New transcript while generation active — interrupting previous turn")
             await self._interrupt_pipeline()
+
+            metrics_collector.start_turn()
+            metrics_collector.set_user_transcript(text)
 
         if self.voice_mail_detector and not self.voice_mail_detection_done and text.strip():
             self._vmd_buffer += f" {text}"
@@ -360,7 +361,6 @@ class PipelineOrchestrator(EventEmitter[Literal[
         """Handle speech started event"""
         logger.info("[orchestrator] _on_speech_started fired")
         self._is_user_speaking = True
-        metrics_collector.on_user_speech_start()
 
         if self.agent and self.agent.session and self.agent.session.agent_state == AgentState.SPEAKING:
             if self._interruption_check_task is None or self._interruption_check_task.done():
@@ -373,8 +373,6 @@ class PipelineOrchestrator(EventEmitter[Literal[
         """Handle speech stopped event"""
         logger.info("[orchestrator] _on_speech_stopped fired")
         self._is_user_speaking = False
-        metrics_collector.on_user_speech_end()
-        metrics_collector.on_stt_start()
 
         if self._interruption_check_task is not None and not self._interruption_check_task.done():
             logger.info("User stopped speaking, cancelling interruption check")
@@ -432,10 +430,14 @@ class PipelineOrchestrator(EventEmitter[Literal[
             kb_context = await self.agent.knowledge_base.process_query(processed_text)
             if kb_context:
                 final_user_text = f"{kb_context}\n\nUser: {processed_text}"
-        
+
         if self.conversational_graph:
             final_user_text = self.conversational_graph.handle_input(processed_text)
-        
+
+        if not metrics_collector.current_turn:
+            metrics_collector.start_turn()
+        metrics_collector.set_user_transcript(user_text)
+
         self.agent.chat_context.add_message(
             role=ChatRole.USER,
             content=final_user_text
@@ -466,6 +468,8 @@ class PipelineOrchestrator(EventEmitter[Literal[
         wait_for_authorization: bool = False
     ) -> None:
         """Generate LLM response and synthesize with TTS"""
+        self._generation_id += 1
+        my_generation_id = self._generation_id
         self._is_interrupted = False
         full_response = ""
         self._partial_response = ""
@@ -488,14 +492,19 @@ class PipelineOrchestrator(EventEmitter[Literal[
             async def collector():
                 """Collect LLM chunks"""
                 response_parts = []
+
+                def _safe_set_agent_response(text: str) -> None:
+                    """Only set agent response if this collector still owns the current generation."""
+                    if text and self._generation_id == my_generation_id and metrics_collector.current_turn:
+                        metrics_collector.set_agent_response(text)
+
                 try:
                     async for chunk in llm_stream:
                         if handle.interrupted or (wait_for_authorization and self._preemptive_cancelled):
                             logger.info("LLM collection interrupted")
                             await q.put(None)
                             full = "".join(response_parts)
-                            if full:
-                                metrics_collector.set_agent_response(full)
+                            _safe_set_agent_response(full)
                             return full
 
                         content = chunk.content if hasattr(chunk, "content") else chunk
@@ -514,18 +523,14 @@ class PipelineOrchestrator(EventEmitter[Literal[
                         _ = await self.conversational_graph.handle_decision(self.agent, metadata.get("graph_response"))
 
                     full = "".join(response_parts)
-                    # Set agent response now, before returning, so it's available
-                    # before complete_turn() fires from the on_last_audio_byte callback
-                    if full:
-                        metrics_collector.set_agent_response(full)
+                    _safe_set_agent_response(full)
                     return full
 
                 except asyncio.CancelledError:
                     logger.info("LLM collection cancelled")
                     await q.put(None)
                     full = "".join(response_parts)
-                    if full:
-                        metrics_collector.set_agent_response(full)
+                    _safe_set_agent_response(full)
                     return full
             
             async def tts_consumer():
@@ -556,7 +561,6 @@ class PipelineOrchestrator(EventEmitter[Literal[
                             chunk = await asyncio.wait_for(q.get(), timeout=0.1)
                             if chunk is None:
                                 break
-                            print(f"chunk: at the tts consumer at pipline orchestrator  {chunk}")
                             yield chunk
                             
                         except asyncio.TimeoutError:
@@ -586,15 +590,14 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 full_response = collector_task.result()
             else:
                 full_response = self._partial_response
-            
-            if full_response and self.agent:
+
+            if self._is_interrupted or self._generation_id != my_generation_id:
+                logger.info("[orchestrator] Skipping post-gather updates — turn was interrupted or generation superseded")
+            elif full_response and self.agent:
                 self.agent.chat_context.add_message(
                     role=ChatRole.ASSISTANT,
                     content=full_response
                 )
-
-                metrics_collector.set_agent_response(full_response)
-
                 if self.hooks and self.hooks.has_content_generated_hooks():
                     await self.hooks.trigger_content_generated({"text": full_response})
 
@@ -813,18 +816,22 @@ class PipelineOrchestrator(EventEmitter[Literal[
         if self._current_generation_task and not self._current_generation_task.done():
             self._current_generation_task.cancel()
 
-        # Complete the interrupted turn — on_last_audio_byte won't fire since
-        # the audio track was reset in speech_generation.interrupt().
-        # Set partial response before completing so the turn has what was generated.
         if self._partial_response and metrics_collector.current_turn:
-            metrics_collector.set_agent_response(self._partial_response)
+            if not metrics_collector.current_turn.agent_speech:
+                metrics_collector.set_agent_response(self._partial_response)
+
+        if self._partial_response and self.agent:
+            self.agent.chat_context.add_message(
+                role=ChatRole.ASSISTANT,
+                content=self._partial_response
+            )
+
         if metrics_collector.current_turn:
             logger.info("[orchestrator] Completing interrupted turn")
             metrics_collector.complete_turn()
 
         self._partial_response = ""
-        self._is_interrupted = False
-    
+
     async def interrupt(self) -> None:
         """Public method to interrupt the pipeline"""
         await self._interrupt_pipeline()
