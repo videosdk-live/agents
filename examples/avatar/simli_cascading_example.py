@@ -10,6 +10,8 @@ from videosdk.plugins.simli import SimliAvatar, SimliConfig
 from videosdk.plugins.openai import OpenAILLM
 from videosdk.plugins.deepgram import DeepgramSTT
 from videosdk.plugins.elevenlabs import ElevenLabsTTS
+import logging 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 
 # Pre-downloading the Turn Detector model
 pre_download_model()
@@ -73,15 +75,16 @@ async def start_session(context: JobContext):
 
     # Initialize Simli Avatar
     simli_config = SimliConfig(
-        apiKey=os.getenv("SIMLI_API_KEY"),
-        faceId="d2a5c7c6-fed9-4f55-bcb3-062f7cd20103",
+        faceId="cace3ef7-a4c4-425d-a8cf-a5358eb0c427",
         maxSessionLength=1800,
         maxIdleTime=600,
     )
    
     simli_avatar = SimliAvatar(
+        api_key=os.getenv("SIMLI_API_KEY"),
         config=simli_config,
         is_trinity_avatar=True,
+        transport_mode="p2p"
     )
 
     # Create agent and conversation flow
