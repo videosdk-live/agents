@@ -20,7 +20,7 @@ classifiers = [
     "Topic :: Multimedia :: Video",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-dependencies = ["videosdk-agents>=0.0.62","aiohttp"]
+dependencies = ["videosdk-agents>=0.0.65","aiohttp"]
 
 [tool.hatch.version]
 path = "videosdk/plugins/assemblyai/version.py"

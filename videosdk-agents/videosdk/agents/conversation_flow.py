@@ -107,6 +107,10 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         
         # Context truncation
         self.max_context_items: int | None = None
+        cascading_metrics_collector.set_metrics(
+            min_speech_wait_timeout=self.min_speech_wait_timeout,
+            max_speech_wait_timeout=self.max_speech_wait_timeout
+        )
 
 
     def apply_flow_config(self, eou_config: "EOUConfig", interrupt_config: "InterruptConfig") -> None:
@@ -119,11 +123,18 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self.interrupt_min_words = interrupt_config.interrupt_min_words
         self.false_interrupt_pause_duration = interrupt_config.false_interrupt_pause_duration
         self.resume_on_false_interrupt = interrupt_config.resume_on_false_interrupt
+        cascading_metrics_collector.set_interrupt_config(
+            mode=self.interrupt_mode,
+            min_duration=self.interrupt_min_duration,
+            min_words=self.interrupt_min_words,
+            false_interrupt_pause_duration=self.false_interrupt_pause_duration,
+            resume_on_false_interrupt=self.resume_on_false_interrupt
+        )
         
     def _update_preemptive_generation_flag(self) -> None:
         """Update the preemptive generation flag based on current STT instance"""
         self._enable_preemptive_generation = getattr(self.stt, 'enable_preemptive_generation', False) if self.stt else False
-        cascading_metrics_collector.set_preemptive_generation_enabled()
+        cascading_metrics_collector.set_preemptive_generation_enabled(self._enable_preemptive_generation)
 
     async def start(self) -> None:
         global_event_emitter.on("speech_started", self.on_speech_started_stt)
@@ -181,6 +192,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 return
                 
             elif vad_response.event_type == VADEventType.END_OF_SPEECH:
+                cascading_metrics_collector.on_vad_end_of_speech()
                 if hasattr(self, '_interruption_check_task') and not self._interruption_check_task.done():
                     logger.info("User stopped speaking, cancelling interruption check")
                     self._interruption_check_task.cancel()
@@ -195,6 +207,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             await self.on_speech_started()
             
         elif vad_response.event_type == VADEventType.END_OF_SPEECH:
+            cascading_metrics_collector.on_vad_end_of_speech()
             self._is_user_speaking = False
             self.on_speech_stopped()
 
@@ -215,6 +228,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             
             if (self.agent.session and self.agent.session.current_utterance and self.agent.session.current_utterance.is_interruptible):
                 logger.info(f"User speech duration exceeded {self.interrupt_min_duration}s threshold, triggering interruption")
+                cascading_metrics_collector.on_interrupt_trigger(duration=self.interrupt_min_duration)
                 await self._trigger_interruption()
             else:
                 logger.debug("Interruption threshold reached but utterance is not interruptible")
@@ -271,6 +285,13 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             
         
         elif stt_response.event_type == SpeechEventType.FINAL:
+            final_response = stt_response.data
+            confidence = final_response.confidence
+            duration = final_response.duration
+            cascading_metrics_collector.on_stt_response(duration, confidence)
+            if stt_response.metadata is not None and stt_response.metadata.get("metrics"):
+                cascading_metrics_collector.on_stt_metrics(stt_response.metadata.get("metrics"))
+
             if cascading_metrics_collector.data.current_turn:
                 cascading_metrics_collector.data.current_turn.stt_preemptive_generation_occurred = False
             user_text = stt_response.data.text
@@ -278,7 +299,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             if self._enable_preemptive_generation:
 
                 if cascading_metrics_collector.data.current_turn:
-                    cascading_metrics_collector.on_stt_complete()
+                    cascading_metrics_collector.on_stt_complete(user_text)
                     cascading_metrics_collector.data.current_turn.stt_preemptive_generation_occurred = True
                 await self._authorize_or_process_final_transcript(user_text)
                 
@@ -377,6 +398,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                     if eou_probability < self.eou_certainty_threshold:
                         logger.info(f"EOU probability is less than the threshold, using max speech wait timeout")
                         delay = self.max_speech_wait_timeout
+                    cascading_metrics_collector.on_wait_for_additional_speech(delay, eou_probability)
                 logger.info(f"Using delay: {delay} seconds")
                 await self._wait_for_additional_speech(delay)
 
@@ -394,6 +416,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                     wait_factor = 1.0 - eou_probability  
                     logger.info(f"Wait factor: {wait_factor}")
                     delay = self.min_speech_wait_timeout + (delay_range * wait_factor)
+                    cascading_metrics_collector.on_wait_for_additional_speech(delay, eou_probability)
                     logger.info(f"Calculated delay: {delay}")
                 await self._wait_for_additional_speech(delay)
 
@@ -469,7 +492,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             cascading_metrics_collector.start_new_interaction()
 
         cascading_metrics_collector.set_user_transcript(user_text)
-        cascading_metrics_collector.on_stt_complete()
+        cascading_metrics_collector.on_stt_complete(user_text)
 
         if self.vad and cascading_metrics_collector.data.is_user_speaking: 
             cascading_metrics_collector.on_user_speech_end()
@@ -576,7 +599,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 # Compare transcripts
                 if final_text_normalized == preflight_normalized:
                     logger.info(f"MATCH! Authorizing preemptive generation")
-                    
+                    cascading_metrics_collector.on_stt_preemptive_generation(final_text, True)
                     # Authorize the waiting TTS to play audio
                     self._preemptive_authorized.set()
                     
@@ -594,7 +617,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                             logger.error(f"Error in preemptive playback: {e}")
                 else:
                     logger.info(f"MISMATCH! Cancelling Preemptive Generation")
-                    
+                    cascading_metrics_collector.on_stt_preemptive_generation(final_text, False)
                     # Cancel preemptive generation
                     await self._cancel_preemptive_generation()
                     
@@ -668,6 +691,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 await self.agent.session.start_thinking_audio()
 
             llm_stream = self.run(user_text)
+            cascading_metrics_collector.on_llm_input(user_text)
 
             q = asyncio.Queue(maxsize=50)
 
@@ -1038,6 +1062,9 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             self._cancel_false_interrupt_timer()
             self._is_in_false_interrupt_pause = False
             self._false_interrupt_paused_speech = False
+            # Notify metrics that false interrupt escalated to true interrupt
+            cascading_metrics_collector.on_false_interrupt_escalated(word_count)
+            cascading_metrics_collector.on_interrupted()
             logger.info("[FALSE_INTERRUPT] Clearing audio buffers and finalizing interruption.")
             await self._interrupt_tts()
             return
@@ -1045,6 +1072,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         if self.interrupt_mode in ("STT_ONLY", "HYBRID"):
             if word_count >= self.interrupt_min_words:
                 if self.agent.session and self.agent.session.current_utterance and self.agent.session.current_utterance.is_interruptible:
+                    cascading_metrics_collector.on_interrupt_trigger(word_count)
                     await self._trigger_interruption()
                 else:
                     logger.info("Interruption not allowed for the current utterance.")
@@ -1074,6 +1102,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             else:
                 logger.info("performing full interruption.")
                 await self._interrupt_tts()
+            cascading_metrics_collector.on_interrupted()
 
     def _start_false_interrupt_timer(self):
         """Starts a timer to detect if an interruption was just a brief false interrupt."""
@@ -1087,6 +1116,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
         logger.info(f"[FALSE_INTERRUPT] Starting timer for {self.false_interrupt_pause_duration}s. If no STT transcript is received within this time, speech will resume.")
         loop = asyncio.get_event_loop()
+        cascading_metrics_collector.on_false_interrupt_start(self.false_interrupt_pause_duration)
         self._false_interrupt_timer = loop.call_later(
             self.false_interrupt_pause_duration,
             lambda: asyncio.create_task(self._on_false_interrupt_timeout())
@@ -1116,6 +1146,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             self._is_interrupted = False
             self._is_in_false_interrupt_pause = False
             self._false_interrupt_paused_speech = False
+            cascading_metrics_collector.on_false_interrupt_resume()
             await self.tts.resume()
         else:
             if self._is_interrupted or self._false_interrupt_paused_speech:
@@ -1146,7 +1177,10 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
             if self._false_interrupt_paused_speech:
                 logger.info("User continued speaking, confirming interruption of paused speech.")
-                self._false_interrupt_paused_speech = False 
+                self._false_interrupt_paused_speech = False
+                # Notify metrics that false interrupt escalated to true interrupt (via VAD)
+                cascading_metrics_collector.on_false_interrupt_escalated()
+                cascading_metrics_collector.on_interrupted()
                 await self._interrupt_tts() 
             elif self.agent and self.agent.session and self.agent.session.agent_state == AgentState.SPEAKING:
                 if can_resume:
@@ -1201,7 +1235,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         self._partial_response = ""
         self._is_interrupted = False
 
-        cascading_metrics_collector.on_interrupted()
 
     async def _cancel_llm(self) -> None:
         """Cancel LLM generation"""
