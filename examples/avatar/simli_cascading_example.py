@@ -1,7 +1,5 @@
-import asyncio
 import aiohttp
 import os
-from typing import AsyncIterator
 
 from videosdk.agents import Agent, AgentSession, CascadingPipeline, function_tool, JobContext, RoomOptions, WorkerJob, ConversationFlow, ChatRole
 from videosdk.plugins.silero import SileroVAD
@@ -84,7 +82,6 @@ async def start_session(context: JobContext):
         api_key=os.getenv("SIMLI_API_KEY"),
         config=simli_config,
         is_trinity_avatar=True,
-        transport_mode="p2p"
     )
 
     # Create agent and conversation flow
@@ -113,7 +110,7 @@ def make_context() -> JobContext:
     room_options = RoomOptions(
         room_id="<room_id>",
         name="Simli Avatar Cascading Agent",
-        playground=False
+        playground=True
     )
 
     return JobContext(room_options=room_options)
