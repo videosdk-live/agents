@@ -240,6 +240,17 @@ class Denoise(BaseDenoise):
             Denoised PCM audio bytes (int16 format), or original audio if processing fails
         """
         try:
+            if self.connecting:
+                return b""
+
+            if not self._ws or self._ws.closed:
+                self.connecting = True
+                try:
+                    await self._connect_ws()
+                    self.connected = True
+                finally:
+                    self.connecting = False
+
             if not self._ws or self._ws.closed:
                 await self._connect_ws()
                 if not self._ws_task or self._ws_task.done():
