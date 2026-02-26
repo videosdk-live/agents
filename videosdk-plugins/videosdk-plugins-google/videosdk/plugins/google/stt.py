@@ -46,7 +46,7 @@ class GoogleSTT(BaseSTT):
         punctuate: bool = True,
         min_confidence_threshold: float = 0.1,
         location: str = "global",
-        profanity_filter:bool=True,
+        profanity_filter:bool=False,
         enable_voice_activity_events:bool=False,
         voice_activity_timeout:VoiceActivityConfig = None,
         **kwargs: Any
