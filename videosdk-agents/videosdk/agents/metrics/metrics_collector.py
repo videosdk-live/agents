@@ -343,7 +343,7 @@ class MetricsCollector:
         self.complete_turn()
 
     def _compute_realtime_latencies(self) -> None:
-        """Compute TTFB, thinking_delay, agent_speech_duration for realtime turns."""
+        """Compute realtime TTFB (used as E2E) and agent speech duration based on user and agent speech timestamps."""
         turn = self.current_turn
         if not turn:
             return
