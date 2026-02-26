@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any, Optional
+from typing import Any, Optional,List, Union
 import os
 from urllib.parse import urlencode
 import aiohttp
@@ -27,6 +27,10 @@ class DeepgramSTT(BaseSTT):
         filler_words: bool = True,
         keywords: list[str] | None = None,
         keyterm: list[str] | None = None,
+        profanity_filter: bool = False,
+        numerals:bool=False,
+        tag:Union[str,List[str]]|None = None,
+        enable_diarization:bool=False,
         base_url: str = "wss://api.deepgram.com/v1/listen",
     ) -> None:
         """Initialize the Deepgram STT plugin
@@ -45,6 +49,10 @@ class DeepgramSTT(BaseSTT):
                 Each entry is a keyword or "keyword:intensifier" (e.g. "snuffleupagus:5", "kansas:-10"). Max 100. Defaults to None.
             keyterm (list[str] | None): Optional keyterms/phrases for Keyterm Prompting. Only for Nova-3 (e.g. model="nova-3").
                 Each entry is a keyterm or phrase (e.g. "tretinoin", "customer service"). Max 500 tokens total. Defaults to None.
+            profanity_filter: Whether to filter profanity from the transcription. Defaults to False.
+            numerals: Whether to include numerals in the transcription. Defaults to False.
+            tag: List of tags to add to the requests for usage reporting. Defaults to None.
+            enable_diarization: Diarize recognizes speaker changes and assigns a speaker to each word in the transcript.
             base_url (str): The base URL to use for the STT plugin. Defaults to "wss://api.deepgram.com/v1/listen".
         """
         super().__init__()
@@ -69,6 +77,10 @@ class DeepgramSTT(BaseSTT):
         self.filler_words = filler_words
         self.keywords = keywords
         self.keyterm = keyterm
+        self.profanity_filter = profanity_filter
+        self.numerals = numerals
+        self.tag = tag
+        self.enable_diarization= enable_diarization
         self.base_url = base_url
         self._session: Optional[aiohttp.ClientSession] = None
         self._ws: Optional[aiohttp.ClientWebSocketResponse] = None
@@ -150,8 +162,13 @@ class DeepgramSTT(BaseSTT):
             "filler_words": str(self.filler_words).lower(),
             "vad_events": "true",
             "no_delay": "true",
+            "profanity_filter":str(self.filler_words).lower(),
+            "numerals":str(self.filler_words).lower(),
+            "diarize":str(self.enable_diarization).lower()
         }
         params_list = list(query_params.items())
+        if self.tag is not None:
+            params_list.append(("tag",self.tag))
         _is_nova3 = self.model == "nova-3" or self.model.startswith("nova-3-")
         if _is_nova3 and self.keyterm:
             for t in self.keyterm:

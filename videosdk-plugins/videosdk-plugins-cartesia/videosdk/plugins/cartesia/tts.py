@@ -33,6 +33,8 @@ class CartesiaTTS(TTS):
         language: str = "en",
         base_url: str = "https://api.cartesia.ai",
         generation_config: GenerationConfig = GenerationConfig(),
+        pronunciation_dict_id:str|None = None,
+        max_buffer_delay_ms:int|None = None
     ) -> None:
         """Initialize the Cartesia TTS plugin
         Args:
@@ -43,6 +45,8 @@ class CartesiaTTS(TTS):
             language (str): The language to use for the TTS plugin. Defaults to "en".
             base_url (str): The base URL to use for the TTS plugin. Defaults to "https://api.cartesia.ai".
             generation_config (GenerationConfig): The generation config to use for the TTS plugin. Defaults to GenerationConfig().
+            pronunciation_dict_id (str): The pronunciation dictionary id to use for custom pronunciations.
+            max_buffer_delay_ms(int): for max_buffer_delay_ms before streaming.
         """
         super().__init__(sample_rate=CARTESIA_SAMPLE_RATE, num_channels=CARTESIA_CHANNELS)
 
@@ -53,6 +57,8 @@ class CartesiaTTS(TTS):
         self._first_chunk_sent = False
         self._interrupted = False
         self._generation_config = generation_config
+        self.pronunciation_dictionary_id=pronunciation_dict_id
+        self.max_buffer_delay_ms=max_buffer_delay_ms
 
         api_key = api_key or os.getenv("CARTESIA_API_KEY")
         if not api_key:
@@ -127,6 +133,8 @@ class CartesiaTTS(TTS):
                 "output_format": {"container": "raw", "encoding": "pcm_s16le", "sample_rate": self.sample_rate},
                 "add_timestamps": True, "context_id": context_id,
                 "generation_config": asdict(self._generation_config),
+                "pronunciation_dictionary_id":self.pronunciation_dictionary_id,
+                "max_buffer_delay_ms":self.max_buffer_delay_ms
             }
 
             async for text_chunk in text_iterator:
