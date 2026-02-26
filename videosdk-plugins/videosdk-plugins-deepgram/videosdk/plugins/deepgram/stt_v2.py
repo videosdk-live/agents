@@ -30,7 +30,6 @@ class DeepgramSTTV2(BaseSTT):
         eot_threshold:float=0.8,
         eot_timeout_ms:int=7000,
         keyterm: list[str] | None = None,
-        language: str = "en",
         base_url: str = "wss://api.deepgram.com/v2/listen",
         enable_preemptive_generation: bool = False,
     ) -> None:
@@ -47,7 +46,6 @@ class DeepgramSTTV2(BaseSTT):
             keyterm (list[str] | None): Optional list of keyterms/phrases to improve recognition (Keyterm Prompting).
                 Each entry is a keyterm or multi-word phrase (e.g. "tretinoin", "customer service").
                 Formatting is preserved (e.g. "Deepgram", "iPhone"). Max 500 tokens total across all keyterms. Defaults to None.
-            language (str): Language code for transcription. Defaults to "en" (Flux currently supports English).
             base_url (str): The base URL to use for the STT plugin. Defaults to "wss://api.deepgram.com/v2/listen".
             enable_preemptive_generation (bool): Enable preemptive generation based on EagerEndOfTurn events. Defaults to False.
         """
@@ -65,7 +63,6 @@ class DeepgramSTTV2(BaseSTT):
         self.eot_threshold=eot_threshold
         self.eot_timeout_ms = eot_timeout_ms
         self.keyterm = keyterm
-        self.language = language
         self.base_url = base_url
         self.enable_preemptive_generation = enable_preemptive_generation
 
@@ -147,7 +144,6 @@ class DeepgramSTTV2(BaseSTT):
 
         query_params = {
             "model": self.model,
-            "language": self.language,
             "encoding": "linear16",
             "sample_rate": self.target_sample_rate,
             "eot_threshold": self.eot_threshold,
