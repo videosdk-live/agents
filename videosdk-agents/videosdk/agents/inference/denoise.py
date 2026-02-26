@@ -90,6 +90,8 @@ class Denoise(BaseDenoise):
         self._ws_task: Optional[asyncio.Task] = None
         self._config_sent: bool = False
         self._reconnecting: bool = False
+        self.connecting: bool = False
+        self.connected: bool = False
 
         # Audio buffering for responses
         self._audio_buffer: asyncio.Queue = asyncio.Queue()
@@ -156,18 +158,13 @@ class Denoise(BaseDenoise):
             ...     sample_rate=16000
             ... )
         """
-        config = {
-            "model_id": model_id,
-            "sample_rate": sample_rate,
-            "channels": channels,
-        }
 
         return Denoise(
             provider="aicoustics",
             model_id=model_id,
             sample_rate=sample_rate,
             channels=channels,
-            config=config,
+            config={},
             base_url=base_url or VIDEOSDK_INFERENCE_URL,
         )
 
@@ -207,19 +204,13 @@ class Denoise(BaseDenoise):
             ... )
         """
 
-        config = {
-            "model_id": model_id,
-            "sample_rate": sample_rate,
-            "channels": channels,
-        }
-
         return Denoise(
             provider="sanas",
             model_id=model_id,
             sample_rate=sample_rate,
             channels=channels,
             base_url=base_url or VIDEOSDK_INFERENCE_URL,
-            config=config,
+            config={},
         )
 
     # ==================== Core Denoise Methods ====================
