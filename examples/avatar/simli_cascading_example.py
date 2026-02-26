@@ -1,7 +1,5 @@
-import asyncio
 import aiohttp
 import os
-from typing import AsyncIterator
 
 from videosdk.agents import Agent, AgentSession, CascadingPipeline, function_tool, JobContext, RoomOptions, WorkerJob, ConversationFlow, ChatRole
 from videosdk.plugins.silero import SileroVAD
@@ -10,6 +8,8 @@ from videosdk.plugins.simli import SimliAvatar, SimliConfig
 from videosdk.plugins.openai import OpenAILLM
 from videosdk.plugins.deepgram import DeepgramSTT
 from videosdk.plugins.elevenlabs import ElevenLabsTTS
+import logging 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 
 # Pre-downloading the Turn Detector model
 pre_download_model()
@@ -73,13 +73,13 @@ async def start_session(context: JobContext):
 
     # Initialize Simli Avatar
     simli_config = SimliConfig(
-        apiKey=os.getenv("SIMLI_API_KEY"),
-        faceId="d2a5c7c6-fed9-4f55-bcb3-062f7cd20103",
+        faceId="cace3ef7-a4c4-425d-a8cf-a5358eb0c427",
         maxSessionLength=1800,
         maxIdleTime=600,
     )
    
     simli_avatar = SimliAvatar(
+        api_key=os.getenv("SIMLI_API_KEY"),
         config=simli_config,
         is_trinity_avatar=True,
     )
@@ -110,7 +110,7 @@ def make_context() -> JobContext:
     room_options = RoomOptions(
         room_id="<room_id>",
         name="Simli Avatar Cascading Agent",
-        playground=False
+        playground=True
     )
 
     return JobContext(room_options=room_options)
