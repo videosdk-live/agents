@@ -54,6 +54,7 @@ dependencies = [
 videosdk = "videosdk.agents.cli:main"
 
 [project.optional-dependencies]
+anam = ["videosdk-plugins-anam>=0.0.60"]
 anthropic = ["videosdk-plugins-anthropic>=0.0.60"]
 assemblyai = ["videosdk-plugins-assemblyai>=0.0.60"]
 aws = ["videosdk-plugins-aws>=0.0.60"]
