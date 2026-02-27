@@ -12,15 +12,11 @@ from .traces_flow import TracesFlowManager
 # Single unified metrics collector instance
 metrics_collector = MetricsCollector()
 
-# Backward compatibility aliases (same instance)
-cascading_metrics_collector = metrics_collector
-realtime_metrics_collector = metrics_collector
+
 
 __all__ = [
     'metrics_collector',
     'MetricsCollector',
-    'cascading_metrics_collector',
-    'realtime_metrics_collector',
     'TurnMetrics',
     'SessionMetrics',
     'TimelineEvent',
