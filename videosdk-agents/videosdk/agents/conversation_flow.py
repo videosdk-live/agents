@@ -494,7 +494,11 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         cascading_metrics_collector.set_user_transcript(user_text)
         cascading_metrics_collector.on_stt_complete(user_text)
 
-        if self.vad and cascading_metrics_collector.data.is_user_speaking: 
+        # Send user transcript via transport signaling channel
+        if self.agent and self.agent.session:
+            self.agent.session._send_transport_transcript(text=user_text, role="user")
+
+        if self.vad and cascading_metrics_collector.data.is_user_speaking:
             cascading_metrics_collector.on_user_speech_end()
         elif not self.vad:
             cascading_metrics_collector.on_user_speech_end()
@@ -1040,11 +1044,13 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         pass
 
     def on_speech_started_stt(self, event_data: Any) -> None:
-        if self.user_speech_callback:   
+        if self.user_speech_callback:
             self.user_speech_callback()
-        
+
         if self.agent and self.agent.session:
             self.agent.session._emit_user_state(UserState.SPEAKING)
+            if self.agent.session.agent_state == AgentState.IDLE:
+                self.agent.session._emit_agent_state(AgentState.LISTENING)
 
     def on_speech_stopped_stt(self, event_data: Any) -> None:
         pass
@@ -1191,6 +1197,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             
             if self.agent and self.agent.session:
                 self.agent.session._emit_user_state(UserState.SPEAKING)
+                if self.agent.session.agent_state == AgentState.IDLE:
+                    self.agent.session._emit_agent_state(AgentState.LISTENING)
 
     async def _interrupt_tts(self) -> None:
         self._is_interrupted = True        

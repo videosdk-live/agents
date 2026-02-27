@@ -135,6 +135,8 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         if self.agent and hasattr(self.agent, 'on_agent_speech_ended'):
             self.agent.on_agent_speech_ended(data)
         if self.agent and self.agent.session:
+            self.agent.session._emit_agent_state(AgentState.IDLE)
+            self.agent.session._emit_user_state(UserState.IDLE)
             self.agent.session._reset_wake_up_timer()
     
     async def on_audio_delta(self, audio_data: bytes):
@@ -165,7 +167,8 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         # self.interrupt() # Not sure yet whether this affects utterance handling.
         if self.agent.session:
             self.agent.session._emit_user_state(UserState.SPEAKING)
-            self.agent.session._emit_agent_state(AgentState.LISTENING)
+            if self.agent.session.agent_state in (AgentState.IDLE, AgentState.SPEAKING):
+                self.agent.session._emit_agent_state(AgentState.LISTENING)
             
     def interrupt(self) -> None:
         """
@@ -210,18 +213,23 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         """
         Handle realtime model transcription event
         """
-        
+
         try:
             self.emit("realtime_model_transcription", data)
+
+            text = data.get("text", "")
+            role = data.get("role")
+
+            # Send transcript (user or assistant) via transport signaling channel
+            if text and isinstance(text, str) and text.strip() and self.agent and self.agent.session:
+                self.agent.session._send_transport_transcript(text=text, role=role or "user")
+
             if self.voice_mail_detector and not self.voice_mail_detection_done:
-                text = data.get("text", "")
-                role = data.get("role") 
-                
                 if role == "user" and text and isinstance(text, str) and text.strip():
                     self._vmd_buffer += f" {text}"
-                    
+
                     if not self._vmd_check_task:
-                        
+
                         self._vmd_check_task = asyncio.create_task(self._run_vmd_check())
         except Exception:
             logger.error(f"Realtime model transcription: {data}")
@@ -317,6 +325,9 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         """
         Handle agent turn started event
         """
+        if self.agent and self.agent.session:
+            self.agent.session._emit_user_state(UserState.IDLE)
+            self.agent.session._emit_agent_state(AgentState.THINKING)
         if self.agent and self.agent.session and self.agent.session.is_background_audio_enabled:
             await self.agent.session.start_thinking_audio()
 
@@ -324,6 +335,9 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         """
         Handle agent speech started event
         """
+        if self.agent and self.agent.session:
+            self.agent.session._emit_agent_state(AgentState.SPEAKING)
+            self.agent.session._emit_user_state(UserState.LISTENING)
         if self.agent and self.agent.session and self.agent.session.is_background_audio_enabled:
             await self.agent.session.stop_thinking_audio()
         if self.agent and self.agent.session:

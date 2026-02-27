@@ -190,6 +190,47 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             self._agent_state = state
             payload = {"state": state.value, **(data or {})}
             self.emit("agent_state_changed", payload)
+            # Signal state via the transport signaling channel
+            self._signal_transport_state(state)
+
+    def _signal_transport_state(self, state: AgentState) -> None:
+        """Signal agent state change via the transport signaling channel."""
+        room = self._get_room()
+        if room and hasattr(room, "send_agent_state"):
+            asyncio.create_task(room.send_agent_state(state.value))
+
+    def _get_room(self):
+        """Get the room (transport handler) from job context."""
+        if self._job_context:
+            return getattr(self._job_context, "room", None)
+        return None
+
+    def _send_transport_transcript(self, text: str, role: str = "assistant") -> None:
+        """Send a transcript via the transport signaling channel."""
+        import datetime
+        room = self._get_room()
+        if room and hasattr(room, "send_agent_transcript"):
+            peer_id = ""
+            if room.meeting and room.meeting.local_participant:
+                peer_id = room.meeting.local_participant.id
+            asyncio.create_task(
+                room.send_agent_transcript(
+                    text=text,
+                    peer_id=peer_id,
+                    timestamp=datetime.datetime.now().isoformat(),
+                )
+            )
+
+    def send_transport_metrics(self, data: dict) -> None:
+        """
+        Send metrics via the transport signaling channel (in addition to PubSub).
+
+        Args:
+            data: Arbitrary metrics dictionary to send to connected clients.
+        """
+        room = self._get_room()
+        if room and hasattr(room, "send_agent_metrics"):
+            asyncio.create_task(room.send_agent_metrics(data))
 
     @property
     def user_state(self) -> UserState:
@@ -414,12 +455,15 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             traces_flow_manager = cascading_metrics_collector.traces_flow_manager
             if traces_flow_manager:
                 traces_flow_manager.agent_say_called(message)
-        
+
         self.agent.chat_context.add_message(role=ChatRole.ASSISTANT, content=message)
-        
+
+        # Send transcript via transport signaling channel
+        self._send_transport_transcript(text=message, role="assistant")
+
         if hasattr(self.pipeline, 'send_message'):
             await self.pipeline.send_message(message, handle=handle)
-        
+
         return handle
     
     async def play_background_audio(self, config: BackgroundAudioHandlerConfig, override_thinking: bool) -> None:
