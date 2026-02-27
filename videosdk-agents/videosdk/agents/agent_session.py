@@ -205,14 +205,17 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             return getattr(self._job_context, "room", None)
         return None
 
-    def _send_transport_transcript(self, text: str, role: str = "assistant") -> None:
+    def _send_transport_transcript(self, text: str, role: str = "assistant", participant_id: str | None = None) -> None:
         """Send a transcript via the transport signaling channel."""
         import datetime
         room = self._get_room()
         if room and hasattr(room, "send_agent_transcript"):
-            peer_id = ""
-            if room.meeting and room.meeting.local_participant:
-                peer_id = room.meeting.local_participant.id
+            peer_id = participant_id or ""
+            if not peer_id:
+                if role == "user" and hasattr(room, "participants_data") and room.participants_data:
+                    peer_id = next(iter(room.participants_data.keys()))
+                elif room.meeting and room.meeting.local_participant:
+                    peer_id = room.meeting.local_participant.id
             asyncio.create_task(
                 room.send_agent_transcript(
                     text=text,
