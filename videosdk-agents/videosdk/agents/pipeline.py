@@ -24,7 +24,7 @@ from .metrics import metrics_collector
 
 logger = logging.getLogger(__name__)
 
-from .helper import (
+from .pipeline_utils import (
     NO_CHANGE, 
     cleanup_pipeline, 
     check_mode_shift, 
@@ -475,7 +475,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
             register_stt_transcript_listener
         )
         await swap_tts(self, tts)
-        await swap_component_in_orchestrator(self, 'vad', vad, 'speech_understanding', 'vad_lock')
+        await swap_component_in_orchestrator(self, 'vad', vad, 'speech_understanding')
         await swap_component_in_orchestrator(self, 'turn_detector', turn_detector, 'speech_understanding', 'turn_detector_lock')
         await swap_component_in_orchestrator(self, 'denoise', denoise, 'speech_understanding', 'denoise_lock')
             
@@ -595,7 +595,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
 
 
         if vad is not NO_CHANGE and self.vad != vad:
-            await swap_component_in_orchestrator(self, 'vad', vad, 'speech_understanding', 'vad_lock')
+            await swap_component_in_orchestrator(self, 'vad', vad, 'speech_understanding')
 
 
         if turn_detector is not NO_CHANGE and self.turn_detector != turn_detector:

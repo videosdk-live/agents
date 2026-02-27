@@ -66,7 +66,6 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
         self._is_user_speaking = False
         self._stt_started = False
         self.stt_lock = asyncio.Lock()
-        self.vad_lock = asyncio.Lock()
         self.turn_detector_lock = asyncio.Lock()
         self.denoise_lock = asyncio.Lock()
         

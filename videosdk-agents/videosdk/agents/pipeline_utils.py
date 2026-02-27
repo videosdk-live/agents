@@ -46,15 +46,11 @@ async def cleanup_pipeline(pipeline, llm_changing: bool = False) -> None:
 
 def check_mode_shift(pipeline, llm: Any, stt: Any, tts: Any) -> bool:
     """Check if component changes trigger a mode shift."""
-    
-    # LLM type change triggers mode shift
     if llm is not NO_CHANGE:
         is_new_llm_realtime = isinstance(llm, RealtimeBaseModel)
         if is_new_llm_realtime != pipeline._is_realtime_mode:
             return True
     
-    # In realtime mode, adding/removing STT/TTS triggers hybrid mode shift
-    if pipeline._is_realtime_mode:
         if stt is not NO_CHANGE and (pipeline.stt is None) != (stt is None):
             return True
         if tts is not NO_CHANGE and (pipeline.tts is None) != (tts is None):
@@ -68,7 +64,7 @@ async def swap_component_in_orchestrator(
     component_name: str,
     new_value: Any,
     orchestrator_attr: str,
-    lock_attr: str,
+    lock_attr: str = None,
     post_swap_hook: Callable[[Any, Any], None] = None
 ) -> None:
     """
@@ -90,7 +86,7 @@ async def swap_component_in_orchestrator(
     if pipeline.orchestrator:
         container = getattr(pipeline.orchestrator, orchestrator_attr, None)
         if container:
-            async with getattr(container, lock_attr):
+            async def _do_swap():
                 if old_value:
                     await old_value.aclose()
                 setattr(pipeline, component_name, new_value)
@@ -98,9 +94,15 @@ async def swap_component_in_orchestrator(
                 
                 if post_swap_hook:
                     post_swap_hook(new_value, container)
+
+            if lock_attr:
+                async with getattr(container, lock_attr):
+                    await _do_swap()
+            else:
+                await _do_swap()
             return
     
-    # Fallback: direct swap
+    # Fallback
     if old_value:
         await old_value.aclose()
     setattr(pipeline, component_name, new_value)
@@ -108,6 +110,8 @@ async def swap_component_in_orchestrator(
 
 def register_stt_transcript_listener(stt: Any, container: Any) -> None:
     """Hook to register STT transcript listener after swap."""
+    if stt is None:
+        return
     if hasattr(stt, 'on_stt_transcript'):
         stt.on_stt_transcript(container._on_stt_transcript)
 
@@ -125,8 +129,7 @@ async def swap_tts(pipeline, new_tts: Any) -> None:
     if new_tts is NO_CHANGE:
         return
     swap_done = False
-    
-    # Check speech_generation (Hybrid/Cascading)
+
     if pipeline.speech_generation:
         async with pipeline.speech_generation.tts_lock:
             if pipeline.tts:
@@ -135,8 +138,7 @@ async def swap_tts(pipeline, new_tts: Any) -> None:
             pipeline.speech_generation.tts = new_tts
             pipeline._configure_components()
             swap_done = True
-    
-    # Check orchestrator speech_generation
+
     if not swap_done and pipeline.orchestrator and pipeline.orchestrator.speech_generation:
         async with pipeline.orchestrator.speech_generation.tts_lock:
             if pipeline.tts:
