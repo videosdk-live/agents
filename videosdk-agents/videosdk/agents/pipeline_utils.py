@@ -50,7 +50,7 @@ def check_mode_shift(pipeline, llm: Any, stt: Any, tts: Any) -> bool:
         is_new_llm_realtime = isinstance(llm, RealtimeBaseModel)
         if is_new_llm_realtime != pipeline._is_realtime_mode:
             return True
-    
+    if pipeline._is_realtime_mode:
         if stt is not NO_CHANGE and (pipeline.stt is None) != (stt is None):
             return True
         if tts is not NO_CHANGE and (pipeline.tts is None) != (tts is None):
