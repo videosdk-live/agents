@@ -1,7 +1,5 @@
-import asyncio
 import aiohttp
 import os
-from typing import AsyncIterator
 
 from videosdk.agents import Agent, AgentSession, Pipeline, function_tool, JobContext, RoomOptions, WorkerJob
 from videosdk.plugins.silero import SileroVAD
@@ -110,7 +108,7 @@ def make_context() -> JobContext:
     room_options = RoomOptions(
         room_id="<room_id>",
         name="Simli Avatar Cascading Agent",
-        playground=False
+        playground=True
     )
 
     return JobContext(room_options=room_options)

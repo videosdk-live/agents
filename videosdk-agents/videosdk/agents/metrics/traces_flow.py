@@ -941,6 +941,40 @@ class TracesFlowManager:
             self.a2a_span = None
             self._a2a_turn_count = 0  
 
+    def create_background_audio_start_span(self, file_path: str = None, looping: bool = False, start_time: float = None):
+        """Creates a 'Playing Background Audio' span at session level (same level as turn spans)."""
+        if not self.main_turn_span:
+            return None
+        
+        bg_audio_attrs = {}
+        if file_path:
+            bg_audio_attrs["file_path"] = file_path
+        bg_audio_attrs["looping"] = looping
+        bg_audio_attrs["event"] = "start"
+        
+        create_log("Playing Background Audio", "INFO")
+        start_span = create_span("Playing Background Audio", bg_audio_attrs, parent_span=self.main_turn_span, start_time=start_time or time.perf_counter())
+        # End immediately as a point-in-time event
+        self.end_span(start_span, message="Background audio started", end_time=start_time or time.perf_counter())
+        return start_span
+
+    def create_background_audio_stop_span(self, file_path: str = None, looping: bool = False, end_time: float = None):
+        """Creates a 'Stopped Background Audio' span at session level (same level as turn spans)."""
+        if not self.main_turn_span:
+            return None
+        
+        bg_audio_attrs = {}
+        if file_path:
+            bg_audio_attrs["file_path"] = file_path
+        bg_audio_attrs["looping"] = looping
+        bg_audio_attrs["event"] = "stop"
+        
+        create_log("Stopped Background Audio", "INFO")
+        stop_span = create_span("Stopped Background Audio", bg_audio_attrs, parent_span=self.main_turn_span, start_time=end_time or time.perf_counter())
+        # End immediately as a point-in-time event
+        self.end_span(stop_span, message="Background audio stopped", end_time=end_time or time.perf_counter())
+        return stop_span
+
     def end_agent_session(self):
         """Completes the agent session span."""
         if self.main_turn_span:

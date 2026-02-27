@@ -5,6 +5,7 @@ from av import VideoFrame, AudioFrame
 from av.audio.resampler import AudioResampler
 import logging
 import numpy as np
+import os
 from simli import SimliConfig, SimliClient
 from simli.simli import TransportMode
 from simli.events import SimliEvent

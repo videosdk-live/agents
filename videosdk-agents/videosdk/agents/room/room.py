@@ -283,6 +283,7 @@ class VideoSDKHandler(BaseTransportHandler):
         asyncio.create_task(self._collect_session_id())
         asyncio.create_task(self._collect_meeting_attributes())
         if self.recording:
+            self.recorded_participants.add(self.meeting.local_participant.id)
             asyncio.create_task(
                 self.start_participant_recording(
                     self.meeting.local_participant.id)
@@ -453,6 +454,7 @@ class VideoSDKHandler(BaseTransportHandler):
         )
 
         if self.recording and len(self.participants_data) == 1:
+            self.recorded_participants.add(participant.id)
             asyncio.create_task(
                 self.start_participant_recording(participant.id))
 
@@ -539,6 +541,11 @@ class VideoSDKHandler(BaseTransportHandler):
         # Update participant count and check if session should end
         self._update_non_agent_participant_count()
         
+        if participant.id in self.recorded_participants:
+            logger.info(f"Recorded participant {participant.display_name} left, ending session")
+            asyncio.create_task(self._end_session("recorded_participant_left"))
+            return
+
         if self._non_agent_participant_count == 0 and self.auto_end_session:
             if self.session_timeout_seconds is not None and self.session_timeout_seconds > 0:
                 logger.info(
@@ -662,6 +669,7 @@ class VideoSDKHandler(BaseTransportHandler):
             metrics_collector.set_traces_flow_manager(None)
         
         self.participants_data.clear()
+        self.recorded_participants.clear()
         self._participant_joined_events.clear()
         self.meeting = None
         self.pipeline = None
