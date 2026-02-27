@@ -20,7 +20,7 @@ classifiers = [
     "Topic :: Multimedia :: Video",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-dependencies = ["videosdk-agents>=0.0.60", "aiohttp>=3.9.0", "numpy>=1.26.0", "scipy>=1.11.0"]
+dependencies = ["videosdk-agents>=1.0.0.dev", "aiohttp>=3.9.0", "numpy>=1.26.0", "scipy>=1.11.0"]
 
 [tool.hatch.version]
 path = "videosdk/plugins/gladia/version.py"

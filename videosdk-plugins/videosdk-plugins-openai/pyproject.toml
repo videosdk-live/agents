@@ -20,7 +20,7 @@ classifiers = [
     "Topic :: Multimedia :: Video",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-dependencies = ["videosdk-agents>=0.0.60", "openai[realtime]>=1.68.2"]
+dependencies = ["videosdk-agents>=1.0.0.dev", "openai[realtime]>=1.68.2"]
 
 [tool.hatch.version]
 path = "videosdk/plugins/openai/version.py"
