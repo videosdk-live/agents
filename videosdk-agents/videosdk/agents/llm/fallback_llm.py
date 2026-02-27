@@ -18,9 +18,8 @@ class FallbackLLM(LLM, FallbackBase):
         asyncio.create_task(self._handle_async_error(str(error_msg), failed_p))
 
     async def _handle_async_error(self, error_msg: str, failed_provider: Any):
-        switched = await self._switch_provider(f"Async Error: {error_msg}", failed_provider=failed_provider)
-        if not switched:
-            self.emit("error", error_msg)
+        await self._switch_provider(f"Async Error: {error_msg}", failed_provider=failed_provider)
+        self.emit("error", error_msg)
 
     async def _switch_provider(self, reason: str, failed_provider: Any = None):
         provider_to_cleanup = failed_provider if failed_provider else self.active_provider
@@ -53,6 +52,7 @@ class FallbackLLM(LLM, FallbackBase):
                     yield chunk
                 return 
             except Exception as e:
+                self.emit("error", str(e))
                 switched = await self._switch_provider(str(e), failed_provider=current_provider)
                 if not switched:
                     raise e

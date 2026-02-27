@@ -22,9 +22,8 @@ class FallbackSTT(STT, FallbackBase):
 
     async def _handle_async_error(self, error_msg: str, failed_provider: Any):
         """Async wrapper to handle switching logic"""
-        switched = await self._switch_provider(f"Async Error: {error_msg}", failed_provider=failed_provider)
-        if not switched:
-            self.emit("error", error_msg)
+        await self._switch_provider(f"Async Error: {error_msg}", failed_provider=failed_provider)
+        self.emit("error", error_msg)
 
     async def _switch_provider(self, reason: str, failed_provider: Any = None):
         """Override switch to handle STT specific setup"""
@@ -65,6 +64,7 @@ class FallbackSTT(STT, FallbackBase):
         try:
             await current_provider.process_audio(audio_frames, **kwargs)
         except Exception as e:
+            self.emit("error", str(e))
             switched = await self._switch_provider(str(e), failed_provider=current_provider)
             if switched:
                 await self.active_provider.process_audio(audio_frames, **kwargs)
