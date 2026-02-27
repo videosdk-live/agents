@@ -315,6 +315,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
     def on_component_error(self, source: str, error_data: Any) -> None:
         """Handle error events from components"""
         logger.error(f"[{source}] Component error: {error_data}")
+        metrics_collector.add_error(source, error_data)
         self.emit("error", {"source": source, "error": str(error_data)})
     
     def get_session_metrics_snapshot(self) -> dict:

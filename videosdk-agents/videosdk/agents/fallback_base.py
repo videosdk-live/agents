@@ -40,9 +40,10 @@ class FallbackBase:
         print(f"Emitting fallback event: {event_data}")  # Debug print for emitted event data
         if self._metrics_collector:
             # Update provider info when fallback occurs
-            if event_data.get("new_provider_label"):
+            if event_data.get("new_provider_label") or event_data.get("is_recovery"):
                 new_provider_class = self.active_provider_class
-                self._metrics_collector.update_provider_class(self._component_name, new_provider_class)
+                new_provider_model = getattr(self.active_provider, 'model', getattr(self.active_provider, 'model_id', getattr(self.active_provider, 'speech_model', getattr(self.active_provider, 'voice_id', getattr(self.active_provider, 'voice', '')))))
+                self._metrics_collector.update_provider_class(self._component_name, new_provider_class, str(new_provider_model))
             self._metrics_collector.on_fallback_event(event_data)
 
     async def _switch_provider(self, reason: str, failed_provider: Any = None):

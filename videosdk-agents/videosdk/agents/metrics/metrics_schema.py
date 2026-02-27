@@ -248,6 +248,7 @@ class TurnMetrics:
     handoff_occurred: bool = False
     errors: List[Dict[str, Any]] = field(default_factory=list)
     timestamp: float = field(default_factory=time.time)
+    preemtive_generation_enabled: bool = False
 
     vad_metrics: List[VadMetrics] = field(default_factory=list)
     stt_metrics: List[SttMetrics] = field(default_factory=list)
@@ -261,6 +262,7 @@ class TurnMetrics:
     fallback_events: List[FallbackEvent] = field(default_factory=list)
     function_tool_metrics: List[FunctionToolMetrics] = field(default_factory=list)
     mcp_tool_metrics: List[McpToolMetrics] = field(default_factory=list)
+    session_metrics: Optional[SessionMetrics] = field(default_factory=SessionMetrics)
 
     def compute_e2e_latency(self) -> None:
         """Calculate E2E latency by summing component latencies (STT + EOU + LLM TTFT + TTS)."""

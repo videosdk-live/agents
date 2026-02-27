@@ -85,6 +85,7 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
     def update_preemptive_generation_flag(self) -> None:
         """Update the preemptive generation flag based on current STT instance"""
         self._enable_preemptive_generation = getattr(self.stt, 'enable_preemptive_generation', False) if self.stt else False
+        metrics_collector.set_preemptive_generation_enabled(self._enable_preemptive_generation)
     
     async def start(self) -> None:
         """Start the speech understanding component"""
@@ -236,21 +237,23 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
                 if self.turn_detector and self.agent:
                     metrics_collector.on_eou_start()
                     eou_probability = self.turn_detector.get_eou_probability(self.agent.chat_context)
-                    metrics_collector.on_eou_complete(eou_probability)
+                    metrics_collector.on_eou_complete()
                     logger.info(f"EOU probability: {eou_probability}")
                     if eou_probability < self.eou_certainty_threshold:
                         delay = self.max_speech_wait_timeout
+                    metrics_collector.on_wait_for_additional_speech(delay, eou_probability)
                         
             elif self.mode == 'ADAPTIVE':
                 if self.turn_detector and self.agent:
                     metrics_collector.on_eou_start()
                     eou_probability = self.turn_detector.get_eou_probability(self.agent.chat_context)
-                    metrics_collector.on_eou_complete(eou_probability)
+                    metrics_collector.on_eou_complete()
                     logger.info(f"EOU probability: {eou_probability}")
                     delay_range = self.max_speech_wait_timeout - self.min_speech_wait_timeout
                     wait_factor = 1.0 - eou_probability
                     delay = self.min_speech_wait_timeout + (delay_range * wait_factor)
-            
+                    metrics_collector.on_wait_for_additional_speech(delay, eou_probability)
+
             logger.info(f"Using delay: {delay} seconds")
             await self._wait_for_additional_speech(delay)
     

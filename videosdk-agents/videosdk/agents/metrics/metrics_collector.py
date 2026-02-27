@@ -80,7 +80,9 @@ class MetricsCollector:
 
         # Realtime agent speech end timer
         self._agent_speech_end_timer: Optional[asyncio.TimerHandle] = None
-
+        self.preemtive_generation_enabled: bool = False
+        self.session_set_in_trace: bool = False
+        self.transport_mode: Optional[str] = None
     # ──────────────────────────────────────────────
     # Session lifecycle
     # ──────────────────────────────────────────────
@@ -134,16 +136,20 @@ class MetricsCollector:
             "model_name": model_name,
         }
 
-    def update_provider_class(self, component_type: str, provider_class: str) -> None:
-        """Update the provider class for a specific component when fallback occurs.
+    def update_provider_class(self, component_type: str, provider_class: str, model_name: str = "") -> None:
+        """Update the provider class and model name for a specific component when fallback occurs.
         
         Args:
             component_type: "STT", "LLM", "TTS", etc.
             provider_class: The new provider class name (e.g., "GoogleLLM")
+            model_name: The new model name
         """
-        if component_type in self.session.provider_per_component:
-            self.session.provider_per_component[component_type]["provider_class"] = provider_class
-            logger.info(f"Updated {component_type} provider class to: {provider_class}")
+        target_type = component_type.lower()
+        if target_type in self.session.provider_per_component:
+            self.session.provider_per_component[target_type]["provider_class"] = provider_class
+            if model_name:
+                self.session.provider_per_component[target_type]["model_name"] = model_name
+            logger.info(f"Updated {target_type} provider class to: {provider_class}, model: {model_name}")
 
     @staticmethod
     def _eou_config_to_dict(eou_config: Any) -> Dict[str, Any]:
@@ -194,6 +200,14 @@ class MetricsCollector:
                 meta=meta,
             )
         )
+        self.traces_flow_manager.participant_metrics.append(
+            ParticipantMetrics(
+                participant_id=participant_id,
+                kind=kind,
+                sip_user=sip_user,
+                join_time=join_time,
+            )
+        )
 
     def set_traces_flow_manager(self, manager: TracesFlowManager) -> None:
         """Set the TracesFlowManager instance."""
@@ -235,7 +249,7 @@ class MetricsCollector:
             self.complete_turn()
 
         self._total_turns += 1
-        self.current_turn = TurnMetrics(turn_id=self._generate_turn_id())
+        self.current_turn = TurnMetrics(turn_id=self._generate_turn_id(), preemtive_generation_enabled=self.preemtive_generation_enabled)
 
         # Carry over pending user start time from a previously discarded turn
         if self._pending_user_start_time is not None:
@@ -255,7 +269,7 @@ class MetricsCollector:
         if not self.current_turn:
             logger.info(f"[metrics] complete_turn() early return — no current_turn")
             return
-
+        self.current_turn.session_metrics = self.session
         # Calculate E2E latency
         self.current_turn.compute_e2e_latency()
 
@@ -378,10 +392,15 @@ class MetricsCollector:
 
         if self.current_turn:
             if self.current_turn.user_speech_start_time is None:
+                logger.info(f"[DEBUG_START] on_user_speech_start() | setting user_speech_start_time={self._user_input_start_time}")
                 self.current_turn.user_speech_start_time = self._user_input_start_time
 
             if not any(ev.event_type == "user_speech" for ev in self.current_turn.timeline_event_metrics):
                 self._start_timeline_event("user_speech", self._user_input_start_time)
+
+            if not self.current_turn.vad_metrics:
+                self.current_turn.vad_metrics.append(VadMetrics())
+            self.current_turn.vad_metrics[-1].user_speech_start_time = self._user_input_start_time
 
     def on_user_speech_end(self) -> None:
         """Called when user stops speaking (VAD end)."""
@@ -391,10 +410,16 @@ class MetricsCollector:
 
         if self.current_turn and self.current_turn.user_speech_start_time:
             self.current_turn.user_speech_end_time = self._user_speech_end_time
+            logger.info(f"[DEBUG_END] on_user_speech_end() | setting user_speech_end_time={self._user_speech_end_time}")
             self.current_turn.user_speech_duration = self._round_latency(
                 self.current_turn.user_speech_end_time - self.current_turn.user_speech_start_time
             )
             self._end_timeline_event("user_speech", self._user_speech_end_time)
+            
+            if not self.current_turn.vad_metrics:
+                self.current_turn.vad_metrics.append(VadMetrics())
+            self.current_turn.vad_metrics[-1].user_speech_end_time = self._user_speech_end_time
+
             logger.info(f"user speech duration: {self.current_turn.user_speech_duration}ms")
 
             if self.playground and self.playground_manager:
@@ -460,7 +485,7 @@ class MetricsCollector:
 
         self._stt_start_time = None
 
-    def on_stt_preflight_end(self) -> None:
+    def on_stt_preflight_end(self, transcript: str = "") -> None:
         """Called when STT preflight event is received."""
         if self.current_turn and self.current_turn.stt_metrics:
             stt = self.current_turn.stt_metrics[-1]
@@ -469,6 +494,7 @@ class MetricsCollector:
                 stt.stt_preflight_latency = self._round_latency(
                     stt.stt_preflight_end_time - stt.stt_start_time
                 )
+                stt.stt_preflight_transcript = transcript
                 logger.info(f"stt preflight latency: {stt.stt_preflight_latency}ms")
 
                 if self.playground and self.playground_manager:
@@ -502,13 +528,10 @@ class MetricsCollector:
             stt.stt_output_tokens = output_tokens
             stt.stt_total_tokens = total_tokens
 
-    def set_preemptive_generation_enabled(self) -> None:
+    def set_preemptive_generation_enabled(self, enabled: bool) -> None:
         """Mark preemptive generation as enabled for current STT."""
-        if self.current_turn:
-            if not self.current_turn.stt_metrics:
-                self.current_turn.stt_metrics.append(SttMetrics())
-            self.current_turn.stt_metrics[-1].stt_preemptive_generation_enabled = True
-
+        self.preemtive_generation_enabled = enabled
+            
     # ──────────────────────────────────────────────
     # EOU metrics
     # ──────────────────────────────────────────────
@@ -523,7 +546,7 @@ class MetricsCollector:
                 self.current_turn.eou_metrics.append(EouMetrics())
             self.current_turn.eou_metrics[-1].eou_start_time = self._eou_start_time
 
-    def on_eou_complete(self, probability: Optional[float] = None) -> None:
+    def on_eou_complete(self) -> None:
         """Called when EOU processing completes."""
         if self._eou_start_time:
             eou_end_time = time.perf_counter()
@@ -535,14 +558,23 @@ class MetricsCollector:
                 eou = self.current_turn.eou_metrics[-1]
                 eou.eou_end_time = eou_end_time
                 eou.eou_latency = eou_latency
-                if probability is not None:
-                    eou.eou_probability = probability
                 logger.info(f"eou latency: {eou_latency}ms")
 
                 if self.playground and self.playground_manager:
                     self.playground_manager.send_cascading_metrics(metrics={"eou_latency": eou_latency})
 
             self._eou_start_time = None
+    
+    def on_wait_for_additional_speech(self, duration: float, eou_probability: float):
+        if self.current_turn:
+            if not self.current_turn.eou_metrics:
+                self.current_turn.eou_metrics.append(EouMetrics())
+            eou = self.current_turn.eou_metrics[-1]
+            eou.wait_for_additional_speech_duration = duration
+            eou.eou_probability = eou_probability
+            eou.waited_for_additional_speech = True
+            logger.info(f"wait for additional speech duration: {duration}ms")
+            logger.info(f"wait for additional speech eou probability: {eou_probability}")
 
     # ──────────────────────────────────────────────
     # LLM metrics
@@ -938,7 +970,7 @@ class MetricsCollector:
             self.current_turn.errors.append({
                 "source": source,
                 "message": message,
-                "timestamp": time.time(),
+                "timestamp_perf": time.perf_counter(),
             })
 
             if self.playground and self.playground_manager:
@@ -950,7 +982,6 @@ class MetricsCollector:
         """Record a fallback event for the current turn"""
         if not self.current_turn:
             self.start_turn()
-        print(f"Received fallback event: {event_data}")
         if self.current_turn:
             fallback_event = FallbackEvent(
                 component_type=event_data.get("component_type", ""),
@@ -1026,10 +1057,12 @@ class MetricsCollector:
         """End a timeline event and calculate duration."""
         if self.current_turn:
             for event in reversed(self.current_turn.timeline_event_metrics):
-                if event.event_type == event_type and event.end_time is None:
-                    event.end_time = end_time
-                    event.duration_ms = self._round_latency(end_time - event.start_time)
-                    break
+                if event.event_type == event_type:
+                    # Allow extending user_speech events which may rapidly start/stop due to VAD
+                    if event.end_time is None or event_type == "user_speech":
+                        event.end_time = end_time
+                        event.duration_ms = self._round_latency(end_time - event.start_time)
+                        break
 
     def _update_timeline_event_text(self, event_type: str, text: str) -> None:
         """Update the most recent timeline event of this type with text content."""
@@ -1127,7 +1160,7 @@ class MetricsCollector:
         # Flatten the last realtime (full s2s) metrics entry for analytics
         if turn.realtime_metrics:
             rt = turn.realtime_metrics[-1]
-            data["realtime_ttfb"] = rt.realtime_ttfb
+            data["ttfb"] = rt.realtime_ttfb
             data["realtime_input_tokens"] = rt.realtime_input_tokens
             data["realtime_total_tokens"] = rt.realtime_total_tokens
             data["realtime_output_tokens"] = rt.realtime_output_tokens

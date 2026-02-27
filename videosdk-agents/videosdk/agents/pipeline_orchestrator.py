@@ -227,6 +227,13 @@ class PipelineOrchestrator(EventEmitter[Literal[
             content=text
         )
 
+        if not self.speech_understanding:
+            metrics_collector.on_user_speech_start()
+            metrics_collector.on_user_speech_end()
+            
+            if not self.speech_generation:
+                metrics_collector.on_agent_speech_start()
+
         if self.content_generation:
             full_response = ""
             async for response_chunk in self.content_generation.generate(text):
@@ -248,6 +255,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
                     await self.speech_generation.synthesize(full_response)
                 else:
                     # No TTS - complete the turn after LLM
+                    metrics_collector.on_agent_speech_end()
                     metrics_collector.set_agent_response(full_response)
                     metrics_collector.complete_turn()
 
@@ -317,6 +325,8 @@ class PipelineOrchestrator(EventEmitter[Literal[
             
             self._preemptive_authorized.clear()
             self._preemptive_cancelled = False
+            if metrics_collector:
+                metrics_collector.on_stt_preflight_end()
             self._preemptive_generation_task = asyncio.create_task(
                 self._generate_and_synthesize(user_text, handle, wait_for_authorization=True)
             )
@@ -485,6 +495,11 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 logger.warning("No content generation available")
                 return
             
+            if not self.speech_generation:
+                logger.warning("No speech generation available")
+                metrics_collector.on_agent_speech_start()
+                
+            
             llm_stream = self.content_generation.generate(user_text)
             
             q = asyncio.Queue(maxsize=50)
@@ -605,6 +620,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
 
                 # For no-TTS modes, complete the turn here since there's no speech_generation
                 if not self.speech_generation:
+                    metrics_collector.on_agent_speech_end()
                     metrics_collector.complete_turn()
 
         finally:

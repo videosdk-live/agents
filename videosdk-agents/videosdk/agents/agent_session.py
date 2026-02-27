@@ -259,24 +259,44 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
 
         # Set provider info based on pipeline components
         configs = self.pipeline.get_component_configs() if hasattr(self.pipeline, 'get_component_configs') else {}
+
+        def _get_provider_info(component, comp_name):
+            if not component:
+                return "", ""
+            default_model = configs.get(comp_name, {}).get('model', '')
+            if hasattr(component, 'active_provider') and component.active_provider is not None:
+                provider_class = component.active_provider.__class__.__name__
+                model = getattr(component.active_provider, 'model', getattr(component.active_provider, 'model_id', getattr(component.active_provider, 'speech_model', getattr(component.active_provider, 'voice_id', getattr(component.active_provider, 'voice', getattr(component.active_provider, 'speaker', default_model))))))
+            else:
+                provider_class = component.__class__.__name__
+                model = getattr(component, 'model', getattr(component, 'model_id', getattr(component, 'speech_model', getattr(component, 'voice_id', getattr(component, 'voice', getattr(component, 'speaker', default_model))))))
+            return provider_class, str(model)
+
         if not self.pipeline.config.is_realtime:
             if self.pipeline.stt:
-                metrics_collector.set_provider_info("stt", self.pipeline.stt.__class__.__name__, configs.get('stt', {}).get('model', ''))
+                p_class, p_model = _get_provider_info(self.pipeline.stt, 'stt')
+                metrics_collector.set_provider_info("stt", p_class, p_model)
             if self.pipeline.llm:
-                metrics_collector.set_provider_info("llm", self.pipeline.llm.__class__.__name__, configs.get('llm', {}).get('model', ''))
+                p_class, p_model = _get_provider_info(self.pipeline.llm, 'llm')
+                metrics_collector.set_provider_info("llm", p_class, p_model)
             if self.pipeline.tts:
-                metrics_collector.set_provider_info("tts", self.pipeline.tts.__class__.__name__, configs.get('tts', {}).get('model', ''))
+                p_class, p_model = _get_provider_info(self.pipeline.tts, 'tts')
+                metrics_collector.set_provider_info("tts", p_class, p_model)
             if hasattr(self.pipeline, 'vad') and self.pipeline.vad:
-                metrics_collector.set_provider_info("vad", self.pipeline.vad.__class__.__name__, configs.get('vad', {}).get('model', ''))
+                p_class, p_model = _get_provider_info(self.pipeline.vad, 'vad')
+                metrics_collector.set_provider_info("vad", p_class, p_model)
             if hasattr(self.pipeline, 'turn_detector') and self.pipeline.turn_detector:
-                metrics_collector.set_provider_info("eou", self.pipeline.turn_detector.__class__.__name__, configs.get('eou', {}).get('model', ''))
+                p_class, p_model = _get_provider_info(self.pipeline.turn_detector, 'eou')
+                metrics_collector.set_provider_info("eou", p_class, p_model)
         else:
             if self.pipeline._realtime_model:
                 metrics_collector.set_provider_info("realtime", self.pipeline._realtime_model.__class__.__name__, getattr(self.pipeline._realtime_model, 'model', ''))
             if self.pipeline.stt:
-                metrics_collector.set_provider_info("stt", self.pipeline.stt.__class__.__name__, configs.get('stt', {}).get('model', ''))
+                p_class, p_model = _get_provider_info(self.pipeline.stt, 'stt')
+                metrics_collector.set_provider_info("stt", p_class, p_model)
             if self.pipeline.tts:
-                metrics_collector.set_provider_info("tts", self.pipeline.tts.__class__.__name__, configs.get('tts', {}).get('model', ''))
+                p_class, p_model = _get_provider_info(self.pipeline.tts, 'tts')
+                metrics_collector.set_provider_info("tts", p_class, p_model)
 
         # Traces flow manager setup
         traces_flow_manager = metrics_collector.traces_flow_manager
@@ -296,6 +316,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
                 ] if self.agent.mcp_manager else [],
                 "pipeline": self.pipeline.__class__.__name__,
                 "pipeline_mode": self.pipeline.config.pipeline_mode.value,
+                "transport_mode": metrics_collector.transport_mode
             }
             start_time = time.perf_counter()
             config_attributes["start_time"] = start_time
