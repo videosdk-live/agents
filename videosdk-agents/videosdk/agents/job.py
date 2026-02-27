@@ -288,6 +288,10 @@ class JobContext:
         self._is_shutting_down: bool = False
         self.want_console = len(sys.argv) > 1 and sys.argv[1].lower() == "console"
         self.playground_manager: Optional["PlaygroundManager"] = None
+        
+        from .metrics import metrics_collector
+        self.metrics_collector = metrics_collector
+        
     def _set_pipeline_internal(self, pipeline: Any) -> None:
         """Internal method called by pipeline constructors"""
         self._pipeline = pipeline
@@ -331,6 +335,7 @@ class JobContext:
                 cleanup_callback = await setup_console_voice_for_ctx(self)
                 self.add_shutdown_callback(cleanup_callback)
             else:
+                self.metrics_collector.transport_mode = self.room_options.transport_mode
                 if self.room_options.transport_mode == TransportMode.VIDEOSDK:
                     from .room.room import VideoSDKHandler
                     

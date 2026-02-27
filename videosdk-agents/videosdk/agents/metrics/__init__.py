@@ -7,6 +7,7 @@ from .integration import (
 )
 from .metrics_collector import MetricsCollector
 from .metrics_schema import TurnMetrics, SessionMetrics
+from .traces_flow import TracesFlowManager
 
 # Single unified metrics collector instance
 metrics_collector = MetricsCollector()
@@ -29,4 +30,5 @@ __all__ = [
     'create_span',
     'complete_span',
     'create_log',
+    'TracesFlowManager',
 ]

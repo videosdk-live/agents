@@ -100,11 +100,20 @@ class VideoSDKTelemetry:
             attributes = {} if attributes is None else attributes
             attributes["attiribute_id"] = attiribute_id
             span_kwargs = {"context": ctx}
-            start_time = time.perf_counter() if start_time is None else start_time
-            start_absolute_time = time.time_ns()
+            
+            current_perf = time.perf_counter()
+            current_abs = time.time_ns()
+            
+            if start_time is None:
+                start_time = current_perf
+                start_absolute_time = current_abs
+            else:
+                diff_ns = int((current_perf - start_time) * 1_000_000_000)
+                start_absolute_time = current_abs - diff_ns
+
             self.span_details[attiribute_id] = {
                 "start_time": start_time, # perf_counter
-                "start_absolute_time": start_absolute_time # time.time()
+                "start_absolute_time": start_absolute_time # absolute ns
             }
             span_kwargs["start_time"] = int(start_absolute_time)
             span = self.tracer.start_span(span_name, **span_kwargs)
