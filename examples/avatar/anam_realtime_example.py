@@ -1,11 +1,10 @@
-import asyncio
 import aiohttp
 import os
 
 from videosdk.agents import Agent, AgentSession, Pipeline, function_tool, JobContext, RoomOptions, WorkerJob
 from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig
-from videosdk.plugins.simli import SimliAvatar, SimliConfig
-import logging 
+from videosdk.plugins.anam import AnamAvatar
+import logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 
 @function_tool
@@ -67,20 +66,14 @@ async def start_session(context: JobContext):
         )
     )
 
-    # Initialize Simli Avatar
-    simli_config = SimliConfig(
-        faceId="cace3ef7-a4c4-425d-a8cf-a5358eb0c427",
-        maxSessionLength=1800,
-        maxIdleTime=600,
-    )
-    simli_avatar = SimliAvatar(
-        api_key=os.getenv("SIMLI_API_KEY"),
-        config=simli_config,
-        is_trinity_avatar=True,
+    # Initialize Anam Avatar
+    anam_avatar = AnamAvatar(
+        api_key=os.getenv("ANAM_API_KEY"),
+        avatar_id=os.getenv("ANAM_AVATAR_ID"),
     )
 
     # Create pipeline with avatar
-    pipeline = Pipeline(llm=model, avatar=simli_avatar)
+    pipeline = Pipeline(llm=model, avatar=anam_avatar)
 
     session = AgentSession(agent=MyVoiceAgent(), pipeline=pipeline)
 
@@ -88,9 +81,9 @@ async def start_session(context: JobContext):
 
 def make_context() -> JobContext:
     room_options = RoomOptions(
-        room_id="xjld-g28c-rda8",
-        name="Simli Avatar Realtime Agent",
-        playground=True 
+        room_id="<room_id>",
+        name="Anam Avatar Realtime Agent",
+        playground=False 
     )
 
     return JobContext(room_options=room_options)
@@ -98,4 +91,4 @@ def make_context() -> JobContext:
 
 if __name__ == "__main__":
     job = WorkerJob(entrypoint=start_session, jobctx=make_context)
-    job.start() 
+    job.start()

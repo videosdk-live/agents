@@ -19,9 +19,8 @@ import asyncio
 import os
 from asyncio import AbstractEventLoop
 from ..metrics.traces_flow import TracesFlowManager
-from ..metrics import cascading_metrics_collector
+from ..metrics import metrics_collector
 from ..metrics.integration import auto_initialize_telemetry_and_logs
-from ..metrics.realtime_metrics_collector import realtime_metrics_collector
 import requests
 import time
 from ..event_bus import global_event_emitter
@@ -281,8 +280,8 @@ class VideoSDKHandler(BaseTransportHandler):
         """
         logger.info(f"Agent joined the meeting")
         self._meeting_joined_data = data
-        # asyncio.create_task(self._collect_session_id())
-        # asyncio.create_task(self._collect_meeting_attributes())
+        asyncio.create_task(self._collect_session_id())
+        asyncio.create_task(self._collect_meeting_attributes())
         if self.recording:
             asyncio.create_task(
                 self.start_participant_recording(
@@ -443,6 +442,15 @@ class VideoSDKHandler(BaseTransportHandler):
         self.participants_data[participant.id]["sipUser"] = participant.meta_data.get("sipUser", False) if participant.meta_data else False
         self.participants_data[participant.id]["sipCallType"] = participant.meta_data.get("callType", False) if participant.meta_data else False
         logger.info(f"Participant joined: {peer_name}")
+
+        sip_user_flag = self.participants_data[participant.id]["sipUser"]
+        metrics_collector.add_participant_metrics(
+            participant_id=participant.id,
+            kind="user",
+            sip_user=sip_user_flag,
+            join_time=time.time(),
+            meta=self.participants_data[participant.id],
+        )
 
         if self.recording and len(self.participants_data) == 1:
             asyncio.create_task(
@@ -678,8 +686,15 @@ class VideoSDKHandler(BaseTransportHandler):
                 session_id = getattr(self.meeting, "session_id", None)
                 if session_id:
                     self._session_id = session_id
-                    # cascading_metrics_collector.set_session_id(session_id)
-                    # realtime_metrics_collector.set_session_id(session_id)
+                    print(f"Session ID: >>>>>>>>>>>> {session_id}")
+                    metrics_collector.set_session_id(session_id)
+                    metrics_collector.add_participant_metrics(
+                        participant_id=self.meeting.local_participant.id,
+                        kind="agent",
+                        sip_user=False,
+                        join_time=time.time(),
+                        meta={"name": self.name},
+                    )
                     self._session_id_collected = True
                     if self.traces_flow_manager:
                         self.traces_flow_manager.set_session_id(session_id)

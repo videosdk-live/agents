@@ -30,7 +30,7 @@ from videosdk.agents import (
     EncodeOptions,
     ResizeOptions,
 )
-from videosdk.agents import realtime_metrics_collector
+from videosdk.agents.metrics import metrics_collector
 
 logger = logging.getLogger(__name__)
 
@@ -442,11 +442,12 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
             await self.interrupt()
             if self.audio_track:
                 self.audio_track.interrupt()
-        await realtime_metrics_collector.set_user_speech_start()
+        metrics_collector.on_user_speech_start()
+        metrics_collector.start_turn()
 
     async def _handle_speech_stopped(self, data: dict) -> None:
         """Handle speech detection end"""
-        await realtime_metrics_collector.set_user_speech_end()
+        metrics_collector.on_user_speech_end()
         self.emit("user_speech_ended", {})
 
     async def _handle_response_created(self, data: dict) -> None:
@@ -472,7 +473,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
                         tool_info = get_tool_info(tool)
                         if tool_info.name == name:
                             try:
-                                await realtime_metrics_collector.add_tool_call(name)
+                                metrics_collector.add_function_tool_call(tool_name=name)
                                 result = await tool(**arguments)
                                 await self.send_event(
                                     {
@@ -517,10 +518,10 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
             self._current_text_response = ""
         
         if not self._agent_speaking and delta_content:
-            await realtime_metrics_collector.set_agent_speech_start()
+            metrics_collector.on_agent_speech_start()
             self._agent_speaking = True
             self.emit("agent_speech_started", {})
-        
+
         self._current_text_response += delta_content
         
         self.emit("realtime_model_text_delta", {
@@ -536,7 +537,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
 
         try:
             if not self._agent_speaking:
-                await realtime_metrics_collector.set_agent_speech_start()
+                metrics_collector.on_agent_speech_start()
                 self._agent_speaking = True
                 self.emit("agent_speech_started", {})
             base64_audio_data = base64.b64decode(data.get("delta"))
@@ -557,12 +558,13 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
                 return
             cancel_event = {"type": "response.cancel", "event_id": str(uuid.uuid4())}
             await self.send_event(cancel_event)
-            await realtime_metrics_collector.set_interrupted()
+            metrics_collector.on_interrupted()
         if self.audio_track:
             self.audio_track.interrupt()
         if self._agent_speaking:
             self.emit("agent_speech_ended", {})
-            await realtime_metrics_collector.set_agent_speech_end(timeout=1.0)
+            metrics_collector.on_agent_speech_end()
+            metrics_collector.schedule_turn_complete(timeout=1.0)
             self._agent_speaking = False
 
     async def _handle_audio_transcript_delta(self, data: dict) -> None:
@@ -576,7 +578,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         """Handle input audio transcription completion for user transcript"""
         transcript = data.get("transcript", "")
         if transcript:
-            await realtime_metrics_collector.set_user_transcript(transcript)
+            metrics_collector.set_user_transcript(transcript)
             try:
                 self.emit(
                     "realtime_model_transcription",
@@ -587,11 +589,13 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
 
     async def _handle_response_done(self, data: dict) -> None:
         """Handle response completion for agent transcript"""
+        usage_metadata = self.get_realtime_tokens(data)
+        metrics_collector.set_realtime_usage(usage_metadata)
         if (
             hasattr(self, "_current_audio_transcript")
             and self._current_audio_transcript
         ):
-            await realtime_metrics_collector.set_agent_response(
+            metrics_collector.set_agent_response(
                 self._current_audio_transcript
             )
             
@@ -614,7 +618,8 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
                 pass
             self._current_audio_transcript = ""
         self.emit("agent_speech_ended", {})
-        await realtime_metrics_collector.set_agent_speech_end(timeout=1.0)
+        metrics_collector.on_agent_speech_end()
+        metrics_collector.schedule_turn_complete(timeout=1.0)
         self._agent_speaking = False
         pass
 
@@ -787,3 +792,40 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
             mime = f"image/{fmt.lower()}"
             encoded = base64.b64encode(image_bytes).decode("utf-8")
             return f"data:{mime};base64,{encoded}"
+
+    def get_realtime_tokens(self, event: dict) -> dict:
+        """
+        Extract and flatten all token details needed for pricing from a
+        OpenAI Realtime response.done event into a single-level dictionary.
+
+        Parameters:
+            event (dict): Full Realtime event payload
+
+        Returns:
+            dict: Single-level dictionary with token counts
+        """
+        usage = event.get("response", {}).get("usage", {})
+        input_details = usage.get("input_token_details", {})
+        cached_details = input_details.get("cached_tokens_details", {})
+        output_details = usage.get("output_token_details", {})
+
+        token_dict = {
+            "total_tokens": usage.get("total_tokens", 0),
+            "input_tokens": usage.get("input_tokens", 0),
+            "output_tokens": usage.get("output_tokens", 0),
+
+            "input_text_tokens": input_details.get("text_tokens", 0),
+            "input_audio_tokens": input_details.get("audio_tokens", 0),
+            "input_image_tokens": input_details.get("image_tokens", 0),
+            "input_cached_tokens": input_details.get("cached_tokens", 0),
+
+            "cached_text_tokens": cached_details.get("text_tokens", 0),
+            "cached_audio_tokens": cached_details.get("audio_tokens", 0),
+            "cached_image_tokens": cached_details.get("image_tokens", 0),
+
+            "output_text_tokens": output_details.get("text_tokens", 0),
+            "output_audio_tokens": output_details.get("audio_tokens", 0),
+            "output_image_tokens": output_details.get("image_tokens", 0)
+        }
+
+        return token_dict            

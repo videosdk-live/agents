@@ -15,9 +15,9 @@ from videosdk.agents import (
     is_function_tool,
     get_tool_info,
     build_openai_schema,
-    realtime_metrics_collector,
     global_event_emitter
 )
+from videosdk.agents.metrics import metrics_collector
 import websockets
 from websockets.client import WebSocketClientProtocol
 import aiohttp
@@ -329,7 +329,7 @@ class UltravoxRealtime(RealtimeBaseModel[UltravoxEventTypes]):
             tool_info = get_tool_info(tool)
             if tool_info.name == tool_name:
                 try:
-                    await realtime_metrics_collector.add_tool_call(tool_info.name)
+                    metrics_collector.add_function_tool_call(tool_name=tool_info.name)
                     result = await tool(**parameters)
                     await self._send_tool_result(invocation_id, result)
                 except Exception as e:
@@ -388,7 +388,7 @@ class UltravoxRealtime(RealtimeBaseModel[UltravoxEventTypes]):
                             
                         if not self._agent_speaking:
                             self.emit("agent_speech_started", {})
-                            await realtime_metrics_collector.set_agent_speech_start()
+                            metrics_collector.on_agent_speech_start()
                             self._agent_speaking = True
 
                         if self.audio_track and self.loop:
@@ -414,7 +414,8 @@ class UltravoxRealtime(RealtimeBaseModel[UltravoxEventTypes]):
                         if role == "user":
                             if not self._user_speaking and (text or delta):
                                 self.emit("user_speech_started", {})
-                                await realtime_metrics_collector.set_user_speech_start()
+                                metrics_collector.on_user_speech_start()
+                                metrics_collector.start_turn()
                                 self._user_speaking = True
                             
                             display_text = text if text else delta
@@ -425,18 +426,18 @@ class UltravoxRealtime(RealtimeBaseModel[UltravoxEventTypes]):
                                 )
                             
                             if is_final and text:
-                                await realtime_metrics_collector.set_user_transcript(text)
+                                metrics_collector.set_user_transcript(text)
                                 self.emit(
                                     "realtime_model_transcription",
                                     {"role": "user", "text": text, "is_final": True},
                                 )
-                                await realtime_metrics_collector.set_user_speech_end()
+                                metrics_collector.on_user_speech_end()
                                 self._user_speaking = False
 
                         elif role == "agent":
                             if not self._agent_speaking and (text or delta):
                                 self.emit("agent_speech_started", {})
-                                await realtime_metrics_collector.set_agent_speech_start()
+                                metrics_collector.on_agent_speech_start()
                                 self._agent_speaking = True
                                 
                             display_text = text if text else delta
@@ -448,7 +449,7 @@ class UltravoxRealtime(RealtimeBaseModel[UltravoxEventTypes]):
                                 )
                             
                             if is_final and text:
-                                await realtime_metrics_collector.set_agent_response(text)
+                                metrics_collector.set_agent_response(text)
                                 self.emit(
                                     "realtime_model_transcription",
                                     {"role": "agent", "text": text, "is_final": True},
@@ -465,12 +466,13 @@ class UltravoxRealtime(RealtimeBaseModel[UltravoxEventTypes]):
                         if state == "speaking":
                             if not self._agent_speaking:
                                 self.emit("agent_speech_started", {})
-                                await realtime_metrics_collector.set_agent_speech_start()
+                                metrics_collector.on_agent_speech_start()
                                 self._agent_speaking = True
                         elif state in ["idle", "listening"]:
                             if self._agent_speaking:
                                 self.emit("agent_speech_ended", {})
-                                await realtime_metrics_collector.set_agent_speech_end()
+                                metrics_collector.on_agent_speech_end()
+                                metrics_collector.schedule_turn_complete()
                                 self._agent_speaking = False
 
                     elif msg_type in ["clientToolInvocation", "client_tool_invocation"]:
@@ -578,7 +580,7 @@ class UltravoxRealtime(RealtimeBaseModel[UltravoxEventTypes]):
             await self._session.websocket.send(json.dumps(clear_msg))
             
             self.emit("agent_speech_ended", {})
-            await realtime_metrics_collector.set_interrupted()
+            metrics_collector.on_interrupted()
             
             if self.audio_track:
                 self.audio_track.interrupt()

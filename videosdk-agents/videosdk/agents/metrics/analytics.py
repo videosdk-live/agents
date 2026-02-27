@@ -36,7 +36,7 @@ class AnalyticsClient:
         """Send turn analytics to the API endpoint"""
         session_id_from_payload = interaction_data.get("sessionId")
         current_session_id = self.session_id or session_id_from_payload
-
+        data =  {"data": [interaction_data]}
         if not current_session_id:
             logger.error("Failed sending session data : No session ID")
             return
@@ -53,7 +53,7 @@ class AnalyticsClient:
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
-                    url, json=interaction_data, headers=headers
+                    url, json=data, headers=headers
                 ) as response:
                     if response.status == 200:
                         logger.info(f"Analytics sent successfully")

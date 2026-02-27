@@ -10,13 +10,17 @@ import logging
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 pre_download_model()
+from dotenv import load_dotenv
+load_dotenv(override=True)
+
+KNOWLEDGE_BASE_ID = os.getenv("KNOWLEDGE_BASE_ID")
 
 class CustomKnowledgeBase(KnowledgeBase):
     """
     Custom knowledge base handler to demonstrate overriding retrieval logic.
     """
 
-    TRIGGER_PHRASES = ["search for", "look up", "what do you know about"]
+    TRIGGER_PHRASES = ["Context Engineering", "context engineering", "contextengineerring" "Context Engineering is a technique", "context engineering is a technique", "Coding", "coding", "search for", "look up", "what do you know about"]
 
     def allow_retrieval(self, transcript: str) -> bool:
         """
@@ -94,7 +98,7 @@ async def entrypoint(ctx: JobContext):
     await session.start(wait_for_participant=True, run_until_shutdown=True)
 
 def make_context() -> JobContext:
-    room_options = RoomOptions(room_id="<room_id>", name="Knowledge Base Agent", playground=True)
+    room_options = RoomOptions(room_id="xjld-g28c-rda8", name="Knowledge Base Agent", playground=True)
 
     return JobContext(room_options=room_options)
 

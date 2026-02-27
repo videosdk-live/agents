@@ -1,12 +1,19 @@
-import asyncio
 import aiohttp
 import os
-
 from videosdk.agents import Agent, AgentSession, Pipeline, function_tool, JobContext, RoomOptions, WorkerJob
-from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig
-from videosdk.plugins.simli import SimliAvatar, SimliConfig
-import logging 
+from videosdk.plugins.silero import SileroVAD
+from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
+from videosdk.plugins.anam import AnamAvatar
+from videosdk.plugins.openai import OpenAILLM
+from videosdk.plugins.deepgram import DeepgramSTT
+from videosdk.plugins.elevenlabs import ElevenLabsTTS
+
+import logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
+from dotenv import load_dotenv
+load_dotenv(override=True)
+# Pre-downloading the Turn Detector model
+pre_download_model()
 
 @function_tool
 async def get_weather(
@@ -49,48 +56,53 @@ class MyVoiceAgent(Agent):
         )
 
     async def on_enter(self) -> None:
-        await self.session.say("Hello! I'm your real-time AI avatar assistant powered by VideoSDK. How can I help you today?")
+        await self.session.say("Hello! I'm your AI avatar assistant powered by VideoSDK. How can I help you today?")
     
     async def on_exit(self) -> None:
-        await self.session.say("Goodbye! It was great talking with you!")
+        await self.session.say("Goodbye! It was nice talking with you!")
         
 
 async def start_session(context: JobContext):
-    # Initialize Gemini Realtime model
-    model = GeminiRealtime(
-        model="gemini-2.5-flash-native-audio-preview-12-2025",
-        # When GOOGLE_API_KEY is set in .env - DON'T pass api_key parameter
-        # api_key="AIXXXXXXXXXXXXXXXXXXXX", 
-        config=GeminiLiveConfig(
-            voice="Leda",  # Puck, Charon, Kore, Fenrir, Aoede, Leda, Orus, and Zephyr.
-            response_modalities=["AUDIO"]
-        )
+
+    stt = DeepgramSTT(model="nova-3", language="multi", api_key=os.getenv("DEEPGRAM_API_KEY"))
+    llm = OpenAILLM(model="gpt-4o-mini", api_key=os.getenv("OPENAI_API_KEY"))
+    tts = ElevenLabsTTS(api_key=os.getenv("ELEVENLABS_API_KEY"), enable_streaming=True, speed=1.2)
+    
+    # Initialize VAD and Turn Detector
+    vad = SileroVAD()
+    turn_detector = TurnDetector(threshold=0.8)
+
+    # Initialize Anam Avatar
+    anam_avatar = AnamAvatar(
+        api_key=os.getenv("ANAM_API_KEY"),
+        avatar_id=os.getenv("ANAM_AVATAR_ID"),
     )
 
-    # Initialize Simli Avatar
-    simli_config = SimliConfig(
-        faceId="cace3ef7-a4c4-425d-a8cf-a5358eb0c427",
-        maxSessionLength=1800,
-        maxIdleTime=600,
-    )
-    simli_avatar = SimliAvatar(
-        api_key=os.getenv("SIMLI_API_KEY"),
-        config=simli_config,
-        is_trinity_avatar=True,
-    )
+    # Create agent
+    agent = MyVoiceAgent()
 
     # Create pipeline with avatar
-    pipeline = Pipeline(llm=model, avatar=simli_avatar)
+    pipeline = Pipeline(
+        stt=stt, 
+        llm=llm, 
+        tts=tts, 
+        vad=vad, 
+        turn_detector=turn_detector,
+        avatar=anam_avatar
+    )
 
-    session = AgentSession(agent=MyVoiceAgent(), pipeline=pipeline)
+    session = AgentSession(
+        agent=agent,
+        pipeline=pipeline,
+    )
 
     await session.start(wait_for_participant=True, run_until_shutdown=True)
 
 def make_context() -> JobContext:
     room_options = RoomOptions(
-        room_id="xjld-g28c-rda8",
-        name="Simli Avatar Realtime Agent",
-        playground=True 
+        room_id="<room_id>",
+        name="Anam Avatar Cascading Agent",
+        playground=False
     )
 
     return JobContext(room_options=room_options)
@@ -98,4 +110,4 @@ def make_context() -> JobContext:
 
 if __name__ == "__main__":
     job = WorkerJob(entrypoint=start_session, jobctx=make_context)
-    job.start() 
+    job.start()
