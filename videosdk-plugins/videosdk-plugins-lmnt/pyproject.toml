@@ -20,7 +20,7 @@ classifiers = [
     "Topic :: Multimedia :: Video",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-dependencies = ["videosdk-agents>=0.0.66", "httpx>=0.24.0"]
+dependencies = ["videosdk-agents>=1.0.0.dev", "httpx>=0.24.0"]
 
 [tool.hatch.version]
 path = "videosdk/plugins/lmnt/version.py"

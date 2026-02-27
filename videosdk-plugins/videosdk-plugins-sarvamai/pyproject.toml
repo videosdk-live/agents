@@ -20,7 +20,7 @@ classifiers = [
     "Topic :: Multimedia :: Video",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-dependencies = ["videosdk-agents>=0.0.66", "sarvamai"]
+dependencies = ["videosdk-agents>=1.0.0.dev", "sarvamai"]
 
 [tool.hatch.version]
 path = "videosdk/plugins/sarvamai/version.py"
