@@ -116,6 +116,8 @@ class TTS(EventEmitter[Literal["error"]]):
                 self.hooks = hooks
             def enable_audio_input(self, manual_control=False):
                 pass
+            def interrupt(self):
+                pass
                 
         mock_track = QueueTrack()
         self.audio_track = mock_track

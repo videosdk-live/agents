@@ -18,10 +18,9 @@ from dotenv import load_dotenv
 import asyncio
 import os
 from asyncio import AbstractEventLoop
-from ..metrics.traces_flow import TracesFlowManager
-from ..metrics import cascading_metrics_collector
+from ..metrics import TracesFlowManager
+from ..metrics import metrics_collector
 from ..metrics.integration import auto_initialize_telemetry_and_logs
-from ..metrics.realtime_metrics_collector import realtime_metrics_collector
 import requests
 import time
 from ..event_bus import global_event_emitter
@@ -140,9 +139,9 @@ class VideoSDKHandler(BaseTransportHandler):
         self._session_id_collected = False
         self.recording = recording
 
-        # self.traces_flow_manager = TracesFlowManager(room_id=self.meeting_id)
-        # cascading_metrics_collector.set_traces_flow_manager(
-        #     self.traces_flow_manager)
+        self.traces_flow_manager = TracesFlowManager(room_id=self.meeting_id)
+        metrics_collector.set_traces_flow_manager(
+            self.traces_flow_manager)
 
         if custom_microphone_audio_track:
             self.audio_track = custom_microphone_audio_track
@@ -207,7 +206,7 @@ class VideoSDKHandler(BaseTransportHandler):
         self._left: bool = False
         self.sdk_metadata = {
             "sdk": "agents",
-            "sdk_version": "0.0.60"
+            "sdk_version": "1.0.0.dev"
         }
         self.videosdk_meeting_meta_data= {
             "agent_id": self.agent_id,
@@ -281,9 +280,10 @@ class VideoSDKHandler(BaseTransportHandler):
         """
         logger.info(f"Agent joined the meeting")
         self._meeting_joined_data = data
-        # asyncio.create_task(self._collect_session_id())
-        # asyncio.create_task(self._collect_meeting_attributes())
+        asyncio.create_task(self._collect_session_id())
+        asyncio.create_task(self._collect_meeting_attributes())
         if self.recording:
+            self.recorded_participants.add(self.meeting.local_participant.id)
             asyncio.create_task(
                 self.start_participant_recording(
                     self.meeting.local_participant.id)
@@ -444,7 +444,17 @@ class VideoSDKHandler(BaseTransportHandler):
         self.participants_data[participant.id]["sipCallType"] = participant.meta_data.get("callType", False) if participant.meta_data else False
         logger.info(f"Participant joined: {peer_name}")
 
+        sip_user_flag = self.participants_data[participant.id]["sipUser"]
+        metrics_collector.add_participant_metrics(
+            participant_id=participant.id,
+            kind="user",
+            sip_user=sip_user_flag,
+            join_time=time.time(),
+            meta=self.participants_data[participant.id],
+        )
+
         if self.recording and len(self.participants_data) == 1:
+            self.recorded_participants.add(participant.id)
             asyncio.create_task(
                 self.start_participant_recording(participant.id))
 
@@ -531,6 +541,11 @@ class VideoSDKHandler(BaseTransportHandler):
         # Update participant count and check if session should end
         self._update_non_agent_participant_count()
         
+        if participant.id in self.recorded_participants:
+            logger.info(f"Recorded participant {participant.display_name} left, ending session")
+            asyncio.create_task(self._end_session("recorded_participant_left"))
+            return
+
         if self._non_agent_participant_count == 0 and self.auto_end_session:
             if self.session_timeout_seconds is not None and self.session_timeout_seconds > 0:
                 logger.info(
@@ -651,9 +666,10 @@ class VideoSDKHandler(BaseTransportHandler):
             except Exception as e:
                 logger.error(f"Error ending traces flow manager: {e}")
             self.traces_flow_manager = None
-            # cascading_metrics_collector.set_traces_flow_manager(None)
+            metrics_collector.set_traces_flow_manager(None)
         
         self.participants_data.clear()
+        self.recorded_participants.clear()
         self._participant_joined_events.clear()
         self.meeting = None
         self.pipeline = None
@@ -678,8 +694,15 @@ class VideoSDKHandler(BaseTransportHandler):
                 session_id = getattr(self.meeting, "session_id", None)
                 if session_id:
                     self._session_id = session_id
-                    # cascading_metrics_collector.set_session_id(session_id)
-                    # realtime_metrics_collector.set_session_id(session_id)
+                    print(f"Session ID: >>>>>>>>>>>> {session_id}")
+                    metrics_collector.set_session_id(session_id)
+                    metrics_collector.add_participant_metrics(
+                        participant_id=self.meeting.local_participant.id,
+                        kind="agent",
+                        sip_user=False,
+                        join_time=time.time(),
+                        meta={"name": self.name},
+                    )
                     self._session_id_collected = True
                     if self.traces_flow_manager:
                         self.traces_flow_manager.set_session_id(session_id)
@@ -700,13 +723,13 @@ class VideoSDKHandler(BaseTransportHandler):
 
                 if attributes:
                     peer_id = getattr(self.meeting, "participant_id", "agent")
-                    # auto_initialize_telemetry_and_logs(
-                    #     room_id=self.meeting_id,
-                    #     peer_id=peer_id,
-                    #     room_attributes=attributes,
-                    #     session_id=self._session_id,
-                    #     sdk_metadata=self.sdk_metadata,
-                    # )
+                    auto_initialize_telemetry_and_logs(
+                        room_id=self.meeting_id,
+                        peer_id=peer_id,
+                        room_attributes=attributes,
+                        session_id=self._session_id,
+                        sdk_metadata=self.sdk_metadata,
+                    )
                 else:
                     logger.error("No meeting attributes found")
             else:

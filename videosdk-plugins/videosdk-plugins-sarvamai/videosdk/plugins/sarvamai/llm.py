@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import json
-from typing import Any, AsyncIterator, List, Union
+from typing import Any, AsyncIterator, List, Union, Literal
 import traceback
 
 import httpx
@@ -24,6 +24,8 @@ class SarvamAILLM(LLM):
         temperature: float = 0.7,
         tool_choice: ToolChoice = "auto",
         max_completion_tokens: int | None = None,
+        reasoning_effort: Literal["low", "medium", "high"] | None = None,
+        wiki_grounding:bool = False
     ) -> None:
         """Initialize the SarvamAI LLM plugin.
 
@@ -33,6 +35,8 @@ class SarvamAILLM(LLM):
             temperature (float): The temperature to use for the LLM plugin. Defaults to 0.7.
             tool_choice (ToolChoice): The tool choice to use for the LLM plugin. Defaults to "auto".
             max_completion_tokens (Optional[int], optional): The maximum completion tokens to use for the LLM plugin. Defaults to None.
+            reasoning_effort (Optional[Literal["low", "medium", "high"]], optional): The reasoning effort to use for the LLM plugin. Defaults to None.
+            wiki_grounding (bool): enables Wikipedia search. Defaults to False
         """
         super().__init__()
         self.api_key = api_key or os.getenv("SARVAMAI_API_KEY")
@@ -43,6 +47,8 @@ class SarvamAILLM(LLM):
         self.temperature = temperature
         self.tool_choice = tool_choice
         self.max_completion_tokens = max_completion_tokens
+        self.reasoning_effort = reasoning_effort
+        self.wiki_grounding = wiki_grounding
         self._cancelled = False
         
         self._client = httpx.AsyncClient(
@@ -109,6 +115,8 @@ class SarvamAILLM(LLM):
                 "messages": final_messages,
                 "temperature": self.temperature,
                 "stream": True,
+                "reasoning_effort": self.reasoning_effort,
+                "wiki_grounding": self.wiki_grounding,
             }
 
             if self.max_completion_tokens:

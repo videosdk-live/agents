@@ -16,6 +16,7 @@ from .background_audio import BackgroundAudioHandler,BackgroundAudioHandlerConfi
 from .dtmf_handler import DTMFHandler
 from .voice_mail_detector import VoiceMailDetector
 from .playground_manager import PlaygroundManager
+from .metrics import metrics_collector
 import logging
 import av
 logger = logging.getLogger(__name__)
@@ -156,7 +157,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             await asyncio.sleep(self.wake_up)
             if self._wake_up_timer_active and self.on_wake_up and not self._reply_in_progress:
                 if asyncio.iscoroutinefunction(self.on_wake_up):
-                    await self.on_wake_up()
+                    asyncio.create_task(self.on_wake_up())
                 else:
                     self.on_wake_up()
         except asyncio.CancelledError:
@@ -251,66 +252,77 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         if self._playground or self._send_analytics_to_pubsub:
             job_ctx = get_current_job_context()
             self.playground_manager = PlaygroundManager(job_ctx)
-            # TODO: Update metrics collection for new unified pipeline architecture
-            # if self.pipeline._is_realtime_mode:
-            #     realtime_metrics_collector.set_playground_manager(self.playground_manager)
-            # else:
-            #     cascading_metrics_collector.set_playground_manager(self.playground_manager)
+            metrics_collector.set_playground_manager(self.playground_manager)
 
-        # if isinstance(self.pipeline, RealTimePipeline):
-        #     await realtime_metrics_collector.start_session(self.agent, self.pipeline)
-        # else:
-        #     traces_flow_manager = cascading_metrics_collector.traces_flow_manager
-        #     if traces_flow_manager:
-        #         config_attributes = {
-        #             "system_instructions": self.agent.instructions,
-        #             "function_tools": [
-        #                 get_tool_info(tool).name
-        #                 for tool in (
-        #                     [tool for tool in self.agent.tools if tool not in self.agent.mcp_manager.tools]
-        #                     if self.agent.mcp_manager else self.agent.tools
-        #                 )
-        #             ] if self.agent.tools else [],
+        # Configure metrics with session info
+        metrics_collector.set_system_instructions(self.agent.instructions)
 
-        #             "mcp_tools": [
-        #                 get_tool_info(tool).name
-        #                 for tool in self.agent.mcp_manager.tools
-        #             ] if self.agent.mcp_manager else [],
+        # Set provider info based on pipeline components
+        configs = self.pipeline.get_component_configs() if hasattr(self.pipeline, 'get_component_configs') else {}
 
-        #             "pipeline": self.pipeline.__class__.__name__,
-        #             **({
-        #                 "stt_provider": self.pipeline.stt.__class__.__name__ if self.pipeline.stt else None,
-        #                 "tts_provider": self.pipeline.tts.__class__.__name__ if self.pipeline.tts else None, 
-        #                 "llm_provider": self.pipeline.llm.__class__.__name__ if self.pipeline.llm else None,
-        #                 "vad_provider": self.pipeline.vad.__class__.__name__ if hasattr(self.pipeline, 'vad') and self.pipeline.vad else None,
-        #                 "eou_provider": self.pipeline.turn_detector.__class__.__name__ if hasattr(self.pipeline, 'turn_detector') and self.pipeline.turn_detector else None,
-        #                 "stt_model": self.pipeline.get_component_configs()['stt'].get('model') if hasattr(self.pipeline, 'get_component_configs') and self.pipeline.stt else None,
-        #                 "llm_model": self.pipeline.get_component_configs()['llm'].get('model') if hasattr(self.pipeline, 'get_component_configs') and self.pipeline.llm else None,
-        #                 "tts_model": self.pipeline.get_component_configs()['tts'].get('model') if hasattr(self.pipeline, 'get_component_configs') and self.pipeline.tts else None,
-        #                 "vad_model": self.pipeline.get_component_configs()['vad'].get('model') if hasattr(self.pipeline, 'get_component_configs') and hasattr(self.pipeline, 'vad') and self.pipeline.vad else None,
-        #                 "eou_model": self.pipeline.get_component_configs()['eou'].get('model') if hasattr(self.pipeline, 'get_component_configs') and hasattr(self.pipeline, 'turn_detector') and self.pipeline.turn_detector else None
-        #             } if self.pipeline.__class__.__name__ == "CascadingPipeline" else {}),
-        #         }
-        #         start_time = time.perf_counter()
-        #         config_attributes["start_time"] = start_time
-        #         await traces_flow_manager.start_agent_session_config(config_attributes)
-        #         await traces_flow_manager.start_agent_session({"start_time": start_time})
+        def _get_provider_info(component, comp_name):
+            if not component:
+                return "", ""
+            default_model = configs.get(comp_name, {}).get('model', '')
+            if hasattr(component, 'active_provider') and component.active_provider is not None:
+                provider_class = component.active_provider.__class__.__name__
+                model = getattr(component.active_provider, 'model', getattr(component.active_provider, 'model_id', getattr(component.active_provider, 'speech_model', getattr(component.active_provider, 'voice_id', getattr(component.active_provider, 'voice', getattr(component.active_provider, 'speaker', default_model))))))
+            else:
+                provider_class = component.__class__.__name__
+                model = getattr(component, 'model', getattr(component, 'model_id', getattr(component, 'speech_model', getattr(component, 'voice_id', getattr(component, 'voice', getattr(component, 'speaker', default_model))))))
+            return provider_class, str(model)
 
-        #     if self.pipeline.__class__.__name__ == "CascadingPipeline":
-        #         configs = self.pipeline.get_component_configs() if hasattr(self.pipeline, 'get_component_configs') else {}
-        #         cascading_metrics_collector.set_provider_info(
-        #             llm_provider=self.pipeline.llm.__class__.__name__ if self.pipeline.llm else "",
-        #             llm_model=configs.get('llm', {}).get('model', "") if self.pipeline.llm else "",
-        #             stt_provider=self.pipeline.stt.__class__.__name__ if self.pipeline.stt else "",
-        #             stt_model=configs.get('stt', {}).get('model', "") if self.pipeline.stt else "",
-        #             tts_provider=self.pipeline.tts.__class__.__name__ if self.pipeline.tts else "",
-        #             tts_model=configs.get('tts', {}).get('model', "") if self.pipeline.tts else "",
-        #             vad_provider=self.pipeline.vad.__class__.__name__ if hasattr(self.pipeline, 'vad') and self.pipeline.vad else "",
-        #             vad_model=configs.get('vad', {}).get('model', "") if hasattr(self.pipeline, 'vad') and self.pipeline.vad else "",
-        #             eou_provider=self.pipeline.turn_detector.__class__.__name__ if hasattr(self.pipeline, 'turn_detector') and self.pipeline.turn_detector else "",
-        #             eou_model=configs.get('eou', {}).get('model', "") if hasattr(self.pipeline, 'turn_detector') and self.pipeline.turn_detector else ""
-        #         )
-        
+        if not self.pipeline.config.is_realtime:
+            if self.pipeline.stt:
+                p_class, p_model = _get_provider_info(self.pipeline.stt, 'stt')
+                metrics_collector.set_provider_info("stt", p_class, p_model)
+            if self.pipeline.llm:
+                p_class, p_model = _get_provider_info(self.pipeline.llm, 'llm')
+                metrics_collector.set_provider_info("llm", p_class, p_model)
+            if self.pipeline.tts:
+                p_class, p_model = _get_provider_info(self.pipeline.tts, 'tts')
+                metrics_collector.set_provider_info("tts", p_class, p_model)
+            if hasattr(self.pipeline, 'vad') and self.pipeline.vad:
+                p_class, p_model = _get_provider_info(self.pipeline.vad, 'vad')
+                metrics_collector.set_provider_info("vad", p_class, p_model)
+            if hasattr(self.pipeline, 'turn_detector') and self.pipeline.turn_detector:
+                p_class, p_model = _get_provider_info(self.pipeline.turn_detector, 'eou')
+                metrics_collector.set_provider_info("eou", p_class, p_model)
+        else:
+            if self.pipeline._realtime_model:
+                metrics_collector.set_provider_info("realtime", self.pipeline._realtime_model.__class__.__name__, getattr(self.pipeline._realtime_model, 'model', ''))
+            if self.pipeline.stt:
+                p_class, p_model = _get_provider_info(self.pipeline.stt, 'stt')
+                metrics_collector.set_provider_info("stt", p_class, p_model)
+            if self.pipeline.tts:
+                p_class, p_model = _get_provider_info(self.pipeline.tts, 'tts')
+                metrics_collector.set_provider_info("tts", p_class, p_model)
+
+        # Traces flow manager setup
+        traces_flow_manager = metrics_collector.traces_flow_manager
+        if traces_flow_manager:
+            config_attributes = {
+                "system_instructions": self.agent.instructions,
+                "function_tools": [
+                    get_tool_info(tool).name
+                    for tool in (
+                        [tool for tool in self.agent.tools if tool not in self.agent.mcp_manager.tools]
+                        if self.agent.mcp_manager else self.agent.tools
+                    )
+                ] if self.agent.tools else [],
+                "mcp_tools": [
+                    tool._tool_info.name
+                    for tool in self.agent.mcp_manager.tools
+                ] if self.agent.mcp_manager else [],
+                "pipeline": self.pipeline.__class__.__name__,
+                "pipeline_mode": self.pipeline.config.pipeline_mode.value,
+                "transport_mode": metrics_collector.transport_mode
+            }
+            start_time = time.perf_counter()
+            config_attributes["start_time"] = start_time
+            await traces_flow_manager.start_agent_session_config(config_attributes)
+            await traces_flow_manager.start_agent_session({"start_time": start_time})
+
         if hasattr(self.pipeline, 'set_agent'):
             self.pipeline.set_agent(self.agent)
 
@@ -356,17 +368,20 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
     async def say(self, message: str, interruptible: bool = True) -> UtteranceHandle:
         """
         Send an initial message to the agent and return a handle to track it.
+        When called from inside a function tool (_is_executing_tool), the current
+        turn's utterance is not interrupted or replaced, so the LLM stream can
+        continue after the tool returns.
         """
-        if self.current_utterance and not self.current_utterance.done():
-            self.current_utterance.interrupt()
         handle = UtteranceHandle(utterance_id=f"utt_{uuid.uuid4().hex[:8]}", interruptible=interruptible)
-        self.current_utterance = handle
+        if not self._is_executing_tool:
+            if self.current_utterance and not self.current_utterance.done():
+                self.current_utterance.interrupt()
+            self.current_utterance = handle
 
-        # if not isinstance(self.pipeline, RealTimePipeline):
-        #     traces_flow_manager = cascading_metrics_collector.traces_flow_manager
-        #     if traces_flow_manager:
-        #         traces_flow_manager.agent_say_called(message)
-        
+        traces_flow_manager = metrics_collector.traces_flow_manager
+        if traces_flow_manager:
+            traces_flow_manager.agent_say_called(message)
+
         self.agent.chat_context.add_message(role=ChatRole.ASSISTANT, content=message)
         
         if hasattr(self.pipeline, 'send_message'):
@@ -392,6 +407,11 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             self._background_audio_player = BackgroundAudioHandler(config, audio_track)
             
             await self._background_audio_player.start()
+            # Track background audio start for metrics
+            metrics_collector.on_background_audio_start(
+                file_path=config.file_path,
+                looping=config.looping
+            )
 
 
     async def stop_background_audio(self) -> None:
@@ -399,6 +419,8 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         if self._background_audio_player:
             await self._background_audio_player.stop()
             self._background_audio_player = None
+            # Track background audio stop for metrics
+            metrics_collector.on_background_audio_stop()
 
         if self._thinking_was_playing:
             await self.start_thinking_audio()
@@ -432,12 +454,19 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         if self.agent._thinking_background_config and audio_track:
             self._thinking_audio_player = BackgroundAudioHandler(self.agent._thinking_background_config, audio_track)
             await self._thinking_audio_player.start()
+            # Track thinking audio start for metrics
+            metrics_collector.on_thinking_audio_start(
+                file_path=self.agent._thinking_background_config.file_path,
+                looping=self.agent._thinking_background_config.looping
+            )
 
     async def stop_thinking_audio(self):
         """Stop thinking audio"""
         if self._thinking_audio_player:
             await self._thinking_audio_player.stop()
             self._thinking_audio_player = None
+            # Track thinking audio stop for metrics
+            metrics_collector.on_thinking_audio_stop()
     
 
     async def reply(self, instructions: str, wait_for_playback: bool = True, frames: list[av.VideoFrame] | None = None, interruptible: bool = True) -> UtteranceHandle:
@@ -521,19 +550,13 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             return
         self._closed = True
         self._emit_agent_state(AgentState.CLOSING)
-        # if isinstance(self.pipeline, RealTimePipeline):
-        #     realtime_metrics_collector.finalize_session()
-        #     traces_flow_manager = realtime_metrics_collector.traces_flow_manager
-        #     if traces_flow_manager:
-        #         start_time = time.perf_counter()
-        #         await traces_flow_manager.start_agent_session_closed({"start_time": start_time})
-        #         traces_flow_manager.end_agent_session_closed()
-        # else:
-        #     traces_flow_manager = cascading_metrics_collector.traces_flow_manager
-        #     if traces_flow_manager:
-        #         start_time = time.perf_counter()
-        #         await traces_flow_manager.start_agent_session_closed({"start_time": start_time})
-        #         traces_flow_manager.end_agent_session_closed()
+
+        metrics_collector.finalize_session()
+        traces_flow_manager = metrics_collector.traces_flow_manager
+        if traces_flow_manager:
+            start_time = time.perf_counter()
+            await traces_flow_manager.start_agent_session_closed({"start_time": start_time})
+            traces_flow_manager.end_agent_session_closed()
 
         self._cancel_wake_up_timer()
         

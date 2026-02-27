@@ -100,11 +100,20 @@ class VideoSDKTelemetry:
             attributes = {} if attributes is None else attributes
             attributes["attiribute_id"] = attiribute_id
             span_kwargs = {"context": ctx}
-            start_time = time.perf_counter() if start_time is None else start_time
-            start_absolute_time = time.time_ns()
+            
+            current_perf = time.perf_counter()
+            current_abs = time.time_ns()
+            
+            if start_time is None:
+                start_time = current_perf
+                start_absolute_time = current_abs
+            else:
+                diff_ns = int((current_perf - start_time) * 1_000_000_000)
+                start_absolute_time = current_abs - diff_ns
+
             self.span_details[attiribute_id] = {
                 "start_time": start_time, # perf_counter
-                "start_absolute_time": start_absolute_time # time.time()
+                "start_absolute_time": start_absolute_time # absolute ns
             }
             span_kwargs["start_time"] = int(start_absolute_time)
             span = self.tracer.start_span(span_name, **span_kwargs)
@@ -139,13 +148,26 @@ class VideoSDKTelemetry:
             
             end_time = time.perf_counter() if end_time is None else end_time
             
-            attribute_id = span._attributes["attiribute_id"]
-            data = self.span_details.get(attribute_id)
-            duration_ns = int((end_time - data["start_time"]) * 1_000_000_000)
-            end_absolute_time = duration_ns + data["start_absolute_time"] # time.time()
-            span.end(int(end_absolute_time))
+            attribute_id = None  
+            if hasattr(span, '_attributes'):  
             
-            del self.span_details[attribute_id]
+                attribute_id = span._attributes.get("attiribute_id")  
+            elif hasattr(span, 'attributes'):  
+                attribute_id = span.attributes.get("attiribute_id")  
+
+            data = self.span_details.get(attribute_id) if attribute_id else None  
+
+            if data:  
+                duration_ns = int((end_time - data["start_time"]) * 1_000_000_000)  
+                end_absolute_time = duration_ns + data["start_absolute_time"]  
+                span.end(int(end_absolute_time))  
+
+                # Clean up span details  
+                if attribute_id in self.span_details:  
+                    del self.span_details[attribute_id]  
+            else:  
+                # Fallback for spans without timing data  
+                span.end()  
                 
         except Exception as e:
             print(f"[TELEMETRY ERROR] Failed to complete span: {e}")
