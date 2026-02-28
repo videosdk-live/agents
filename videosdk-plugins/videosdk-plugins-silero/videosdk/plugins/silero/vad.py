@@ -26,11 +26,11 @@ class SileroVAD(BaseVAD):
         input_sample_rate: int = 48000,
         model_sample_rate: Literal[8000, 16000] = 16000,
         threshold: float = 0.5,
-        activation_threshold: float = 0.5,
-        deactivation_threshold: float = 0.25,
+        start_threshold: float = 0.5,
+        end_threshold: float = 0.25,
         min_speech_duration: float = 0.1,
         min_silence_duration: float = 0.5,
-        prefix_padding_duration: float = 0.5,
+        padding_duration: float = 0.5,
         max_buffered_speech: float = 60.0,
         force_cpu: bool = True,
     ) -> None:
@@ -46,9 +46,9 @@ class SileroVAD(BaseVAD):
         )
 
         # Config properties
-        self._start_thresh = activation_threshold
-        self._stop_thresh = deactivation_threshold
-        self._padding_sec = prefix_padding_duration
+        self._start_thresh = start_threshold
+        self._stop_thresh = end_threshold
+        self._padding_sec = padding_duration
         self._max_buffer_sec = max_buffered_speech
 
         self._in_rate = input_sample_rate
@@ -214,7 +214,8 @@ class SileroVAD(BaseVAD):
 
     async def aclose(self) -> None:
         try:
-            logger.info("Closing VAD...")
+            logger.info("SileroVAD garbage collection completed")
+
             self._raw_queue = np.array([], dtype=np.int16)
             self._model_queue = np.array([], dtype=np.float32)
             
