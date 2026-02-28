@@ -8,231 +8,240 @@ from scipy import signal
 from .onnx_runtime import VadModelWrapper, SAMPLE_RATES
 from videosdk.agents.vad import VAD as BaseVAD, VADResponse, VADEventType, VADData
 import logging
+
 logger = logging.getLogger(__name__)
+
+INFERENCE_DELAY_TOLERANCE = 0.2
 
 
 class SileroVAD(BaseVAD):
-    """Silero Voice Activity Detection implementation using ONNX runtime"""
+    """Silero Voice Activity Detection implementation using ONNX runtime.
+    
+    This implementation buffers audio, runs it through the Silero model,
+    applies exponential smoothing to the probabilities to accurately detect the start and end of speech.
+    """
 
     def __init__(
         self,
         input_sample_rate: int = 48000,
         model_sample_rate: Literal[8000, 16000] = 16000,
-        threshold: float = 0.30,
+        threshold: float = 0.5,
+        activation_threshold: float = 0.5,
+        deactivation_threshold: float = 0.25,
         min_speech_duration: float = 0.1,
-        min_silence_duration: float = 0.75,
+        min_silence_duration: float = 0.5,
+        prefix_padding_duration: float = 0.5,
+        max_buffered_speech: float = 60.0,
         force_cpu: bool = True,
     ) -> None:
-        """Initialize the Silero VAD plugin.
-
-        Args:
-            input_sample_rate (int): The input sample rate for the VAD plugin. Defaults to 48000.
-            model_sample_rate (Literal[8000, 16000]): The model sample rate for the VAD plugin. Must be one of: 8000, 16000. Defaults to 16000.
-            threshold (float): The threshold for the VAD plugin. Defaults to 0.30.
-            min_speech_duration (float): The minimum speech duration for the VAD plugin. Defaults to 0.1.
-            min_silence_duration (float): The minimum silence duration for the VAD plugin. Defaults to 0.75.
-            force_cpu (bool): Whether to force CPU usage for the VAD plugin. Defaults to True.
-        """
-
         if model_sample_rate not in SAMPLE_RATES:
-            self.emit(
-                "error", f"Invalid model sample rate {model_sample_rate}: must be one of {SAMPLE_RATES}")
-            raise ValueError(
-                f"Model sample rate {model_sample_rate} not supported. Must be one of {SAMPLE_RATES}")
+            self.emit("error", f"Invalid model sample rate {model_sample_rate}: must be one of {SAMPLE_RATES}")
+            raise ValueError(f"Model sample rate {model_sample_rate} not supported. Must be one of {SAMPLE_RATES}")
 
         super().__init__(
             sample_rate=model_sample_rate,
             threshold=threshold,
             min_speech_duration=min_speech_duration,
-            min_silence_duration=min_silence_duration
+            min_silence_duration=min_silence_duration,
         )
 
-        self._input_sample_rate = input_sample_rate
-        self._model_sample_rate = model_sample_rate
-        self._needs_resampling = input_sample_rate != model_sample_rate
+        # Config properties
+        self._start_thresh = activation_threshold
+        self._stop_thresh = deactivation_threshold
+        self._padding_sec = prefix_padding_duration
+        self._max_buffer_sec = max_buffered_speech
+
+        self._in_rate = input_sample_rate
+        self._mod_rate = model_sample_rate
+        self._requires_resample = input_sample_rate != model_sample_rate
 
         try:
-            self._session = VadModelWrapper.create_inference_session(force_cpu)
-            self._model = VadModelWrapper(
-                session=self._session, rate=model_sample_rate)
+            self._onnx_sess = VadModelWrapper.create_inference_session(force_cpu)
+            self._silero = VadModelWrapper(session=self._onnx_sess, rate=model_sample_rate)
         except Exception as e:
-            self.emit("error", f"Failed to initialize VAD model: {str(e)}")
+            self.emit("error", f"Failed to init VAD model: {e}")
             raise
 
-        self._exp_filter = 0.0
+        # Smoothing
+        self._smooth_factor = 0.35
+        self._smoothed_prob = 0.0
 
-        self._speech_threshold_duration = 0.0
-        self._silence_threshold_duration = 0.0
+        # State tracking
+        self._speech_run_time = 0.0
+        self._silence_run_time = 0.0
 
-        self._pub_speaking = False
-        self._pub_speech_duration = 0.0
-        self._pub_silence_duration = 0.0
-        self._pub_timestamp = 0.0
+        self._is_active = False
+        self._active_speech_time = 0.0
+        self._active_silence_time = 0.0
+        self._total_time = 0.0
 
-        self._remaining_input_fraction = 0.0
+        self._fract_offset = 0.0
 
-        self._input_accumulator = np.array([], dtype=np.int16)
-        self._inference_accumulator = np.array([], dtype=np.float32)
+        # Buffers
+        self._raw_queue = np.array([], dtype=np.int16)
+        self._model_queue = np.array([], dtype=np.float32)
 
-        self._frame_count = 0
-        self._inference_count = 0
+        # Padding / Speech
+        self._pad_frames = int(self._padding_sec * self._in_rate)
+        buffer_size = int(self._max_buffer_sec * self._in_rate) + self._pad_frames
+        self._audio_capture = np.empty(buffer_size, dtype=np.int16)
+        self._capture_ptr = 0
+        self._buffer_full = False
 
-        self._consecutive_low_confidence_count = 0
-        self._error_emission_threshold = 10
+        self._lag_time = 0.0
+
+    def _smooth_probability(self, val: float) -> float:
+        self._smoothed_prob = (self._smooth_factor * val) + ((1 - self._smooth_factor) * self._smoothed_prob)
+        return self._smoothed_prob
+
+    def _flush_capture_buffer(self) -> None:
+        if self._capture_ptr <= self._pad_frames:
+            return
+
+        retained = self._audio_capture[self._capture_ptr - self._pad_frames : self._capture_ptr].copy()
+        self._buffer_full = False
+        self._audio_capture[: self._pad_frames] = retained
+        self._capture_ptr = self._pad_frames
 
     async def process_audio(self, audio_frames: bytes, **kwargs: Any) -> None:
         try:
-            input_frame_data = np.frombuffer(audio_frames, dtype=np.int16)
+            incoming = np.frombuffer(audio_frames, dtype=np.int16)
 
-            self._input_accumulator = np.concatenate(
-                [self._input_accumulator, input_frame_data])
+            self._raw_queue = np.concatenate([self._raw_queue, incoming])
 
-            if self._needs_resampling:
-                input_float = input_frame_data.astype(np.float32) / 32768.0
-                target_length = int(
-                    len(input_float) * self._model_sample_rate / self._input_sample_rate)
-                if target_length > 0:
-                    resampled_float = signal.resample(
-                        input_float, target_length)
-                    self._inference_accumulator = np.concatenate([
-                        self._inference_accumulator,
-                        resampled_float.astype(np.float32)
-                    ])
+            if self._requires_resample:
+                normalized = incoming.astype(np.float32) / 32768.0
+                target_len = int(len(normalized) * self._mod_rate / self._in_rate)
+                if target_len > 0:
+                    resampled = signal.resample(normalized, target_len)
+                    self._model_queue = np.concatenate([self._model_queue, resampled.astype(np.float32)])
             else:
-                input_float = input_frame_data.astype(np.float32) / 32768.0
-                self._inference_accumulator = np.concatenate(
-                    [self._inference_accumulator, input_float])
+                normalized = incoming.astype(np.float32) / 32768.0
+                self._model_queue = np.concatenate([self._model_queue, normalized])
 
-            while len(self._inference_accumulator) >= self._model.frame_size:
-                inference_window = self._inference_accumulator[:self._model.frame_size]
+            frame_size = self._silero.frame_size
+
+            while len(self._model_queue) >= frame_size:
+                t0 = time.perf_counter()
+                chunk = self._model_queue[:frame_size]
 
                 try:
-                    raw_prob = self._model.process(inference_window)
-                except Exception as e:
-                    self.emit("error", f"VAD inference error: {e}")
-                    raw_prob = 0.0
+                    p_raw = self._silero.process(chunk)
+                except Exception as err:
+                    self.emit("error", f"VAD error: {err}")
+                    p_raw = 0.0
 
-                alpha = 0.40
-                self._exp_filter = alpha * raw_prob + \
-                    (1 - alpha) * self._exp_filter
+                p = self._smooth_probability(p_raw)
+                step_time = frame_size / self._mod_rate
+                self._total_time += step_time
 
-                window_duration = self._model.frame_size / self._model_sample_rate
-                self._pub_timestamp += window_duration
+                ratio = self._in_rate / self._mod_rate
+                samples_needed = (frame_size * ratio) + self._fract_offset
+                consume_count = int(samples_needed)
+                self._fract_offset = samples_needed - consume_count
 
-                resampling_ratio = self._input_sample_rate / self._model_sample_rate
+                space_left = len(self._audio_capture) - self._capture_ptr
+                copy_amt = min(consume_count, space_left)
 
-                _copy = self._model.frame_size * \
-                    resampling_ratio + self._remaining_input_fraction
-                _int_copy = int(_copy)
+                if copy_amt > 0 and len(self._raw_queue) >= consume_count:
+                    self._audio_capture[self._capture_ptr : self._capture_ptr + copy_amt] = self._raw_queue[:copy_amt]
+                    self._capture_ptr += copy_amt
+                elif not self._buffer_full:
+                    self._buffer_full = True
+                    logger.warning("VAD buffer full, dropping new samples")
 
-                self._remaining_input_fraction = _copy - _int_copy
+                exec_time = time.perf_counter() - t0
+                self._lag_time = max(0.0, self._lag_time + exec_time - step_time)
+                if exec_time > INFERENCE_DELAY_TOLERANCE:
+                    logger.warning(f"VAD slow: delay {self._lag_time:.3f}s")
 
-                if len(self._input_accumulator) >= _int_copy:
-                    self._input_accumulator = self._input_accumulator[_int_copy:]
-
-                if self._pub_speaking:
-                    self._pub_speech_duration += window_duration
+                if self._is_active:
+                    self._active_speech_time += step_time
                 else:
-                    self._pub_silence_duration += window_duration
+                    self._active_silence_time += step_time
 
-                if self._exp_filter >= self._threshold:
-                    self._speech_threshold_duration += window_duration
-                    self._silence_threshold_duration = 0.0
+                if p >= self._start_thresh or (self._is_active and p > self._stop_thresh):
+                    self._speech_run_time += step_time
+                    self._silence_run_time = 0.0
 
-                    if not self._pub_speaking:
-                        if self._speech_threshold_duration >= self._min_speech_duration:
-                            self._pub_speaking = True
-                            self._pub_silence_duration = 0.0
-                            self._pub_speech_duration = self._speech_threshold_duration
-
-                            self._send_speech_event(
-                                VADEventType.START_OF_SPEECH)
+                    if not self._is_active:
+                        if self._speech_run_time >= self._min_speech_duration:
+                            self._is_active = True
+                            self._active_silence_time = 0.0
+                            self._active_speech_time = self._speech_run_time
+                            self._dispatch_event(VADEventType.START_OF_SPEECH)
                 else:
-                    self._silence_threshold_duration += window_duration
-                    self._speech_threshold_duration = 0.0
+                    self._silence_run_time += step_time
+                    self._speech_run_time = 0.0
 
-                    if not self._pub_speaking:
-                        pass
+                    if not self._is_active:
+                        self._flush_capture_buffer()
 
-                    if self._pub_speaking and self._silence_threshold_duration >= self._min_silence_duration:
-                        self._pub_speaking = False
-                        self._pub_speech_duration = 0.0
-                        self._pub_silence_duration = self._silence_threshold_duration
+                    if self._is_active and self._silence_run_time >= self._min_silence_duration:
+                        self._is_active = False
+                        self._active_silence_time = self._silence_run_time
+                        self._dispatch_event(VADEventType.END_OF_SPEECH)
+                        self._active_speech_time = 0.0
+                        self._flush_capture_buffer()
 
-                        self._send_speech_event(VADEventType.END_OF_SPEECH)
-                        self._reset_model_state()
-                        pass
+                if len(self._raw_queue) >= consume_count:
+                    self._raw_queue = self._raw_queue[consume_count:]
+                else:
+                    self._raw_queue = np.array([], dtype=np.int16)
 
-                self._inference_accumulator = self._inference_accumulator[self._model.frame_size:]
+                self._model_queue = self._model_queue[frame_size:]
 
         except Exception as e:
-            self.emit("error", f"VAD audio processing failed: {str(e)}")
+            self.emit("error", f"VAD processing failed: {e}")
 
-    def _send_speech_event(self, event_type: VADEventType) -> None:
-        response = VADResponse(
+    def _dispatch_event(self, event_type: VADEventType) -> None:
+        dur = self._active_speech_time
+        if event_type == VADEventType.END_OF_SPEECH:
+            dur = max(0.0, self._active_speech_time - self._silence_run_time)
+
+        evt = VADResponse(
             event_type=event_type,
             data=VADData(
                 is_speech=event_type == VADEventType.START_OF_SPEECH,
-                confidence=self._exp_filter,
-                timestamp=self._pub_timestamp,
-                speech_duration=self._pub_speech_duration,
-                silence_duration=self._pub_silence_duration
-            )
+                confidence=self._smoothed_prob,
+                timestamp=self._total_time,
+                speech_duration=dur,
+                silence_duration=self._active_silence_time,
+            ),
         )
         if self._vad_callback:
-            asyncio.create_task(self._vad_callback(response))
-
-    def _reset_model_state(self) -> None:
-        """Reset model internal state when errors occur"""
-        try:
-            self._model._hidden_state = np.zeros((2, 1, 128), dtype=np.float32)
-            self._model._prev_context = np.zeros(
-                (1, self._model.history_len), dtype=np.float32)
-
-            self._exp_filter = 0.0
-            self._speech_threshold_duration = 0.0
-            self._silence_threshold_duration = 0.0
-        except Exception as e:
-            self.emit("error", f"Failed to reset VAD model state: {e}")
+            asyncio.create_task(self._vad_callback(evt))
 
     async def aclose(self) -> None:
-        """Cleanup resources"""
         try:
-            logger.info("SileroVAD cleaning up")
-            self._input_accumulator = np.array([], dtype=np.int16)
-            self._inference_accumulator = np.array([], dtype=np.float32)
-            if hasattr(self, '_model') and self._model is not None:
+            logger.info("Closing VAD...")
+            self._raw_queue = np.array([], dtype=np.int16)
+            self._model_queue = np.array([], dtype=np.float32)
+            
+            if hasattr(self, "_silero") and self._silero is not None:
                 try:
-                    if hasattr(self._model, '_hidden_state'):
-                        del self._model._hidden_state
-                        self._model._hidden_state = None
-                    if hasattr(self._model, '_prev_context'):
-                        del self._model._prev_context
-                        self._model._prev_context = None
-                    if hasattr(self._model, '_model_session'):
-                        self._model._model_session = None
-                    del self._model
-                    self._model = None
-                    logger.info("SileroVAD model cleaned up")
+                    if hasattr(self._silero, "_hidden_state"):
+                        self._silero._hidden_state = None
+                    if hasattr(self._silero, "_prev_context"):
+                        self._silero._prev_context = None
+                    if hasattr(self._silero, "_model_session"):
+                        self._silero._model_session = None
+                    self._silero = None
                 except Exception as e:
-                    logger.error(f"Error cleaning up SileroVAD model: {e}")
+                    logger.error(f"Error closing model: {e}")
 
-            if hasattr(self, '_session') and self._session is not None:
+            if hasattr(self, "_onnx_sess") and self._onnx_sess is not None:
                 try:
-                    del self._session
-                    self._session = None
-                    logger.info("SileroVAD ONNX session cleaned up")
+                    self._onnx_sess = None
                 except Exception as e:
-                    logger.error(f"Error cleaning up SileroVAD ONNX session: {e}")
+                    logger.error(f"Error closing session: {e}")
 
             try:
                 import gc
                 gc.collect()
-                logger.info("SileroVAD garbage collection completed")
             except Exception as e:
-                logger.error(f"Error during SileroVAD garbage collection: {e}")
-                
-            logger.info("SileroVAD cleaned up")
+                logger.error(f"GC error: {e}")
+
             await super().aclose()
         except Exception as e:
-            self.emit("error", f"Error during VAD cleanup: {str(e)}")
+            self.emit("error", f"VAD close error: {e}")

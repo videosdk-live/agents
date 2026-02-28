@@ -399,6 +399,7 @@ class CascadingMetricsCollector:
             self.analytics_client.send_interaction_analytics_safe(interaction_payload) 
             self.data.current_turn = None
             self.data.is_interrupted = False
+            self.data.turn_timestamps_locked = False
             self.pending_user_start_time = None
     
     def on_interrupted(self):
@@ -553,6 +554,13 @@ class CascadingMetricsCollector:
         if not self.data.current_turn:
             self.start_new_interaction()
         
+        # Fallback: if on_stt_start() hasn't been called yet (e.g., STT produced 
+        # a result via flush signal before VAD END fired), set stt_start_time now
+        if self.data.stt_start_time is None and not self.data.turn_timestamps_locked:
+            self.data.stt_start_time = time.perf_counter()
+            if self.data.current_turn:
+                self.data.current_turn.stt_start_time = self.data.stt_start_time
+
         if self.data.current_turn:
             self.data.current_turn.stt_duration = duration
             self.data.current_turn.stt_confidence = confidence
