@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+import json
 import asyncio
 import time
 from typing import Any, Optional,List, Union
@@ -234,6 +234,12 @@ class DeepgramSTT(BaseSTT):
             logger.error(f"Error handling WebSocket message: {str(e)}")
 
         return responses
+    
+    async def flush(self) -> None:
+        """Send flush signal to Sarvam to trigger immediate transcription."""
+        if self._ws and not self._ws.closed:
+            flush_message = {"type": "Finalize"}
+            await self._ws.send_str(json.dumps(flush_message)) 
 
     async def aclose(self) -> None:
         """Cleanup resources"""
