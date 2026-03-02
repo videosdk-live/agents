@@ -73,13 +73,18 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
                 response_iterator = response_gen
 
             self.full_transcript = ""
-
+            tts_start_recorded = False
             async def character_counting_wrapper(text_iterator: AsyncIterator[str]):
+                
                 async for text_chunk in text_iterator:
-                    logger.info(f"[TTS DEBUG] Got text chunk: {len(text_chunk) if text_chunk else 0} chars")
+                    nonlocal tts_start_recorded
+                    logger.debug(f"[TTS DEBUG] Got text chunk: {len(text_chunk) if text_chunk else 0} chars")
                     if text_chunk and metrics_collector:
                         # Count characters in this chunk
-                        logger.info(f"[TTS DEBUG] Calling add_tts_characters({len(text_chunk)})")
+                        if not tts_start_recorded:
+                            metrics_collector.on_tts_start()
+                            tts_start_recorded = True
+                        logger.debug(f"[TTS DEBUG] Calling add_tts_characters({len(text_chunk)})")
                         metrics_collector.add_tts_characters(len(text_chunk))
                     if text_chunk:
                         self.full_transcript += text_chunk
@@ -101,7 +106,6 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
                     self.audio_track.enable_audio_input(manual_control=True)
                 
                 self.emit("synthesis_started", {})
-                metrics_collector.on_tts_start()
 
                 if self.hooks and self.hooks.has_agent_turn_start_hooks():
                     await self.hooks.trigger_agent_turn_start()
