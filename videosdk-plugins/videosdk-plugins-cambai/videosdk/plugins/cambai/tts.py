@@ -68,7 +68,7 @@ class VoiceSettings:
 @dataclass
 class OutputConfiguration:
     """Audio output format & pacing options."""
-    format: str = "pcm_s16le"
+    format: str = "wav"
     duration: float | None = None
     sample_rate: int | None = None
 
@@ -239,8 +239,9 @@ class CambAITTS(TTS):
                     if chunk:
                         audio_data += chunk
 
-            if self.output_configuration.format == "pcm_s16le":
-                resampled_pcm = self.resample_audio(audio_data)
+            if self.output_configuration.format == "wav":
+                pcm_audio = self._extract_pcm_from_wav(audio_data)
+                resampled_pcm = self.resample_audio(pcm_audio)
                 await self._stream_audio_chunks(resampled_pcm)
             else:
                 self.emit(
@@ -298,6 +299,20 @@ class CambAITTS(TTS):
             if chunk:
                 asyncio.create_task(self.audio_track.add_new_bytes(chunk))
                 await asyncio.sleep(0.001)
+
+    def _extract_pcm_from_wav(self, wav_data: bytes) -> bytes:
+        """Extract PCM data from WAV file format"""
+        if len(wav_data) < 44:
+            return wav_data
+
+        if wav_data[:4] != b"RIFF":
+            return wav_data
+
+        data_pos = wav_data.find(b"data")
+        if data_pos == -1:
+            return wav_data
+
+        return wav_data[data_pos + 8:]
 
     async def aclose(self) -> None:
         """Cleanup resources"""
