@@ -864,6 +864,68 @@ class TracesFlowManager:
 
         self.end_span(agent_reply_span, "Agent reply span created", end_time=time.perf_counter())
 
+    def create_components_change_trace(self, components_change_status: Dict[str, Any], components_change_data: Dict[str, Any], time_data: Dict[str, Any]) -> None:
+        """
+        Creates a span for the agent's components change.
+        Args:
+            components_change_status: Status of the components change.
+            components_change_data: Data of the components change.
+            time_data: Time data of the components change.
+        """
+        if not self.main_turn_span:
+            return
+        
+        attr = {}
+
+        if components_change_data.get("new_stt") is not None:
+            attr["new_stt"] = components_change_data["new_stt"]
+        if components_change_data.get("new_tts") is not None:
+            attr["new_tts"] = components_change_data["new_tts"]
+        if components_change_data.get("new_llm") is not None:
+            attr["new_llm"] = components_change_data["new_llm"]
+        if components_change_data.get("new_vad") is not None:
+            attr["new_vad"] = components_change_data["new_vad"]
+        if components_change_data.get("new_turn_detector") is not None:
+            attr["new_turn_detector"] = components_change_data["new_turn_detector"]
+        if components_change_data.get("new_denoise") is not None:
+            attr["new_denoise"] = components_change_data["new_denoise"]
+        if components_change_status:
+            attr["components_change_status"] = components_change_status
+
+        self.components_change_span = create_span(
+            "Components Change",
+            attr,
+            parent_span=self.main_turn_span,
+            start_time=time_data.get("start_time", time.perf_counter())
+        )
+
+        self.end_span(self.components_change_span, "Components change span created", end_time=time_data.get("end_time", time.perf_counter()))
+        self.components_change_span = None
+
+    def create_pipeline_change_trace(self, time_data: Dict[str, Any], original_pipeline_config: Dict[str, Any], new_pipeline_config: Dict[str, Any]) -> None:
+        """
+        Creates a span for the agent's pipeline change.
+        Args:
+            time_data: Time data of the pipeline change.
+            original_pipeline_config: Original pipeline configuration.
+            new_pipeline_config: New pipeline configuration.
+        """
+        if not self.main_turn_span:
+            return
+        
+        attr = {
+            "original_pipeline_config": original_pipeline_config,
+            "new_pipeline_config": new_pipeline_config
+        }
+        pipeline_change_span = create_span(
+            "Pipeline Change",
+            attr,
+            parent_span=self.main_turn_span,
+            start_time=time_data.get("start_time", time.perf_counter())
+        )
+
+        self.end_span(pipeline_change_span, "Pipeline change span created", end_time=time_data.get("end_time", time.perf_counter()))
+
     def create_a2a_trace(self, name: str, attributes: Dict[str, Any]) -> Optional[Span]:
         """Creates an A2A trace under the main turn span."""
         if not self.main_turn_span:

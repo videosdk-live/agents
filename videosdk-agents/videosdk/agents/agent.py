@@ -63,7 +63,7 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
         self._agent_card = None 
         self.id = agent_id or str(uuid.uuid4())
         self.mcp_manager = MCPToolManager()
-        self.session: "AgentSession"
+        self.session: AgentSession | None = None
         self._thinking_background_config: Optional[BackgroundAudioHandlerConfig] = None
         self.knowledge_base = knowledge_base 
         self.inherit_context = inherit_context

@@ -258,44 +258,32 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         metrics_collector.set_system_instructions(self.agent.instructions)
 
         # Set provider info based on pipeline components
-        configs = self.pipeline.get_component_configs() if hasattr(self.pipeline, 'get_component_configs') else {}
 
-        def _get_provider_info(component, comp_name):
-            if not component:
-                return "", ""
-            default_model = configs.get(comp_name, {}).get('model', '')
-            if hasattr(component, 'active_provider') and component.active_provider is not None:
-                provider_class = component.active_provider.__class__.__name__
-                model = getattr(component.active_provider, 'model', getattr(component.active_provider, 'model_id', getattr(component.active_provider, 'speech_model', getattr(component.active_provider, 'voice_id', getattr(component.active_provider, 'voice', getattr(component.active_provider, 'speaker', default_model))))))
-            else:
-                provider_class = component.__class__.__name__
-                model = getattr(component, 'model', getattr(component, 'model_id', getattr(component, 'speech_model', getattr(component, 'voice_id', getattr(component, 'voice', getattr(component, 'speaker', default_model))))))
-            return provider_class, str(model)
 
         if not self.pipeline.config.is_realtime:
             if self.pipeline.stt:
-                p_class, p_model = _get_provider_info(self.pipeline.stt, 'stt')
+                p_class, p_model = self._get_provider_info(self.pipeline.stt, 'stt')
                 metrics_collector.set_provider_info("stt", p_class, p_model)
             if self.pipeline.llm:
-                p_class, p_model = _get_provider_info(self.pipeline.llm, 'llm')
+                p_class, p_model = self._get_provider_info(self.pipeline.llm, 'llm')
                 metrics_collector.set_provider_info("llm", p_class, p_model)
             if self.pipeline.tts:
-                p_class, p_model = _get_provider_info(self.pipeline.tts, 'tts')
+                p_class, p_model = self._get_provider_info(self.pipeline.tts, 'tts')
                 metrics_collector.set_provider_info("tts", p_class, p_model)
             if hasattr(self.pipeline, 'vad') and self.pipeline.vad:
-                p_class, p_model = _get_provider_info(self.pipeline.vad, 'vad')
+                p_class, p_model = self._get_provider_info(self.pipeline.vad, 'vad')
                 metrics_collector.set_provider_info("vad", p_class, p_model)
             if hasattr(self.pipeline, 'turn_detector') and self.pipeline.turn_detector:
-                p_class, p_model = _get_provider_info(self.pipeline.turn_detector, 'eou')
+                p_class, p_model = self._get_provider_info(self.pipeline.turn_detector, 'eou')
                 metrics_collector.set_provider_info("eou", p_class, p_model)
         else:
             if self.pipeline._realtime_model:
                 metrics_collector.set_provider_info("realtime", self.pipeline._realtime_model.__class__.__name__, getattr(self.pipeline._realtime_model, 'model', ''))
             if self.pipeline.stt:
-                p_class, p_model = _get_provider_info(self.pipeline.stt, 'stt')
+                p_class, p_model = self._get_provider_info(self.pipeline.stt, 'stt')
                 metrics_collector.set_provider_info("stt", p_class, p_model)
             if self.pipeline.tts:
-                p_class, p_model = _get_provider_info(self.pipeline.tts, 'tts')
+                p_class, p_model = self._get_provider_info(self.pipeline.tts, 'tts')
                 metrics_collector.set_provider_info("tts", p_class, p_model)
 
         # Traces flow manager setup
@@ -364,7 +352,20 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         if self.on_wake_up is not None:
             self._start_wake_up_timer()
         self._emit_agent_state(AgentState.IDLE)
-        
+    
+    def _get_provider_info(self, component, comp_name):
+        configs = self.pipeline.get_component_configs() if hasattr(self.pipeline, 'get_component_configs') else {}
+        if not component:
+            return "", ""
+        default_model = configs.get(comp_name, {}).get('model', '')
+        if hasattr(component, 'active_provider') and component.active_provider is not None:
+            provider_class = component.active_provider.__class__.__name__
+            model = getattr(component.active_provider, 'model', getattr(component.active_provider, 'model_id', getattr(component.active_provider, 'speech_model', getattr(component.active_provider, 'voice_id', getattr(component.active_provider, 'voice', getattr(component.active_provider, 'speaker', default_model))))))
+        else:
+            provider_class = component.__class__.__name__
+            model = getattr(component, 'model', getattr(component, 'model_id', getattr(component, 'speech_model', getattr(component, 'voice_id', getattr(component, 'voice', getattr(component, 'speaker', default_model))))))
+        return provider_class, str(model)
+
     async def say(self, message: str, interruptible: bool = True) -> UtteranceHandle:
         """
         Send an initial message to the agent and return a handle to track it.

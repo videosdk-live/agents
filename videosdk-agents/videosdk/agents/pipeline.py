@@ -2,7 +2,9 @@ from typing import Any, Literal, Optional, Callable, Dict, List, Tuple
 import asyncio
 import logging
 import av
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
+import time
+from .agent import Agent
 from .utterance_handle import UtteranceHandle
 from .event_emitter import EventEmitter
 from .room.output_stream import CustomAudioStreamTrack
@@ -165,7 +167,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         self.interrupt_config = interrupt_config or InterruptConfig()
         
         # Pipeline state
-        self.agent = None
+        self.agent : Agent | None = None
         self.orchestrator: PipelineOrchestrator | None = None
         self.speech_generation: SpeechGeneration | None = None
         self.vision = False
@@ -466,7 +468,43 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         and updating individual components.
         """
         logger.info("Changing pipeline configuration...")
-        
+        if self.orchestrator:
+            await self.orchestrator.interrupt()
+        get_provider_info = self.agent.session._get_provider_info
+        start_time = time.perf_counter()
+        original_pipeline_config = {}
+        if not self.config.is_realtime:
+            if self.stt:
+                p_class, p_model = get_provider_info(self.stt, 'stt')
+                original_pipeline_config["stt"] = {"class": p_class, "model": p_model}
+            if self.llm:
+                p_class, p_model = get_provider_info(self.llm, 'llm')
+                original_pipeline_config["llm"] = {"class": p_class, "model": p_model}
+            if self.tts:
+                p_class, p_model = get_provider_info(self.tts, 'tts')
+                original_pipeline_config["tts"] = {"class": p_class, "model": p_model}
+            if hasattr(self, 'vad') and self.vad:
+                p_class, p_model = get_provider_info(self.vad, 'vad')
+                original_pipeline_config["vad"] = {"class": p_class, "model": p_model}
+            if hasattr(self, 'turn_detector') and self.turn_detector:
+                p_class, p_model = get_provider_info(self.turn_detector, 'eou')
+                original_pipeline_config["eou"] = {"class": p_class, "model": p_model}
+        else:
+            if self._realtime_model:
+                original_pipeline_config["realtime"] = {"class": self._realtime_model.__class__.__name__, "model": getattr(self._realtime_model, 'model', '')}
+            if self.stt:
+                p_class, p_model = get_provider_info(self.stt, 'stt')
+                original_pipeline_config["stt"] = {"class": p_class, "model": p_model}
+            if self.tts:
+                p_class, p_model = get_provider_info(self.tts, 'tts')
+                original_pipeline_config["tts"] = {"class": p_class, "model": p_model}
+
+        original_pipeline_config["pipeline_mode"] = self.config.pipeline_mode.value
+        original_pipeline_config["denoise"] = self.denoise.__class__.__name__
+        original_pipeline_config["eou_config"] = asdict(self.eou_config)
+        original_pipeline_config["interrupt_config"] = asdict(self.interrupt_config)
+        original_pipeline_config["max_context_items"] = self.max_context_items
+
         # 1.Cleanup current execution
         await cleanup_pipeline(self, llm_changing=True)
 
@@ -519,6 +557,45 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
             self.set_agent(self.agent)
             
         self._configure_components()
+        end_time = time.perf_counter()
+        time_data = {
+            "start_time": start_time,
+            "end_time": end_time
+        }
+        new_pipeline_config = {}
+
+        if not self.config.is_realtime:
+            if self.stt:
+                p_class, p_model = get_provider_info(self.stt, 'stt')
+                new_pipeline_config["stt"] = {"class": p_class, "model": p_model}
+            if self.llm:
+                p_class, p_model = get_provider_info(self.llm, 'llm')
+                new_pipeline_config["llm"] = {"class": p_class, "model": p_model}
+            if self.tts:
+                p_class, p_model = get_provider_info(self.tts, 'tts')
+                new_pipeline_config["tts"] = {"class": p_class, "model": p_model}
+            if hasattr(self, 'vad') and self.vad:
+                p_class, p_model = get_provider_info(self.vad, 'vad')
+                new_pipeline_config["vad"] = {"class": p_class, "model": p_model}
+            if hasattr(self, 'turn_detector') and self.turn_detector:
+                p_class, p_model = get_provider_info(self.turn_detector, 'eou')
+                new_pipeline_config["eou"] = {"class": p_class, "model": p_model}
+        else:
+            if self._realtime_model:
+                new_pipeline_config["realtime"] = {"class": self._realtime_model.__class__.__name__, "model": getattr(self._realtime_model, 'model', '')}
+            if self.stt:
+                p_class, p_model = get_provider_info(self.stt, 'stt')
+                new_pipeline_config["stt"] = {"class": p_class, "model": p_model}
+            if self.tts:
+                p_class, p_model = get_provider_info(self.tts, 'tts')
+                new_pipeline_config["tts"] = {"class": p_class, "model": p_model}
+
+        new_pipeline_config["pipeline_mode"] = self.config.pipeline_mode.value
+        new_pipeline_config["eou_config"] = asdict(self.eou_config)
+        new_pipeline_config["interrupt_config"] = asdict(self.interrupt_config)
+        new_pipeline_config["max_context_items"] = self.max_context_items
+
+        metrics_collector.traces_flow_manager.create_pipeline_change_trace(time_data, original_pipeline_config, new_pipeline_config)
         await self.start()
 
     async def change_component(
@@ -534,7 +611,15 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         This will close the old components and set the new ones.
         """
         logger.info("Changing pipeline component(s)...")
-        
+        start_time = time.perf_counter()
+        components_change_data = {
+            "new_stt": stt.__class__.__name__ if stt is not NO_CHANGE else None,
+            "new_tts": tts.__class__.__name__ if tts is not NO_CHANGE else None,
+            "new_llm": llm.__class__.__name__ if llm is not NO_CHANGE else None,
+            "new_vad": vad.__class__.__name__ if vad is not NO_CHANGE else None,
+            "new_turn_detector": turn_detector.__class__.__name__ if turn_detector is not NO_CHANGE else None,
+            "new_denoise": denoise.__class__.__name__ if denoise is not NO_CHANGE else None
+        }
 
         # 0 Change components only if present earlier
         validation_map = {
@@ -578,32 +663,46 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                 tts=target_tts,
                 vad=target_vad,
                 turn_detector=target_turn_detector,
-                denoise=target_denoise
+                denoise=target_denoise,
+                avatar=self.avatar,
+                eou_config=self.eou_config,
+                interrupt_config=self.interrupt_config,
+                conversational_graph=self.conversational_graph,
+                max_context_items=self.max_context_items,
+                voice_mail_detector=self.voice_mail_detector,
+                realtime_config=self.realtime_config
             )
             return
+        
+        components_change_status = {}
 
         if stt is not NO_CHANGE and self.stt != stt:
             await swap_component_in_orchestrator(
                 self, 'stt', stt, 'speech_understanding', 'stt_lock', 
                 register_stt_transcript_listener
             )
+            components_change_status["new_stt"] = "success"
 
         if llm is not NO_CHANGE and self.llm != llm:
             await swap_llm(self, llm)
+            components_change_status["new_llm"] = "success"
 
         if tts is not NO_CHANGE and self.tts != tts:
             await swap_tts(self, tts)
-
+            components_change_status["new_tts"] = "success"
 
         if vad is not NO_CHANGE and self.vad != vad:
             await swap_component_in_orchestrator(self, 'vad', vad, 'speech_understanding')
+            components_change_status["new_vad"] = "success"
 
 
         if turn_detector is not NO_CHANGE and self.turn_detector != turn_detector:
             await swap_component_in_orchestrator(self, 'turn_detector', turn_detector, 'speech_understanding', 'turn_detector_lock')
+            components_change_status["new_turn_detector"] = "success"
 
         if denoise is not NO_CHANGE and self.denoise != denoise:
             await swap_component_in_orchestrator(self, 'denoise', denoise, 'speech_understanding', 'denoise_lock')
+            components_change_status["new_denoise"] = "success"
 
         # 3. REBOOT: Rebuild config with updated components
         self.config = build_pipeline_config(
@@ -619,6 +718,12 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                 self.realtime_config.mode if self.realtime_config and self.realtime_config.mode else None
             ),
         )
+        end_time = time.perf_counter()
+        time_data = {
+            "start_time": start_time,
+            "end_time": end_time
+        }
+        metrics_collector.traces_flow_manager.create_components_change_trace(components_change_status, components_change_data, time_data)
         new_mode = self.config.pipeline_mode.value
         logger.info(f"New pipeline mode: {new_mode}")
 
