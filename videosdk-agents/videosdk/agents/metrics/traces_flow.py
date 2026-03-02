@@ -1,7 +1,7 @@
 from typing import Any, Dict, Optional, List
 from opentelemetry.trace import Span, StatusCode
 from opentelemetry import trace
-from .integration import create_span, complete_span, create_log
+from .integration import create_span, complete_span
 from .metrics_schema import (
     TurnMetrics, 
     SttMetrics, LlmMetrics, TtsMetrics, 
@@ -64,10 +64,6 @@ class TracesFlowManager:
         # when telemetry is not initialized (create_span returns None)
         self.root_span_ready.set()
 
-        if self.root_span:
-            with trace.use_span(self.root_span):
-                create_log("Agent Session Started", "INFO", { "meeting_id": self.room_id })
-
     async def start_agent_session_config(self, attributes: Dict[str, Any]):
         """Starts the span for the agent's session configuration, child of the root span."""
         await self.root_span_ready.wait()
@@ -100,9 +96,6 @@ class TracesFlowManager:
 
         start_time = attributes.get('start_time', time.perf_counter())
         self.agent_session_closed_span = create_span("Agent Session Closed", attributes, parent_span=self.root_span, start_time=start_time)
-        if self.agent_session_closed_span:
-            with trace.use_span(self.agent_session_closed_span):
-                create_log("Agent session closed span created", "INFO", attributes)
 
     def end_agent_session_closed(self):
         """Completes the agent session closed span."""
@@ -130,11 +123,6 @@ class TracesFlowManager:
         attributes["participant_metrics"] = p_m
         attributes["agent_participant_metrics"] = a_p_m
         self.agent_session_span = create_span("Session Started", attributes, parent_span=self.root_span, start_time=start_time)
-        if self.agent_session_span:
-            with trace.use_span(self.agent_session_span):
-                create_log("Agent session started", "INFO", {
-                    "session_id": self.session_id,
-                })
         
         self.start_main_turn()
 
@@ -148,9 +136,6 @@ class TracesFlowManager:
             
         start_time = time.perf_counter()
         self.main_turn_span = create_span("User & Agent Turns", parent_span=self.agent_session_span, start_time=start_time)
-        if self.main_turn_span:
-            with trace.use_span(self.main_turn_span):
-                create_log("Main Turn span started, ready for user turns.", "INFO")
     
     def create_unified_turn_trace(self, turn: TurnMetrics, session: Any = None) -> None:
         """
@@ -182,9 +167,6 @@ class TracesFlowManager:
         turn_span_start_time = min(start_times) if start_times else None
 
         turn_span = create_span(turn_name, parent_span=self.main_turn_span, start_time=turn_span_start_time)
-        if turn_span:
-            with trace.use_span(turn_span):
-                create_log(f"Turn Started: {turn_name}", "INFO")
 
         if not turn_span:
             return
@@ -446,7 +428,6 @@ class TracesFlowManager:
                                     self.end_span(stt_error_span, end_time=error.get("timestamp")+0.100)
                                     stt_errors.remove(error)
                         status = StatusCode.ERROR if stt_errors else StatusCode.OK
-                        create_log(f"{stt_class}: Speech to Text Processing Ended with status {status}", "INFO")
                         self.end_span(stt_span, status_code=status, end_time=stt.stt_end_time if stt else None)
             
             stt_list = turn.stt_metrics if turn.stt_metrics else None
@@ -694,7 +675,6 @@ class TracesFlowManager:
                 
                 kb_span = create_span(kb_span_name, kb_attrs, parent_span=turn_span, start_time=kb.kb_start_time)
                 if kb_span:
-                    create_log("Knowledge Base: Retrieval Ended", "INFO")
                     self.end_span(kb_span, status_code=StatusCode.OK, end_time=kb.kb_end_time)
 
             if turn.kb_metrics:
@@ -827,7 +807,6 @@ class TracesFlowManager:
             if turn.timeline_event_metrics:
                 for event in turn.timeline_event_metrics:
                     if event.event_type == "user_speech":
-                        create_log("User Input Speech Detected", "INFO")
                         user_speech_span = create_span(
                             "User Input Speech",
                             {"Transcript": event.text, "duration_ms": event.duration_ms},
@@ -836,7 +815,6 @@ class TracesFlowManager:
                         )
                         self.end_span(user_speech_span, end_time=event.end_time if event.end_time else turn_end_time)
                     elif event.event_type == "agent_speech":
-                        create_log("Agent Output Speech Detected", "INFO")
                         agent_speech_span = create_span(
                             "Agent Output Speech",
                             {"Transcript": event.text, "duration_ms": event.duration_ms},
@@ -897,9 +875,6 @@ class TracesFlowManager:
                 {"total_a2a_turns": self._a2a_turn_count},
                 parent_span=self.main_turn_span
             )
-            if self.a2a_span:
-                with trace.use_span(self.a2a_span):
-                    create_log("A2A communication started", "INFO")
 
         if not self.a2a_span:
             return None
@@ -918,28 +893,17 @@ class TracesFlowManager:
             start_time=time.perf_counter()
         )
         
-        if a2a_span:
-            with trace.use_span(a2a_span):
-                create_log(f"A2A event: {name}", "INFO", attributes)
-        
         return a2a_span
 
     def end_a2a_trace(self, span: Optional[Span], message: str = ""):
         """Ends an A2A trace span."""
-        if span:
-            with trace.use_span(span):
-                if message:
-                    create_log(message, "INFO")
-            complete_span(span, StatusCode.OK, end_time=time.perf_counter())
+        complete_span(span, StatusCode.OK, end_time=time.perf_counter())
 
     def end_a2a_communication(self):
         """Ends the A2A communication parent span."""
-        if self.a2a_span:
-            with trace.use_span(self.a2a_span, start_time=time.perf_counter()):
-                create_log(f"A2A communication ended with {self._a2a_turn_count} turns", "INFO")
-            complete_span(self.a2a_span, StatusCode.OK, end_time=time.perf_counter())
-            self.a2a_span = None
-            self._a2a_turn_count = 0  
+        complete_span(self.a2a_span, StatusCode.OK, end_time=time.perf_counter())
+        self.a2a_span = None
+        self._a2a_turn_count = 0  
 
     def create_background_audio_start_span(self, file_path: str = None, looping: bool = False, start_time: float = None):
         """Creates a 'Playing Background Audio' span at session level (same level as turn spans)."""
@@ -952,7 +916,6 @@ class TracesFlowManager:
         bg_audio_attrs["looping"] = looping
         bg_audio_attrs["event"] = "start"
         
-        create_log("Playing Background Audio", "INFO")
         start_span = create_span("Playing Background Audio", bg_audio_attrs, parent_span=self.main_turn_span, start_time=start_time or time.perf_counter())
         # End immediately as a point-in-time event
         self.end_span(start_span, message="Background audio started", end_time=start_time or time.perf_counter())
@@ -969,7 +932,6 @@ class TracesFlowManager:
         bg_audio_attrs["looping"] = looping
         bg_audio_attrs["event"] = "stop"
         
-        create_log("Stopped Background Audio", "INFO")
         stop_span = create_span("Stopped Background Audio", bg_audio_attrs, parent_span=self.main_turn_span, start_time=end_time or time.perf_counter())
         # End immediately as a point-in-time event
         self.end_span(stop_span, message="Background audio stopped", end_time=end_time or time.perf_counter())

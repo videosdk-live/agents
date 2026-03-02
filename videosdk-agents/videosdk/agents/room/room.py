@@ -62,6 +62,7 @@ class VideoSDKHandler(BaseTransportHandler):
         on_session_end: Optional[Callable[[str], None]] = None,
         # VideoSDK connection options
         signaling_base_url: Optional[str] = None,
+        job_logger=None,
     ):
         """
         Initialize the VideoSDK handler.
@@ -185,6 +186,7 @@ class VideoSDKHandler(BaseTransportHandler):
         self.on_room_error = on_room_error
         self._participant_joined_events: dict[str, asyncio.Event] = {}
         self._left: bool = False
+        self._job_logger = job_logger
 
     async def connect(self):
         """
@@ -677,12 +679,13 @@ class VideoSDKHandler(BaseTransportHandler):
         self.custom_microphone_audio_track = None
         self.audio_sinks = None
         self.on_room_error = None
-        self.on_session_end = None        
+        self.on_session_end = None
+        self._job_logger = None
         self._session_ended = True
         self._session_id = None
         self._session_id_collected = False
         self._non_agent_participant_count = 0
-        
+
         logger.info("Room cleanup completed")
 
     async def _collect_session_id(self) -> None:
@@ -694,7 +697,7 @@ class VideoSDKHandler(BaseTransportHandler):
                 session_id = getattr(self.meeting, "session_id", None)
                 if session_id:
                     self._session_id = session_id
-                    print(f"Session ID: >>>>>>>>>>>> {session_id}")
+                    logger.info(f"Session ID collected: {session_id}")
                     metrics_collector.set_session_id(session_id)
                     metrics_collector.add_participant_metrics(
                         participant_id=self.meeting.local_participant.id,
@@ -706,6 +709,8 @@ class VideoSDKHandler(BaseTransportHandler):
                     self._session_id_collected = True
                     if self.traces_flow_manager:
                         self.traces_flow_manager.set_session_id(session_id)
+                    if self._job_logger:
+                        self._job_logger.update_context(sessionId=session_id)
             except Exception as e:
                 logger.error(f"Error collecting session ID: {e}")
 
@@ -730,6 +735,17 @@ class VideoSDKHandler(BaseTransportHandler):
                         session_id=self._session_id,
                         sdk_metadata=self.sdk_metadata,
                     )
+
+                    if self._job_logger:
+                        logs_config = attributes.get("logs", {})
+                        observability_jwt = attributes.get("observability", "")
+                        if logs_config.get("enabled"):
+                            log_endpoint = logs_config.get("endPoint", "")
+                            if log_endpoint:
+                                self._job_logger.set_endpoint(log_endpoint, observability_jwt)
+                                logger.debug(
+                                    f"Log endpoint configured: {log_endpoint}"
+                                )
                 else:
                     logger.error("No meeting attributes found")
             else:

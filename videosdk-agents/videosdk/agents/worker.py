@@ -710,6 +710,8 @@ class Worker:
                 join_meeting=self.default_room_options.join_meeting,
                 auto_end_session=self.default_room_options.auto_end_session,
                 session_timeout_seconds=self.default_room_options.session_timeout_seconds,
+                send_logs_to_dashboard=self.default_room_options.send_logs_to_dashboard,
+                dashboard_log_level=self.default_room_options.dashboard_log_level,
             )
 
             # Apply RoomOptions from assignment if provided

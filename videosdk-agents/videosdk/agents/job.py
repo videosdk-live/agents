@@ -72,6 +72,9 @@ class RoomOptions:
     signaling_base_url: Optional[str] = "api.videosdk.live"
     background_audio: bool = False
 
+    send_logs_to_dashboard: bool = False
+    dashboard_log_level: str = "INFO"
+
     # New Configuration Fields
     _transport_mode: TransportMode = field(default=TransportMode.VIDEOSDK, init=False, repr=False)
 
@@ -292,6 +295,9 @@ class JobContext:
         from .metrics import metrics_collector
         self.metrics_collector = metrics_collector
         
+        self._log_manager = None
+        self._job_logger = None
+        
     def _set_pipeline_internal(self, pipeline: Any) -> None:
         """Internal method called by pipeline constructors"""
         self._pipeline = pipeline
@@ -341,6 +347,19 @@ class JobContext:
                     
                     if not self.room_options.room_id:
                         self.room_options.room_id = self.get_room_id()
+                    if self.room_options.send_logs_to_dashboard:
+                        from .metrics.logger_handler import LogManager, JobLogger
+                        self._log_manager = LogManager()
+                        self._log_manager.start(auth_token=self.videosdk_auth or "")
+                        self._job_logger = JobLogger(
+                            queue=self._log_manager.get_queue(),
+                            room_id=self.room_options.room_id or "",
+                            peer_id=self.room_options.agent_participant_id or "agent",
+                            auth_token=self.videosdk_auth or "",
+                            dashboard_log_level=self.room_options.dashboard_log_level,
+                            send_logs_to_dashboard=True,
+                        )
+
                     if self.room_options.join_meeting:
                         agent_id = self._pipeline.agent.id if self._pipeline and hasattr(self._pipeline, 'agent') else None
                         self.room = VideoSDKHandler(
@@ -361,6 +380,7 @@ class JobContext:
                             auto_end_session=self.room_options.auto_end_session,
                             session_timeout_seconds=self.room_options.session_timeout_seconds,
                             signaling_base_url=self.room_options.signaling_base_url,
+                            job_logger=self._job_logger,
                         )
                     if self._pipeline and hasattr(
                         self._pipeline, "_set_loop_and_audio_track"
@@ -453,6 +473,19 @@ class JobContext:
             except Exception as e:
                 logger.error(f"Error during pipeline cleanup: {e}")
             self._pipeline = None
+
+        if self._job_logger:
+            try:
+                self._job_logger.cleanup()
+            except Exception as e:
+                logger.error(f"Error during job logger cleanup: {e}")
+            self._job_logger = None
+        if self._log_manager:
+            try:
+                self._log_manager.stop()
+            except Exception as e:
+                logger.error(f"Error during log manager stop: {e}")
+            self._log_manager = None
 
         if self.room:
             try:
