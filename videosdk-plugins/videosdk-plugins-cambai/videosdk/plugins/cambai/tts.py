@@ -70,7 +70,7 @@ class OutputConfiguration:
     """Audio output format & pacing options."""
     format: str = "wav"
     duration: float | None = None
-    sample_rate: int | None = None
+    sample_rate: int = 24000
 
     def to_dict(self) -> dict:
         d: dict = {"format": self.format}
@@ -241,8 +241,9 @@ class CambAITTS(TTS):
 
             if self.output_configuration.format == "wav":
                 pcm_audio = self._extract_pcm_from_wav(audio_data)
-                resampled_pcm = self.resample_audio(pcm_audio)
-                await self._stream_audio_chunks(resampled_pcm)
+                if self.output_configuration.sample_rate == 48000:
+                    pcm_audio = self.resample_audio(pcm_audio)
+                await self._stream_audio_chunks(pcm_audio)
             else:
                 self.emit(
                     "error",
