@@ -139,6 +139,7 @@ class VideoSDKHandler(BaseTransportHandler):
         self._session_id: Optional[str] = None
         self._session_id_collected = False
         self.recording = recording
+        self.recorded_participants: set = set()
 
         self.traces_flow_manager = TracesFlowManager(room_id=self.meeting_id)
         metrics_collector.set_traces_flow_manager(
