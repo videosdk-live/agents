@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import time
 import logging
+import json
 from typing import TYPE_CHECKING, Dict, List, Optional, Any, Union
 from dataclasses import asdict
 
@@ -83,6 +84,12 @@ class MetricsCollector:
         self.preemtive_generation_enabled: bool = False
         self.session_set_in_trace: bool = False
         self.transport_mode: Optional[str] = None
+
+        # Buffered data from an interrupted turn's interrupting speech
+        self._pending_interrupt_timeline: Optional[dict] = None
+        self._pending_interrupt_stt: Optional['SttMetrics'] = None
+        self._pending_interrupt_eou: Optional['EouMetrics'] = None
+        self._pending_interrupt_vad: Optional['VadMetrics'] = None
     # ──────────────────────────────────────────────
     # Session lifecycle
     # ──────────────────────────────────────────────
@@ -256,6 +263,32 @@ class MetricsCollector:
             self.current_turn.user_speech_start_time = self._pending_user_start_time
             self._start_timeline_event("user_speech", self._pending_user_start_time)
 
+        # Carry over buffered data from an interrupted turn
+        if self._pending_interrupt_timeline is not None:
+            tl = self._pending_interrupt_timeline
+            event = TimelineEvent(
+                event_type="user_speech",
+                start_time=tl["start_time"],
+                end_time=tl.get("end_time"),
+                duration_ms=tl.get("duration_ms"),
+                text=tl.get("text")
+            )
+            self.current_turn.timeline_event_metrics.append(event)
+            logger.info(f"[metrics] start_turn() carried over interrupt timeline: {tl.get('text')}")
+            self._pending_interrupt_timeline = None
+        if self._pending_interrupt_stt is not None:
+            self.current_turn.stt_metrics.append(self._pending_interrupt_stt)
+            logger.info(f"[metrics] start_turn() carried over interrupt STT: {self._pending_interrupt_stt.stt_transcript}")
+            self._pending_interrupt_stt = None
+        if self._pending_interrupt_eou is not None:
+            self.current_turn.eou_metrics.append(self._pending_interrupt_eou)
+            logger.info(f"[metrics] start_turn() carried over interrupt EOU: {self._pending_interrupt_eou.eou_latency}")
+            self._pending_interrupt_eou = None
+        if self._pending_interrupt_vad is not None:
+            self.current_turn.vad_metrics.append(self._pending_interrupt_vad)
+            logger.info(f"[metrics] start_turn() carried over interrupt VAD")
+            self._pending_interrupt_vad = None
+
         # If user is currently speaking, capture the start time
         if self._is_user_speaking and self._user_input_start_time:
             if self.current_turn.user_speech_start_time is None:
@@ -289,6 +322,36 @@ class MetricsCollector:
             self.current_turn = None
             return
 
+        # If this turn was interrupted, buffer the interrupting user's metrics
+        # (STT, EOU, VAD, timeline) for carry-over to the next turn.
+        if self.current_turn.is_interrupted:
+            # Buffer STT metrics from interrupting speech
+            if len(self.current_turn.stt_metrics) >= 2:
+                self._pending_interrupt_stt = self.current_turn.stt_metrics.pop()
+                logger.info(f"[metrics] complete_turn() buffering interrupt STT for next turn: {self._pending_interrupt_stt.stt_transcript}")
+
+            # Buffer EOU metrics from interrupting speech
+            if len(self.current_turn.eou_metrics) >= 2:
+                self._pending_interrupt_eou = self.current_turn.eou_metrics.pop()
+                logger.info(f"[metrics] complete_turn() buffering interrupt EOU for next turn: {self._pending_interrupt_eou.eou_latency}")
+
+            # Buffer VAD metrics from interrupting speech and construct timeline from it
+            if len(self.current_turn.vad_metrics) >= 2:
+                self._pending_interrupt_vad = self.current_turn.vad_metrics.pop()
+                # Build the pending timeline from the buffered VAD data
+                self._pending_interrupt_timeline = {
+                    "start_time": self._pending_interrupt_vad.user_speech_start_time,
+                    "end_time": self._pending_interrupt_vad.user_speech_end_time,
+                    "duration_ms": (
+                        round((self._pending_interrupt_vad.user_speech_end_time - self._pending_interrupt_vad.user_speech_start_time) * 1000, 4)
+                        if self._pending_interrupt_vad.user_speech_start_time and self._pending_interrupt_vad.user_speech_end_time
+                        else None
+                    ),
+                    "text": None,  # Will be set by set_user_transcript in the next turn
+                }
+                logger.info(f"[metrics] complete_turn() buffering interrupt VAD + timeline for next turn")
+
+        print(json.dumps(self.current_turn.to_dict(), indent=2))
         # Send trace
         if self.traces_flow_manager:
             self.traces_flow_manager.create_unified_turn_trace(self.current_turn, self.session)
@@ -398,7 +461,8 @@ class MetricsCollector:
             if not any(ev.event_type == "user_speech" for ev in self.current_turn.timeline_event_metrics):
                 self._start_timeline_event("user_speech", self._user_input_start_time)
 
-            if not self.current_turn.vad_metrics:
+            # Create new entry if none exists or last entry is already complete
+            if not self.current_turn.vad_metrics or self.current_turn.vad_metrics[-1].user_speech_end_time is not None:
                 self.current_turn.vad_metrics.append(VadMetrics())
             self.current_turn.vad_metrics[-1].user_speech_start_time = self._user_input_start_time
 
@@ -446,8 +510,8 @@ class MetricsCollector:
         self._stt_start_time = time.perf_counter()
         if self.current_turn:
             logger.info(f"[metrics] on_stt_start() called | current_turn={'exists' if self.current_turn else 'None'}")
-            # Create STT metrics entry if not present
-            if not self.current_turn.stt_metrics:
+            # Create new entry if none exists or last entry is already complete
+            if not self.current_turn.stt_metrics or self.current_turn.stt_metrics[-1].stt_latency is not None:
                 self.current_turn.stt_metrics.append(SttMetrics())
             stt = self.current_turn.stt_metrics[-1]
             stt.stt_start_time = self._stt_start_time
@@ -542,7 +606,8 @@ class MetricsCollector:
             self.start_turn()
         self._eou_start_time = time.perf_counter()
         if self.current_turn:
-            if not self.current_turn.eou_metrics:
+            # Create new entry if none exists or last entry is already complete
+            if not self.current_turn.eou_metrics or self.current_turn.eou_metrics[-1].eou_latency is not None:
                 self.current_turn.eou_metrics.append(EouMetrics())
             self.current_turn.eou_metrics[-1].eou_start_time = self._eou_start_time
 
@@ -863,10 +928,19 @@ class MetricsCollector:
     def set_user_transcript(self, transcript: str) -> None:
         """Set the user transcript for the current turn."""
         if self.current_turn:
-            if self._is_agent_speaking and self.current_turn.user_speech:
+            # Guard: skip if the turn already has user_speech AND the pipeline
+            # is actively processing (agent speaking OR LLM/TTS already started).
+            # This prevents the interrupting speech's transcript from overwriting
+            # the original transcript of the current turn.
+            pipeline_active = (
+                self._is_agent_speaking
+                or bool(self.current_turn.llm_metrics)
+                or bool(self.current_turn.tts_metrics)
+            )
+            if pipeline_active and self.current_turn.user_speech:
                 logger.info(
-                    f"[metrics] Skipping set_user_transcript during agent speech "
-                    f"— current turn already has user_speech, new transcript "
+                    f"[metrics] Skipping set_user_transcript — pipeline active "
+                    f"and turn already has user_speech, new transcript "
                     f"belongs to the next turn: {transcript}"
                 )
                 return
