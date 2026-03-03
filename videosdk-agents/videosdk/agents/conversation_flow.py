@@ -209,6 +209,8 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         elif vad_response.event_type == VADEventType.END_OF_SPEECH:
             cascading_metrics_collector.on_vad_end_of_speech()
             self._is_user_speaking = False
+            if self.stt and hasattr(self.stt, 'flush'):
+                await self.stt.flush()
             self.on_speech_stopped()
 
 
@@ -1305,7 +1307,6 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
         self.tts.reset_first_audio_tracking()
 
-        cascading_metrics_collector.on_tts_start()
         try:
             response_iterator: AsyncIterator[str]
             if isinstance(response_gen, str):
@@ -1314,9 +1315,14 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 response_iterator = string_to_iterator(response_gen)
             else:
                 response_iterator = response_gen
+            tts_start_recorded = False
             async def counting_wrapper(iterator: AsyncIterator[str]):
+                nonlocal tts_start_recorded
                 async for chunk in iterator:
                     if chunk:
+                        if not tts_start_recorded:
+                            tts_start_recorded = True
+                            cascading_metrics_collector.on_tts_start()
                         # Count characters and update metrics
                         cascading_metrics_collector.add_tts_characters(len(chunk))
                     yield chunk
