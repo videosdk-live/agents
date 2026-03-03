@@ -82,9 +82,9 @@ class JobLogger:
         """Update context fields (e.g. sessionId once available)."""
         self._context.update(kwargs)
 
-    def set_endpoint(self, endpoint: str, jwt_key: str = "") -> None:
+    def set_endpoint(self, endpoint: str, jwt_key: str = "", custom_headers: Optional[Dict[str, str]] = None) -> None:
         """
-        Send the log endpoint and observability JWT to the consumer thread
+        Send the log endpoint and optional custom headers to the consumer thread
         via the queue so the LogConsumerHandler can start posting logs.
 
         Called from room.py when room attributes become available.
@@ -97,6 +97,7 @@ class JobLogger:
         )
         record._config_endpoint = endpoint
         record._config_jwt_key = jwt_key
+        record._config_custom_headers = custom_headers
         self._queue.put_nowait(record)
 
     def cleanup(self) -> None:
@@ -140,12 +141,15 @@ class LogConsumerHandler(logging.Handler):
             name="LogFlushThread",
         )
         self._flush_thread.start()
+        self.custom_headers = None
 
-    def update_endpoint(self, endpoint: str, jwt_key: str = "") -> None:
+    def update_endpoint(self, endpoint: str, jwt_key: str = "", custom_headers: Optional[Dict[str, str]] = None) -> None:
         """Called when room attributes provide the real endpoint."""
         self.endpoint = endpoint
         if jwt_key:
             self.jwt_key = jwt_key
+        if custom_headers:
+            self.custom_headers = custom_headers
 
         if self.endpoint:
             with self._pending_lock:
@@ -163,7 +167,8 @@ class LogConsumerHandler(logging.Handler):
         """
         if hasattr(record, "_config_endpoint"):
             jwt_key = getattr(record, "_config_jwt_key", "")
-            self.update_endpoint(record._config_endpoint, jwt_key)
+            custom_headers = getattr(record, "_config_custom_headers", None)
+            self.update_endpoint(record._config_endpoint, jwt_key, custom_headers)
             return
 
         if not self.endpoint:
@@ -247,9 +252,13 @@ class LogConsumerHandler(logging.Handler):
             }
 
             headers = {
-                "Authorization": self.jwt_key,
                 "Content-Type": "application/json",
             }
+            if self.custom_headers:
+                headers.update(self.custom_headers)
+            elif self.jwt_key:
+                headers["Authorization"] = self.jwt_key
+
             req_lib.post(self.endpoint, json=body, headers=headers, timeout=10)
         except Exception:
             pass
@@ -296,10 +305,10 @@ class LogManager:
         )
         self._listener.start()
 
-    def update_endpoint(self, endpoint: str, jwt_key: str = "") -> None:
+    def update_endpoint(self, endpoint: str, jwt_key: str = "", custom_headers: Optional[Dict[str, str]] = None) -> None:
         """Set/update the endpoint and flush buffered records."""
         if self._consumer_handler:
-            self._consumer_handler.update_endpoint(endpoint, jwt_key)
+            self._consumer_handler.update_endpoint(endpoint, jwt_key, custom_headers)
 
     def stop(self) -> None:
         """Stop the listener and flush remaining logs."""

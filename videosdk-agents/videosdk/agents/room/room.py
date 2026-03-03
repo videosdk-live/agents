@@ -63,6 +63,9 @@ class VideoSDKHandler(BaseTransportHandler):
         # VideoSDK connection options
         signaling_base_url: Optional[str] = None,
         job_logger=None,
+        traces_options=None,
+        metrics_options=None,
+        logs_options=None,
     ):
         """
         Initialize the VideoSDK handler.
@@ -119,6 +122,9 @@ class VideoSDKHandler(BaseTransportHandler):
 
         # VideoSDK connection
         self.signaling_base_url = signaling_base_url
+        self.traces_options = traces_options
+        self.metrics_options = metrics_options
+        self.logs_options = logs_options
 
         super().__init__(loop, pipeline)
 
@@ -729,24 +735,44 @@ class VideoSDKHandler(BaseTransportHandler):
 
                 if attributes:
                     peer_id = getattr(self.meeting, "participant_id", "agent")
+
+                    traces_config = attributes.get("traces", {})
+                    if self.traces_options:
+                        if not self.traces_options.enabled:
+                            traces_config["enabled"] = False
+                        elif self.traces_options.enabled and self.traces_options.export_url:
+                            traces_config["enabled"] = True
+                            traces_config["pbEndPoint"] = self.traces_options.export_url
+                            traces_config["export_headers"] = self.traces_options.export_headers
+
                     auto_initialize_telemetry_and_logs(
                         room_id=self.meeting_id,
                         peer_id=peer_id,
                         room_attributes=attributes,
                         session_id=self._session_id,
                         sdk_metadata=self.sdk_metadata,
+                        custom_traces_config=traces_config,
                     )
 
                     if self._job_logger:
                         logs_config = attributes.get("logs", {})
                         observability_jwt = attributes.get("observability", "")
-                        if logs_config.get("enabled"):
-                            log_endpoint = logs_config.get("endPoint", "")
-                            if log_endpoint:
-                                self._job_logger.set_endpoint(log_endpoint, observability_jwt)
-                                logger.debug(
-                                    f"Log endpoint configured: {log_endpoint}"
-                                )
+                        
+                        is_logs_enabled = logs_config.get("enabled", False)
+                        log_endpoint = logs_config.get("endPoint", "")
+                        custom_headers = None
+                        
+                        if self.logs_options:
+                            if not self.logs_options.enabled:
+                                is_logs_enabled = False
+                            elif self.logs_options.enabled and self.logs_options.export_url:
+                                is_logs_enabled = True
+                                log_endpoint = self.logs_options.export_url
+                                custom_headers = self.logs_options.export_headers
+
+                        if is_logs_enabled and log_endpoint:
+                            self._job_logger.set_endpoint(log_endpoint, observability_jwt, custom_headers)
+                            logger.debug(f"Log endpoint configured: {log_endpoint}")
                 else:
                     logger.error("No meeting attributes found")
             else:

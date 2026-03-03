@@ -4,7 +4,8 @@ from .telemetry import initialize_telemetry, get_telemetry
 
 
 def auto_initialize_telemetry_and_logs(room_id: str, peer_id: str, 
-                                      room_attributes: Dict[str, Any] = None, session_id: str = None, sdk_metadata: Dict[str, Any] = None):
+                                      room_attributes: Dict[str, Any] = None, session_id: str = None, sdk_metadata: Dict[str, Any] = None,
+                                      custom_traces_config: Dict[str, Any] = None):
     """
     Auto-initialize telemetry and logs from room attributes
     """
@@ -13,7 +14,7 @@ def auto_initialize_telemetry_and_logs(room_id: str, peer_id: str,
     
     observability_jwt = room_attributes.get('observability', '')
     
-    traces_config = room_attributes.get('traces', {})
+    traces_config = custom_traces_config or room_attributes.get('traces', {})
     if traces_config.get('enabled'):
         metadata = {
         }

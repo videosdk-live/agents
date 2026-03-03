@@ -34,6 +34,7 @@ class VideoSDKTelemetry:
         self.observability_jwt = observability_jwt
         self.traces_enabled = traces_config.get('enabled', False)
         self.pb_endpoint = traces_config.get('pbEndPoint')
+        self.export_headers = traces_config.get('export_headers')
         self.metadata = metadata
         self.sdk_metadata = sdk_metadata
         
@@ -63,7 +64,9 @@ class VideoSDKTelemetry:
             })
             
             headers = {}
-            if self.observability_jwt:
+            if self.export_headers:
+                headers.update(self.export_headers)
+            elif self.observability_jwt:
                 headers["Authorization"] = self.observability_jwt
             
             otlp_exporter = OTLPSpanExporter(

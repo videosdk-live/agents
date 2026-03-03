@@ -57,7 +57,7 @@ from .utils import (
 )
 from .room.output_stream import CustomAudioStreamTrack, TeeCustomAudioStreamTrack, TeeMixingCustomAudioStreamTrack
 from .event_emitter import EventEmitter
-from .job import WorkerJob, JobContext, RoomOptions, Options, WebSocketConfig, WebRTCConfig
+from .job import WorkerJob, JobContext, RoomOptions, Options, WebSocketConfig, WebRTCConfig, TracesOptions, MetricsOptions, LoggingOptions
 from .worker import Worker, WorkerOptions, WorkerType
 from .utterance_handle import UtteranceHandle
 from .playground_manager import PlaygroundManager
@@ -175,6 +175,9 @@ __all__ = [
     "Options",
     "WebSocketConfig",
     "WebRTCConfig",
+    "TracesOptions",
+    "MetricsOptions",
+    "LoggingOptions",
     "metrics_collector",
     "ImageContent",
     "segment_text",
