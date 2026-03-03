@@ -4,7 +4,6 @@ import asyncio
 import hashlib
 import time
 import logging
-import json
 from typing import TYPE_CHECKING, Dict, List, Optional, Any, Union
 from dataclasses import asdict
 
@@ -351,7 +350,6 @@ class MetricsCollector:
                 }
                 logger.info(f"[metrics] complete_turn() buffering interrupt VAD + timeline for next turn")
 
-        print(json.dumps(self.current_turn.to_dict(), indent=2))
         # Send trace
         if self.traces_flow_manager:
             self.traces_flow_manager.create_unified_turn_trace(self.current_turn, self.session)
