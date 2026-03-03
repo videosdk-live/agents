@@ -100,8 +100,6 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
         self._tools: List[FunctionTool] = []
         self._formatted_tools: List[Dict[str, Any]] = []
         
-        self.loop = None
-        self.audio_track: Optional[CustomAudioStreamTrack] = None
         self.input_sample_rate = INPUT_SAMPLE_RATE
         self.target_sample_rate = DEFAULT_SAMPLE_RATE
         self._agent_speaking = False
@@ -544,5 +542,4 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
         if self._http_session and not self._http_session.closed:
             await self._http_session.close()
 
-        if hasattr(self.audio_track, "cleanup") and self.audio_track:
-            await self.audio_track.cleanup()
+        await super().aclose()

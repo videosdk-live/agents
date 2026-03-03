@@ -120,8 +120,6 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
         self._instructions = "You are a helpful assistant. The user and you will engage in a spoken dialog exchanging the transcripts of a natural real-time conversation. Keep your responses short, generally two or three sentences for chatty scenarios."
         self._tools = []
         self.tools_formatted = []
-        self.loop = asyncio.get_event_loop()
-        self.audio_track = None
         self.prompt_name = str(uuid.uuid4())
         self.system_content_name = f"system_{str(uuid.uuid4())}"
         self.audio_content_name = f"audio_{str(uuid.uuid4())}"
@@ -664,13 +662,7 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
 
         await self._cleanup()
 
-        if self.audio_track:
-            if hasattr(self.audio_track, "cleanup"):
-                try:
-                    await self.audio_track.cleanup()
-                except Exception as e:
-                    await self.emit("error", f"Error cleaning up audio track: {e}")
-            self.audio_track = None
+        await super().aclose()
 
     async def _execute_tool_and_send_result(
         self, tool_use_event: Dict[str, Any]

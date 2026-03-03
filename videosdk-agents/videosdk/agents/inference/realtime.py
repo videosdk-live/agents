@@ -141,8 +141,6 @@ class Realtime(RealtimeBaseModel[RealtimeEventTypes]):
         self._closing: bool = False
 
         # Audio state
-        self.audio_track: Optional[CustomAudioStreamTrack] = None
-        self.loop: Optional[asyncio.AbstractEventLoop] = None
         self.target_sample_rate = 24000
         self.input_sample_rate = 48000
 
@@ -251,20 +249,8 @@ class Realtime(RealtimeBaseModel[RealtimeEventTypes]):
 
         try:
             # Create audio track if needed
-            if (
-                not self.audio_track
-                and self.loop
-                and "AUDIO" in self.config.response_modalities
-            ):
-                self.audio_track = CustomAudioStreamTrack(self.loop)
-            elif not self.loop and "AUDIO" in self.config.response_modalities:
-
-                self.emit(
-                    "error", "Event loop not initialized. Audio playback will not work."
-                )
-                raise RuntimeError(
-                    "Event loop not initialized. Audio playback will not work."
-                )
+            if not self.audio_track and "AUDIO" in self.config.response_modalities:
+                logger.warning("[InferenceRealtime] audio_track not set — it should be assigned externally by the pipeline before connect().")
 
             # Connect to WebSocket
             await self._connect_ws()
@@ -780,12 +766,7 @@ class Realtime(RealtimeBaseModel[RealtimeEventTypes]):
             await self._session.close()
             self._session = None
 
-        # Cleanup audio track
-        if hasattr(self.audio_track, "cleanup") and self.audio_track:
-            try:
-                await self.audio_track.cleanup()
-            except Exception as e:
-                logger.error(f"[InferenceRealtime] Error cleaning up audio track: {e}")
+        await super().aclose()  # Nulls audio_track and loop
 
         logger.info("[InferenceRealtime] Closed successfully")
 

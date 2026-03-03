@@ -175,8 +175,6 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         self._closing = False
         self._session_should_close = asyncio.Event()
         self._main_task = None
-        self.loop = None
-        self.audio_track = None
         self._buffered_audio = bytearray()
         self._is_speaking = False
         self._last_audio_time = 0.0
@@ -238,19 +236,8 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
 
         try:
 
-            if (
-                not self.audio_track
-                and self.loop
-                and "AUDIO" in self.config.response_modalities
-            ):
-                self.audio_track = CustomAudioStreamTrack(self.loop)
-            elif not self.loop and "AUDIO" in self.config.response_modalities:
-                self.emit(
-                    "error", "Event loop not initialized. Audio playback will not work."
-                )
-                raise RuntimeError(
-                    "Event loop not initialized. Audio playback will not work."
-                )
+            if not self.audio_track and "AUDIO" in self.config.response_modalities:
+                logger.warning("audio_track not set — it should be assigned externally by the pipeline before connect().")
 
             try:
                 initial_session = await self._create_session()
@@ -903,13 +890,8 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
             await self._cleanup_session(self._session)
             self._session = None
 
-        if hasattr(self.audio_track, "cleanup") and self.audio_track:
-            try:
-                await self.audio_track.cleanup()
-            except Exception as e:
-                self.emit("error", f"Error cleaning up audio track: {e}")
-
         self._buffered_audio = bytearray()
+        await super().aclose()
 
     async def _reconnect(self) -> None:
         if self._session:

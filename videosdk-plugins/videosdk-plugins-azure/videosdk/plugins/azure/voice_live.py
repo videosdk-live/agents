@@ -136,8 +136,6 @@ class AzureVoiceLive(RealtimeBaseModel[AzureVoiceLiveEventTypes]):
         self._instructions: str = (
             "You are a helpful voice assistant that can answer questions and help with tasks."
         )
-        self.loop = None
-        self.audio_track: Optional[CustomAudioStreamTrack] = None
         self.config: AzureVoiceLiveConfig = config or AzureVoiceLiveConfig()
         self.input_sample_rate = VIDEOSDK_INPUT_SAMPLE_RATE
         self.target_sample_rate = AZURE_VOICE_LIVE_SAMPLE_RATE
@@ -159,19 +157,8 @@ class AzureVoiceLive(RealtimeBaseModel[AzureVoiceLiveEventTypes]):
         self._closing = False
 
         try:
-            if (
-                not self.audio_track
-                and self.loop
-                and Modality.AUDIO in self.config.modalities
-            ):
-                self.audio_track = CustomAudioStreamTrack(self.loop)
-            elif not self.loop and Modality.AUDIO in self.config.modalities:
-                self.emit(
-                    "error", "Event loop not initialized. Audio playback will not work."
-                )
-                raise RuntimeError(
-                    "Event loop not initialized. Audio playback will not work."
-                )
+            if not self.audio_track and Modality.AUDIO in self.config.modalities:
+                logger.warning("audio_track not set — it should be assigned externally by the pipeline before connect().")
 
             session = await self._create_session()
             if session:
@@ -539,8 +526,4 @@ class AzureVoiceLive(RealtimeBaseModel[AzureVoiceLiveEventTypes]):
             await self._cleanup_session(self._session)
             self._session = None
 
-        if hasattr(self.audio_track, "cleanup") and self.audio_track:
-            try:
-                await self.audio_track.cleanup()
-            except Exception as e:
-                self.emit("error", f"Error cleaning up audio track: {e}")
+        await super().aclose()

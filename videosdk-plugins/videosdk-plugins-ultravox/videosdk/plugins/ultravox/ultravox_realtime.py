@@ -90,8 +90,6 @@ class UltravoxRealtime(RealtimeBaseModel[UltravoxEventTypes]):
         self._closing = False
         self._session_should_close = asyncio.Event()
         self._main_task = None
-        self.loop = None
-        self.audio_track = None
         self.tools = []
         self._instructions: str = "You are a helpful voice assistant."
         self.config: UltravoxLiveConfig = config or UltravoxLiveConfig()
@@ -116,10 +114,8 @@ class UltravoxRealtime(RealtimeBaseModel[UltravoxEventTypes]):
         self._session_should_close.clear()
 
         try:
-            if not self.audio_track and self.loop:
-                self.audio_track = CustomAudioStreamTrack(self.loop)
-            elif not self.loop:
-                raise RuntimeError("Event loop not initialized")
+            if not self.audio_track:
+                logger.warning("audio_track not set — it should be assigned externally by the pipeline before connect().")
 
             if not self._http_session:
                 self._http_session = aiohttp.ClientSession()
@@ -630,11 +626,7 @@ class UltravoxRealtime(RealtimeBaseModel[UltravoxEventTypes]):
             await self._http_session.close()
             self._http_session = None
 
-        if hasattr(self.audio_track, "cleanup") and self.audio_track:
-            try:
-                await self.audio_track.cleanup()
-            except Exception as e:
-                logger.error(f"Error cleaning up audio track: {e}")
+        await super().aclose()
 
     def _convert_tools_to_ultravox_format(self, tools):
         """

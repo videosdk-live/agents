@@ -158,8 +158,6 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         self._closing = False
         self._instructions: Optional[str] = None
         self._tools: Optional[List[FunctionTool]] = []
-        self.loop = None
-        self.audio_track: Optional[CustomAudioStreamTrack] = None
         self._formatted_tools: Optional[List[Dict[str, Any]]] = None
         self.config: OpenAIRealtimeConfig = config or OpenAIRealtimeConfig()
         self.input_sample_rate = 48000
@@ -670,6 +668,8 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
 
         if self._http_session and not self._http_session.closed:
             await self._http_session.close()
+
+        await super().aclose()
 
     async def send_first_session_update(self) -> None:
         """Send initial session update with default values after connection"""
