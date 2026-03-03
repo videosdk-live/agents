@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from typing import Any, Optional,List, Union
 import os
@@ -87,6 +88,7 @@ class DeepgramSTT(BaseSTT):
         self._ws_task: Optional[asyncio.Task] = None
         self._last_speech_event_time = 0.0
         self._previous_speech_event_time = 0.0
+        self._closed = False
 
     async def process_audio(
         self,
@@ -95,6 +97,8 @@ class DeepgramSTT(BaseSTT):
         **kwargs: Any
     ) -> None:
         """Process audio frames and send to Deepgram's Streaming API"""
+        if self._closed:
+            return
 
         if not self._ws:
             await self._connect_ws()
@@ -235,8 +239,15 @@ class DeepgramSTT(BaseSTT):
 
         return responses
 
+    async def flush(self) -> None:
+        """Send flush signal to Deepgram to trigger immediate transcription."""
+        if self._ws and not self._ws.closed:
+            flush_message = {"type": "Finalize"}
+            await self._ws.send_str(json.dumps(flush_message))
+
     async def aclose(self) -> None:
         """Cleanup resources"""
+        self._closed = True
         if self._ws_task:
             self._ws_task.cancel()
             logger.info("DeepgramSTT WebSocket task cancelled")

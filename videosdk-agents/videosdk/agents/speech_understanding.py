@@ -10,6 +10,7 @@ from .eou import EOU
 from .llm.chat_context import ChatRole
 from .denoise import Denoise
 from .metrics import metrics_collector
+from .utils import UserState, AgentState
 
 
 if TYPE_CHECKING:
@@ -153,6 +154,8 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
         logger.info(f"[speech_understanding] _on_vad_event: {vad_response.event_type.value} | confidence={vad_response.data.confidence:.4f} | _is_user_speaking={self._is_user_speaking}")
         if vad_response.event_type == VADEventType.START_OF_SPEECH:
             self._is_user_speaking = True
+            self.agent.session._emit_user_state(UserState.SPEAKING)
+            self.agent.session._emit_agent_state(AgentState.LISTENING)
             metrics_collector.on_user_speech_start()
             if self._waiting_for_more_speech:
                 logger.debug("User continued speaking, cancelling wait timer")
@@ -162,6 +165,11 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
 
         elif vad_response.event_type == VADEventType.END_OF_SPEECH:
             self._is_user_speaking = False
+            try:
+                if self.stt:
+                    await self.stt.flush()
+            except Exception as e:
+                logger.error(f"Error flushing STT: {e}")
             metrics_collector.on_user_speech_end()
             metrics_collector.on_stt_start()
             self.emit("speech_stopped")
@@ -207,6 +215,11 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
                 await self._process_transcript_with_eou(text)
                 
         elif stt_response.event_type == SpeechEventType.INTERIM:
+            # If on_stt_start() was never called (no VAD END_OF_SPEECH fired),
+            # call it on the first INTERIM so STT latency measures from first
+            # transcript activity to FINAL result.
+            if metrics_collector._stt_start_time is None:
+                metrics_collector.on_stt_start()
             metrics_collector.on_stt_interim_end()
             self.emit("transcript_interim", {
                 "text": text,
