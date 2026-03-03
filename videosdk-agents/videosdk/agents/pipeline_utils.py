@@ -21,7 +21,9 @@ async def cleanup_pipeline(pipeline, llm_changing: bool = False) -> None:
         await pipeline.speech_generation.cleanup()
         pipeline.speech_generation = None
     
-    components = ['stt', 'llm', 'tts', 'vad', 'turn_detector', 'denoise']
+    components = ['stt', 'tts', 'vad', 'turn_detector', 'denoise']
+    if not llm_changing:
+        components.append('llm')
     for attr in components:
         comp = getattr(pipeline, attr, None)
         if comp:
@@ -181,11 +183,16 @@ async def swap_llm(pipeline, new_llm: Any) -> None:
     else:
         # Direct swap
         if pipeline.llm:
+            if pipeline._realtime_model:
+                pipeline._realtime_model.audio_track = None
             await pipeline.llm.aclose()
         
         if isinstance(new_llm, RealtimeBaseModel):
+            new_llm_wrapped = RealtimeLLMAdapter(new_llm)
+            if pipeline.agent:
+                new_llm_wrapped.set_agent(pipeline.agent)
+            pipeline.llm = new_llm_wrapped
             pipeline._realtime_model = new_llm
-            pipeline.llm = RealtimeLLMAdapter(new_llm)
         else:
-            pipeline._realtime_model = None
             pipeline.llm = new_llm
+            pipeline._realtime_model = None

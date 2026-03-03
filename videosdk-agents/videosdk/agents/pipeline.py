@@ -136,6 +136,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         self.hooks = PipelineHooks()
         
         # Realtime configuration
+        self.agent : Agent | None = None
         self.realtime_config = realtime_config
 
         # Detect and handle realtime models
@@ -145,6 +146,8 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         if isinstance(llm, RealtimeBaseModel):
             self._realtime_model = llm
             self.llm = RealtimeLLMAdapter(llm)
+            if self.agent:
+                self.llm.set_agent(self.agent)
         else:
             self.llm = llm
 
@@ -167,7 +170,6 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         self.interrupt_config = interrupt_config or InterruptConfig()
         
         # Pipeline state
-        self.agent : Agent | None = None
         self.orchestrator: PipelineOrchestrator | None = None
         self.speech_generation: SpeechGeneration | None = None
         self.vision = False
@@ -505,7 +507,8 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         original_pipeline_config["interrupt_config"] = asdict(self.interrupt_config)
         original_pipeline_config["max_context_items"] = self.max_context_items
 
-        # 1.Cleanup current execution
+        if self._realtime_model and hasattr(self._realtime_model, 'audio_track'):
+            self._realtime_model.audio_track = None
         await cleanup_pipeline(self, llm_changing=True)
 
         # 2.Update components
@@ -596,6 +599,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         new_pipeline_config["max_context_items"] = self.max_context_items
 
         metrics_collector.traces_flow_manager.create_pipeline_change_trace(time_data, original_pipeline_config, new_pipeline_config)
+        self._setup_error_handlers()
         await self.start()
 
     async def change_component(
@@ -726,6 +730,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
        
         if self._is_realtime_mode:
             self._configure_components()
+            self._setup_error_handlers()
             await self.start()
 
         metrics_collector.traces_flow_manager.create_components_change_trace(components_change_status, components_change_data, time_data)
