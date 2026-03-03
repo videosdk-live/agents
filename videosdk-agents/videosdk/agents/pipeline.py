@@ -723,6 +723,11 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
             "start_time": start_time,
             "end_time": end_time
         }
+       
+        if self._is_realtime_mode:
+            self._configure_components()
+            await self.start()
+
         metrics_collector.traces_flow_manager.create_components_change_trace(components_change_status, components_change_data, time_data)
         new_mode = self.config.pipeline_mode.value
         logger.info(f"New pipeline mode: {new_mode}")
