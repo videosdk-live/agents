@@ -88,6 +88,28 @@ Before you begin, ensure you have:
 
 ## Installation
 
+### Using UV (Recommended)
+
+[UV](https://docs.astral.sh/uv/) is a fast Python package manager that handles virtual environments and dependency management automatically.
+
+> If you don't have UV installed, see the [UV installation guide](https://docs.astral.sh/uv/getting-started/installation/).
+
+- Install the core VideoSDK AI Agent package:
+  ```bash
+  uv add videosdk-agents
+  ```
+
+- Install Optional Plugins:
+  ```bash
+  uv add videosdk-plugins-openai
+  uv add videosdk-plugins-deepgram
+  ```
+
+- Run your agent:
+  ```bash
+  uv run python main.py
+  ```
+
 ### Using pip
 
 - Create and activate a virtual environment with Python 3.12 or higher.
@@ -118,28 +140,6 @@ Before you begin, ensure you have:
   pip install videosdk-plugins-turn-detector
   ```
   👉 Supported plugins (Realtime, LLM, STT, TTS, VAD, Avatar, SIP) are listed in the [Supported Libraries](#supported-libraries-and-plugins) section below.
-
-### Using UV (Recommended)
-
-[UV](https://docs.astral.sh/uv/) is a fast Python package manager that handles virtual environments and dependency management automatically.
-
-> If you don't have UV installed, see the [UV installation guide](https://docs.astral.sh/uv/getting-started/installation/).
-
-- Install the core VideoSDK AI Agent package:
-  ```bash
-  uv add videosdk-agents
-  ```
-
-- Install Optional Plugins:
-  ```bash
-  uv add videosdk-plugins-openai
-  uv add videosdk-plugins-deepgram
-  ```
-
-- Run your agent:
-  ```bash
-  uv run python main.py
-  ```
 
 ### Development Setup
 
