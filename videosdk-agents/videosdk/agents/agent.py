@@ -141,7 +141,7 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
         await self.mcp_manager.add_mcp_server(mcp_server)
         new_tools = self.mcp_manager.tools[existing_tool_count:]
         self._tools.extend(new_tools)
-    
+        
     @abstractmethod
     async def on_enter(self) -> None:
         """Called when session starts, to be implemented in your custom agent implementation."""
