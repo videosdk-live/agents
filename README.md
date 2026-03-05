@@ -67,7 +67,7 @@ The AI Agent SDK is a Python framework built on top of the VideoSDK Python SDK t
 | 9  | **🌐 MCP Integration**               | Connect agents to external data sources and tools using Model Context Protocol. |
 | 10  | **🔗 A2A Protocol**                  | Enable agent-to-agent interactions for complex workflows.                  |
 | 11 | **📊 Observability**             | Built-in OpenTelemetry tracing and metrics collection |  
-| 12 | **🚀 CLI Tool**                  | Run agents locally and test with `videosdk` CLI ⚠️ Deprecated: Removed in versions > 1.0.0.dev. |
+| 12 | **🚀 CLI Tool**                  | Run agents locally and test with `videosdk` CLI ⚠️ Deprecated: Removed in versions > 1.0.0b1. |
 
 > \[!IMPORTANT]
 >
