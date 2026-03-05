@@ -1,4 +1,3 @@
-from .models import TimelineEvent, CascadingTurnData, CascadingMetricsData
 from .integration import (
     auto_initialize_telemetry_and_logs,
     create_span,

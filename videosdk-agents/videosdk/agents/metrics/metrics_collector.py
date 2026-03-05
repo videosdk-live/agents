@@ -1039,10 +1039,12 @@ class MetricsCollector:
     def add_error(self, source: str, message: str) -> None:
         """Add an error to the current turn."""
         if self.current_turn:
+            now = time.perf_counter()
             self.current_turn.errors.append({
                 "source": source,
-                "message": message,
-                "timestamp_perf": time.perf_counter(),
+                "message": str(message),
+                "timestamp": now,
+                "timestamp_perf": now,
             })
 
             if self.playground and self.playground_manager:
@@ -1109,10 +1111,12 @@ class MetricsCollector:
         """Track a realtime model error."""
         if self.current_turn:
             logger.error(f"realtime model error: {error}")
+            now = time.perf_counter()
             self.current_turn.errors.append({
                 "source": "REALTIME_MODEL",
                 "message": str(error.get("message", "Unknown error")),
-                "timestamp": time.time(),
+                "timestamp": now,
+                "timestamp_perf": now,
             })
 
     # ──────────────────────────────────────────────
