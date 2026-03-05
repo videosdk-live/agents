@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, AsyncIterator, Optional, Union
+from typing import Any, AsyncIterator, Optional, Union, Literal
 import os
 import httpx
 import asyncio
@@ -42,6 +42,10 @@ class ElevenLabsTTS(TTS):
         base_url: str = API_BASE_URL,
         enable_streaming: bool = True,
         inactivity_timeout: int = WS_INACTIVITY_TIMEOUT,
+        language: str = "en",
+        enable_ssml_parsing:bool=False,
+        apply_text_normalization:Literal["auto","on","off"]="auto",
+        auto_mode:bool=False
     ) -> None:
         """Initialize the ElevenLabs TTS plugin.
 
@@ -55,6 +59,13 @@ class ElevenLabsTTS(TTS):
             base_url (str): The base URL to use for the TTS plugin. Defaults to "https://api.elevenlabs.io/v1".
             enable_streaming (bool): Whether to enable streaming for the TTS plugin. Defaults to True.
             inactivity_timeout (int): The inactivity timeout to use for the TTS plugin. Defaults to 300.
+            language (str): The language to use for the TTS plugin. Defaults to "en".
+            enable_ssml_parsing(bool): Whether to enable SSML parsing.
+            apply_text_normalization:This parameter controls text normalization with three modes - "auto", "on", and "off". 
+                When set to  auto, the system will automatically decide whether to apply text normalization (e.g., spelling out numbers)
+                with "on", text normalization will always be applied, while with "off", it will be skipped. 
+                For "eleven_turbo_v2_5" and "eleven_flash_v2_5" models, text normalization can only be enabled with Enterprise plans. Defaults to "auto".
+            auto_mode (bool): Reduces latency by disabling chunk schedule and buffers. Recommended for full sentences/phrases.
         """
         super().__init__(
             sample_rate=ELEVENLABS_SAMPLE_RATE, num_channels=ELEVENLABS_CHANNELS
@@ -63,6 +74,10 @@ class ElevenLabsTTS(TTS):
         self.model = model
         self.voice = voice
         self.speed = speed
+        self.language = language
+        self.enable_ssml_parsing = enable_ssml_parsing
+        self.apply_text_normalization = apply_text_normalization
+        self.auto_mode = auto_mode
         self.audio_track = None
         self.loop = None
         self.response_format = response_format
@@ -134,6 +149,10 @@ class ElevenLabsTTS(TTS):
         params = {
             "model_id": self.model,
             "output_format": self.response_format,
+            "language_code": self.language,
+            "enable_ssml_parsing":self.enable_ssml_parsing,
+            "apply_text_normalization":self.apply_text_normalization,
+            "auto_mode":self.auto_mode
         }
 
         headers = {

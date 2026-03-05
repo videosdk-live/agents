@@ -18,13 +18,13 @@ from videosdk.agents import (
     FunctionTool,
     is_function_tool,
     get_tool_info,
-    build_openai_schema, 
+    build_openai_schema,
     CustomAudioStreamTrack,
     RealtimeBaseModel,
     global_event_emitter,
     Agent,
-    realtime_metrics_collector,
 )
+from videosdk.agents.metrics import metrics_collector
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -100,8 +100,6 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
         self._tools: List[FunctionTool] = []
         self._formatted_tools: List[Dict[str, Any]] = []
         
-        self.loop = None
-        self.audio_track: Optional[CustomAudioStreamTrack] = None
         self.input_sample_rate = INPUT_SAMPLE_RATE
         self.target_sample_rate = DEFAULT_SAMPLE_RATE
         self._agent_speaking = False
@@ -292,7 +290,7 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
         if self._session and not self._closing:
             if self.current_utterance and not self.current_utterance.is_interruptible:
                 return
-            await realtime_metrics_collector.set_interrupted()
+            metrics_collector.on_interrupted()
             
         if self.audio_track:
             self.audio_track.interrupt()
@@ -383,8 +381,9 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
     async def _handle_speech_started(self) -> None:
         logger.info("xAI User speech started")
         self.emit("user_speech_started", {"type": "done"})
-        await realtime_metrics_collector.set_user_speech_start()
-        
+        metrics_collector.on_user_speech_start()
+        metrics_collector.start_turn()
+
         if self.current_utterance and not self.current_utterance.is_interruptible:
             return
             
@@ -392,7 +391,7 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
 
     async def _handle_speech_stopped(self) -> None:
         logger.info("xAI User speech stopped")
-        await realtime_metrics_collector.set_user_speech_end()
+        metrics_collector.on_user_speech_end()
         self.emit("user_speech_ended", {})
 
     async def _handle_audio_delta(self, data: dict) -> None:
@@ -401,7 +400,7 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
             return
 
         if not self._agent_speaking:
-            await realtime_metrics_collector.set_agent_speech_start()
+            metrics_collector.on_agent_speech_start()
             self._agent_speaking = True
             self.emit("agent_speech_started", {})
 
@@ -425,7 +424,7 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
         transcript = data.get("transcript", "")
         if transcript:
             logger.info(f"xAI User transcript: {transcript}")
-            await realtime_metrics_collector.set_user_transcript(transcript)
+            metrics_collector.set_user_transcript(transcript)
             try:
                 self.emit(
                     "realtime_model_transcription",
@@ -437,7 +436,7 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
     async def _handle_response_done(self) -> None:
         if hasattr(self, "_current_transcript") and self._current_transcript:
              logger.info(f"xAI Agent response: {self._current_transcript}")
-             await realtime_metrics_collector.set_agent_response(self._current_transcript)
+             metrics_collector.set_agent_response(self._current_transcript)
              
              try:
                  self.emit(
@@ -457,7 +456,8 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
 
         logger.info("xAI Agent speech ended")
         self.emit("agent_speech_ended", {})
-        await realtime_metrics_collector.set_agent_speech_end(timeout=1.0)
+        metrics_collector.on_agent_speech_end()
+        metrics_collector.schedule_turn_complete(timeout=1.0)
         self._agent_speaking = False
 
         if self._has_unprocessed_tool_outputs and not self._generated_text_in_current_response:
@@ -479,7 +479,7 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
         try:
             arguments = json.loads(args_str)
             logger.info(f"Executing tool: {name} with args: {arguments}")
-            await realtime_metrics_collector.add_tool_call(name)
+            metrics_collector.add_function_tool_call(tool_name=name)
             result = None
             found = False
             for tool in self._tools:
@@ -542,5 +542,4 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
         if self._http_session and not self._http_session.closed:
             await self._http_session.close()
 
-        if hasattr(self.audio_track, "cleanup") and self.audio_track:
-            await self.audio_track.cleanup()
+        await super().aclose()

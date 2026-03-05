@@ -42,7 +42,12 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         self.samples = int(AUDIO_PTIME * self.sample_rate)
         self.chunk_size = int(self.samples * self.channels * self.sample_width)
         self._is_speaking = False
-        
+
+        # Synthesis completion tracking - prevents premature on_last_audio_byte
+        # when the buffer temporarily empties between TTS API calls
+        self._synthesis_complete = False
+        self._needs_last_audio_callback = False
+
         # Pause/resume support - simple flag-based (no blocking)
         self._is_paused = False
         self._paused_frames = []  # Separate buffer for paused content
@@ -61,6 +66,9 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         self.audio_data_buffer.clear()
         self._paused_frames.clear()
         self._is_paused = False
+        self._is_speaking = False
+        self._synthesis_complete = False
+        self._needs_last_audio_callback = False
         
         # Handle manual audio control mode
         if self._manual_audio_control:
@@ -116,8 +124,24 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         """Set callback for when the final audio byte of synthesis is produced"""
         logger.info("on last audio callback")
         self._last_audio_callback = callback
-    
-            
+        self._synthesis_complete = False
+        self._needs_last_audio_callback = False
+
+    def mark_synthesis_complete(self) -> None:
+        """
+        Mark that TTS synthesis has finished sending all audio data.
+        If the buffer is already empty (all audio consumed), fires the
+        on_last_audio_byte callback immediately. Otherwise, the callback
+        will fire when recv() drains the remaining buffer.
+        """
+        self._synthesis_complete = True
+        if self._needs_last_audio_callback:
+            self._needs_last_audio_callback = False
+            self._synthesis_complete = False
+            logger.info("[AudioTrack] Synthesis complete and buffer already empty — triggering last_audio_callback.")
+            if hasattr(self, "_last_audio_callback") and self._last_audio_callback:
+                asyncio.create_task(self._last_audio_callback())
+
     async def add_new_bytes(self, audio_data: bytes):
         """
         Add new audio bytes to the buffer. Respects _accepting_audio flag
@@ -207,11 +231,19 @@ class CustomAudioStreamTrack(CustomAudioTrack):
             else:
                 # No audio data available — silence
                 if getattr(self, "_is_speaking", False):
-                    logger.info("[AudioTrack] Agent finished speaking — triggering last_audio_callback.")
                     self._is_speaking = False
 
-                    if hasattr(self, "_last_audio_callback") and self._last_audio_callback:
-                        asyncio.create_task(self._last_audio_callback())
+                    if self._synthesis_complete:
+                        # TTS finished and buffer drained — fire callback
+                        self._synthesis_complete = False
+                        self._needs_last_audio_callback = False
+                        logger.info("[AudioTrack] Agent finished speaking — triggering last_audio_callback.")
+                        if hasattr(self, "_last_audio_callback") and self._last_audio_callback:
+                            asyncio.create_task(self._last_audio_callback())
+                    else:
+                        # Buffer temporarily empty but synthesis still in progress
+                        logger.debug("[AudioTrack] Buffer temporarily empty — waiting for more TTS audio.")
+                        self._needs_last_audio_callback = True
 
                 # Produce silence frame
                 frame = AudioFrame(format="s16", layout="mono", samples=self.samples)
@@ -270,6 +302,8 @@ class MixingCustomAudioStreamTrack(CustomAudioStreamTrack):
         """Set callback for when the final audio byte of synthesis is produced"""
         logger.info("on last audio callback")
         self._last_audio_callback = callback
+        self._synthesis_complete = False
+        self._needs_last_audio_callback = False
 
     async def recv(self) -> AudioFrame:
         """
@@ -298,11 +332,19 @@ class MixingCustomAudioStreamTrack(CustomAudioStreamTrack):
                 self.audio_data_buffer = self.audio_data_buffer[self.chunk_size :]
                 self._is_speaking = True
             elif getattr(self, "_is_speaking", False):
-                logger.info("[AudioTrack] Agent finished speaking — triggering last_audio_callback.")
                 self._is_speaking = False
 
-                if hasattr(self, "_last_audio_callback") and self._last_audio_callback:
-                    asyncio.create_task(self._last_audio_callback())
+                if self._synthesis_complete:
+                    # TTS finished and buffer drained — fire callback
+                    self._synthesis_complete = False
+                    self._needs_last_audio_callback = False
+                    logger.info("[AudioTrack] Agent finished speaking — triggering last_audio_callback.")
+                    if hasattr(self, "_last_audio_callback") and self._last_audio_callback:
+                        asyncio.create_task(self._last_audio_callback())
+                else:
+                    # Buffer temporarily empty but synthesis still in progress
+                    logger.debug("[AudioTrack] Buffer temporarily empty — waiting for more TTS audio.")
+                    self._needs_last_audio_callback = True
 
             background_chunk = b''
             has_background = len(self.background_audio_buffer) >= self.chunk_size

@@ -50,6 +50,7 @@ class GoogleLLM(LLM):
         frequency_penalty: float | None = None,
         vertexai: bool = False,
         vertexai_config: VertexAIConfig| None = None,
+        thinking_budget: int | None = 0,
     ) -> None:
         """Initialize the Google LLM plugin
         
@@ -84,6 +85,7 @@ class GoogleLLM(LLM):
         self.presence_penalty = presence_penalty
         self.frequency_penalty = frequency_penalty
         self._cancelled = False
+        self.thinking_budget = thinking_budget
         if self.vertexai:
             project_id = (self.vertexai_config.project_id if self.vertexai_config else None) or os.getenv("GOOGLE_CLOUD_PROJECT")
             if project_id is None:
@@ -131,6 +133,7 @@ class GoogleLLM(LLM):
             ) = await self._convert_messages_to_contents_async(messages)
             config_params = {
                 "temperature": self.temperature,
+                "thinking_config": types.ThinkingConfig(thinking_budget=self.thinking_budget) if self.thinking_budget is not None else None,
                 **kwargs
             }
             if conversational_graph:
