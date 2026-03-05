@@ -88,25 +88,27 @@ Before you begin, ensure you have:
 
 ## Installation
 
+### Using pip
+
 - Create and activate a virtual environment with Python 3.12 or higher.
     <details>
     <summary><strong> macOS / Linux</strong></summary>
-    
+
     ```bash
     python3 -m venv venv
     source venv/bin/activate
     ```
-    </details> 
-    <details> 
+    </details>
+    <details>
     <summary><strong> Windows</strong></summary>
-    
+
     ```bash
     python -m venv venv
     venv\Scripts\activate
     ```
     </details>
-    
-- Install the core VideoSDK AI Agent package 
+
+- Install the core VideoSDK AI Agent package
   ```bash
   pip install videosdk-agents
   ```
@@ -116,6 +118,49 @@ Before you begin, ensure you have:
   pip install videosdk-plugins-turn-detector
   ```
   👉 Supported plugins (Realtime, LLM, STT, TTS, VAD, Avatar, SIP) are listed in the [Supported Libraries](#supported-libraries-and-plugins) section below.
+
+### Using UV (Recommended)
+
+[UV](https://docs.astral.sh/uv/) is a fast Python package manager that handles virtual environments and dependency management automatically.
+
+> If you don't have UV installed, see the [UV installation guide](https://docs.astral.sh/uv/getting-started/installation/).
+
+- Install the core VideoSDK AI Agent package:
+  ```bash
+  uv add videosdk-agents
+  ```
+
+- Install Optional Plugins:
+  ```bash
+  uv add videosdk-plugins-openai
+  uv add videosdk-plugins-deepgram
+  ```
+
+- Run your agent:
+  ```bash
+  uv run python main.py
+  ```
+
+### Development Setup
+
+To set up the project locally, clone the repo and install all packages (core + all plugins) as editable installs:
+
+**Using UV (Recommended):**
+```bash
+git clone https://github.com/videosdk-live/agents.git
+cd agents
+uv sync
+uv run python examples/test_cascading_pipeline.py
+```
+
+**Using pip:**
+```bash
+git clone https://github.com/videosdk-live/agents.git
+cd agents
+bash setup.sh
+source venv/bin/activate
+python examples/test_cascading_pipeline.py
+```
 
 
 ## Generating a VideoSDK Meeting ID
