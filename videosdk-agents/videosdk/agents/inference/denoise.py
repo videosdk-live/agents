@@ -3,20 +3,20 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import math
 import os
+import time
 import logging
 from typing import Any, Optional, Dict
 
 import aiohttp
-
-from videosdk.agents.denoise import (
-    Denoise as BaseDenoise,
-)
+import numpy as np
+from scipy.signal import resample_poly
+from videosdk.agents.denoise import Denoise as BaseDenoise
 
 logger = logging.getLogger(__name__)
 
-# Default inference gateway URL
-VIDEOSDK_INFERENCE_URL = "wss://inference-gateway.videosdk.live"
+VIDEOSDK_INFERENCE_URL = "wss://dev-inference.videosdk.live"
 
 
 class Denoise(BaseDenoise):
@@ -55,6 +55,7 @@ class Denoise(BaseDenoise):
         model_id: str,
         sample_rate: int = 48000,
         channels: int = 1,
+        chunk_ms: int = 10,
         config: Dict[str, Any] | None = None,
         base_url: str | None = None,
     ) -> None:
@@ -81,21 +82,50 @@ class Denoise(BaseDenoise):
         self.model_id = model_id
         self.sample_rate = sample_rate
         self.channels = channels
+        self.input_sample_rate = 48000
+        self.input_channels = 2
         self.config = config or {}
         self.base_url = base_url or VIDEOSDK_INFERENCE_URL
+        self.chunk_ms = chunk_ms
+
+        self._send_chunk_bytes: int = (
+            self.chunk_ms * self.sample_rate // 1000 * self.channels * 2
+        )
+        self._send_buffer: bytearray = bytearray()
+
+        # Pre-compute resampling ratios to avoid math.gcd on every call
+        self._in_gcd = math.gcd(self.input_sample_rate, self.sample_rate)
+        self._in_up = self.sample_rate // self._in_gcd
+        self._in_down = self.input_sample_rate // self._in_gcd
+
+        self._out_gcd = math.gcd(self.sample_rate, self.input_sample_rate)
+        self._out_up = self.input_sample_rate // self._out_gcd
+        self._out_down = self.sample_rate // self._out_gcd
+
+        self._needs_resample_in = (
+            self.input_sample_rate != self.sample_rate
+            or self.input_channels != self.channels
+        )
 
         # WebSocket state
         self._session: Optional[aiohttp.ClientSession] = None
         self._ws: Optional[aiohttp.ClientWebSocketResponse] = None
+        self.connected = False
+        self.connecting = False
         self._ws_task: Optional[asyncio.Task] = None
+        self._connect_lock = asyncio.Lock()
         self._config_sent: bool = False
         self._reconnecting: bool = False
 
         # Audio buffering for responses
         self._audio_buffer: asyncio.Queue = asyncio.Queue()
-        self._processing: bool = False
 
-        # Statistics
+        # Latency tracking
+        self._send_timestamps: asyncio.Queue = asyncio.Queue()  # timestamps of sent chunks
+        self._latency_samples: list[float] = []
+        self._total_chunks_latency: float = 0.0
+        self._latency_count: int = 0
+
         self._stats = {
             "chunks_sent": 0,
             "bytes_sent": 0,
@@ -103,6 +133,10 @@ class Denoise(BaseDenoise):
             "bytes_received": 0,
             "errors": 0,
             "reconnections": 0,
+            "avg_latency_ms": 0.0,
+            "min_latency_ms": float("inf"),
+            "max_latency_ms": 0.0,
+            "last_latency_ms": 0.0,
         }
 
         logger.info(
@@ -167,6 +201,7 @@ class Denoise(BaseDenoise):
             model_id=model_id,
             sample_rate=sample_rate,
             channels=channels,
+            chunk_ms=10,
             config=config,
             base_url=base_url or VIDEOSDK_INFERENCE_URL,
         )
@@ -258,6 +293,7 @@ class Denoise(BaseDenoise):
             model_id=model_id,
             sample_rate=sample_rate,
             channels=channels,
+            chunk_ms=20,
             base_url=base_url or VIDEOSDK_INFERENCE_URL,
         )
 
@@ -279,28 +315,69 @@ class Denoise(BaseDenoise):
             Denoised PCM audio bytes (int16 format), or original audio if processing fails
         """
         try:
+            if self.connecting:
+                return b""
+
             if not self._ws or self._ws.closed:
-                await self._connect_ws()
-                if not self._ws_task or self._ws_task.done():
-                    self._ws_task = asyncio.create_task(self._listen_for_responses())
+                self.connecting = True
+                try:
+                    await self._connect_ws()
+                    self.connected = True
+                finally:
+                    self.connecting = False
+
+            if not self._ws_task or self._ws_task.done():
+                self._ws_task = asyncio.create_task(self._listen_for_responses())
 
             if not self._config_sent:
                 await self._send_config()
 
-            await self._send_audio(audio_frames)
-
-            # Try to get denoised audio (with timeout to prevent blocking)
-            # This returns immediately if no audio is ready
-            try:
-                denoised_audio = await asyncio.wait_for(
-                    self._audio_buffer.get(), timeout=0.05
+            # --- Resample inbound audio (pre-computed ratios) ---
+            if self._needs_resample_in:
+                resampled = self._resample_fast(
+                    audio_frames,
+                    self._in_up,
+                    self._in_down,
+                    self.input_channels,
+                    self.channels,
                 )
+            else:
+                resampled = audio_frames
+
+            # --- Chunk and send ---
+            self._send_buffer.extend(resampled)
+            while len(self._send_buffer) >= self._send_chunk_bytes:
+                chunk = bytes(self._send_buffer[: self._send_chunk_bytes])
+                del self._send_buffer[: self._send_chunk_bytes]
+                await self._send_audio(chunk)
+                # Record send timestamp for latency measurement
+                await self._send_timestamps.put(time.perf_counter())
+
+            # --- Non-blocking receive (zero timeout = no added latency) ---
+            try:
+                denoised = self._audio_buffer.get_nowait()
+
+                # Calculate latency
+                try:
+                    sent_at = self._send_timestamps.get_nowait()
+                    latency_ms = (time.perf_counter() - sent_at) * 1000
+                    self._update_latency(latency_ms)
+                except asyncio.QueueEmpty:
+                    pass
+
                 self._stats["chunks_received"] += 1
-                self._stats["bytes_received"] += len(denoised_audio)
-                return denoised_audio
-            except asyncio.TimeoutError:
-                # no denoised audio available yet
-                # this is normal during initial buffering or low latency scenarios and return empty bytes to maintain stream flow
+                self._stats["bytes_received"] += len(denoised)
+
+                # Resample outbound back to original format
+                return self._resample_fast(
+                    denoised,
+                    self._out_up,
+                    self._out_down,
+                    self.channels,
+                    self.input_channels,
+                )
+
+            except asyncio.QueueEmpty:
                 return b""
 
         except Exception as e:
@@ -318,6 +395,29 @@ class Denoise(BaseDenoise):
 
             # Return empty bytes on error (don't pass through original to avoid glitches)
             return b""
+
+    def _update_latency(self, latency_ms: float) -> None:
+        """Update running latency statistics."""
+        self._latency_count += 1
+        self._total_chunks_latency += latency_ms
+        self._stats["last_latency_ms"] = round(latency_ms, 2)
+        self._stats["avg_latency_ms"] = round(
+            self._total_chunks_latency / self._latency_count, 2
+        )
+        if latency_ms < self._stats["min_latency_ms"]:
+            self._stats["min_latency_ms"] = round(latency_ms, 2)
+        if latency_ms > self._stats["max_latency_ms"]:
+            self._stats["max_latency_ms"] = round(latency_ms, 2)
+
+        # Log every 100 chunks so you can monitor without spam
+        if self._latency_count % 100 == 0:
+            logger.info(
+                f"[Denoise] Latency — "
+                f"last={self._stats['last_latency_ms']}ms | "
+                f"avg={self._stats['avg_latency_ms']}ms | "
+                f"min={self._stats['min_latency_ms']}ms | "
+                f"max={self._stats['max_latency_ms']}ms"
+            )
 
     # ==================== WebSocket Communication ====================
 
@@ -342,8 +442,7 @@ class Denoise(BaseDenoise):
                 f"(provider={self.provider}, model={self.model_id})"
             )
 
-            timeout = aiohttp.ClientTimeout(total=10)
-            self._ws = await self._session.ws_connect(ws_url, timeout=timeout)
+            self._ws = await self._session.ws_connect(ws_url)
             self._config_sent = False
 
             logger.info("[InferenceDenoise] Connected successfully")
@@ -386,7 +485,7 @@ class Denoise(BaseDenoise):
 
     async def _send_config(self) -> None:
         """Send configuration message to the inference server."""
-        if not self._ws or self._ws.closed:
+        if not self._ws:
             raise ConnectionError("WebSocket not connected")
 
         config_message = {
@@ -414,7 +513,7 @@ class Denoise(BaseDenoise):
 
     async def _send_audio(self, audio_bytes: bytes) -> None:
         """Send audio data to the inference server."""
-        if not self._ws or self._ws.closed:
+        if not self._ws:
             raise ConnectionError("WebSocket not connected")
 
         audio_message = {
@@ -452,8 +551,7 @@ class Denoise(BaseDenoise):
                     break
 
         except asyncio.CancelledError:
-            logger.debug("[InferenceDenoise] WebSocket listener cancelled")
-
+            pass
         except Exception as e:
             logger.error(
                 f"[InferenceDenoise] Error in WebSocket listener: {e}", exc_info=True
@@ -461,7 +559,7 @@ class Denoise(BaseDenoise):
             self.emit("error", str(e))
 
         finally:
-            pass
+            self._cleanup_connection()
 
     async def _handle_message(self, raw_message: str) -> None:
         """
@@ -504,41 +602,67 @@ class Denoise(BaseDenoise):
                 self.emit("error", error_msg)
                 self._stats["errors"] += 1
 
-            elif msg_type == "stats":
-                # Optional: handle statistics from server
-                stats_data = data.get("data", {})
-                logger.debug(f"[InferenceDenoise] Server stats: {stats_data}")
-
-            else:
-                logger.debug(f"[InferenceDenoise] Unknown message type: {msg_type}")
-
         except json.JSONDecodeError as e:
             logger.error(
                 f"[InferenceDenoise] Failed to parse message: {e} | "
                 f"raw_message: {raw_message[:100]}"
             )
         except Exception as e:
-            logger.error(
-                f"[InferenceDenoise] Error handling message: {e}", exc_info=True
-            )
+            logger.error(f"[Denoise] Message handling error: {e}", exc_info=True)
+
+    # ==================== Resampling ====================
+
+    def _resample_fast(
+        self,
+        audio_bytes: bytes,
+        up: int,
+        down: int,
+        src_channels: int,
+        dst_channels: int,
+    ) -> bytes:
+        """Optimized resample using pre-computed up/down ratios."""
+        if not audio_bytes:
+            return b""
+
+        audio = np.frombuffer(audio_bytes, dtype=np.int16)
+        if audio.size == 0:
+            return b""
+
+        remainder = audio.size % src_channels
+        if remainder:
+            audio = audio[:-remainder]
+
+        audio = audio.reshape(-1, src_channels).astype(np.float32)
+
+        # Channel conversion
+        if src_channels != dst_channels:
+            if dst_channels == 1:
+                audio = audio.mean(axis=1, keepdims=True)
+            elif src_channels == 1:
+                audio = np.repeat(audio, dst_channels, axis=1)
+            else:
+                audio = audio[:, : min(src_channels, dst_channels)]
+                if dst_channels > audio.shape[1]:
+                    pad = np.zeros(
+                        (audio.shape[0], dst_channels - audio.shape[1]), dtype=np.float32
+                    )
+                    audio = np.hstack([audio, pad])
+
+        # Sample rate conversion
+        if up != down:
+            audio = resample_poly(audio, up, down, axis=0)
+
+        return np.clip(audio, -32768, 32767).astype(np.int16).tobytes()
+
+    # ==================== Lifecycle ====================
 
     async def _cleanup_connection(self) -> None:
         """Clean up WebSocket connection resources."""
         if self._ws and not self._ws.closed:
             try:
-                stop_message = {"type": "stop"}
-                await asyncio.wait_for(
-                    self._ws.send_str(json.dumps(stop_message)), timeout=1.0
-                )
-                await asyncio.sleep(0.1)
-            except Exception as e:
-                logger.debug(f"[InferenceDenoise] Error sending stop message: {e}")
-
-            try:
                 await self._ws.close()
-            except Exception as e:
-                logger.debug(f"[InferenceDenoise] Error closing WebSocket: {e}")
-
+            except Exception:
+                pass
         self._ws = None
         self._config_sent = False
 
@@ -562,44 +686,28 @@ class Denoise(BaseDenoise):
         }
 
     async def flush(self) -> None:
-        """
-        Flush any remaining buffered audio.
-
-        Note: This sends a stop message to ensure all audio is processed.
-        """
+        if self._send_buffer and self._ws and not self._ws.closed:
+            padded = bytes(self._send_buffer).ljust(self._send_chunk_bytes, b"\x00")
+            await self._send_audio(padded)
+            self._send_buffer.clear()
         if self._ws and not self._ws.closed:
             try:
-                stop_message = {"type": "stop"}
-                await self._ws.send_str(json.dumps(stop_message))
-                logger.info("[InferenceDenoise] Flush requested (stop message sent)")
-
+                await self._ws.send_str(json.dumps({"type": "stop"}))
                 await asyncio.sleep(0.1)
-
             except Exception as e:
-                logger.error(f"[InferenceDenoise] Error during flush: {e}")
+                logger.error(f"[Denoise] Flush error: {e}")
 
     async def aclose(self) -> None:
-        """Clean up all resources."""
-        logger.info(
-            f"[InferenceDenoise] Closing Denoise (provider={self.provider}). "
-            f"Final stats: {self.get_stats()}"
-        )
-
-        # Cancel WebSocket listener task
-        if self._ws_task and not self._ws_task.done():
+        logger.info(f"[Denoise] Closing. Final stats: {self.get_stats()}")
+        if self._ws_task:
             self._ws_task.cancel()
             try:
-                await asyncio.wait_for(self._ws_task, timeout=2.0)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
+                await self._ws_task
+            except asyncio.CancelledError:
                 pass
-            self._ws_task = None
-
         await self._cleanup_connection()
-
         if self._session and not self._session.closed:
             await self._session.close()
-            self._session = None
-
         while not self._audio_buffer.empty():
             try:
                 self._audio_buffer.get_nowait()
@@ -608,9 +716,6 @@ class Denoise(BaseDenoise):
 
         await super().aclose()
 
-        logger.info("[InferenceDenoise] Closed successfully")
-
-    # ==================== Properties ====================
 
     @property
     def label(self) -> str:
