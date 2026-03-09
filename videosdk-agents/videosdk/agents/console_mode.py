@@ -24,6 +24,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 class LocalAudioPlayer:
+    """Plays audio through a local output device using sounddevice, with optional AEC reverse-stream support."""
+
     def __init__(self, samplerate: int = 24000, channels: int = 1, output_device: Optional[int] = None,
                  apm_processor: Optional[apm.AudioProcessor] = None,
                  reverse_stream_queue: Optional[queue.Queue] = None):
@@ -108,6 +110,8 @@ class LocalAudioPlayer:
 
 
 class MicrophoneStreamer:
+    """Captures audio from a local microphone input device and streams it as raw bytes with optional AEC processing and a live dBFS meter."""
+
     def __init__(self, samplerate: int = 48000, channels: int = 1, block_ms: int = 20, input_device: Optional[int] = None,
                  meter: bool = True, idle_dbfs: float = -42.0,
                  apm_processor: Optional[apm.AudioProcessor] = None,
@@ -262,6 +266,8 @@ class MicrophoneStreamer:
 
 
 class ConsoleMode(BaseTransportHandler):
+    """A local transport handler that replaces a real room connection, routing audio through local devices for console-based testing."""
+
     def __init__(self, *, audio_track: TeeCustomAudioStreamTrack, loop: asyncio.AbstractEventLoop) -> None:
         super().__init__(loop, None)
         self.audio_track = audio_track

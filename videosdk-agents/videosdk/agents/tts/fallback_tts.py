@@ -7,6 +7,7 @@ from ..fallback_base import FallbackBase
 logger = logging.getLogger(__name__)
 
 class FallbackTTS(TTS, FallbackBase):
+    """TTS wrapper that automatically fails over to backup providers on errors and attempts recovery of higher-priority ones."""
     def __init__(self, providers: List[TTS], temporary_disable_sec: float = 60.0, permanent_disable_after_attempts: int = 3):
         TTS.__init__(
             self,

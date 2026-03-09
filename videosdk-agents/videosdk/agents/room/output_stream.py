@@ -263,11 +263,7 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         self.stop()
 
 class MixingCustomAudioStreamTrack(CustomAudioStreamTrack):
-    """
-    Audio track implementation with mixing capabilities.
-    Inherits from CustomAudioStreamTrack and overrides methods to handle mixing.
-    Frames are created just-in-time in the recv method.
-    """
+    """Audio track that mixes primary TTS audio with a background audio buffer, creating frames just-in-time during recv."""
     def __init__(self, loop):
         super().__init__(loop)
         self.background_audio_buffer = bytearray()
@@ -374,6 +370,8 @@ class MixingCustomAudioStreamTrack(CustomAudioStreamTrack):
             logger.error(f"Error while creating tts->rtc frame: {e}")
 
 class TeeCustomAudioStreamTrack(CustomAudioStreamTrack):
+    """Audio track that duplicates outgoing audio bytes to registered sinks such as avatar plugins or local speakers."""
+
     def __init__(self, loop, sinks=None, pipeline=None):
         super().__init__(loop)
         self.sinks = sinks if sinks is not None else []
@@ -406,6 +404,8 @@ class TeeCustomAudioStreamTrack(CustomAudioStreamTrack):
         # This prevents the agent from hearing itself speak
 
 class TeeMixingCustomAudioStreamTrack(MixingCustomAudioStreamTrack):
+    """Combines mixing and tee functionality, mixing background audio while also forwarding audio bytes to registered sinks."""
+
     def __init__(self, loop, sinks=None, pipeline=None):
         super().__init__(loop)
         self.sinks = sinks if sinks is not None else []

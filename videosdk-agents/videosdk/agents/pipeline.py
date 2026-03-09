@@ -39,6 +39,7 @@ from .pipeline_utils import (
 
 @dataclass
 class EOUConfig:
+    """Configuration for end-of-utterance detection behavior and speech wait timeouts."""
     mode: Literal["ADAPTIVE", "DEFAULT"] = "DEFAULT"
     min_max_speech_wait_timeout: List[float] | Tuple[float, float] = field(default_factory=lambda: [0.5, 0.8])
 
@@ -56,6 +57,7 @@ class EOUConfig:
 
 @dataclass
 class InterruptConfig:
+    """Configuration for interruption handling, including mode, duration thresholds, and false interrupt behavior."""
     mode: Literal["VAD_ONLY", "STT_ONLY", "HYBRID"] = "HYBRID"
     interrupt_min_duration: float = 0.5
     interrupt_min_words: int = 2
@@ -340,7 +342,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         }
 
     def set_agent(self, agent: Any) -> None:
-        """Set the agent for this pipeline"""
+        """Associate an agent with this pipeline and configure the orchestrator based on the pipeline mode."""
         self.agent = agent
 
         # Configure metrics with pipeline info
@@ -442,7 +444,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
             self.orchestrator.on("voicemail_result", lambda data: self.emit("voicemail_result", data))
     
     def _set_loop_and_audio_track(self, loop: asyncio.AbstractEventLoop, audio_track: CustomAudioStreamTrack) -> None:
-        """Set the event loop and configure components"""
+        """Set the event loop and audio output track, then configure all pipeline components."""
         self.loop = loop
         self.audio_track = audio_track
         self._configure_components()
@@ -740,7 +742,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         return
 
     def _configure_components(self) -> None:
-        """Configure pipeline components with loop and audio track"""
+        """Configure pipeline components with the event loop, audio track, and vision settings based on pipeline mode."""
         if not self.loop:
             return
         
@@ -797,7 +799,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                     self._realtime_model.audio_track.set_pipeline_hooks(self.hooks)
     
     def set_wake_up_callback(self, callback: Callable[[], None]) -> None:
-        """Set wake-up callback for speech detection"""
+        """Set a callback to be invoked when user speech is first detected."""
         self._wake_up_callback = callback
     
     def _notify_speech_started(self) -> None:
@@ -951,7 +953,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         return self._recent_frames[-num_frames:]
     
     def interrupt(self) -> None:
-        """Interrupt the pipeline"""
+        """Interrupt the current agent speech, cancelling ongoing generation and playback if interruptible."""
         if self.config.is_realtime:
             if self._realtime_model:
                 if self._realtime_model.current_utterance and not self._realtime_model.current_utterance.is_interruptible:
@@ -1056,7 +1058,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
             pass
     
     def set_voice_mail_detector(self, detector: VoiceMailDetector | None) -> None:
-        """Set voicemail detector"""
+        """Set or replace the voicemail detector on the pipeline and its orchestrator."""
         self.voice_mail_detector = detector
         if self.orchestrator:
             self.orchestrator.set_voice_mail_detector(detector)
@@ -1079,7 +1081,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
     
     
     def get_component_configs(self) -> Dict[str, Dict[str, Any]]:
-        """Get component configurations"""
+        """Return a dictionary of public configuration attributes for each active pipeline component."""
         configs: Dict[str, Dict[str, Any]] = {}
         
         for comp_name, comp in [
@@ -1101,7 +1103,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         return configs
     
     async def cleanup(self) -> None:
-        """Cleanup pipeline resources"""
+        """Release all pipeline resources, close components, and reset internal state."""
         logger.info("Cleaning up pipeline")
         
         if self.config.is_realtime:
@@ -1159,5 +1161,5 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         logger.info("Pipeline cleaned up")
     
     async def leave(self) -> None:
-        """Leave the pipeline"""
+        """Leave the pipeline by performing a full cleanup of all resources."""
         await self.cleanup()

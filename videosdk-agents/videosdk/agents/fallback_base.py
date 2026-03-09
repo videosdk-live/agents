@@ -8,7 +8,7 @@ from .metrics import metrics_collector
 logger = logging.getLogger(__name__)
 
 class FallbackBase:
-    """Shared logic for switching providers and cleanup."""
+    """Base class providing provider failover, recovery, and metrics emission for fallback-capable components."""
     def __init__(self, providers: List[Any], component_name: str, temporary_disable_sec: float = 60.0, permanent_disable_after_attempts: int = 3):
         if not providers:
             raise ValueError(f"{component_name} requires at least one provider")

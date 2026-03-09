@@ -4,6 +4,7 @@ from .stt import STT
 from ..fallback_base import FallbackBase
 
 class FallbackSTT(STT, FallbackBase):
+    """STT wrapper that automatically fails over to backup providers on errors and attempts recovery of higher-priority ones."""
     def __init__(self, providers: List[STT], temporary_disable_sec: float = 60.0, permanent_disable_after_attempts: int = 3):
         STT.__init__(self)
         FallbackBase.__init__(self, providers, "STT", temporary_disable_sec=temporary_disable_sec, permanent_disable_after_attempts=permanent_disable_after_attempts)

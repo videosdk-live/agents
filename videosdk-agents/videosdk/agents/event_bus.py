@@ -11,6 +11,8 @@ EventTypes = Literal[
 T = TypeVar('T')
 
 class EventBus(EventEmitter[EventTypes]):
+    """Singleton event emitter for broadcasting and subscribing to global agent lifecycle events."""
+
     _instance = None
 
     def __new__(cls):
@@ -26,6 +28,7 @@ class EventBus(EventEmitter[EventTypes]):
 
     @classmethod
     def get_instance(cls) -> 'EventBus':
+        """Return the singleton EventBus instance, creating it if necessary."""
         return cls()
     
 global_event_emitter = EventBus()

@@ -44,6 +44,7 @@ class LLMResponse(BaseModel):
 
 
 class ResponseChunk(str):
+    """A string subclass representing a single chunk of an LLM response, carrying optional metadata and role."""
     def __new__(cls, content: str, metadata: dict[str, Any] | None = None, role: str | None = None):
         obj = super().__new__(cls, content or "")
         obj.metadata = metadata

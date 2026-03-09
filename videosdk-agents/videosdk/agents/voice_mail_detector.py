@@ -26,6 +26,7 @@ class VoiceMailDetector:
         self.callback = callback
 
     async def detect(self, transcript: str) -> bool:
+        """Classify the given transcript using the LLM to determine if it is a voicemail greeting."""
         if not transcript or not transcript.strip():
             return False
 

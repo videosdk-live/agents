@@ -8,12 +8,16 @@ T = TypeVar("T", contravariant=True)
 
 
 class EventEmitter(Generic[T]):
+    """A generic synchronous event emitter that supports registering, removing, and invoking event handlers."""
+
     def __init__(self) -> None:
         self._handlers: Dict[T, List[Callable[..., Any]]] = {}
 
     def on(
         self, event: T, callback: Callable[..., Any] | None = None
     ) -> Callable[..., Any]:
+        """Register a synchronous handler for an event. Can be used directly or as a decorator."""
+
         def register(handler: Callable[..., Any]) -> Callable[..., Any]:
             if asyncio.iscoroutinefunction(handler):
                 raise ValueError(
@@ -27,6 +31,7 @@ class EventEmitter(Generic[T]):
         return register if callback is None else register(callback)
 
     def off(self, event: T, callback: Callable[..., Any]) -> None:
+        """Remove a previously registered handler for an event."""
         if event in self._handlers:
             try:
                 self._handlers[event].remove(callback)
@@ -36,6 +41,7 @@ class EventEmitter(Generic[T]):
                 del self._handlers[event]
 
     def emit(self, event: T, *args: Any) -> None:
+        """Emit an event, invoking all registered handlers with the provided arguments."""
         callbacks = self._handlers.get(event)
         if not callbacks:
             return
@@ -48,6 +54,7 @@ class EventEmitter(Generic[T]):
                 logger.error(f"Handler raised exception on event '{event}': {ex}")
 
     def _invoke(self, func: Callable[..., Any], args: tuple[Any, ...]) -> None:
+        """Invoke a handler, adapting the argument count to match the handler's signature."""
         code = func.__code__
         argcount = code.co_argcount
         flags = code.co_flags

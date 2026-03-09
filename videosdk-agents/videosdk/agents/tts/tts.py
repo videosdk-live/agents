@@ -47,17 +47,20 @@ class TTS(EventEmitter[Literal["error"]]):
         pass 
 
     async def pause(self) -> None:
+        """Pause audio playback if the audio track supports it, otherwise interrupt."""
         if self.audio_track and hasattr(self.audio_track, 'pause'):
             await self.audio_track.pause()
         else:
             await self.interrupt()
 
     async def resume(self) -> None:
+        """Resume audio playback if the audio track supports it."""
         if self.audio_track and hasattr(self.audio_track, 'resume'):
             await self.audio_track.resume()
 
     @property
     def can_pause(self) -> bool:
+        """Return whether the current audio track supports pausing."""
         return self.audio_track and hasattr(self.audio_track, 'can_pause') and self.audio_track.can_pause
 
     @abstractmethod

@@ -30,6 +30,8 @@ _current_job_context: ContextVar[Optional["JobContext"]] = ContextVar(
 
 
 class TransportMode(Enum):
+    """Enumeration of supported transport modes for room connections."""
+
     VIDEOSDK = "videosdk"
     WEBSOCKET = "websocket"
     WEBRTC = "webrtc"
@@ -37,12 +39,16 @@ class TransportMode(Enum):
 
 @dataclass
 class WebSocketConfig:
+    """Configuration for WebSocket transport including port and endpoint path."""
+
     port: int = 8080
     path: str = "/ws"
 
 
 @dataclass
 class WebRTCConfig:
+    """Configuration for WebRTC transport including signaling and ICE server settings."""
+
     signaling_url: Optional[str] = None
     signaling_type: str = "websocket"
     ice_servers: Optional[list] = None
@@ -53,18 +59,24 @@ class WebRTCConfig:
 
 @dataclass
 class TracesOptions:
+    """Configuration for OpenTelemetry trace export settings."""
+
     enabled: bool = True
     export_url: Optional[str] = None
     export_headers: Optional[Dict[str, str]] = None
 
 @dataclass
 class MetricsOptions:
+    """Configuration for metrics collection and export settings."""
+
     enabled: bool = True
     export_url: Optional[str] = None
     export_headers: Optional[Dict[str, str]] = None
 
 @dataclass
 class LoggingOptions:
+    """Configuration for log collection, level filtering, and export settings."""
+
     enabled: bool = False
     level: str = "INFO"
     export_url: Optional[str] = None
@@ -73,6 +85,8 @@ class LoggingOptions:
 
 @dataclass
 class RoomOptions:
+    """Configuration options for connecting to and managing a VideoSDK room, including transport, telemetry, and session settings."""
+
     room_id: Optional[str] = None
     auth_token: Optional[str] = None
     name: Optional[str] = "Agent"
@@ -233,6 +247,8 @@ class Options:
 
 
 class WorkerJob:
+    """Wraps an async entrypoint function and manages its execution either directly or via a Worker process."""
+
     def __init__(self, entrypoint, jobctx=None, options: Optional[Options] = None):
         """
         :param entrypoint: An async function accepting one argument: jobctx
@@ -304,6 +320,8 @@ class WorkerJob:
 
 
 class JobContext:
+    """Holds the runtime state for a single job, including room connection, pipeline, and shutdown lifecycle management."""
+
     def __init__(
         self,
         *,
@@ -718,13 +736,15 @@ def _reset_current_job_context(token: Any) -> None:
 
 @unique
 class JobExecutorType(Enum):
+    """Enumeration of executor types for running jobs in separate processes or threads."""
+
     PROCESS = "process"
     THREAD = "thread"
 
 
 @dataclass
 class JobAcceptArguments:
-    """Arguments for accepting a job."""
+    """Holds identity, name, and metadata used when accepting a job from the worker pool."""
 
     identity: str
     name: str
@@ -733,7 +753,7 @@ class JobAcceptArguments:
 
 @dataclass
 class RunningJobInfo:
-    """Information about a running job."""
+    """Tracks a running job's context, connection details, and associated worker identity."""
 
     accept_arguments: JobAcceptArguments
     job: JobContext
