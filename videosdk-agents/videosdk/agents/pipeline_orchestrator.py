@@ -235,6 +235,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 metrics_collector.on_agent_speech_start()
 
         if self.content_generation:
+            self.agent.session._emit_agent_state(AgentState.THINKING)
             full_response = ""
             async for response_chunk in self.content_generation.generate(text):
                 if response_chunk.content:
@@ -255,6 +256,8 @@ class PipelineOrchestrator(EventEmitter[Literal[
                     await self.speech_generation.synthesize(full_response)
                 else:
                     # No TTS - complete the turn after LLM
+                    self.agent.session._emit_agent_state(AgentState.IDLE)
+                    self.agent.session._emit_user_state(UserState.IDLE)
                     metrics_collector.on_agent_speech_end()
                     metrics_collector.set_agent_response(full_response)
                     metrics_collector.complete_turn()
@@ -499,7 +502,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 logger.warning("No speech generation available")
                 metrics_collector.on_agent_speech_start()
                 
-            
+            self.agent.session._emit_agent_state(AgentState.THINKING)
             llm_stream = self.content_generation.generate(user_text)
             
             q = asyncio.Queue(maxsize=50)
@@ -620,6 +623,8 @@ class PipelineOrchestrator(EventEmitter[Literal[
 
                 # For no-TTS modes, complete the turn here since there's no speech_generation
                 if not self.speech_generation:
+                    self.agent.session._emit_user_state(UserState.IDLE)
+                    self.agent.session._emit_agent_state(AgentState.IDLE)
                     metrics_collector.on_agent_speech_end()
                     metrics_collector.complete_turn()
 
