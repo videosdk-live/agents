@@ -70,7 +70,7 @@ class RoomOptions:
     auto_end_session: bool = True
     session_timeout_seconds: Optional[int] = 5
     # VideoSDK connection options
-    signaling_base_url: Optional[str] = None
+    signaling_base_url: Optional[str] = "api.videosdk.live"
     background_audio: bool = False
 
     # New Configuration Fields
@@ -603,7 +603,8 @@ class JobContext:
             return None
 
         if self.videosdk_auth:
-            url = f"https://api.videosdk.live/v2/rooms"
+            base_url = self.room_options.signaling_base_url
+            url = f"https://{base_url}/v2/rooms"
             headers = {"Authorization": self.videosdk_auth}
 
             try:

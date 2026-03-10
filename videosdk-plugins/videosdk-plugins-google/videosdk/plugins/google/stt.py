@@ -5,13 +5,15 @@ import os
 import time
 from typing import Any, Optional, Union, AsyncGenerator
 import numpy as np
-from videosdk.agents import STT as BaseSTT, STTResponse, SpeechEventType, SpeechData
+from videosdk.agents import STT as BaseSTT, STTResponse, SpeechEventType, SpeechData,global_event_emitter
 import logging
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
 try:
     from google.cloud.speech_v2 import SpeechAsyncClient, types as speech_types
+    from google.protobuf.duration_pb2 import Duration
     from google.api_core.exceptions import DeadlineExceeded, GoogleAPICallError
     from google.auth import default as gauth_default
     from google.auth.exceptions import DefaultCredentialsError
@@ -27,6 +29,11 @@ except ImportError:
 
 _MAX_SESSION_DURATION = 240  
 
+@dataclass
+class VoiceActivityConfig:
+    speech_start_timeout:float = 1.0
+    speech_end_timeout:float = 5.0
+    
 class GoogleSTT(BaseSTT):
     def __init__(
         self,
@@ -39,6 +46,9 @@ class GoogleSTT(BaseSTT):
         punctuate: bool = True,
         min_confidence_threshold: float = 0.1,
         location: str = "global",
+        profanity_filter:bool=False,
+        enable_voice_activity_events:bool=False,
+        voice_activity_timeout:VoiceActivityConfig = None,
         **kwargs: Any
     ) -> None:
         """Initialize the Google STT plugin.
@@ -52,6 +62,10 @@ class GoogleSTT(BaseSTT):
             punctuate (bool): Whether to use punctuation for the STT plugin. Defaults to True.
             min_confidence_threshold (float): The minimum confidence threshold for the STT plugin. Defaults to 0.1.
             location (str): The location to use for the STT plugin. Defaults to "global".
+            profanity_filter(bool): detect profane words and return only the first letter followed by asterisks in the transcript
+            enable_voice_activity_events(bool): whether to enable voice activity timeout.
+            voice_activity_timeout (VoiceActivityConfig): configure speech_start_timeout and speech_end_timeout.
+
         """
         super().__init__()
         if not GOOGLE_V2_AVAILABLE:
@@ -79,6 +93,11 @@ class GoogleSTT(BaseSTT):
             "punctuate": punctuate,
             "min_confidence_threshold": min_confidence_threshold,
             "location": location,
+            "profanity_filter":profanity_filter,
+            "voice_activity_timeout":voice_activity_timeout,
+            "enable_voice_activity_events":enable_voice_activity_events,
+            "speech_start_timeout":voice_activity_timeout.speech_start_timeout if voice_activity_timeout else None,
+            "speech_end_timeout":voice_activity_timeout.speech_end_timeout if voice_activity_timeout else None,
         }
 
         self._client: Optional[SpeechAsyncClient] = None
@@ -146,6 +165,7 @@ class SpeechStream:
         self._running = False
         self._stream_task: Optional[asyncio.Task] = None
         self.emit = lambda event, payload: logger.warning(f"Emit: {event}, Payload: {payload}")  # mock
+        self._last_billed_sec = 0.0
 
     async def start(self):
         if self._running:
@@ -174,6 +194,34 @@ class SpeechStream:
             return
 
         try:
+            voice_timeout_proto = None
+            vat = self._config.get("voice_activity_timeout")
+
+            if vat:
+                start = vat.speech_start_timeout
+                end = vat.speech_end_timeout
+
+                kwargs = {}
+                if start is not None:
+                    start = max(0.5, float(start))
+                    kwargs["speech_start_timeout"] = Duration(
+                        seconds=int(start),
+                        nanos=int((start % 1) * 1e9),
+                    )
+
+                if end is not None:
+                    end = max(0.1, float(end))
+                    kwargs["speech_end_timeout"] = Duration(
+                        seconds=int(end),
+                        nanos=int((end % 1) * 1e9),
+                    )
+
+                if kwargs:
+                    voice_timeout_proto = (
+                        speech_types.StreamingRecognitionFeatures.VoiceActivityTimeout(
+                            **kwargs
+                        )
+                    )
             streaming_config = speech_types.StreamingRecognitionConfig(
                 config=speech_types.RecognitionConfig(
                     explicit_decoding_config=speech_types.ExplicitDecodingConfig(
@@ -185,10 +233,17 @@ class SpeechStream:
                     model=self._config["model"],
                     features=speech_types.RecognitionFeatures(
                         enable_automatic_punctuation=self._config["punctuate"],
+                        profanity_filter=self._config["profanity_filter"],
+                        enable_spoken_punctuation=True
                     ),
                 ),
                 streaming_features=speech_types.StreamingRecognitionFeatures(
                     interim_results=self._config["interim_results"],
+                    enable_voice_activity_events=(
+                        self._config["enable_voice_activity_events"]
+                        or (self._config["voice_activity_timeout"]) is not None
+                    ),
+                    voice_activity_timeout=voice_timeout_proto,
                 ),
             )
             yield speech_types.StreamingRecognizeRequest(
@@ -237,6 +292,15 @@ class SpeechStream:
         try:
             if not response.results or not response.results[0].alternatives:
                 return
+            
+            if  response.speech_event_type == (
+                    speech_types.StreamingRecognizeResponse.SpeechEventType.SPEECH_ACTIVITY_BEGIN
+                ):
+                    global_event_emitter.emit("speech_started")
+            if  response.speech_event_type == (
+                    speech_types.StreamingRecognizeResponse.SpeechEventType.SPEECH_ACTIVITY_END
+                ):
+                    global_event_emitter.emit("end_of_speech")
 
             alt = response.results[0].alternatives[0]
             transcript = alt.transcript.strip()
@@ -245,7 +309,8 @@ class SpeechStream:
 
             is_final = response.results[0].is_final
             confidence = alt.confidence
-
+            if is_final:
+                duration = self.extract(response)
             if confidence >= self._config["min_confidence_threshold"]:
                 if self._transcript_callback:
                     event = STTResponse(
@@ -253,12 +318,27 @@ class SpeechStream:
                         data=SpeechData(
                             text=transcript,
                             confidence=confidence,
-                            language=response.results[0].language_code or self._config["languages"][0]
+                            language=response.results[0].language_code or self._config["languages"][0],
+                            duration=duration if duration else 0
                         )
                     )
                     asyncio.create_task(self._transcript_callback(event))
         except Exception as e:
             self.emit("error", {"message": "Error handling response", "error": str(e)})
+        
+    def extract(self, response):
+        """
+        Returns:
+            - per-turn duration (delta)
+        """
+
+        billed = response.metadata.total_billed_duration
+        current_billed_sec = billed.seconds
+
+        turn_billed_sec = max(0.0, current_billed_sec - self._last_billed_sec)
+        self._last_billed_sec = current_billed_sec
+
+        return turn_billed_sec
 
     async def close(self):
         self._running = False

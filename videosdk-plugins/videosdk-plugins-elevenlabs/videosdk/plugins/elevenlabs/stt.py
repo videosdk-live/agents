@@ -6,10 +6,11 @@ import json
 import os
 import logging
 import time
-from typing import Any, Optional, List
+from typing import Any, Optional, List, Tuple, Dict
 from urllib.parse import urlencode
 import aiohttp
 import numpy as np
+import math
 from videosdk.agents import STT as BaseSTT, STTResponse, SpeechEventType, SpeechData, global_event_emitter
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,7 @@ class ElevenLabsSTT(BaseSTT):
         min_speech_duration_ms: int = 50,
         min_silence_duration_ms: int = 50,
         base_url: str = "wss://api.elevenlabs.io/v1/speech-to-text/realtime",
+        detect_language:bool = False
     ) -> None:
         """
         Initialize the ElevenLabs STT client.
@@ -72,6 +74,7 @@ class ElevenLabsSTT(BaseSTT):
         self.vad_threshold = vad_threshold
         self.min_speech_duration_ms = min_speech_duration_ms
         self.min_silence_duration_ms = min_silence_duration_ms
+        self.detect_language = detect_language
 
         self._last_final_text = ""
         self._last_final_time = 0.0
@@ -127,16 +130,21 @@ class ElevenLabsSTT(BaseSTT):
         if not self._session:
             self._session = aiohttp.ClientSession()
 
+        language_code = None if self.detect_language else str(self.language_code)
         query_params = {
             "model_id": str(self.model_id),
-            "language_code": str(self.language_code),
             "audio_format": f"pcm_{self.sample_rate}",
             "commit_strategy": str(self.commit_strategy),
             "vad_silence_threshold_secs": self.vad_silence_threshold_secs,
             "vad_threshold": self.vad_threshold,
             "min_speech_duration_ms": self.min_speech_duration_ms,
             "min_silence_duration_ms": self.min_silence_duration_ms,
+            "include_timestamps": True,
+            "include_language_detection":self.detect_language
         }
+
+        if language_code is not None:
+            query_params["language_code"] = language_code
 
         ws_url = f"{self.base_url}?{urlencode(query_params)}"
         headers = {"xi-api-key": self.api_key}
@@ -261,11 +269,14 @@ class ElevenLabsSTT(BaseSTT):
             global_event_emitter.emit("speech_session_started")
             return responses
 
-        if message_type == "committed_transcript":
-            logger.info("==== Received final transcript event: %s", data)
+        if message_type == "committed_transcript_with_timestamps":
+            logger.debug("==== Received final transcript event: %s", data)
             text = data.get("text", "")
             clean_text = text.strip()
-            confidence = float(data.get("confidence", 0.0))
+            if self.detect_language:
+                language_code = data.get("language_code", None)
+                self.language_code = language_code
+            avg_conf, duration = self.get_avg_confidence_and_duration(data)
             now = time.time()
 
             if clean_text == "":
@@ -278,7 +289,8 @@ class ElevenLabsSTT(BaseSTT):
                 event_type=SpeechEventType.FINAL,
                 data=SpeechData(
                     text=clean_text,
-                    confidence=confidence,
+                    confidence=avg_conf,
+                    duration=duration,
                 ),
                 metadata={"model": self.model_id, "raw_event": data},
             )
@@ -308,7 +320,7 @@ class ElevenLabsSTT(BaseSTT):
                 data=SpeechData(
                     text=text,
                     confidence=float(data.get("confidence", 0.0)),
-                ),
+                    ),
                 metadata={"model": self.model_id, "raw_event": data},
             )
             responses.append(resp)
@@ -354,3 +366,40 @@ class ElevenLabsSTT(BaseSTT):
                 self._session = None
 
         await super().aclose()
+    
+    def get_avg_confidence_and_duration(self,payload: Dict) -> Tuple[float, float]:
+        """
+        Computes:
+        - Average confidence from log probabilities
+        - Total transcript duration from last word end timestamp
+
+        Args:
+            payload (dict): Transcript JSON message
+
+        Returns:
+            (avg_confidence, duration)
+        """
+
+        words = payload.get("words", [])
+
+        total_confidence = 0.0
+        word_count = 0
+        last_end_time = 0.0
+
+        for w in words:
+            if w.get("type") != "word":
+                continue
+
+            logprob = w.get("logprob")
+
+            if logprob is not None:
+                total_confidence += math.exp(logprob)
+                word_count += 1
+
+
+            last_end_time = max(last_end_time, w.get("end", 0.0))
+
+
+        avg_confidence = total_confidence / word_count if word_count > 0 else 0.0
+
+        return avg_confidence, last_end_time

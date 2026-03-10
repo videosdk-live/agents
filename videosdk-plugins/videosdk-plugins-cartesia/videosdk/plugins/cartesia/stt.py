@@ -170,6 +170,7 @@ class CartesiaSTT(BaseSTT):
                                 language=language,
                                 start_time=0.0,
                                 end_time=duration,
+                                duration=duration,
                             ),
                             metadata={
                                 "model": self.model,

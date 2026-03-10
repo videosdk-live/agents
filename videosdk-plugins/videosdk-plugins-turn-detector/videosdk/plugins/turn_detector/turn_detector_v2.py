@@ -8,7 +8,18 @@ from transformers import BertTokenizer
 
 logger = logging.getLogger(__name__)
 
+_videosdk_model_ready = False
+
+
 def pre_download_videosdk_model(overwrite_existing: bool = False):
+    """Download model files to MODEL_DIR once; reuse from disk and from in-process cache."""
+    global _videosdk_model_ready
+    if _videosdk_model_ready and not overwrite_existing:
+        return
+    model_onnx = os.path.join(MODEL_DIR, "model.onnx")
+    if not overwrite_existing and os.path.exists(model_onnx):
+        _videosdk_model_ready = True
+        return
     from .download_model import download_model_files_to_directory
     download_model_files_to_directory(
         base_cdn_url=VIDEOSDK_MODEL_URL,
@@ -17,6 +28,7 @@ def pre_download_videosdk_model(overwrite_existing: bool = False):
         overwrite_existing=overwrite_existing,
     )
     BertTokenizer.from_pretrained(MODEL_DIR)
+    _videosdk_model_ready = True
 
 class VideoSDKTurnDetector(EOU):
     """
@@ -33,16 +45,12 @@ class VideoSDKTurnDetector(EOU):
         self._initialize_model()
     
     def _initialize_model(self):
-        """Initialize the ONNX model and tokenizer"""
+        """Initialize the ONNX model and tokenizer. Downloads model once; reuses from MODEL_DIR if already present."""
         try:
             import onnxruntime as ort
-            
-            if not os.path.exists(MODEL_DIR):
-                logger.warning(f"Model directory {MODEL_DIR} does not exist. Running pre_download_model()...")
-                pre_download_videosdk_model(overwrite_existing=True)
-            
+
             pre_download_videosdk_model(overwrite_existing=False)
-            
+
             self.tokenizer = BertTokenizer.from_pretrained(MODEL_DIR)
             
             model_path = os.path.join(MODEL_DIR, "model.onnx")

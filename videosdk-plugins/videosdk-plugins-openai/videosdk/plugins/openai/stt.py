@@ -4,7 +4,7 @@ import asyncio
 import base64
 import os
 import time
-from typing import Any, Optional
+from typing import Any, Optional, Dict, Tuple
 from urllib.parse import urlencode
 import io
 import wave
@@ -13,6 +13,7 @@ import aiohttp
 import httpx
 import openai
 import numpy as np
+import math
 from videosdk.agents import STT as BaseSTT, STTResponse, SpeechEventType, SpeechData, global_event_emitter
 
 class OpenAISTT(BaseSTT):
@@ -387,14 +388,16 @@ class OpenAISTT(BaseSTT):
                         
             elif msg_type == "conversation.item.input_audio_transcription.completed":
                 transcript = msg.get("transcript", "")
+                metrics_data = self.extract_tokens_and_avg_probability(msg)
                 if transcript:
                     responses.append(STTResponse(
                         event_type=SpeechEventType.FINAL,
                         data=SpeechData(
                             text=transcript,
                             language=self.language,
+                            confidence=metrics_data.get("confidence", 1.0)
                         ),
-                        metadata={"model": self.model}
+                        metadata={"model": self.model, "metrics": metrics_data}
                     ))
                     self._current_text = ""
             
@@ -408,6 +411,49 @@ class OpenAISTT(BaseSTT):
             print(f"Error handling WebSocket message: {str(e)}")
         
         return responses
+
+    def extract_tokens_and_avg_probability(self, event: Dict) -> Tuple[int, float]:
+        """
+        Extracts:
+        - Input tokens
+        - Output tokens
+        - Total tokens
+        - Average token probability from logprobs
+
+        Args:
+            event (dict): OpenAI transcription completed payload
+
+        Returns:
+            dict with token usage + avg probability
+        """
+        usage = event.get("usage", {})
+
+        input_tokens = usage.get("input_tokens", 0)
+        output_tokens = usage.get("output_tokens", 0)
+        total_tokens = usage.get("total_tokens", 0)
+
+        logprobs = event.get("logprobs", [])
+
+        total_prob = 0.0
+        count = 0
+
+        for token_info in logprobs:
+            lp = token_info.get("logprob")
+            if lp is None:
+                continue
+
+            total_prob += math.exp(lp)
+            count += 1
+
+        avg_probability = total_prob / count if count > 0 else 0.0
+
+        return {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+            "confidence": avg_probability,
+        }
+
 
     async def aclose(self) -> None:
         """Cleanup resources"""

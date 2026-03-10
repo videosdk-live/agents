@@ -349,8 +349,10 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
                 "model",
                 "model_id",
                 "model_name",
+                "speech_model",
                 "voice",
                 "voice_id",
+                "speaker",
                 "name",
             ]
             try:
@@ -395,8 +397,17 @@ class CascadingPipeline(Pipeline, EventEmitter[Literal["error"]]):
                     if model_info:
                         if "model" not in configs[comp_name] and "model" in model_info:
                             configs[comp_name]["model"] = model_info["model"]
+                        elif "model" not in configs[comp_name] and "speech_model" in model_info:
+                            configs[comp_name]["model"] = model_info["speech_model"]
+                        elif "model" not in configs[comp_name] and "model_id" in model_info:
+                            configs[comp_name]["model"] = model_info["model_id"]
                         elif "model" not in configs[comp_name] and "name" in model_info:
                             configs[comp_name]["model"] = model_info["name"]
+                        if "model" not in configs[comp_name]:
+                            for fallback_key in ["voice", "voice_id", "speaker"]:
+                                if fallback_key in model_info and model_info[fallback_key]:
+                                    configs[comp_name]["model"] = model_info[fallback_key]
+                                    break
                         configs[comp_name].update(
                             {
                                 k: v

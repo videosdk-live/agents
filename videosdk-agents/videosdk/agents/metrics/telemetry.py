@@ -139,13 +139,26 @@ class VideoSDKTelemetry:
             
             end_time = time.perf_counter() if end_time is None else end_time
             
-            attribute_id = span._attributes["attiribute_id"]
-            data = self.span_details.get(attribute_id)
-            duration_ns = int((end_time - data["start_time"]) * 1_000_000_000)
-            end_absolute_time = duration_ns + data["start_absolute_time"] # time.time()
-            span.end(int(end_absolute_time))
+            attribute_id = None  
+            if hasattr(span, '_attributes'):  
             
-            del self.span_details[attribute_id]
+                attribute_id = span._attributes.get("attiribute_id")  
+            elif hasattr(span, 'attributes'):  
+                attribute_id = span.attributes.get("attiribute_id")  
+
+            data = self.span_details.get(attribute_id) if attribute_id else None  
+
+            if data:  
+                duration_ns = int((end_time - data["start_time"]) * 1_000_000_000)  
+                end_absolute_time = duration_ns + data["start_absolute_time"]  
+                span.end(int(end_absolute_time))  
+
+                # Clean up span details  
+                if attribute_id in self.span_details:  
+                    del self.span_details[attribute_id]  
+            else:  
+                # Fallback for spans without timing data  
+                span.end()  
                 
         except Exception as e:
             print(f"[TELEMETRY ERROR] Failed to complete span: {e}")
