@@ -16,6 +16,7 @@ import logging
 from .utils import UserState, AgentState
 from .utterance_handle import UtteranceHandle
 from .voice_mail_detector import VoiceMailDetector
+from .llm.chat_context import ChatRole
 
 logger = logging.getLogger(__name__)
 
@@ -213,6 +214,22 @@ class RealTimePipeline(Pipeline, EventEmitter[Literal["realtime_start", "realtim
         
         try:
             self.emit("realtime_model_transcription", data)
+
+            if self.agent and hasattr(self.agent, 'chat_context'):
+                 text = data.get("text", "")
+                 role = data.get("role", "")
+                 is_final = data.get("is_final", False)
+                 
+                 if text and role and is_final:
+                     chat_role = None
+                     if role == "user":
+                         chat_role = ChatRole.USER
+                     elif role in ["assistant", "agent", "model"]:
+                         chat_role = ChatRole.ASSISTANT
+                     
+                     if chat_role:
+                         self.agent.chat_context.add_message(role=chat_role, content=text)
+
             if self.voice_mail_detector and not self.voice_mail_detection_done:
                 text = data.get("text", "")
                 role = data.get("role") 
