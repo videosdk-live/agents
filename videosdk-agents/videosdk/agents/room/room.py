@@ -283,6 +283,13 @@ class VideoSDKHandler(BaseTransportHandler):
         """
         logger.info(f"Agent joined the meeting")
         self._meeting_joined_data = data
+
+        # Notify JobContext that meeting has been joined
+        from ..job import get_current_job_context
+        job_ctx = get_current_job_context()
+        if job_ctx:
+            job_ctx.notify_meeting_joined()
+
         asyncio.create_task(self._collect_session_id())
         asyncio.create_task(self._collect_meeting_attributes())
         if self.recording:

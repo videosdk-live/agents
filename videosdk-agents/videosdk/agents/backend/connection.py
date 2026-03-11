@@ -28,7 +28,6 @@ class BackendConnection:
         auth_token: str,
         agent_id: str = "",
         worker_type: str = "room",
-        version: str = "1.0.0",
         max_retry: int = 16,
         http_proxy: Optional[str] = None,
         backend_url: str = None,
@@ -38,7 +37,6 @@ class BackendConnection:
         self.auth_token = auth_token
         self.agent_id = agent_id
         self.worker_type = worker_type
-        self.version = version
         self.max_retry = max_retry
         self.http_proxy = http_proxy
         self.backend_url = backend_url
@@ -345,8 +343,6 @@ class BackendConnection:
             type="register",
             worker_id=worker_id,  # Empty string for new assignment, existing ID for reconnection
             agent_name=self.agent_id,
-            namespace="default",
-            version=self.version,
             capabilities=["room", "voice", "stt", "tts"],
             registry_uuid="default",
             token=self.auth_token,
@@ -442,7 +438,10 @@ class BackendConnection:
 
         elif msg_type == "job_assignment":
             if self._on_assignment:
-                assignment = JobAssignment(**data)
+                import dataclasses
+                valid_fields = {f.name for f in dataclasses.fields(JobAssignment)}
+                filtered_data = {k: v for k, v in data.items() if k in valid_fields}
+                assignment = JobAssignment(**filtered_data)
                 self._on_assignment(assignment)
 
         elif msg_type == "job_termination":

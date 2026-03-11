@@ -58,8 +58,6 @@ class WorkerMessage:
     type: str
     worker_id: Optional[str] = None
     agent_name: Optional[str] = None
-    namespace: Optional[str] = None
-    version: Optional[str] = None
     capabilities: Optional[List[str]] = None
     status: Optional[str] = None
     load: Optional[float] = None
@@ -97,11 +95,8 @@ class ServerMessage:
     success: Optional[bool] = None
     message: Optional[str] = None
     job_id: Optional[str] = None
-    job_type: Optional[str] = None
     room_id: Optional[str] = None
-    room_name: Optional[str] = None
     agent_name: Optional[str] = None
-    namespace: Optional[str] = None
     token: Optional[str] = None
     url: Optional[str] = None
 
@@ -120,11 +115,8 @@ class AvailabilityRequest:
 
     type: str = "availability_request"
     job_id: str = ""
-    job_type: str = ""
     room_id: str = ""
-    room_name: str = ""
     agent_name: str = ""
-    namespace: str = ""
 
 
 @dataclass
@@ -152,15 +144,13 @@ class JobAssignment:
 
     type: str = "job_assignment"
     job_id: str = ""
-    job_type: str = ""
     room_id: str = ""
-    room_name: str = ""
     agent_name: str = ""
-    namespace: str = ""
     token: str = ""
     url: str = ""
     room_options: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
+    wait: bool = False
 
     def dict(self) -> Dict[str, Any]:
         """Convert to dictionary, excluding None values."""

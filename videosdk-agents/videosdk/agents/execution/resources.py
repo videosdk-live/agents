@@ -118,10 +118,12 @@ class ProcessResource(BaseResource):
                             raise RuntimeError(
                                 result_data.get("error", "Unknown error")
                             )
-
-                await asyncio.sleep(0.1)
+            except RuntimeError:
+                raise
             except Exception as e:
                 logger.warning(f"Error checking task result: {e}")
+
+            await asyncio.sleep(0.1)
 
         raise TimeoutError(f"Task {task_id} timed out after {timeout}s")
 
@@ -311,10 +313,12 @@ class ThreadResource(BaseResource):
                             raise RuntimeError(
                                 result_data.get("error", "Unknown error")
                             )
-
-                await asyncio.sleep(0.1)
+            except RuntimeError:
+                raise
             except Exception as e:
                 logger.warning(f"Error checking task result: {e}")
+
+            await asyncio.sleep(0.1)
 
         raise TimeoutError(f"Task {task_id} timed out after {timeout}s")
 
