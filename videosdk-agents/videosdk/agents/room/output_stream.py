@@ -41,12 +41,10 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         self.time_base_fraction = Fraction(1, self.sample_rate)
         self.samples = int(AUDIO_PTIME * self.sample_rate)
         self.chunk_size = int(self.samples * self.channels * self.sample_width)
-        self._is_speaking = False
-
-        # Synthesis completion tracking - prevents premature on_last_audio_byte
-        # when the buffer temporarily empties between TTS API calls
         self._synthesis_complete = False
         self._needs_last_audio_callback = False
+        self._last_speaking_time = 0.0
+        self._speaking_grace_period = 0.5 # 500ms grace period for jitter
 
         # Pause/resume support - simple flag-based (no blocking)
         self._is_paused = False
@@ -66,7 +64,7 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         self.audio_data_buffer.clear()
         self._paused_frames.clear()
         self._is_paused = False
-        self._is_speaking = False
+        self._last_speaking_time = 0.0
         self._synthesis_complete = False
         self._needs_last_audio_callback = False
         
@@ -127,6 +125,17 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         self._synthesis_complete = False
         self._needs_last_audio_callback = False
 
+    @property
+    def is_speaking(self) -> bool:
+        """
+        True if the track is currently playing audio or has buffered data,
+        including a small grace period to bridge gaps in streaming TTS.
+        """
+        has_data = len(self.frame_buffer) > 0 or len(self.audio_data_buffer) > 0
+        if has_data:
+            return True
+        return (time() - self._last_speaking_time) < self._speaking_grace_period
+
     def mark_synthesis_complete(self) -> None:
         """
         Mark that TTS synthesis has finished sending all audio data.
@@ -135,7 +144,8 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         will fire when recv() drains the remaining buffer.
         """
         self._synthesis_complete = True
-        if self._needs_last_audio_callback:
+        # If we're not currently speaking (grace period passed) and buffer is empty, fire immediately
+        if not self.is_speaking and self._needs_last_audio_callback:
             self._needs_last_audio_callback = False
             self._synthesis_complete = False
             logger.info("[AudioTrack] Synthesis complete and buffer already empty — triggering last_audio_callback.")
@@ -228,22 +238,26 @@ class CustomAudioStreamTrack(CustomAudioTrack):
             elif len(self.frame_buffer) > 0:
                 frame = self.frame_buffer.pop(0)
                 self._is_speaking = True
+                self._last_speaking_time = time()
             else:
                 # No audio data available — silence
                 if getattr(self, "_is_speaking", False):
-                    self._is_speaking = False
+                    # Only declare we've stopped speaking if the grace period has passed
+                    # This bridges gaps in streaming TTS (like Sarvam jitter)
+                    if (time() - self._last_speaking_time) >= self._speaking_grace_period:
+                        self._is_speaking = False
 
-                    if self._synthesis_complete:
-                        # TTS finished and buffer drained — fire callback
-                        self._synthesis_complete = False
-                        self._needs_last_audio_callback = False
-                        logger.info("[AudioTrack] Agent finished speaking — triggering last_audio_callback.")
-                        if hasattr(self, "_last_audio_callback") and self._last_audio_callback:
-                            asyncio.create_task(self._last_audio_callback())
-                    else:
-                        # Buffer temporarily empty but synthesis still in progress
-                        logger.debug("[AudioTrack] Buffer temporarily empty — waiting for more TTS audio.")
-                        self._needs_last_audio_callback = True
+                        if self._synthesis_complete:
+                            # TTS finished and buffer drained — fire callback
+                            self._synthesis_complete = False
+                            self._needs_last_audio_callback = False
+                            logger.info("[AudioTrack] Agent finished speaking — triggering last_audio_callback.")
+                            if hasattr(self, "_last_audio_callback") and self._last_audio_callback:
+                                asyncio.create_task(self._last_audio_callback())
+                        else:
+                            # Buffer temporarily empty but synthesis still in progress
+                            logger.debug("[AudioTrack] Buffer empty — waiting for more TTS audio.")
+                            self._needs_last_audio_callback = True
 
                 # Produce silence frame
                 frame = AudioFrame(format="s16", layout="mono", samples=self.samples)
@@ -327,20 +341,23 @@ class MixingCustomAudioStreamTrack(CustomAudioStreamTrack):
                 primary_chunk = self.audio_data_buffer[: self.chunk_size]
                 self.audio_data_buffer = self.audio_data_buffer[self.chunk_size :]
                 self._is_speaking = True
+                self._last_speaking_time = time()
             elif getattr(self, "_is_speaking", False):
-                self._is_speaking = False
+                # Apply grace period for mixing track as well
+                if (time() - self._last_speaking_time) >= self._speaking_grace_period:
+                    self._is_speaking = False
 
-                if self._synthesis_complete:
-                    # TTS finished and buffer drained — fire callback
-                    self._synthesis_complete = False
-                    self._needs_last_audio_callback = False
-                    logger.info("[AudioTrack] Agent finished speaking — triggering last_audio_callback.")
-                    if hasattr(self, "_last_audio_callback") and self._last_audio_callback:
-                        asyncio.create_task(self._last_audio_callback())
-                else:
-                    # Buffer temporarily empty but synthesis still in progress
-                    logger.debug("[AudioTrack] Buffer temporarily empty — waiting for more TTS audio.")
-                    self._needs_last_audio_callback = True
+                    if self._synthesis_complete:
+                        # TTS finished and buffer drained — fire callback
+                        self._synthesis_complete = False
+                        self._needs_last_audio_callback = False
+                        logger.info("[AudioTrack] Agent finished speaking — triggering last_audio_callback.")
+                        if hasattr(self, "_last_audio_callback") and self._last_audio_callback:
+                            asyncio.create_task(self._last_audio_callback())
+                    else:
+                        # Buffer temporarily empty but synthesis still in progress
+                        logger.debug("[AudioTrack] Buffer empty — waiting for more TTS audio.")
+                        self._needs_last_audio_callback = True
 
             background_chunk = b''
             has_background = len(self.background_audio_buffer) >= self.chunk_size

@@ -135,12 +135,11 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
                     metrics_collector.on_agent_speech_end()
                     metrics_collector.complete_turn()
 
-                    if self.agent and self.agent.session:
-                        self.agent.session._emit_agent_state(AgentState.IDLE)
-                        self.agent.session._emit_user_state(UserState.IDLE)
-
                     if self.hooks and self.hooks.has_agent_turn_end_hooks():
                         await self.hooks.trigger_agent_turn_end()
+
+                    if self.audio_track and hasattr(self.audio_track, "mark_synthesis_complete"):
+                        self.audio_track.mark_synthesis_complete()
 
                     logger.info("TTS stream synthesis complete")
                     self.emit("last_audio_byte", {})
@@ -303,3 +302,10 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
         self.audio_track = None
         
         logger.info("Speech generation cleaned up")
+
+    @property
+    def is_speaking(self) -> bool:
+        """Returns True if the agent is currently playing audio"""
+        if self.audio_track and hasattr(self.audio_track, "is_speaking"):
+            return self.audio_track.is_speaking
+        return False

@@ -275,8 +275,24 @@ class PipelineOrchestrator(EventEmitter[Literal[
         text = data["text"]
         is_preemptive = data.get("is_preemptive", False)
 
-        if self._current_generation_task and not self._current_generation_task.done():
-            logger.info("[orchestrator] New transcript while generation active — interrupting previous turn")
+        agent_state = self.agent.session.agent_state if self.agent and self.agent.session else None
+        is_agent_active = agent_state in (AgentState.SPEAKING, AgentState.THINKING)
+
+        if is_agent_active:
+            word_count = len(text.strip().split()) if text.strip() else 0
+            logger.info(f"[orchestrator] Final transcript while agent is {agent_state.value} | word_count={word_count}, min_words={self.interrupt_min_words}")
+
+            if word_count < self.interrupt_min_words:
+                logger.info(f"[orchestrator] Transcript '{text}' below min_words threshold ({word_count} < {self.interrupt_min_words}), dropping")
+                return
+
+            # Word count threshold met — check if utterance is interruptible
+            if self.agent.session.current_utterance and not self.agent.session.current_utterance.is_interruptible:
+                logger.info(f"[orchestrator] Transcript '{text}' meets min_words but utterance is not interruptible, dropping")
+                return
+
+            # Interrupt the current pipeline and start a new turn
+            logger.info(f"[orchestrator] Word count {word_count} >= min_words {self.interrupt_min_words}, interrupting pipeline")
             await self._interrupt_pipeline()
 
             metrics_collector.start_turn()
@@ -367,15 +383,18 @@ class PipelineOrchestrator(EventEmitter[Literal[
         self._preemptive_generation_task = None
     
     async def _on_transcript_interim(self, data: dict) -> None:
-        """Handle interim transcript"""
-        pass
+        """Handle interim transcript — check for STT-based interruption"""
+        text = data.get("text", "")
+        if text and text.strip():
+            await self.handle_stt_event(text)
     
     async def _on_speech_started(self, data: dict) -> None:
         """Handle speech started event"""
         logger.info("[orchestrator] _on_speech_started fired")
         self._is_user_speaking = True
 
-        if self.agent and self.agent.session and self.agent.session.agent_state == AgentState.SPEAKING:
+        agent_state = self.agent.session.agent_state if self.agent and self.agent.session else None
+        if agent_state == AgentState.SPEAKING:
             if self._interruption_check_task is None or self._interruption_check_task.done():
                 logger.info("User started speaking during agent response, initiating interruption monitoring")
                 self._interruption_check_task = asyncio.create_task(
@@ -726,12 +745,31 @@ class PipelineOrchestrator(EventEmitter[Literal[
         except asyncio.CancelledError:
             logger.debug("Interruption monitoring cancelled")
     
-    async def handle_stt_event(self, text: str) -> None:
-        """Handle STT event for interruption (word-based)"""
+    async def handle_stt_event(self, text: str) -> bool:
+        """Handle STT event for interruption (word-based).
+        
+        Only processes interruptions when the agent is actively speaking or generating.
+        Respects interrupt_min_words and interrupt_mode configuration.
+        
+        Returns:
+            True if interruption was triggered, False otherwise.
+        """
         if not text or not text.strip():
-            return
+            return False
+        
+        # Only consider interruption when agent is actively speaking or thinking
+        agent_state = self.agent.session.agent_state if self.agent and self.agent.session else None
+        if agent_state not in (AgentState.SPEAKING, AgentState.THINKING):
+            return False
         
         word_count = len(text.strip().split())
+        
+        # Debug: log exact state of current_utterance
+        if self.agent and self.agent.session and self.agent.session.current_utterance:
+            cu = self.agent.session.current_utterance
+            logger.info(f"[orchestrator] handle_stt_event: word_count={word_count}, min_words={self.interrupt_min_words}, mode={self.interrupt_mode}, utterance_id={cu.id}, interruptible={cu.is_interruptible}, done={cu.done()}")
+        else:
+            logger.info(f"[orchestrator] handle_stt_event: word_count={word_count}, min_words={self.interrupt_min_words}, mode={self.interrupt_mode}, no current_utterance")
         
         if self.resume_on_false_interrupt and self._is_in_false_interrupt_pause and word_count >= self.interrupt_min_words:
             logger.info(f"STT transcript received while in paused state, confirming real interruption")
@@ -739,13 +777,21 @@ class PipelineOrchestrator(EventEmitter[Literal[
             self._is_in_false_interrupt_pause = False
             self._false_interrupt_paused_speech = False
             await self._interrupt_pipeline()
-            return
+            return True
         
         if self.interrupt_mode in ("STT_ONLY", "HYBRID"):
             if word_count >= self.interrupt_min_words:
                 if self.agent and self.agent.session and self.agent.session.current_utterance:
                     if self.agent.session.current_utterance.is_interruptible:
+                        logger.info(f"[orchestrator] Word count {word_count} >= min_words {self.interrupt_min_words}, triggering interruption")
                         await self._trigger_interruption()
+                        return True
+                    else:
+                        logger.info(f"[orchestrator] Word count threshold met but utterance is not interruptible")
+            else:
+                logger.info(f"[orchestrator] Word count {word_count} < min_words {self.interrupt_min_words}, ignoring")
+        
+        return False
     
     async def _trigger_interruption(self) -> None:
         """Trigger interruption with optional pause/resume support"""

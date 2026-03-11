@@ -155,7 +155,6 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
         if vad_response.event_type == VADEventType.START_OF_SPEECH:
             self._is_user_speaking = True
             self.agent.session._emit_user_state(UserState.SPEAKING)
-            self.agent.session._emit_agent_state(AgentState.LISTENING)
             metrics_collector.on_user_speech_start()
             if self._waiting_for_more_speech:
                 logger.debug("User continued speaking, cancelling wait timer")
