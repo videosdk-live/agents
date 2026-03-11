@@ -17,10 +17,10 @@ VIDEOSDK_INFERENCE_URL = "wss://inference-gateway.videosdk.live"
 DEFAULT_SAMPLE_RATE = 24000
 DEFAULT_CHANNELS = 1
 
-MIN_CHARS_FOR_SARVAM = 5
+MIN_CHARS_FOR_TTS = 5
 
 # Providers that require text content validation before sending
-TEXT_VALIDATION_PROVIDERS = {"sarvamai"}
+TEXT_VALIDATION_PROVIDERS = {"sarvamai","cartesia"}
 
 
 def _has_enough_content(text: str, provider: str) -> bool:
@@ -32,7 +32,7 @@ def _has_enough_content(text: str, provider: str) -> bool:
     if provider not in TEXT_VALIDATION_PROVIDERS:
         return True
     real_chars = re.sub(r"[^a-zA-Z0-9\u0900-\u097F]", "", text)
-    return len(real_chars) >= MIN_CHARS_FOR_SARVAM
+    return len(real_chars) >= MIN_CHARS_FOR_TTS
 
 
 class TTS(BaseTTS):
