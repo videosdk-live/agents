@@ -155,6 +155,8 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
         if vad_response.event_type == VADEventType.START_OF_SPEECH:
             self._is_user_speaking = True
             self.agent.session._emit_user_state(UserState.SPEAKING)
+            if not (self.agent.session.agent_state == AgentState.SPEAKING or self.agent.session.agent_state == AgentState.THINKING):
+                self.agent.session._emit_agent_state(AgentState.LISTENING)
             metrics_collector.on_user_speech_start()
             if self._waiting_for_more_speech:
                 logger.debug("User continued speaking, cancelling wait timer")
@@ -217,6 +219,9 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
             # If on_stt_start() was never called (no VAD END_OF_SPEECH fired),
             # call it on the first INTERIM so STT latency measures from first
             # transcript activity to FINAL result.
+            self.agent.session._emit_user_state(UserState.SPEAKING)
+            if not (self.agent.session.agent_state == AgentState.SPEAKING or self.agent.session.agent_state == AgentState.THINKING):
+                self.agent.session._emit_agent_state(AgentState.LISTENING)
             if metrics_collector._stt_start_time is None:
                 metrics_collector.on_stt_start()
             metrics_collector.on_stt_interim_end()

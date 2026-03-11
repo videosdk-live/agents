@@ -560,9 +560,8 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         if self.audio_track:
             self.audio_track.interrupt()
         if self._agent_speaking:
-            self.emit("agent_speech_ended", {})
-            metrics_collector.on_agent_speech_end()
-            metrics_collector.schedule_turn_complete(timeout=1.0)
+            if self.audio_track:
+                self.audio_track.mark_synthesis_complete()
             self._agent_speaking = False
 
     async def _handle_audio_transcript_delta(self, data: dict) -> None:
@@ -615,9 +614,10 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
             except Exception:
                 pass
             self._current_audio_transcript = ""
-        self.emit("agent_speech_ended", {})
-        metrics_collector.on_agent_speech_end()
-        metrics_collector.schedule_turn_complete(timeout=1.0)
+        self.audio_track.mark_synthesis_complete()
+        # self.emit("agent_speech_ended", {})
+        # metrics_collector.on_agent_speech_end()
+        # metrics_collector.schedule_turn_complete(timeout=1.0)
         self._agent_speaking = False
         pass
 

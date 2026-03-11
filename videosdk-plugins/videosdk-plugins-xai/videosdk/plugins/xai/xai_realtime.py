@@ -290,14 +290,16 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
         if self._session and not self._closing:
             if self.current_utterance and not self.current_utterance.is_interruptible:
                 return
+
+            if self.audio_track:
+                self.audio_track.interrupt()
+
+            if self._agent_speaking:
+                if self.audio_track:
+                    self.audio_track.mark_synthesis_complete()
+                self._agent_speaking = False
+
             metrics_collector.on_interrupted()
-            
-        if self.audio_track:
-            self.audio_track.interrupt()
-        
-        if self._agent_speaking:
-            self.emit("agent_speech_ended", {})
-            self._agent_speaking = False
 
     async def _handle_websocket(self, session: XAISession) -> None:
         session.tasks.extend([
@@ -455,9 +457,8 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
              self._current_transcript = ""
 
         logger.info("xAI Agent speech ended")
-        self.emit("agent_speech_ended", {})
-        metrics_collector.on_agent_speech_end()
-        metrics_collector.schedule_turn_complete(timeout=1.0)
+        if self.audio_track:
+            self.audio_track.mark_synthesis_complete()
         self._agent_speaking = False
 
         if self._has_unprocessed_tool_outputs and not self._generated_text_in_current_response:

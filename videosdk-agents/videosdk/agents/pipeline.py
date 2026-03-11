@@ -23,6 +23,7 @@ from .voice_mail_detector import VoiceMailDetector
 from .job import get_current_job_context
 from .utils import PipelineMode, RealtimeMode,PipelineConfig, build_pipeline_config
 from .metrics import metrics_collector
+from .utils import UserState, AgentState
 
 logger = logging.getLogger(__name__)
 
@@ -797,6 +798,10 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                 
                 if self._realtime_model.audio_track and hasattr(self._realtime_model.audio_track, 'set_pipeline_hooks'):
                     self._realtime_model.audio_track.set_pipeline_hooks(self.hooks)
+                async def _audio_track_callback():
+                    self._realtime_model.emit("agent_speech_ended", {})
+                    self._on_agent_speech_ended_realtime({})
+                self._realtime_model.audio_track.on_last_audio_byte(_audio_track_callback)
     
     def set_wake_up_callback(self, callback: Callable[[], None]) -> None:
         """Set a callback to be invoked when user speech is first detected."""
@@ -828,7 +833,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                     self.llm.on_user_speech_started(lambda data: self._on_user_speech_started_realtime(data))
                     self.llm.on_user_speech_ended(lambda data: asyncio.create_task(self._on_user_speech_ended_realtime(data)))
                     self.llm.on_agent_speech_started(lambda data: asyncio.create_task(self._on_agent_speech_started_realtime(data)))
-                    self.llm.on_agent_speech_ended(lambda data: self._on_agent_speech_ended_realtime(data))
+                    # self.llm.on_agent_speech_ended(lambda data: self._on_agent_speech_ended_realtime(data))
                     self.llm.on_transcription(self._on_realtime_transcription)            
             if self.config.realtime_mode == RealtimeMode.HYBRID_STT and self.orchestrator:
                 await self.orchestrator.start()
@@ -1020,26 +1025,34 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
             asyncio.create_task(self.speech_generation.interrupt())
 
         if self.agent and self.agent.session:
-            from .utils import UserState, AgentState
             self.agent.session._emit_user_state(UserState.SPEAKING)
             self.agent.session._emit_agent_state(AgentState.LISTENING)
     
     async def _on_user_speech_ended_realtime(self, data: dict) -> None:
         """Handle user speech ended in realtime mode"""
         metrics_collector.on_user_speech_end()
-        if self.agent and self.agent.session and self.agent.session.is_background_audio_enabled:
-            await self.agent.session.start_thinking_audio()
+        if self.agent and self.agent.session:
+            self.agent.session._emit_user_state(UserState.IDLE)
+            self.agent.session._emit_agent_state(AgentState.THINKING)
+            if self.agent.session.is_background_audio_enabled:
+                await self.agent.session.start_thinking_audio()
     
     async def _on_agent_speech_started_realtime(self, data: dict) -> None:
         """Handle agent speech started in realtime mode"""
         metrics_collector.on_agent_speech_start()
-        if self.agent and self.agent.session and self.agent.session.is_background_audio_enabled:
-            await self.agent.session.stop_thinking_audio()
+        if self.agent and self.agent.session:
+            self.agent.session._emit_agent_state(AgentState.SPEAKING)
+            self.agent.session._emit_user_state(UserState.LISTENING)
+            if self.agent.session.is_background_audio_enabled:
+                await self.agent.session.stop_thinking_audio()
     
     def _on_agent_speech_ended_realtime(self, data: dict) -> None:
         """Handle agent speech ended in realtime mode"""
         metrics_collector.on_agent_speech_end()
         metrics_collector.schedule_turn_complete(timeout=1.0)
+        if self.agent:
+            self.agent.session._emit_user_state(UserState.IDLE)
+            self.agent.session._emit_agent_state(AgentState.IDLE)
 
         if self._current_utterance_handle and not self._current_utterance_handle.done():
             self._current_utterance_handle._mark_done()

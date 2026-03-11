@@ -448,11 +448,11 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                             ):
                                 if input_transcription.text:
                                     if not self._user_speaking:
-                                        self.emit("user_speech_ended", {})
+                                        self.emit("user_speech_started", {})
                                         metrics_collector.on_user_speech_start()
                                         metrics_collector.start_turn()
                                         self._user_speaking = True
-                                    self.emit("user_speech_started", {"type": "done"})
+                                    self.emit("user_speech_ended", {"type": "done"})
                                     accumulated_input_text += input_transcription.text
                                     global_event_emitter.emit(
                                         "input_transcription",
@@ -461,6 +461,12 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                             "is_final": False,
                                         },
                                     )
+
+                                    # If agent is still producing audio, re-emit to restore SPEAKING state
+                                    # (user speech events override it to LISTENING → THINKING)
+                                    if self._agent_speaking:
+                                        self.emit("agent_speech_started", {})
+                                        metrics_collector.on_agent_speech_start()
 
                             if (
                                 output_transcription := server_content.output_transcription
@@ -594,9 +600,8 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                 active_response_id = None
                                 accumulated_text = ""
                                 final_transcription = ""
-                                self.emit("agent_speech_ended", {})
-                                metrics_collector.on_agent_speech_end()
-                                metrics_collector.schedule_turn_complete(timeout=1.0)
+                                if self.audio_track:
+                                    self.audio_track.mark_synthesis_complete()
                                 self._agent_speaking = False
 
                 except Exception as e:

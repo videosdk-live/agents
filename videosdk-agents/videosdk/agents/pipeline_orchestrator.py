@@ -861,6 +861,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
     
     async def _interrupt_pipeline(self) -> None:
         """Interrupt all components"""
+        self.agent.session._emit_agent_state(AgentState.LISTENING)
         self._is_interrupted = True
         self._cancel_false_interrupt_timer()
         self._is_in_false_interrupt_pause = False

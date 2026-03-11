@@ -374,7 +374,7 @@ class UltravoxRealtime(RealtimeBaseModel[UltravoxEventTypes]):
             while not self._closing:
                 try:
                     message = await session.websocket.recv()
-
+                    # logger.info(message)
                     if self._closing:
                         break
 
@@ -427,8 +427,15 @@ class UltravoxRealtime(RealtimeBaseModel[UltravoxEventTypes]):
                                     "realtime_model_transcription",
                                     {"role": "user", "text": text, "is_final": True},
                                 )
+                                self.emit("user_speech_ended", {})
                                 metrics_collector.on_user_speech_end()
                                 self._user_speaking = False
+
+                                # If agent is still producing audio, re-emit to restore SPEAKING state
+                                # (user speech events override it to LISTENING → THINKING)
+                                if self._agent_speaking:
+                                    self.emit("agent_speech_started", {})
+                                    metrics_collector.on_agent_speech_start()
 
                         elif role == "agent":
                             if not self._agent_speaking and (text or delta):
@@ -464,11 +471,15 @@ class UltravoxRealtime(RealtimeBaseModel[UltravoxEventTypes]):
                                 self.emit("agent_speech_started", {})
                                 metrics_collector.on_agent_speech_start()
                                 self._agent_speaking = True
+                        elif state == "thinking":
+                            if self._user_speaking:
+                                self.emit("user_speech_ended", {})
+                                metrics_collector.on_user_speech_end()
+                                self._user_speaking = False
                         elif state in ["idle", "listening"]:
                             if self._agent_speaking:
-                                self.emit("agent_speech_ended", {})
-                                metrics_collector.on_agent_speech_end()
-                                metrics_collector.schedule_turn_complete()
+                                if self.audio_track:
+                                    self.audio_track.mark_synthesis_complete()
                                 self._agent_speaking = False
 
                     elif msg_type in ["clientToolInvocation", "client_tool_invocation"]:
@@ -477,7 +488,7 @@ class UltravoxRealtime(RealtimeBaseModel[UltravoxEventTypes]):
                     elif msg_type in ["playbackClearBuffer", "playback_clear_buffer"]:
                         if self.audio_track:
                             self.audio_track.interrupt()
-                            
+                        self._agent_speaking = False
 
                 except websockets.exceptions.ConnectionClosed:
                     self._session_should_close.set()
@@ -575,11 +586,15 @@ class UltravoxRealtime(RealtimeBaseModel[UltravoxEventTypes]):
             clear_msg = {"type": "playbackClearBuffer"}
             await self._session.websocket.send(json.dumps(clear_msg))
             
-            self.emit("agent_speech_ended", {})
-            metrics_collector.on_interrupted()
-            
             if self.audio_track:
                 self.audio_track.interrupt()
+
+            if self._agent_speaking:
+                if self.audio_track:
+                    self.audio_track.mark_synthesis_complete()
+                self._agent_speaking = False
+
+            metrics_collector.on_interrupted()
         except Exception as e:
             logger.error(f"Interrupt error: {e}")
 

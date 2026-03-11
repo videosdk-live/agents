@@ -179,8 +179,11 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
             if self.audio_track and hasattr(self.audio_track, "enable_audio_input"):
                 self.audio_track.enable_audio_input(manual_control=True)
             
+            first_byte_event = asyncio.Event()
+
             async def on_first_audio_byte():
                 """Called when first audio byte is ready"""
+                first_byte_event.set()
                 if self.agent and self.agent.session and self.agent.session.is_background_audio_enabled:
                     await self.agent.session.stop_thinking_audio()
 
@@ -230,6 +233,15 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
             
             try:
                 await self.tts.synthesize(response_iterator)
+
+                # If text was generated but the TTS plugin returned before sending any audio
+                # (e.g. non-blocking streaming plugins), wait for the first audio byte
+                # to prevent mark_synthesis_complete() from firing immediately on an empty buffer.
+                if self.full_transcript and not first_byte_event.is_set():
+                    try:
+                        await asyncio.wait_for(first_byte_event.wait(), timeout=10.0)
+                    except asyncio.TimeoutError:
+                        logger.warning("Timeout waiting for first audio byte before marking synthesis complete")
 
                 # Signal that TTS has finished sending all audio data.
                 # The audio track will fire on_last_audio_byte only after
