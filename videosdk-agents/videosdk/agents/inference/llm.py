@@ -7,8 +7,8 @@ Supports Google Gemini through a unified interface for cascading pipelines.
 Example:
     from videosdk.inference import LLM
 
-    # Using factory method (recommended)
-    llm = LLM.google(model="gemini-2.0-flash")
+    # Using factory method (recommended) — same model_id convention as STT/TTS
+    llm = LLM.google(model_id="gemini-2.0-flash")
 
     # Use with CascadingPipeline
     pipeline = CascadingPipeline(stt=stt, llm=llm, tts=tts)
@@ -55,8 +55,9 @@ class LLM(BaseLLM):
     Supports Google Gemini models through a unified interface.
 
     Example:
-        # Using factory methods (recommended)
-        llm = LLM.google(model="gemini-2.0-flash")
+        # model_id is consistent with the STT/TTS plugin convention
+        llm = LLM.google(model_id="gemini-2.0-flash")
+        llm = LLM.google(model_id="gemini-2.5-pro")
 
         # Use with CascadingPipeline
         pipeline = CascadingPipeline(stt=stt, llm=llm, tts=tts)
@@ -66,7 +67,7 @@ class LLM(BaseLLM):
         self,
         *,
         provider: str,
-        model: str,
+        model_id: str,
         temperature: float = 0.7,
         tool_choice: ToolChoice = "auto",
         max_output_tokens: Optional[int] = None,
@@ -82,7 +83,7 @@ class LLM(BaseLLM):
 
         Args:
             provider: LLM provider name (e.g., "google")
-            model: Model identifier (e.g., "gemini-2.0-flash")
+            model_id: Model identifier (e.g., "gemini-2.0-flash") — consistent with STT/TTS
             temperature: Controls randomness in responses (0.0 to 1.0)
             tool_choice: Tool calling mode ("auto", "required", "none")
             max_output_tokens: Maximum tokens in model responses
@@ -101,7 +102,8 @@ class LLM(BaseLLM):
             )
 
         self.provider = provider
-        self.model = model
+        self.model_id = model_id
+        self.model = model_id  # OpenAI-compat alias used in request payload
         self.temperature = temperature
         self.tool_choice = tool_choice
         self.max_output_tokens = max_output_tokens
@@ -121,7 +123,7 @@ class LLM(BaseLLM):
     @staticmethod
     def google(
         *,
-        model: str = "gemini-2.0-flash",
+        model_id: str = "gemini-2.0-flash",
         config: Optional[Dict] = None,
         temperature: float = 0.7,
         tool_choice: ToolChoice = "auto",
@@ -136,8 +138,10 @@ class LLM(BaseLLM):
         Create an LLM instance configured for Google Gemini.
 
         Args:
-            model: Gemini model identifier (default: "gemini-2.0-flash")
-            Options: "gemini-2.0-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro", etc.
+            model_id: Gemini model identifier (default: "gemini-2.0-flash")
+                Options: "gemini-2.0-flash", "gemini-2.0-flash-lite",
+                         "gemini-2.5-flash-lite", "gemini-2.5-pro", etc.
+            config: Optional extra config dict (merged on top of defaults)
             temperature: Controls randomness in responses (0.0 to 1.0)
             tool_choice: Tool calling mode ("auto", "required", "none")
             max_output_tokens: Maximum tokens in model responses
@@ -150,14 +154,13 @@ class LLM(BaseLLM):
         Returns:
             Configured LLM instance for Google Gemini
         """
-
-        config = {"model_id": model}
+        resolved_config: Dict[str, Any] = {"model_id": model_id}
         if config:
-            model = config.get("model_id")
+            resolved_config.update(config)
 
         return LLM(
             provider="google",
-            model=model,
+            model_id=model_id,
             temperature=temperature,
             tool_choice=tool_choice,
             max_output_tokens=max_output_tokens,
@@ -166,7 +169,7 @@ class LLM(BaseLLM):
             presence_penalty=presence_penalty,
             frequency_penalty=frequency_penalty,
             base_url=base_url,
-            config=config,
+            config=resolved_config,
         )
 
     # ==================== Core Methods ====================
@@ -198,7 +201,7 @@ class LLM(BaseLLM):
 
             # Build request payload
             payload: Dict[str, Any] = {
-                "model": self.model,
+                "model": self.model_id,
                 "messages": formatted_messages,
                 "stream": True,
                 "temperature": self.temperature,
@@ -266,7 +269,6 @@ class LLM(BaseLLM):
             "Authorization": f"Bearer {self._videosdk_token}",
         }
 
-        # Add provider header
         url = f"{self.base_url}/v1/chat/completions?provider={self.provider}"
 
         current_content = ""
@@ -278,7 +280,8 @@ class LLM(BaseLLM):
 
         try:
             logger.debug(
-                f"[InferenceLLM] Making request to {self.base_url} (provider={self.provider}, model={self.model})"
+                f"[InferenceLLM] Making request to {self.base_url} "
+                f"(provider={self.provider}, model_id={self.model_id})"
             )
 
             async with self._session.post(
@@ -289,7 +292,6 @@ class LLM(BaseLLM):
             ) as response:
                 if response.status != 200:
                     error_text = await response.text()
-
                     raise Exception(f"HTTP {response.status}: {error_text}")
 
                 # Process SSE stream
@@ -363,16 +365,15 @@ class LLM(BaseLLM):
 
         choice = choices[0]
         delta = choice.get("delta", {})
+
         # Check for tool calls
         if "tool_calls" in delta:
             for tool_call in delta.get("tool_calls") or []:
-
                 function_data = tool_call.get("function", {})
                 function_name = function_data.get("name", "")
                 function_args = function_data.get("arguments", "")
 
                 if function_name:
-                    # Try to parse arguments if complete
                     try:
                         args_dict = json.loads(function_args) if function_args else {}
                     except json.JSONDecodeError:
@@ -392,7 +393,6 @@ class LLM(BaseLLM):
         content = delta.get("content", "")
         if content:
             if conversational_graph:
-                # Stream conversational graph response
                 full_content = current_content + content
                 for (
                     content_chunk
@@ -431,7 +431,6 @@ class LLM(BaseLLM):
                 formatted_messages.append({"role": role, "content": content})
 
             elif isinstance(item, FunctionCall):
-                # Convert function call to assistant message with tool_calls
                 formatted_messages.append(
                     {
                         "role": "assistant",
@@ -454,7 +453,6 @@ class LLM(BaseLLM):
                 )
 
             elif isinstance(item, FunctionCallOutput):
-                # Convert function output to tool message
                 formatted_messages.append(
                     {
                         "role": "tool",
@@ -527,10 +525,7 @@ class LLM(BaseLLM):
                 continue
 
             try:
-                # Build Gemini-compatible schema
                 gemini_schema = build_gemini_schema(tool)
-
-                # Convert to OpenAI format
                 formatted_tools.append(
                     {
                         "type": "function",
@@ -555,7 +550,6 @@ class LLM(BaseLLM):
 
         self._cancelled = True
 
-        # Close HTTP session
         if self._session and not self._session.closed:
             await self._session.close()
             self._session = None
@@ -569,4 +563,4 @@ class LLM(BaseLLM):
     @property
     def label(self) -> str:
         """Get a descriptive label for this LLM instance."""
-        return f"videosdk.inference.LLM.{self.provider}.{self.model}"
+        return f"videosdk.inference.LLM.{self.provider}.{self.model_id}"
