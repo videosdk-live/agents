@@ -69,6 +69,7 @@ class RoomOptions:
     # Session management options
     auto_end_session: bool = True
     session_timeout_seconds: Optional[int] = 5
+    no_participant_timeout_seconds: Optional[int] = 90
     # VideoSDK connection options
     signaling_base_url: Optional[str] = "api.videosdk.live"
     background_audio: bool = False
@@ -354,6 +355,7 @@ class JobContext:
                             on_room_error=self.room_options.on_room_error,
                             auto_end_session=self.room_options.auto_end_session,
                             session_timeout_seconds=self.room_options.session_timeout_seconds,
+                            no_participant_timeout_seconds=self.room_options.no_participant_timeout_seconds,
                             signaling_base_url=self.room_options.signaling_base_url,
                         )
                     if self._pipeline and hasattr(
@@ -554,7 +556,10 @@ class JobContext:
             if wait_for_participant and self.room:
                 try:
                     logger.info("Waiting for participant...")
-                    await self.room.wait_for_participant()
+                    participant_id = await self.room.wait_for_participant()
+                    if participant_id is None:
+                        logger.info("Session ended before any participant joined, shutting down")
+                        return
                     logger.info("Participant joined")
                 except Exception as e:
                     logger.error(f"Error waiting for participant: {e}")
