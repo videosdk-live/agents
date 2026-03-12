@@ -109,6 +109,22 @@ class ProcessResource(BaseResource):
 
         while (time.time() - start_time) < timeout:
             try:
+                # Check if child process is still alive
+                if self.process and not self.process.is_alive():
+                    logger.info(
+                        f"Process {self.resource_id} exited (pid={self.process.pid}), "
+                        f"treating task {task_id} as completed"
+                    )
+                    # Drain any remaining results from the queue
+                    try:
+                        if not self.result_queue.empty():
+                            result_data = self.result_queue.get_nowait()
+                            if result_data.get("status") == "success":
+                                return result_data.get("result")
+                    except Exception:
+                        pass
+                    return None  # Process exited cleanly after cleanup
+
                 if not self.result_queue.empty():
                     result_data = self.result_queue.get_nowait()
                     if result_data.get("task_id") == task_id:
@@ -118,12 +134,15 @@ class ProcessResource(BaseResource):
                             raise RuntimeError(
                                 result_data.get("error", "Unknown error")
                             )
-
-                await asyncio.sleep(0.1)
+            except RuntimeError:
+                raise
             except Exception as e:
                 logger.warning(f"Error checking task result: {e}")
 
+            await asyncio.sleep(0.1)
+
         raise TimeoutError(f"Task {task_id} timed out after {timeout}s")
+
 
     async def _shutdown_impl(self) -> None:
         """Shutdown the process resource."""
@@ -157,10 +176,6 @@ class ProcessResource(BaseResource):
     ):
         """Worker function that runs in the process."""
         try:
-            # Set up event loop for this process
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
             logger.info(f"Process worker {resource_id} started")
 
             # Signal ready
@@ -188,7 +203,12 @@ class ProcessResource(BaseResource):
                         try:
                             # Execute the task
                             if asyncio.iscoroutinefunction(entrypoint):
-                                result = loop.run_until_complete(entrypoint(*args, **kwargs))
+                                # Use asyncio.run() which properly handles cleanup:
+                                # 1. Creates a fresh event loop
+                                # 2. Runs the coroutine to completion
+                                # 3. Cancels ALL remaining tasks
+                                # 4. Closes the loop
+                                result = asyncio.run(entrypoint(*args, **kwargs))
                             else:
                                 result = entrypoint(*args, **kwargs)
 
@@ -212,22 +232,6 @@ class ProcessResource(BaseResource):
                     time.sleep(1.0)
             
             logger.info(f"Process worker {resource_id} shutting down")
-            
-            # Clean up tasks
-            if loop and not loop.is_closed():
-                try:
-                    # Cancel all running tasks
-                    tasks = asyncio.all_tasks(loop)
-                    for task in tasks:
-                        task.cancel()
-                    
-                    if tasks:
-                        # Allow tasks to finish cancellation
-                        loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=True))
-                        
-                    loop.close()
-                except Exception as e:
-                    logger.error(f"Error closing process worker loop: {e}")
 
         except Exception as e:
             logger.error(f"Fatal error in process worker {resource_id}: {e}")
@@ -311,12 +315,15 @@ class ThreadResource(BaseResource):
                             raise RuntimeError(
                                 result_data.get("error", "Unknown error")
                             )
-
-                await asyncio.sleep(0.1)
+            except RuntimeError:
+                raise
             except Exception as e:
                 logger.warning(f"Error checking task result: {e}")
 
+            await asyncio.sleep(0.1)
+
         raise TimeoutError(f"Task {task_id} timed out after {timeout}s")
+
 
     async def _shutdown_impl(self) -> None:
         """Shutdown the thread resource."""
