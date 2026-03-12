@@ -19,6 +19,8 @@ from .eou import EOU
 from .metrics import cascading_metrics_collector
 from .denoise import Denoise
 from .utils import UserState, AgentState
+import re
+from difflib import SequenceMatcher
 import uuid
 from .utterance_handle import UtteranceHandle
 import logging
@@ -105,6 +107,18 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         # Conversational Graph
         self.conversational_graph = None
         
+
+        self._last_agent_response: str = ""         # exact text of last agent response
+        self._echo_similarity_threshold = 0.7       # SequenceMatcher ratio to classify as echo
+        self._echo_substring_min_words = 3          # min words for substring check
+        self._echo_prefix_min_words = 3             # min prefix length to strip (avoids "i"/"the" false matches)
+
+
+        self._agent_speaker_id: int | None = None          # identified agent speaker
+        self._speaker_match_count: dict[int, int] = {}     # speaker_id → echo-match count
+        self._speaker_confirm_threshold = 2                # matches needed to confirm
+        self._speaker_identified = False                   # locked in?
+
         # Context truncation
         self.max_context_items: int | None = None
         cascading_metrics_collector.set_metrics(
@@ -178,25 +192,233 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         except Exception as e:
             self.emit("error", f"Audio processing failed: {str(e)}")
 
+    @staticmethod
+    def _normalize(text: str) -> str:
+        """Lowercase, strip punctuation, collapse whitespace."""
+        return re.sub(r'\s+', ' ', re.sub(r'[^\w\s]', '', text.lower())).strip()
+
+    def _set_last_agent_response(self, text: str) -> None:
+        """Store the agent's last turn response for echo detection.
+        Replaces (not appends) — only the most recent turn matters."""
+        if text and text.strip():
+            self._last_agent_response = text.strip()
+            logger.debug(f"[ECHO_FILTER] Stored agent response: '{self._last_agent_response[:80]}...'")
+
+    def _try_identify_agent_speaker(self, text: str, speaker_id: int) -> bool | None:
+        """Try to identify whether *speaker_id* is the agent by fuzzy-matching
+        *text* against the agent's known speech.
+
+        Returns:
+            True  — this transcript is from the agent speaker (drop it)
+            False — this transcript is from the user (process it)
+            None  — not enough info yet, fall through to echo filter
+        """
+        if self._speaker_identified:
+            if speaker_id == self._agent_speaker_id:
+                logger.info(
+                    f"[DIARIZE] speaker={speaker_id} is agent — dropping"
+                )
+                return True
+            else:
+                logger.info(
+                    f"[DIARIZE] speaker={speaker_id} is user — processing"
+                )
+                return False
+
+        incoming_norm = self._normalize(text)
+        if not incoming_norm or len(incoming_norm.split()) < 3:
+            return None  
+
+        agent_texts = []
+        if self._last_agent_response:
+            agent_texts.append(self._last_agent_response)
+        if self._partial_response:
+            agent_texts.append(self._partial_response)
+
+        if not agent_texts:
+            return None
+
+        is_echo = False
+        for agent_text in agent_texts:
+            agent_norm = self._normalize(agent_text)
+            if not agent_norm:
+                continue
+
+            if incoming_norm in agent_norm:
+                is_echo = True
+                break
+
+            incoming_words = incoming_norm.split()
+            agent_words = agent_norm.split()
+            window_size = len(incoming_words)
+            if window_size >= 3 and len(agent_words) >= window_size:
+                for i in range(len(agent_words) - window_size + 1):
+                    window = ' '.join(agent_words[i:i + window_size])
+                    sim = SequenceMatcher(None, incoming_norm, window).ratio()
+                    if sim >= 0.75:
+                        is_echo = True
+                        break
+            if is_echo:
+                break
+
+        if is_echo:
+            self._speaker_match_count[speaker_id] = self._speaker_match_count.get(speaker_id, 0) + 1
+            count = self._speaker_match_count[speaker_id]
+            logger.info(
+                f"[DIARIZE] speaker={speaker_id} matched agent speech "
+                f"({count}/{self._speaker_confirm_threshold})"
+            )
+            if count >= self._speaker_confirm_threshold:
+                self._agent_speaker_id = speaker_id
+                self._speaker_identified = True
+                logger.info(
+                    f"[DIARIZE] Confirmed: speaker={speaker_id} is the AGENT"
+                )
+            return True 
+        else:
+            logger.info(
+                f"[DIARIZE] speaker={speaker_id} did NOT match agent speech"
+            )
+            return False
+
+    def _match_echo_against(self, incoming_norm: str, agent_text: str) -> tuple[str, str]:
+        """Try to match incoming transcript against a single agent text source.
+
+        Returns (result, label) where:
+            result = "" means full echo
+            result = shortened string means partial echo stripped
+            result = None means no echo detected against this source
+            label = description for logging
+        """
+        agent_norm = self._normalize(agent_text)
+        if not agent_norm:
+            return None, ""
+
+        incoming_words = incoming_norm.split()
+        agent_words_set = set(agent_norm.split())
+
+        if len(incoming_words) <= 2 and all(w in agent_words_set for w in incoming_words):
+            return "", f"short ({len(incoming_words)} word(s)), all words found in agent response"
+
+        if incoming_norm in agent_norm and len(incoming_words) >= self._echo_substring_min_words:
+            return "", "SUBSTRING of agent response"
+
+
+        agent_words = agent_norm.split()
+        best_echo_end = 0
+        min_prefix = self._echo_prefix_min_words 
+        for end_idx in range(len(incoming_words), min_prefix - 1, -1):
+            prefix = ' '.join(incoming_words[:end_idx])
+            if end_idx >= min_prefix and prefix in agent_norm:
+                best_echo_end = end_idx
+                break
+            if end_idx >= min_prefix:
+                min_sim = 0.85 if end_idx <= 4 else 0.75
+                prefix_len = end_idx
+                if len(agent_words) >= prefix_len:
+                    for i in range(len(agent_words) - prefix_len + 1):
+                        window = ' '.join(agent_words[i:i + prefix_len])
+                        sim = SequenceMatcher(None, prefix, window).ratio()
+                        if sim >= min_sim:
+                            best_echo_end = end_idx
+                            break
+                if best_echo_end > 0:
+                    break
+
+        if best_echo_end > 0:
+            remaining = ' '.join(incoming_words[best_echo_end:]).strip()
+            if not remaining:
+                return "", f"full echo (prefix match {best_echo_end}/{len(incoming_words)} words)"
+            else:
+                return remaining, f"stripped echo prefix ({best_echo_end} words)"
+
+        similarity = SequenceMatcher(None, incoming_norm, agent_norm).ratio()
+
+        best_window_sim = 0.0
+        window_size = len(incoming_words)
+        if window_size >= 2 and len(agent_words) >= window_size:
+            for i in range(len(agent_words) - window_size + 1):
+                window = ' '.join(agent_words[i:i + window_size])
+                win_sim = SequenceMatcher(None, incoming_norm, window).ratio()
+                if win_sim > best_window_sim:
+                    best_window_sim = win_sim
+
+        final_sim = max(similarity, best_window_sim)
+
+        if final_sim >= self._echo_similarity_threshold:
+            return "", f"sim={final_sim:.2f} >= {self._echo_similarity_threshold}"
+
+        return None, f"sim={final_sim:.2f} < {self._echo_similarity_threshold}"
+
+    def _strip_echo(self, text: str) -> str:
+        """Strip the echo portion from a transcript and return remaining user speech.
+
+        Checks transcript against BOTH the last complete agent response AND the
+        current partial response (in-progress speech).  If either source detects
+        echo, the transcript is filtered.
+
+        Returns:
+            - "" (empty) if the entire transcript is echo
+            - the non-echo user portion if mixed echo+user speech was detected
+            - the original text unchanged if no echo was found
+        """
+        if not text or not text.strip():
+            return ""
+
+        agent_sources = []
+        if self._last_agent_response:
+            agent_sources.append(("last_response", self._last_agent_response))
+        if self._partial_response and self._partial_response.strip():
+            agent_sources.append(("partial_response", self._partial_response))
+
+        if not agent_sources:
+            return text 
+
+        incoming_norm = self._normalize(text)
+        if not incoming_norm:
+            return text
+
+        best_result = text  
+        for source_name, agent_text in agent_sources:
+            result, label = self._match_echo_against(incoming_norm, agent_text)
+
+            if result is None:
+                logger.debug(f"[ECHO_FILTER] transcript='{text}' vs {source_name} | {label} | no match")
+                continue
+
+            if result == "":
+                logger.info(f"[ECHO_FILTER] transcript='{text}' vs {source_name} | {label} | echo=True")
+                return ""
+
+            logger.info(
+                f"[ECHO_FILTER] transcript='{text}' vs {source_name} | {label} "
+                f"| remaining user speech: '{result}'"
+            )
+            if best_result == text or len(result) < len(best_result):
+                best_result = result
+
+        if best_result != text:
+            return best_result
+
+        logger.info(f"[ECHO_FILTER] transcript='{text}' | no echo match against any source | echo=False")
+        return text
+
     async def on_vad_event(self, vad_response: VADResponse) -> None:
-        """Handle VAD events with interruption logic"""
-        
+        """Handle VAD events with interruption logic.
+
+        When the agent is SPEAKING, VAD signals are ignored entirely to avoid
+        echo-driven interruptions (the remote mic picks up TTS audio).  The
+        agent will only be interrupted when STT produces a transcript that
+        passes the echo filter — see handle_stt_event().
+        """
+
         if (self.agent and self.agent.session and self.agent.session.agent_state == AgentState.SPEAKING):
-            
             if vad_response.event_type == VADEventType.START_OF_SPEECH:
-                if not hasattr(self, '_interruption_check_task') or self._interruption_check_task.done():
-                    logger.info("User started speaking during agent response, initiating interruption monitoring")
-                    self._interruption_check_task = asyncio.create_task(
-                        self._monitor_interruption_duration()
-                    )
-                return
-                
+                logger.info("[ECHO_FILTER] VAD START_OF_SPEECH while agent speaking — ignoring (waiting for STT to decide)")
             elif vad_response.event_type == VADEventType.END_OF_SPEECH:
                 cascading_metrics_collector.on_vad_end_of_speech()
-                if hasattr(self, '_interruption_check_task') and not self._interruption_check_task.done():
-                    logger.info("User stopped speaking, cancelling interruption check")
-                    self._interruption_check_task.cancel()
-                return
+                logger.info("[ECHO_FILTER] VAD END_OF_SPEECH while agent speaking — ignoring")
+            return
         
         if vad_response.event_type == VADEventType.START_OF_SPEECH:
             self._is_user_speaking = True            
@@ -269,9 +491,13 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         if self.agent.session:
             state = self.agent.session.agent_state
             if state == AgentState.SPEAKING:
-                logger.info(f"Agent is speaking, handling STT event")          
+                speaker_id = (stt_response.metadata or {}).get("speaker")
+                if speaker_id is not None:
+                    self._try_identify_agent_speaker(text, speaker_id)
+
+                logger.info(f"Agent is speaking, handling STT event")
                 await self.handle_stt_event(text)
-                
+
             elif state == AgentState.THINKING:
                 if not self._enable_preemptive_generation:
                     await self.handle_stt_event(text)
@@ -469,15 +695,24 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         """Finalize the accumulated transcript and generate response"""
         if not self._accumulated_transcript.strip():
             return
-        
+
         final_transcript = self._accumulated_transcript.strip()
-        
+
+        cleaned = self._strip_echo(final_transcript)
+        if not cleaned:
+            logger.info(f"[ECHO_FILTER] Dropping full echo in _finalize_transcript_and_respond: '{final_transcript}'")
+            self._accumulated_transcript = ""
+            return
+        if cleaned != final_transcript:
+            logger.info(f"[ECHO_FILTER] Stripped echo, using remaining user speech: '{cleaned}'")
+            final_transcript = cleaned
+
         word_count = len(final_transcript.split())
         if word_count < self.interrupt_min_words and self.agent.session.agent_state != AgentState.IDLE:
             logger.info(f"Ignoring transcript '{final_transcript}' - word count {word_count} is less than minimum {self.interrupt_min_words}")
             self._accumulated_transcript = ""
             return
-        
+
         logger.info(f"Finalizing transcript: '{final_transcript}'")
         
         self._accumulated_transcript = ""
@@ -722,7 +957,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                             await q.put(content)
                         if chunk_metadata:
                             metadata = chunk_metadata
-                        
+
                         self._partial_response = "".join(response_parts)
 
                     if not handle.interrupted:
@@ -811,6 +1046,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                 and getattr(self.agent, "chat_context", None)
             ):
                 cascading_metrics_collector.set_agent_response(full_response)
+                self._set_last_agent_response(full_response)
                 self.agent.chat_context.add_message(
                     role=ChatRole.ASSISTANT,
                     content=full_response
@@ -995,6 +1231,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         if self.tts:
             cascading_metrics_collector.start_new_interaction("")
             cascading_metrics_collector.set_agent_response(message)
+            self._set_last_agent_response(message)
 
             try:
                 await self._synthesize_with_tts(message)
@@ -1052,27 +1289,33 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         pass
 
     async def handle_stt_event(self, text: str) -> None:
-        """Handle STT event"""
+        """Handle STT event during agent speech.
+
+        Used when diarization is not available or speaker not yet identified.
+        Uses the echo transcript filter to decide whether to interrupt:
+        - If the transcript matches the agent's recent speech → echo → ignore
+        - If it differs → real user speech → interrupt TTS
+        """
         if not text or not text.strip():
             return
-        
-        word_count = len(text.strip().split())
-        logger.info(f"handle_stt_event: Word count: {word_count}")
-        
-        if self.resume_on_false_interrupt and self._is_in_false_interrupt_pause and word_count >= self.interrupt_min_words:
-            logger.info(f"[FALSE_INTERRUPT] STT transcript received while in paused state: '{text}' ({word_count} words). Confirming real interruption.")
-            self._cancel_false_interrupt_timer()
-            self._is_in_false_interrupt_pause = False
-            self._false_interrupt_paused_speech = False
-            # Notify metrics that false interrupt escalated to true interrupt
-            cascading_metrics_collector.on_false_interrupt_escalated(word_count)
-            cascading_metrics_collector.on_interrupted()
-            logger.info("[FALSE_INTERRUPT] Clearing audio buffers and finalizing interruption.")
-            await self._interrupt_tts()
+
+        # Strip echo portion — if STT merged echo + user speech, extract the user part
+        cleaned = self._strip_echo(text)
+        if not cleaned:
+            logger.info(f"[ECHO_FILTER] Dropping echo transcript during agent speech: '{text}'")
             return
-        
+
+        if cleaned != text:
+            logger.info(f"[ECHO_FILTER] Stripped echo from STT, remaining user speech: '{cleaned}'")
+            text = cleaned
+
+        word_count = len(text.strip().split())
+        logger.info(f"handle_stt_event: Real user speech '{text}' — Word count: {word_count}")
+        stt_interrupt_min = max(self.interrupt_min_words, 2)
+
+        # Real user speech detected — interrupt the agent
         if self.interrupt_mode in ("STT_ONLY", "HYBRID"):
-            if word_count >= self.interrupt_min_words:
+            if word_count >= stt_interrupt_min:
                 if self.agent.session and self.agent.session.current_utterance and self.agent.session.current_utterance.is_interruptible:
                     cascading_metrics_collector.on_interrupt_trigger(word_count)
                     await self._trigger_interruption()
@@ -1090,20 +1333,10 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             if utterance and not utterance.is_interruptible:
                 logger.info("Interruption is disabled for the current utterance. Ignoring.")
                 return
-                
-            self._is_interrupted = True 
 
-            can_resume = self.resume_on_false_interrupt and self.tts and self.tts.can_pause
-            
-            if can_resume:
-                logger.info(f"[FALSE_INTERRUPT] Pausing TTS for potential resume. (resume_on_false_interrupt={self.resume_on_false_interrupt}, can_pause={self.tts.can_pause if self.tts else False})")
-                self._false_interrupt_paused_speech = True
-                self._is_in_false_interrupt_pause = True
-                await self.tts.pause()
-                self._start_false_interrupt_timer()
-            else:
-                logger.info("performing full interruption.")
-                await self._interrupt_tts()
+            self._is_interrupted = True
+            logger.info("Performing full interruption.")
+            await self._interrupt_tts()
             cascading_metrics_collector.on_interrupted()
 
     def _start_false_interrupt_timer(self):
@@ -1157,7 +1390,14 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
             else:
                 logger.info("[FALSE_INTERRUPT] Timeout reached but no paused state found. No action needed.")        
     
-    async def on_speech_started(self) -> None:       
+    async def on_speech_started(self) -> None:
+            """Handle VAD speech-start.
+
+            When the agent is SPEAKING we do NOT interrupt here — interruption
+            is deferred to handle_stt_event() which checks the echo filter first.
+            This prevents the agent's own TTS audio (picked up by the remote mic)
+            from causing self-interruption.
+            """
             cascading_metrics_collector.on_user_speech_start()
 
             if self.user_speech_callback:
@@ -1165,7 +1405,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
 
             if self._stt_started:
                 self._stt_started = False
-            
+
             utterance = self.agent.session.current_utterance if self.agent and self.agent.session else None
             if utterance and not utterance.is_interruptible:
                 logger.info("Interruption is disabled for the current utterance. Not interrupting.")
@@ -1173,24 +1413,12 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                     self.agent.session._emit_user_state(UserState.SPEAKING)
                 return
 
-            self._cancel_false_interrupt_timer()
-            
-            can_resume = self.resume_on_false_interrupt and self.tts and self.tts.can_pause
+            if self.agent and self.agent.session and self.agent.session.agent_state == AgentState.SPEAKING:
+                logger.info("[ECHO_FILTER] on_speech_started while agent speaking — deferring to STT echo filter")
+                if self.agent and self.agent.session:
+                    self.agent.session._emit_user_state(UserState.SPEAKING)
+                return
 
-            if self._false_interrupt_paused_speech:
-                logger.info("User continued speaking, confirming interruption of paused speech.")
-                self._false_interrupt_paused_speech = False
-                # Notify metrics that false interrupt escalated to true interrupt (via VAD)
-                cascading_metrics_collector.on_false_interrupt_escalated()
-                cascading_metrics_collector.on_interrupted()
-                await self._interrupt_tts() 
-            elif self.agent and self.agent.session and self.agent.session.agent_state == AgentState.SPEAKING:
-                if can_resume:
-                    logger.info("Pausing agent speech for potential hesitation (will resume if user stops quickly).")
-                    await self._trigger_interruption()
-                else:
-                    await self._interrupt_tts()
-            
             if self.agent and self.agent.session:
                 self.agent.session._emit_user_state(UserState.SPEAKING)
 

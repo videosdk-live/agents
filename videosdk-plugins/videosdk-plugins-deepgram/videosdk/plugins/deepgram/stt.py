@@ -216,17 +216,34 @@ class DeepgramSTT(BaseSTT):
                     if alt["transcript"] == "":
                         return responses
 
+                    metadata: dict[str, Any] = {"model": self.model}
+
+                    # Extract per-word speaker info when diarization is enabled
+                    words = alt.get("words", [])
+                    if self.enable_diarization and words:
+                        speaker_ids = [w["speaker"] for w in words if "speaker" in w]
+                        if speaker_ids:
+                            # Dominant speaker for this segment
+                            from collections import Counter
+                            speaker_counts = Counter(speaker_ids)
+                            dominant_speaker = speaker_counts.most_common(1)[0][0]
+                            metadata["speaker"] = dominant_speaker
+                            metadata["speaker_words"] = [
+                                {"word": w["word"], "speaker": w.get("speaker", -1)}
+                                for w in words
+                            ]
+
                     response = STTResponse(
                         event_type=SpeechEventType.FINAL if is_final else SpeechEventType.INTERIM,
                         data=SpeechData(
                             text=alt["transcript"],
                             language=self.language,
                             confidence=alt.get("confidence", 0.0),
-                            start_time=alt["words"][0]["start"] if alt["words"] else 0.0,
-                            end_time=alt["words"][-1]["end"] if alt["words"] else 0.0,
+                            start_time=words[0]["start"] if words else 0.0,
+                            end_time=words[-1]["end"] if words else 0.0,
                             duration=msg["duration"]
                         ),
-                        metadata={"model": self.model}
+                        metadata=metadata
                     )
                     responses.append(response)
 
