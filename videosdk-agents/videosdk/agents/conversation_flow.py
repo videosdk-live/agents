@@ -817,6 +817,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
                     role=ChatRole.ASSISTANT,
                     content=full_response
                 )
+                self.agent.session._send_transport_transcript(text=full_response, role=ChatRole.ASSISTANT)
 
         finally:
             self._current_tts_task = None
