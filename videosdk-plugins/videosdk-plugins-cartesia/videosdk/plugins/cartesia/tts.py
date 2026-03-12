@@ -14,7 +14,7 @@ from videosdk.agents import TTS
 CARTESIA_SAMPLE_RATE = 24000
 CARTESIA_CHANNELS = 1
 DEFAULT_MODEL = "sonic-2"
-DEFAULT_VOICE_ID = "f786b574-daa5-4673-aa0c-cbe3e8534c02"
+DEFAULT_VOICE_ID = "f8f5f1b2-f02d-4d8e-a40d-fd850a487b3d"
 API_VERSION = "2024-06-10"
 
 @dataclass

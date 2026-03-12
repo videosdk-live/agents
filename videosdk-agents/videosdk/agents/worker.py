@@ -749,6 +749,7 @@ class Worker:
                 join_meeting=self.default_room_options.join_meeting,
                 auto_end_session=self.default_room_options.auto_end_session,
                 session_timeout_seconds=self.default_room_options.session_timeout_seconds,
+                no_participant_timeout_seconds=self.default_room_options.no_participant_timeout_seconds,
             )
 
             # Apply RoomOptions from assignment if provided
@@ -769,6 +770,13 @@ class Worker:
                     ]
                     logger.info(
                         f"Set session_timeout_seconds: {room_options.session_timeout_seconds}"
+                    )
+                if "no_participant_timeout_seconds" in assignment.room_options:
+                    room_options.no_participant_timeout_seconds = assignment.room_options[
+                        "no_participant_timeout_seconds"
+                    ]
+                    logger.info(
+                        f"Set no_participant_timeout_seconds: {room_options.no_participant_timeout_seconds}"
                     )
                 if "playground" in assignment.room_options:
                     room_options.playground = assignment.room_options["playground"]

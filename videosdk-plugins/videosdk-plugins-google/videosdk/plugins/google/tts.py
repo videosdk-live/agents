@@ -16,8 +16,8 @@ GOOGLE_CHANNELS = 1
 @dataclass
 class GoogleVoiceConfig:
     languageCode: str = "en-US"
-    name: str = "en-US-Chirp3-HD-Aoede"
-    ssmlGender: str = "FEMALE"
+    name: str = "en-US-Chirp3-HD-Charon"
+    ssmlGender: str = "MALE"
 
 
 @dataclass

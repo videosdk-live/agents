@@ -29,9 +29,9 @@ class SileroVAD(BaseVAD):
         start_threshold: float = 0.5,
         end_threshold: float = 0.25,
         min_speech_duration: float = 0.1,
-        min_silence_duration: float = 0.5,
-        padding_duration: float = 0.5,
-        max_buffered_speech: float = 60.0,
+        min_silence_duration: float = 0.3,
+        padding_duration: float = .25,
+        max_buffered_speech: float = 30.0,
         force_cpu: bool = True,
     ) -> None:
         if model_sample_rate not in SAMPLE_RATES:

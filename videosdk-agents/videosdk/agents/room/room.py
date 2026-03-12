@@ -65,6 +65,7 @@ class VideoSDKHandler(BaseTransportHandler):
         # Session management options
         auto_end_session: bool = True,
         session_timeout_seconds: Optional[int] = None,
+        no_participant_timeout_seconds: Optional[int] = 90,
         on_session_end: Optional[Callable[[str], None]] = None,
         # VideoSDK connection options
         signaling_base_url: Optional[str] = None,
@@ -87,7 +88,8 @@ class VideoSDKHandler(BaseTransportHandler):
             background_audio (bool, optional): Whether to use background audio. Defaults to False.
             on_room_error (Optional[Callable[[Any], None]], optional): Error callback function.
             auto_end_session (bool, optional): Whether to automatically end sessions. Defaults to True.
-            session_timeout_seconds (Optional[int], optional): Timeout for session auto-end.
+            session_timeout_seconds (Optional[int], optional): Timeout for session auto-end after participants leave.
+            no_participant_timeout_seconds (Optional[int], optional): Timeout to end session if no participant joins after agent connects.
             on_session_end (Optional[Callable[[str], None]], optional): Session end callback function.
             signaling_base_url (Optional[str], optional): Custom signaling server URL.
 
@@ -110,9 +112,11 @@ class VideoSDKHandler(BaseTransportHandler):
         # Session management
         self.auto_end_session = auto_end_session
         self.session_timeout_seconds = session_timeout_seconds
+        self.no_participant_timeout_seconds = no_participant_timeout_seconds
         self.on_session_end = on_session_end
         self._session_ended = False
         self._session_end_task = None
+        self._no_participant_timeout_task = None
 
         # VideoSDK connection
         self.signaling_base_url = signaling_base_url
@@ -291,6 +295,14 @@ class VideoSDKHandler(BaseTransportHandler):
         self._meeting_joined_data = data
         asyncio.create_task(self._collect_session_id())
         asyncio.create_task(self._collect_meeting_attributes())
+
+        if self.no_participant_timeout_seconds is not None and self.no_participant_timeout_seconds > 0:
+            self._no_participant_timeout_task = asyncio.create_task(
+                self._no_participant_timeout_handler()
+            )
+            logger.info(
+                f"No-participant timeout started: {self.no_participant_timeout_seconds}s"
+            )
         if self.recording:
             self.recorded_participants.add(self.meeting.local_participant.id)
             asyncio.create_task(
@@ -370,6 +382,12 @@ class VideoSDKHandler(BaseTransportHandler):
 
         # Mark session as ended AFTER leaving
         self._session_ended = True
+
+        if not self._first_participant_event.is_set():
+            self._first_participant_event.set()
+        for evt in self._participant_joined_events.values():
+            if not evt.is_set():
+                evt.set()
 
     async def force_end_session(self, reason: str = "manual_hangup") -> None:
         """
@@ -536,6 +554,17 @@ class VideoSDKHandler(BaseTransportHandler):
         await asyncio.sleep(timeout_seconds)
         await self._end_session("no_participants")
 
+    async def _no_participant_timeout_handler(self):
+        """
+        Internal method: End session if no participant joins within the configured timeout.
+        """
+        await asyncio.sleep(self.no_participant_timeout_seconds)
+        if self._non_agent_participant_count == 0:
+            logger.info(
+                f"No participant joined within {self.no_participant_timeout_seconds}s, ending session"
+            )
+            await self._end_session("no_participant_joined")
+
     def on_participant_joined(self, participant: Participant):
         """
         Handle participant join event.
@@ -566,6 +595,11 @@ class VideoSDKHandler(BaseTransportHandler):
 
         if not self._first_participant_event.is_set():
             self._first_participant_event.set()
+
+        if self._no_participant_timeout_task and not self._no_participant_timeout_task.done():
+            self._no_participant_timeout_task.cancel()
+            self._no_participant_timeout_task = None
+            logger.info("No-participant timeout cancelled: participant joined")
 
         # Update participant count and cancel session end if participants are present
         self._update_non_agent_participant_count()
@@ -744,12 +778,20 @@ class VideoSDKHandler(BaseTransportHandler):
                 self._participant_joined_events[participant_id] = asyncio.Event()
 
             await self._participant_joined_events[participant_id].wait()
+
+            if self._session_ended:
+                return None
+
             return participant_id
         else:
             if self.participants_data:
                 return next(iter(self.participants_data.keys()))
 
             await self._first_participant_event.wait()
+
+            if self._session_ended or not self.participants_data:
+                return None
+
             return next(iter(self.participants_data.keys()))
 
     async def subscribe_to_pubsub(self, pubsub_config: PubSubSubscribeConfig):
@@ -808,6 +850,10 @@ class VideoSDKHandler(BaseTransportHandler):
 
         self._cancel_session_end_task()
 
+        if self._no_participant_timeout_task and not self._no_participant_timeout_task.done():
+            self._no_participant_timeout_task.cancel()
+            self._no_participant_timeout_task = None
+        
         self.participants_data.clear()
 
         for task_id, task in list(self.audio_listener_tasks.items()):
