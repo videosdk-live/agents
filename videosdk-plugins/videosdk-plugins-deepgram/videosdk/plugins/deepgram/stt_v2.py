@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import numpy as np
-from typing import Any, Optional
+from typing import Any, Optional, List,Union
 import os
 from urllib.parse import urlencode
 import aiohttp
@@ -30,7 +30,7 @@ class DeepgramSTTV2(BaseSTT):
         eot_threshold:float=0.8,
         eot_timeout_ms:int=7000,
         keyterm: list[str] | None = None,
-        language: str = "en",
+        tag:Union[str,List[str]]|None = None,
         base_url: str = "wss://api.deepgram.com/v2/listen",
         enable_preemptive_generation: bool = False,
     ) -> None:
@@ -47,7 +47,7 @@ class DeepgramSTTV2(BaseSTT):
             keyterm (list[str] | None): Optional list of keyterms/phrases to improve recognition (Keyterm Prompting).
                 Each entry is a keyterm or multi-word phrase (e.g. "tretinoin", "customer service").
                 Formatting is preserved (e.g. "Deepgram", "iPhone"). Max 500 tokens total across all keyterms. Defaults to None.
-            language (str): Language code for transcription. Defaults to "en" (Flux currently supports English).
+            tag: List of tags to add to the requests for usage reporting. Defaults to None.
             base_url (str): The base URL to use for the STT plugin. Defaults to "wss://api.deepgram.com/v2/listen".
             enable_preemptive_generation (bool): Enable preemptive generation based on EagerEndOfTurn events. Defaults to False.
         """
@@ -65,7 +65,7 @@ class DeepgramSTTV2(BaseSTT):
         self.eot_threshold=eot_threshold
         self.eot_timeout_ms = eot_timeout_ms
         self.keyterm = keyterm
-        self.language = language
+        self.tag=tag
         self.base_url = base_url
         self.enable_preemptive_generation = enable_preemptive_generation
 
@@ -147,7 +147,6 @@ class DeepgramSTTV2(BaseSTT):
 
         query_params = {
             "model": self.model,
-            "language": self.language,
             "encoding": "linear16",
             "sample_rate": self.target_sample_rate,
             "eot_threshold": self.eot_threshold,
@@ -155,6 +154,8 @@ class DeepgramSTTV2(BaseSTT):
             "eager_eot_threshold": self.eager_eot_threshold,
         }
         params_list = list(query_params.items())
+        if self.tag is not None:
+            params_list.append(("tag",self.tag))
         if self.keyterm:
             for t in self.keyterm:
                 if t.strip():

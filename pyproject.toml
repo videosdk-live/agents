@@ -1,0 +1,47 @@
+[tool.uv.workspace]
+members = [
+    "videosdk-agents",
+    "videosdk-plugins/*",
+]
+
+[dependency-groups]
+dev = [
+    "pdoc3",
+]
+
+[tool.uv.sources]
+videosdk-agents = { workspace = true }
+videosdk-plugins-anam = { workspace = true }
+videosdk-plugins-anthropic = { workspace = true }
+videosdk-plugins-assemblyai = { workspace = true }
+videosdk-plugins-aws = { workspace = true }
+videosdk-plugins-azure = { workspace = true }
+videosdk-plugins-cambai = { workspace = true }
+videosdk-plugins-cartesia = { workspace = true }
+videosdk-plugins-cerebras = { workspace = true }
+videosdk-plugins-cometapi = { workspace = true }
+videosdk-plugins-deepgram = { workspace = true }
+videosdk-plugins-elevenlabs = { workspace = true }
+videosdk-plugins-gladia = { workspace = true }
+videosdk-plugins-google = { workspace = true }
+videosdk-plugins-groq = { workspace = true }
+videosdk-plugins-humeai = { workspace = true }
+videosdk-plugins-inworldai = { workspace = true }
+videosdk-plugins-lmnt = { workspace = true }
+videosdk-plugins-murfai = { workspace = true }
+videosdk-plugins-navana = { workspace = true }
+videosdk-plugins-neuphonic = { workspace = true }
+videosdk-plugins-nvidia = { workspace = true }
+videosdk-plugins-openai = { workspace = true }
+videosdk-plugins-papla = { workspace = true }
+videosdk-plugins-resemble = { workspace = true }
+videosdk-plugins-rime = { workspace = true }
+videosdk-plugins-rnnoise = { workspace = true }
+videosdk-plugins-sarvamai = { workspace = true }
+videosdk-plugins-silero = { workspace = true }
+videosdk-plugins-simli = { workspace = true }
+videosdk-plugins-smallestai = { workspace = true }
+videosdk-plugins-speechify = { workspace = true }
+videosdk-plugins-turn-detector = { workspace = true }
+videosdk-plugins-ultravox = { workspace = true }
+videosdk-plugins-xai = { workspace = true }
