@@ -56,6 +56,9 @@ async def _execute_job_entrypoint(
     meeting_joined_event: Any = None,
 ):
     """Execute job entrypoint in a separate process/thread."""
+    import os as _os
+    import multiprocessing
+
     # Create job context
     ctx = JobContext(room_options=room_options, metadata=metadata)
     ctx._wait_for_meeting_join = wait_for_meeting_join
@@ -70,13 +73,49 @@ async def _execute_job_entrypoint(
 
         ctx.notify_meeting_joined = _notify_with_mp_event
 
+    # Detect if we're in a child process or the main process (thread mode)
+    is_child_process = multiprocessing.current_process().name != "MainProcess"
+
+    # Track the entrypoint task so the watchdog can cancel it in thread mode
+    entrypoint_task = None
+
+    # Watchdog: force cleanup after JobContext shutdown completes
+    async def _shutdown_watchdog():
+        """Monitor ctx._is_shutting_down and force cleanup after it."""
+        while not getattr(ctx, '_is_shutting_down', False):
+            await asyncio.sleep(0.5)
+        # Give cleanup 5 seconds to finish
+        for _ in range(10):
+            await asyncio.sleep(0.5)
+
+        if is_child_process:
+            # In subprocess: force-exit the process
+            logger.info("Watchdog: force-exiting child process after job cleanup")
+            _os._exit(0)
+        else:
+            # In thread/main process: cancel the entrypoint task
+            logger.info("Watchdog: cancelling entrypoint task after job cleanup")
+            if entrypoint_task and not entrypoint_task.done():
+                entrypoint_task.cancel()
+
+    asyncio.ensure_future(_shutdown_watchdog())
+
     # Set context var
     token = _set_current_job_context(ctx)
     try:
-        # Execute entrypoint
-        await entrypoint(ctx)
+        # Wrap in a task so the watchdog can cancel it
+        entrypoint_task = asyncio.ensure_future(entrypoint(ctx))
+        await entrypoint_task
+    except asyncio.CancelledError:
+        logger.info("Job entrypoint cancelled by shutdown watchdog")
+    except Exception as e:
+        logger.error(f"Error in job entrypoint: {e}")
     finally:
-        _reset_current_job_context(token)
+        try:
+            _reset_current_job_context(token)
+        except ValueError:
+            pass
+
 
 
 class WorkerType(Enum):
