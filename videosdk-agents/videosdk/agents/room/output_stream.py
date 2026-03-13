@@ -268,6 +268,8 @@ class CustomAudioStreamTrack(CustomAudioTrack):
             frame.time_base = time_base
             frame.sample_rate = self.sample_rate
             return frame
+        except MediaStreamError:
+            raise
         except Exception as e:
             traceback.print_exc()
             logger.error(f"Error while creating tts->rtc frame: {e}")
@@ -382,6 +384,8 @@ class MixingCustomAudioStreamTrack(CustomAudioStreamTrack):
             frame.time_base = time_base
             frame.sample_rate = self.sample_rate
             return frame
+        except MediaStreamError:
+            raise
         except Exception as e:
             traceback.print_exc()
             logger.error(f"Error while creating tts->rtc frame: {e}")
