@@ -264,6 +264,15 @@ class TurnMetrics:
     mcp_tool_metrics: List[McpToolMetrics] = field(default_factory=list)
     session_metrics: Optional[SessionMetrics] = field(default_factory=SessionMetrics)
 
+    # Background audio
+    background_audio_file_path: Optional[str] = None
+    background_audio_looping: Optional[bool] = None
+
+    # Thinking audio
+    thinking_audio_file_path: Optional[str] = None
+    thinking_audio_looping: Optional[bool] = None
+    thinking_audio_override_thinking: Optional[bool] = None
+
     def compute_e2e_latency(self) -> None:
         """Calculate E2E latency by summing component latencies (STT + EOU + LLM TTFT + TTS)."""
         e2e_components = []

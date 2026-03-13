@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
 import time
 import logging
 from typing import TYPE_CHECKING, Dict, List, Optional, Any, Union
@@ -89,6 +90,10 @@ class MetricsCollector:
         self._pending_interrupt_stt: Optional['SttMetrics'] = None
         self._pending_interrupt_eou: Optional['EouMetrics'] = None
         self._pending_interrupt_vad: Optional['VadMetrics'] = None
+
+        # Audio playback timing (session-level)
+        self._background_audio_start_time: Optional[float] = None
+        self._thinking_audio_start_time: Optional[float] = None
     # ──────────────────────────────────────────────
     # Session lifecycle
     # ──────────────────────────────────────────────
@@ -1078,6 +1083,58 @@ class MetricsCollector:
             )
             self.current_turn.fallback_events.append(fallback_event)
             logger.info(f"Fallback event recorded: {event_data.get('component_type')} - {event_data.get('message')}")
+
+    # ──────────────────────────────────────────────
+    # Background audio metrics
+    # ──────────────────────────────────────────────
+
+    def on_background_audio_start(self, file_path: Optional[str] = None, looping: bool = False) -> None:
+        """Called when background audio playback starts."""
+        now = time.perf_counter()
+        self._background_audio_start_time = now
+        file_name = os.path.basename(file_path) if file_path else None
+        if self.current_turn:
+            self.current_turn.background_audio_file_path = file_name
+            self.current_turn.background_audio_looping = looping
+            self._start_timeline_event("background_audio", now)
+        if self.traces_flow_manager:
+            self.traces_flow_manager.create_background_audio_start_span(
+                file_path=file_name, looping=looping, start_time=now
+            )
+        logger.info(f"[metrics] background audio started | file={file_name} | looping={looping}")
+
+    def on_background_audio_stop(self) -> None:
+        """Called when background audio playback stops."""
+        now = time.perf_counter()
+        self._background_audio_start_time = None
+        if self.current_turn:
+            self._end_timeline_event("background_audio", now)
+        if self.traces_flow_manager:
+            self.traces_flow_manager.create_background_audio_stop_span(end_time=now)
+        logger.info("[metrics] background audio stopped")
+
+    # ──────────────────────────────────────────────
+    # Thinking audio metrics
+    # ──────────────────────────────────────────────
+
+    def on_thinking_audio_start(self, file_path: Optional[str] = None, looping: bool = False) -> None:
+        """Called when thinking audio playback starts."""
+        now = time.perf_counter()
+        self._thinking_audio_start_time = now
+        file_name = os.path.basename(file_path) if file_path else None
+        if self.current_turn:
+            self.current_turn.thinking_audio_file_path = file_name
+            self.current_turn.thinking_audio_looping = looping
+            self._start_timeline_event("thinking_audio", now)
+        logger.info(f"[metrics] thinking audio started | file={file_name} | looping={looping}")
+
+    def on_thinking_audio_stop(self) -> None:
+        """Called when thinking audio playback stops."""
+        now = time.perf_counter()
+        self._thinking_audio_start_time = None
+        if self.current_turn:
+            self._end_timeline_event("thinking_audio", now)
+        logger.info("[metrics] thinking audio stopped")
 
     # ──────────────────────────────────────────────
     # Realtime-specific metrics

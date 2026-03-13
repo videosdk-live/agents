@@ -822,6 +822,38 @@ class TracesFlowManager:
                             start_time=event.start_time,
                         )
                         self.end_span(agent_speech_span, end_time=event.end_time if event.end_time else turn_end_time)
+                    elif event.event_type == "thinking_audio":
+                        thinking_attrs = {}
+                        if turn.thinking_audio_file_path:
+                            thinking_attrs["file_path"] = turn.thinking_audio_file_path
+                        if turn.thinking_audio_looping is not None:
+                            thinking_attrs["looping"] = turn.thinking_audio_looping
+                        if turn.thinking_audio_override_thinking is not None:
+                            thinking_attrs["override_thinking"] = turn.thinking_audio_override_thinking
+                        if event.duration_ms is not None:
+                            thinking_attrs["duration_ms"] = event.duration_ms
+                        thinking_span = create_span(
+                            "Thinking Audio",
+                            thinking_attrs,
+                            parent_span=turn_span,
+                            start_time=event.start_time,
+                        )
+                        self.end_span(thinking_span, end_time=event.end_time if event.end_time else turn_end_time)
+                    elif event.event_type == "background_audio":
+                        bg_attrs = {}
+                        if turn.background_audio_file_path:
+                            bg_attrs["file_path"] = turn.background_audio_file_path
+                        if turn.background_audio_looping is not None:
+                            bg_attrs["looping"] = turn.background_audio_looping
+                        if event.duration_ms is not None:
+                            bg_attrs["duration_ms"] = event.duration_ms
+                        bg_span = create_span(
+                            "Background Audio",
+                            bg_attrs,
+                            parent_span=turn_span,
+                            start_time=event.start_time,
+                        )
+                        self.end_span(bg_span, end_time=event.end_time if event.end_time else turn_end_time)
 
 
 
@@ -966,6 +998,30 @@ class TracesFlowManager:
         complete_span(self.a2a_span, StatusCode.OK, end_time=time.perf_counter())
         self.a2a_span = None
         self._a2a_turn_count = 0  
+
+    def create_thinking_audio_start_span(self, file_path: str = None, looping: bool = False, start_time: float = None):
+        """Creates a 'Playing Thinking Audio' point-in-time span at session level."""
+        if not self.main_turn_span:
+            return None
+
+        attrs = {"event": "start", "looping": looping}
+        if file_path:
+            attrs["file_path"] = file_path
+
+        t = start_time or time.perf_counter()
+        span = create_span("Playing Thinking Audio", attrs, parent_span=self.main_turn_span, start_time=t)
+        self.end_span(span, message="Thinking audio started", end_time=t)
+        return span
+
+    def create_thinking_audio_stop_span(self, end_time: float = None):
+        """Creates a 'Stopped Thinking Audio' point-in-time span at session level."""
+        if not self.main_turn_span:
+            return None
+
+        t = end_time or time.perf_counter()
+        span = create_span("Stopped Thinking Audio", {"event": "stop"}, parent_span=self.main_turn_span, start_time=t)
+        self.end_span(span, message="Thinking audio stopped", end_time=t)
+        return span
 
     def create_background_audio_start_span(self, file_path: str = None, looping: bool = False, start_time: float = None):
         """Creates a 'Playing Background Audio' span at session level (same level as turn spans)."""
