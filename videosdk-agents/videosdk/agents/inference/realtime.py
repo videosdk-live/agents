@@ -206,6 +206,7 @@ class Realtime(RealtimeBaseModel[RealtimeEventTypes]):
             presence_penalty=presence_penalty,
             frequency_penalty=frequency_penalty,
             response_modalities=response_modalities or ["AUDIO"],
+            model_id=model,
         )
 
         return Realtime(
