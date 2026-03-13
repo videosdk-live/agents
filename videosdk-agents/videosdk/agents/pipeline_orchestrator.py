@@ -653,6 +653,9 @@ class PipelineOrchestrator(EventEmitter[Literal[
 
             if not handle.done():
                 handle._mark_done()
+
+            if self.agent and self.agent.session and self.agent.session.is_background_audio_enabled:
+                await self.agent.session.stop_thinking_audio()
     
     async def say(self, message: str, handle: UtteranceHandle) -> None:
         """
