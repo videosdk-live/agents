@@ -24,7 +24,7 @@ from videosdk.agents import (
 import av
 import time
 from videosdk.agents.event_bus import global_event_emitter
-from videosdk.agents import realtime_metrics_collector
+from videosdk.agents.metrics import metrics_collector
 from google import genai
 from google.genai.live import AsyncSession
 from google.genai.types import (
@@ -175,8 +175,6 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         self._closing = False
         self._session_should_close = asyncio.Event()
         self._main_task = None
-        self.loop = None
-        self.audio_track = None
         self._buffered_audio = bytearray()
         self._is_speaking = False
         self._last_audio_time = 0.0
@@ -238,19 +236,8 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
 
         try:
 
-            if (
-                not self.audio_track
-                and self.loop
-                and "AUDIO" in self.config.response_modalities
-            ):
-                self.audio_track = CustomAudioStreamTrack(self.loop)
-            elif not self.loop and "AUDIO" in self.config.response_modalities:
-                self.emit(
-                    "error", "Event loop not initialized. Audio playback will not work."
-                )
-                raise RuntimeError(
-                    "Event loop not initialized. Audio playback will not work."
-                )
+            if not self.audio_track and "AUDIO" in self.config.response_modalities:
+                logger.warning("audio_track not set — it should be assigned externally by the pipeline before connect().")
 
             try:
                 initial_session = await self._create_session()
@@ -408,13 +395,13 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                     tool_info = get_tool_info(tool)
                     if tool_info.name == tool_call.name:
                         if accumulated_input_text:
-                            await realtime_metrics_collector.set_user_transcript(
+                            metrics_collector.set_user_transcript(
                                 accumulated_input_text
                             )
                             accumulated_input_text = ""
                         try:
-                            await realtime_metrics_collector.add_tool_call(
-                                tool_info.name
+                            metrics_collector.add_function_tool_call(
+                                tool_name=tool_info.name
                             )
                             result = await tool(**tool_call.args)
                             await self.send_tool_response(
@@ -461,10 +448,11 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                             ):
                                 if input_transcription.text:
                                     if not self._user_speaking:
-                                        self.emit("user_speech_ended", {})
-                                        await realtime_metrics_collector.set_user_speech_start()
+                                        self.emit("user_speech_started", {})
+                                        metrics_collector.on_user_speech_start()
+                                        metrics_collector.start_turn()
                                         self._user_speaking = True
-                                    self.emit("user_speech_started", {"type": "done"})
+                                    self.emit("user_speech_ended", {"type": "done"})
                                     accumulated_input_text += input_transcription.text
                                     global_event_emitter.emit(
                                         "input_transcription",
@@ -473,6 +461,12 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                             "is_final": False,
                                         },
                                     )
+
+                                    # If agent is still producing audio, re-emit to restore SPEAKING state
+                                    # (user speech events override it to LISTENING → THINKING)
+                                    if self._agent_speaking:
+                                        self.emit("agent_speech_started", {})
+                                        metrics_collector.on_agent_speech_start()
 
                             if (
                                 output_transcription := server_content.output_transcription
@@ -508,10 +502,10 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
 
                             if model_turn := server_content.model_turn:
                                 if self._user_speaking:
-                                    await realtime_metrics_collector.set_user_speech_end()
+                                    metrics_collector.on_user_speech_end()
                                     self._user_speaking = False
                                 if accumulated_input_text:
-                                    await realtime_metrics_collector.set_user_transcript(
+                                    metrics_collector.set_user_transcript(
                                         accumulated_input_text
                                     )
                                     try:
@@ -539,7 +533,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                             chunk_number += 1
                                             if not self._agent_speaking:
                                                 self.emit("agent_speech_started", {})
-                                                await realtime_metrics_collector.set_agent_speech_start()
+                                                metrics_collector.on_agent_speech_start()
                                                 self._agent_speaking = True
 
                                             if self.audio_track and self.loop:
@@ -557,13 +551,15 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                         accumulated_text += part.text
 
                             if server_content.turn_complete and active_response_id:
+                                usage_metadata = self.get_usage_details(response.usage_metadata)
+                                metrics_collector.set_realtime_usage(usage_metadata)
                                 if accumulated_input_text:
-                                    await realtime_metrics_collector.set_user_transcript(
+                                    metrics_collector.set_user_transcript(
                                         accumulated_input_text
                                     )
                                     accumulated_input_text = ""
                                 if final_transcription:
-                                    await realtime_metrics_collector.set_agent_response(
+                                    metrics_collector.set_agent_response(
                                         final_transcription
                                     )
                                     try:
@@ -604,10 +600,8 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                 active_response_id = None
                                 accumulated_text = ""
                                 final_transcription = ""
-                                self.emit("agent_speech_ended", {})
-                                await realtime_metrics_collector.set_agent_speech_end(
-                                    timeout=1.0
-                                )
+                                if self.audio_track:
+                                    self.audio_track.mark_synthesis_complete()
                                 self._agent_speaking = False
 
                 except Exception as e:
@@ -739,7 +733,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                 turn_complete=True,
             )
             self.emit("agent_speech_ended", {})
-            await realtime_metrics_collector.set_interrupted()
+            metrics_collector.on_interrupted()
             if self.audio_track and "AUDIO" in self.config.response_modalities:
                 self.audio_track.interrupt()
         except Exception as e:
@@ -901,13 +895,8 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
             await self._cleanup_session(self._session)
             self._session = None
 
-        if hasattr(self.audio_track, "cleanup") and self.audio_track:
-            try:
-                await self.audio_track.cleanup()
-            except Exception as e:
-                self.emit("error", f"Error cleaning up audio track: {e}")
-
         self._buffered_audio = bytearray()
+        await super().aclose()
 
     async def _reconnect(self) -> None:
         if self._session:
@@ -955,3 +944,66 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
             "gemini-2.5-flash-native-audio-preview-12-2025"
         ]
         return any(indicator in self.model for indicator in native_audio_indicators)
+
+
+    def get_usage_details(self,usage_metadata) -> dict:
+        """
+        Flatten Gemini Live UsageMetadata into the same pricing dictionary format.
+
+        Supports TEXT/AUDIO/IMAGE breakdown + thoughts tokens.
+        """
+        total_tokens = getattr(usage_metadata, "total_token_count", 0)
+        input_tokens = getattr(usage_metadata, "prompt_token_count", 0)
+        output_tokens = getattr(usage_metadata, "response_token_count", 0)
+
+        thoughts_tokens = getattr(usage_metadata, "thoughts_token_count", 0)
+
+        prompt_details = getattr(usage_metadata, "prompt_tokens_details", None) or []
+        response_details = getattr(usage_metadata, "response_tokens_details", None) or []
+
+        input_text_tokens = 0
+        input_audio_tokens = 0
+        input_image_tokens = 0
+
+        output_text_tokens = 0
+        output_audio_tokens = 0
+        output_image_tokens = 0
+
+        for item in prompt_details:
+            modality = str(getattr(item, "modality", "")).upper()
+            count = getattr(item, "token_count", 0)
+
+            if "TEXT" in modality:
+                input_text_tokens += count
+            elif "AUDIO" in modality:
+                input_audio_tokens += count
+            elif "IMAGE" in modality:
+                input_image_tokens += count
+
+        for item in response_details:
+            modality = str(getattr(item, "modality", "")).upper()
+            count = getattr(item, "token_count", 0)
+
+            if "TEXT" in modality:
+                output_text_tokens += count
+            elif "AUDIO" in modality:
+                output_audio_tokens += count
+            elif "IMAGE" in modality:
+                output_image_tokens += count
+
+        return {
+            "total_tokens": total_tokens,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+
+            "input_text_tokens": input_text_tokens,
+            "input_audio_tokens": input_audio_tokens,
+            "input_image_tokens": input_image_tokens,
+
+            "output_text_tokens": output_text_tokens,
+            "output_audio_tokens": output_audio_tokens,
+            "output_image_tokens": output_image_tokens,
+
+            "thoughts_tokens": thoughts_tokens,
+        }
+        

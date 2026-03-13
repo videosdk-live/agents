@@ -19,6 +19,7 @@ from .llm.chat_context import ChatRole, ImageContent
 from .utterance_handle import UtteranceHandle
 from .utils import UserState, AgentState
 from .voice_mail_detector import VoiceMailDetector
+from .metrics import metrics_collector
 
 if TYPE_CHECKING:
     from .agent import Agent
@@ -93,6 +94,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
         self.resume_on_false_interrupt = resume_on_false_interrupt
         
         # Interruption state
+        self._generation_id = 0
         self._is_interrupted = False
         self._is_in_false_interrupt_pause = False
         self._false_interrupt_paused_speech = False
@@ -209,39 +211,57 @@ class PipelineOrchestrator(EventEmitter[Literal[
     async def process_text(self, text: str) -> None:
         """
         Process text input directly (bypasses STT).
-        
+
         Args:
             text: User text input
         """
         if not self.agent:
             logger.warning("No agent available for text processing")
             return
-        
+
+        metrics_collector.start_turn()
+        metrics_collector.set_user_transcript(text)
+
         self.agent.chat_context.add_message(
             role=ChatRole.USER,
             content=text
         )
-        
+
+        if not self.speech_understanding:
+            metrics_collector.on_user_speech_start()
+            metrics_collector.on_user_speech_end()
+            
+            if not self.speech_generation:
+                metrics_collector.on_agent_speech_start()
+
         if self.content_generation:
+            self.agent.session._emit_agent_state(AgentState.THINKING)
             full_response = ""
             async for response_chunk in self.content_generation.generate(text):
                 if response_chunk.content:
                     full_response += response_chunk.content
-            
+
             if full_response:
                 self.agent.chat_context.add_message(
                     role=ChatRole.ASSISTANT,
                     content=full_response
                 )
-                
+
                 if self.hooks and self.hooks.has_content_generated_hooks():
                     await self.hooks.trigger_content_generated({"text": full_response})
-                
+
                 self.emit("content_generated", {"text": full_response})
-                
+
                 if self.speech_generation:
                     await self.speech_generation.synthesize(full_response)
-                
+                else:
+                    # No TTS - complete the turn after LLM
+                    self.agent.session._emit_agent_state(AgentState.IDLE)
+                    self.agent.session._emit_user_state(UserState.IDLE)
+                    metrics_collector.on_agent_speech_end()
+                    metrics_collector.set_agent_response(full_response)
+                    metrics_collector.complete_turn()
+
                 self.emit("synthesis_complete", {})
     
     def get_latest_transcript(self) -> str:
@@ -254,7 +274,30 @@ class PipelineOrchestrator(EventEmitter[Literal[
         """Handle final transcript from speech understanding"""
         text = data["text"]
         is_preemptive = data.get("is_preemptive", False)
-        
+
+        agent_state = self.agent.session.agent_state if self.agent and self.agent.session else None
+        is_agent_active = agent_state in (AgentState.SPEAKING, AgentState.THINKING)
+
+        if is_agent_active:
+            word_count = len(text.strip().split()) if text.strip() else 0
+            logger.info(f"[orchestrator] Final transcript while agent is {agent_state.value} | word_count={word_count}, min_words={self.interrupt_min_words}")
+
+            if word_count < self.interrupt_min_words:
+                logger.info(f"[orchestrator] Transcript '{text}' below min_words threshold ({word_count} < {self.interrupt_min_words}), dropping")
+                return
+
+            # Word count threshold met — check if utterance is interruptible
+            if self.agent.session.current_utterance and not self.agent.session.current_utterance.is_interruptible:
+                logger.info(f"[orchestrator] Transcript '{text}' meets min_words but utterance is not interruptible, dropping")
+                return
+
+            # Interrupt the current pipeline and start a new turn
+            logger.info(f"[orchestrator] Word count {word_count} >= min_words {self.interrupt_min_words}, interrupting pipeline")
+            await self._interrupt_pipeline()
+
+            metrics_collector.start_turn()
+            metrics_collector.set_user_transcript(text)
+
         if self.voice_mail_detector and not self.voice_mail_detection_done and text.strip():
             self._vmd_buffer += f" {text}"
             if not self._vmd_check_task:
@@ -276,7 +319,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
     async def _on_transcript_preflight(self, data: dict) -> None:
         """Handle preflight transcript for preemptive generation"""
         preflight_text = data["text"]
-        
+
         if self.agent and self.content_generation:
             user_text = preflight_text
             if self.agent.knowledge_base:
@@ -301,6 +344,8 @@ class PipelineOrchestrator(EventEmitter[Literal[
             
             self._preemptive_authorized.clear()
             self._preemptive_cancelled = False
+            if metrics_collector:
+                metrics_collector.on_stt_preflight_end()
             self._preemptive_generation_task = asyncio.create_task(
                 self._generate_and_synthesize(user_text, handle, wait_for_authorization=True)
             )
@@ -338,14 +383,18 @@ class PipelineOrchestrator(EventEmitter[Literal[
         self._preemptive_generation_task = None
     
     async def _on_transcript_interim(self, data: dict) -> None:
-        """Handle interim transcript"""
-        pass
+        """Handle interim transcript — check for STT-based interruption"""
+        text = data.get("text", "")
+        if text and text.strip():
+            await self.handle_stt_event(text)
     
     async def _on_speech_started(self, data: dict) -> None:
         """Handle speech started event"""
+        logger.info("[orchestrator] _on_speech_started fired")
         self._is_user_speaking = True
-        
-        if self.agent and self.agent.session and self.agent.session.agent_state == AgentState.SPEAKING:
+
+        agent_state = self.agent.session.agent_state if self.agent and self.agent.session else None
+        if agent_state == AgentState.SPEAKING:
             if self._interruption_check_task is None or self._interruption_check_task.done():
                 logger.info("User started speaking during agent response, initiating interruption monitoring")
                 self._interruption_check_task = asyncio.create_task(
@@ -354,8 +403,9 @@ class PipelineOrchestrator(EventEmitter[Literal[
     
     async def _on_speech_stopped(self, data: dict) -> None:
         """Handle speech stopped event"""
+        logger.info("[orchestrator] _on_speech_stopped fired")
         self._is_user_speaking = False
-        
+
         if self._interruption_check_task is not None and not self._interruption_check_task.done():
             logger.info("User stopped speaking, cancelling interruption check")
             self._interruption_check_task.cancel()
@@ -412,10 +462,14 @@ class PipelineOrchestrator(EventEmitter[Literal[
             kb_context = await self.agent.knowledge_base.process_query(processed_text)
             if kb_context:
                 final_user_text = f"{kb_context}\n\nUser: {processed_text}"
-        
+
         if self.conversational_graph:
             final_user_text = self.conversational_graph.handle_input(processed_text)
-        
+
+        if not metrics_collector.current_turn:
+            metrics_collector.start_turn()
+        metrics_collector.set_user_transcript(user_text)
+
         self.agent.chat_context.add_message(
             role=ChatRole.USER,
             content=final_user_text
@@ -446,6 +500,8 @@ class PipelineOrchestrator(EventEmitter[Literal[
         wait_for_authorization: bool = False
     ) -> None:
         """Generate LLM response and synthesize with TTS"""
+        self._generation_id += 1
+        my_generation_id = self._generation_id
         self._is_interrupted = False
         full_response = ""
         self._partial_response = ""
@@ -461,6 +517,11 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 logger.warning("No content generation available")
                 return
             
+            if not self.speech_generation:
+                logger.warning("No speech generation available")
+                metrics_collector.on_agent_speech_start()
+                
+            self.agent.session._emit_agent_state(AgentState.THINKING)
             llm_stream = self.content_generation.generate(user_text)
             
             q = asyncio.Queue(maxsize=50)
@@ -468,34 +529,46 @@ class PipelineOrchestrator(EventEmitter[Literal[
             async def collector():
                 """Collect LLM chunks"""
                 response_parts = []
+
+                def _safe_set_agent_response(text: str) -> None:
+                    """Only set agent response if this collector still owns the current generation."""
+                    if text and self._generation_id == my_generation_id and metrics_collector.current_turn:
+                        metrics_collector.set_agent_response(text)
+
                 try:
                     async for chunk in llm_stream:
                         if handle.interrupted or (wait_for_authorization and self._preemptive_cancelled):
                             logger.info("LLM collection interrupted")
                             await q.put(None)
-                            return "".join(response_parts)
-                        
+                            full = "".join(response_parts)
+                            _safe_set_agent_response(full)
+                            return full
+
                         content = chunk.content if hasattr(chunk, "content") else chunk
                         metadata = chunk.metadata if hasattr(chunk, "metadata") else chunk
-                        
+
                         if content:
                             response_parts.append(content)
                             await q.put(content)
-                        
+
                         self._partial_response = "".join(response_parts)
-                    
+
                     if not handle.interrupted:
                         await q.put(None)
 
                     if self.conversational_graph and metadata.get("graph_response"):
                         _ = await self.conversational_graph.handle_decision(self.agent, metadata.get("graph_response"))
-                    
-                    return "".join(response_parts)
-                
+
+                    full = "".join(response_parts)
+                    _safe_set_agent_response(full)
+                    return full
+
                 except asyncio.CancelledError:
                     logger.info("LLM collection cancelled")
                     await q.put(None)
-                    return "".join(response_parts)
+                    full = "".join(response_parts)
+                    _safe_set_agent_response(full)
+                    return full
             
             async def tts_consumer():
                 """Consume LLM chunks and send to TTS"""
@@ -525,7 +598,6 @@ class PipelineOrchestrator(EventEmitter[Literal[
                             chunk = await asyncio.wait_for(q.get(), timeout=0.1)
                             if chunk is None:
                                 break
-                            print(f"chunk: at the tts consumer at pipline orchestrator  {chunk}")
                             yield chunk
                             
                         except asyncio.TimeoutError:
@@ -555,24 +627,35 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 full_response = collector_task.result()
             else:
                 full_response = self._partial_response
-            
-            if full_response and self.agent:
+
+            if self._is_interrupted or self._generation_id != my_generation_id:
+                logger.info("[orchestrator] Skipping post-gather updates — turn was interrupted or generation superseded")
+            elif full_response and self.agent:
                 self.agent.chat_context.add_message(
                     role=ChatRole.ASSISTANT,
                     content=full_response
                 )
-                
                 if self.hooks and self.hooks.has_content_generated_hooks():
                     await self.hooks.trigger_content_generated({"text": full_response})
-                
+
                 self.emit("content_generated", {"text": full_response})
-        
+
+                # For no-TTS modes, complete the turn here since there's no speech_generation
+                if not self.speech_generation:
+                    self.agent.session._emit_user_state(UserState.IDLE)
+                    self.agent.session._emit_agent_state(AgentState.IDLE)
+                    metrics_collector.on_agent_speech_end()
+                    metrics_collector.complete_turn()
+
         finally:
             if self.hooks and self.hooks.has_user_turn_end_hooks():
                 await self.hooks.trigger_user_turn_end()
-            
+
             if not handle.done():
                 handle._mark_done()
+
+            if self.agent and self.agent.session and self.agent.session.is_background_audio_enabled:
+                await self.agent.session.stop_thinking_audio()
     
     async def say(self, message: str, handle: UtteranceHandle) -> None:
         """
@@ -584,6 +667,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
         """
         if self.speech_generation:
             try:
+                metrics_collector.set_agent_response(message)
                 await self.speech_generation.synthesize(message)
             finally:
                 handle._mark_done()
@@ -664,12 +748,31 @@ class PipelineOrchestrator(EventEmitter[Literal[
         except asyncio.CancelledError:
             logger.debug("Interruption monitoring cancelled")
     
-    async def handle_stt_event(self, text: str) -> None:
-        """Handle STT event for interruption (word-based)"""
+    async def handle_stt_event(self, text: str) -> bool:
+        """Handle STT event for interruption (word-based).
+        
+        Only processes interruptions when the agent is actively speaking or generating.
+        Respects interrupt_min_words and interrupt_mode configuration.
+        
+        Returns:
+            True if interruption was triggered, False otherwise.
+        """
         if not text or not text.strip():
-            return
+            return False
+        
+        # Only consider interruption when agent is actively speaking or thinking
+        agent_state = self.agent.session.agent_state if self.agent and self.agent.session else None
+        if agent_state not in (AgentState.SPEAKING, AgentState.THINKING):
+            return False
         
         word_count = len(text.strip().split())
+        
+        # Debug: log exact state of current_utterance
+        if self.agent and self.agent.session and self.agent.session.current_utterance:
+            cu = self.agent.session.current_utterance
+            logger.info(f"[orchestrator] handle_stt_event: word_count={word_count}, min_words={self.interrupt_min_words}, mode={self.interrupt_mode}, utterance_id={cu.id}, interruptible={cu.is_interruptible}, done={cu.done()}")
+        else:
+            logger.info(f"[orchestrator] handle_stt_event: word_count={word_count}, min_words={self.interrupt_min_words}, mode={self.interrupt_mode}, no current_utterance")
         
         if self.resume_on_false_interrupt and self._is_in_false_interrupt_pause and word_count >= self.interrupt_min_words:
             logger.info(f"STT transcript received while in paused state, confirming real interruption")
@@ -677,13 +780,21 @@ class PipelineOrchestrator(EventEmitter[Literal[
             self._is_in_false_interrupt_pause = False
             self._false_interrupt_paused_speech = False
             await self._interrupt_pipeline()
-            return
+            return True
         
         if self.interrupt_mode in ("STT_ONLY", "HYBRID"):
             if word_count >= self.interrupt_min_words:
                 if self.agent and self.agent.session and self.agent.session.current_utterance:
                     if self.agent.session.current_utterance.is_interruptible:
+                        logger.info(f"[orchestrator] Word count {word_count} >= min_words {self.interrupt_min_words}, triggering interruption")
                         await self._trigger_interruption()
+                        return True
+                    else:
+                        logger.info(f"[orchestrator] Word count threshold met but utterance is not interruptible")
+            else:
+                logger.info(f"[orchestrator] Word count {word_count} < min_words {self.interrupt_min_words}, ignoring")
+        
+        return False
     
     async def _trigger_interruption(self) -> None:
         """Trigger interruption with optional pause/resume support"""
@@ -753,11 +864,13 @@ class PipelineOrchestrator(EventEmitter[Literal[
     
     async def _interrupt_pipeline(self) -> None:
         """Interrupt all components"""
+        self.agent.session._emit_agent_state(AgentState.LISTENING)
         self._is_interrupted = True
         self._cancel_false_interrupt_timer()
         self._is_in_false_interrupt_pause = False
         self._false_interrupt_paused_speech = False
-        
+        metrics_collector.on_interrupted()
+
         if self.agent and self.agent.session and self.agent.session.current_utterance:
             if self.agent.session.current_utterance.is_interruptible:
                 self.agent.session.current_utterance.interrupt()
@@ -772,11 +885,24 @@ class PipelineOrchestrator(EventEmitter[Literal[
             await self.content_generation.cancel()
 
         if self._current_generation_task and not self._current_generation_task.done():
-            self._current_generation_task.cancel()     
-        
+            self._current_generation_task.cancel()
+
+        if self._partial_response and metrics_collector.current_turn:
+            if not metrics_collector.current_turn.agent_speech:
+                metrics_collector.set_agent_response(self._partial_response)
+
+        if self._partial_response and self.agent:
+            self.agent.chat_context.add_message(
+                role=ChatRole.ASSISTANT,
+                content=self._partial_response
+            )
+
+        if metrics_collector.current_turn:
+            logger.info("[orchestrator] Completing interrupted turn")
+            metrics_collector.complete_turn()
+
         self._partial_response = ""
-        self._is_interrupted = False
-    
+
     async def interrupt(self) -> None:
         """Public method to interrupt the pipeline"""
         await self._interrupt_pipeline()

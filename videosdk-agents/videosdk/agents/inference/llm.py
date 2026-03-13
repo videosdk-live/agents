@@ -149,7 +149,7 @@ class LLM(BaseLLM):
         """
         return LLM(
             provider="google",
-            model=model,
+            model_id=model,
             temperature=temperature,
             tool_choice=tool_choice,
             max_output_tokens=max_output_tokens,
@@ -280,9 +280,8 @@ class LLM(BaseLLM):
             ) as response:
                 if response.status != 200:
                     error_text = await response.text()
-                    raise Exception(
-                        f"HTTP {response.status}: {error_text}"
-                    )
+
+                    raise Exception(f"HTTP {response.status}: {error_text}")
 
                 # Process SSE stream
                 async for line in response.content:
@@ -302,7 +301,10 @@ class LLM(BaseLLM):
                         try:
                             chunk = json.loads(data_str)
                             async for llm_response in self._process_chunk(
-                                chunk, current_content, streaming_state, conversational_graph
+                                chunk,
+                                current_content,
+                                streaming_state,
+                                conversational_graph,
                             ):
                                 if llm_response.content:
                                     current_content += llm_response.content
@@ -354,8 +356,8 @@ class LLM(BaseLLM):
         delta = choice.get("delta", {})
         # Check for tool calls
         if "tool_calls" in delta:
-            for tool_call in (delta.get("tool_calls") or []):
-                
+            for tool_call in delta.get("tool_calls") or []:
+
                 function_data = tool_call.get("function", {})
                 function_name = function_data.get("name", "")
                 function_args = function_data.get("arguments", "")
@@ -383,7 +385,9 @@ class LLM(BaseLLM):
             if conversational_graph:
                 # Stream conversational graph response
                 full_content = current_content + content
-                for content_chunk in conversational_graph.stream_conversational_graph_response(
+                for (
+                    content_chunk
+                ) in conversational_graph.stream_conversational_graph_response(
                     full_content, streaming_state
                 ):
                     yield LLMResponse(content=content_chunk, role=ChatRole.ASSISTANT)
@@ -419,30 +423,36 @@ class LLM(BaseLLM):
 
             elif isinstance(item, FunctionCall):
                 # Convert function call to assistant message with tool_calls
-                formatted_messages.append({
-                    "role": "assistant",
-                    "content": None,
-                    "tool_calls": [{
-                        "id": f"call_{item.name}",
-                        "type": "function",
-                        "function": {
-                            "name": item.name,
-                            "arguments": (
-                                item.arguments
-                                if isinstance(item.arguments, str)
-                                else json.dumps(item.arguments)
-                            ),
-                        },
-                    }],
-                })
+                formatted_messages.append(
+                    {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": f"call_{item.name}",
+                                "type": "function",
+                                "function": {
+                                    "name": item.name,
+                                    "arguments": (
+                                        item.arguments
+                                        if isinstance(item.arguments, str)
+                                        else json.dumps(item.arguments)
+                                    ),
+                                },
+                            }
+                        ],
+                    }
+                )
 
             elif isinstance(item, FunctionCallOutput):
                 # Convert function output to tool message
-                formatted_messages.append({
-                    "role": "tool",
-                    "tool_call_id": f"call_{item.name}",
-                    "content": str(item.output),
-                })
+                formatted_messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": f"call_{item.name}",
+                        "content": str(item.output),
+                    }
+                )
 
         return formatted_messages
 
@@ -512,14 +522,16 @@ class LLM(BaseLLM):
                 gemini_schema = build_gemini_schema(tool)
 
                 # Convert to OpenAI format
-                formatted_tools.append({
-                    "type": "function",
-                    "function": {
-                        "name": gemini_schema.get("name", ""),
-                        "description": gemini_schema.get("description", ""),
-                        "parameters": gemini_schema.get("parameters", {}),
-                    },
-                })
+                formatted_tools.append(
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": gemini_schema.get("name", ""),
+                            "description": gemini_schema.get("description", ""),
+                            "parameters": gemini_schema.get("parameters", {}),
+                        },
+                    }
+                )
             except Exception as e:
                 logger.error(f"[InferenceLLM] Failed to format tool: {e}")
                 continue
@@ -549,4 +561,3 @@ class LLM(BaseLLM):
     def label(self) -> str:
         """Get a descriptive label for this LLM instance."""
         return f"videosdk.inference.LLM.{self.provider}.{self.model}"
-

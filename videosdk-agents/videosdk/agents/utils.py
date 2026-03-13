@@ -16,18 +16,21 @@ import asyncio
 
 @dataclass
 class FunctionToolInfo:
+    """Holds metadata about a function tool, including its name, description, and parameter schema."""
     name: str
     description: str | None = None
     parameters_schema: Optional[dict] = None
 
 @enum.unique
 class UserState(enum.Enum):
+    """Represents the current state of the user in a conversation session."""
     IDLE = "idle"
     SPEAKING = "speaking"
     LISTENING = "listening"
 
 @enum.unique
 class AgentState(enum.Enum):
+    """Represents the current state of the agent in a conversation session."""
     STARTING = "starting"
     IDLE = "idle"
     SPEAKING = "speaking"
@@ -240,6 +243,7 @@ def build_pydantic_args_model(func: Callable[..., Any]) -> type[BaseModel]:
     return ModelBuilder(func).construct()
 
 class ModelBuilder:
+    """Constructs a Pydantic BaseModel from a function's signature, type hints, and docstring."""
     def __init__(self, func: Callable[..., Any]):
         self.func = func
         self.sig = inspect.signature(func)
@@ -275,6 +279,7 @@ class ModelBuilder:
         return "".join(part.title() for part in self.func.__name__.split("_")) + "Args"
 
 class TypeProcessor:
+    """Extracts the base type and Pydantic FieldInfo from a possibly Annotated type hint."""
     def __init__(self, hint: Any):
         self.original_hint = hint
         self.base_type = hint
@@ -294,6 +299,7 @@ class TypeProcessor:
                 break
 
 class FieldBuilder:
+    """Builds a Pydantic field tuple from a function parameter, its processed type, and docstring description."""
     def __init__(self, param: inspect.Parameter, type_processor: TypeProcessor, description: str | None):
         self.param = param
         self.type_processor = type_processor
@@ -600,6 +606,7 @@ async def graceful_cancel(*tasks: asyncio.Task) -> None:
 
 
 class AsyncIteratorQueue:
+    """An async iterator backed by an asyncio.Queue, allowing producers to put items and consumers to async-iterate until closed."""
     def __init__(self):
         self.queue = asyncio.Queue()
         self.closed = False

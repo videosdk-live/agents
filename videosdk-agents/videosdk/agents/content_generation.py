@@ -10,6 +10,7 @@ from .llm.llm import LLM, ResponseChunk
 from .llm.chat_context import ChatRole
 from .utils import is_function_tool, get_tool_info, UserState, AgentState
 from .agent import Agent
+from .metrics import metrics_collector
 
 if TYPE_CHECKING:
     from .knowledge_base.base import KnowledgeBase
@@ -82,7 +83,10 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                 "user_text": user_text,
                 "context_size": len(self.agent.chat_context.items)
             })
-            
+
+            metrics_collector.on_llm_start()
+            metrics_collector.set_llm_input(user_text)
+
             first_chunk_received = False
             
             agent_session = getattr(self.agent, "session", None)
@@ -96,6 +100,7 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                 conversational_graph=self.conversational_graph if self.conversational_graph else None
             ):
                 if llm_chunk_resp.metadata and "usage" in llm_chunk_resp.metadata:
+                    metrics_collector.set_llm_usage(llm_chunk_resp.metadata["usage"])
                     self.emit("usage_tracked", llm_chunk_resp.metadata["usage"])
                 
                 if self._is_interrupted:
@@ -108,11 +113,16 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                 
                 if not first_chunk_received:
                     first_chunk_received = True
+                    metrics_collector.on_llm_first_token()
                     self.emit("first_chunk", {})
                 
                 if llm_chunk_resp.metadata and "function_call" in llm_chunk_resp.metadata:
                     func_call = llm_chunk_resp.metadata["function_call"]
                     
+                    metrics_collector.add_function_tool_call(
+                        tool_name=func_call["name"],
+                        tool_params=func_call["arguments"],
+                    )
                     self.emit("tool_called", {
                         "name": func_call["name"],
                         "arguments": func_call["arguments"]
@@ -223,6 +233,7 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                         yield ResponseChunk(llm_chunk_resp.content, llm_chunk_resp.metadata, llm_chunk_resp.role)
             
             if not self._is_interrupted:
+                metrics_collector.on_llm_complete()
                 self.emit("generation_complete", {})
     
     def interrupt(self) -> None:

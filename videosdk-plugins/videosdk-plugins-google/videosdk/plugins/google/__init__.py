@@ -1,7 +1,7 @@
 from .live_api import GeminiRealtime, GeminiLiveConfig
 from .tts import GoogleTTS, GoogleVoiceConfig
 from .llm import GoogleLLM,VertexAIConfig
-from .stt import GoogleSTT
+from .stt import GoogleSTT,VoiceActivityConfig
 
 __all__ = [
     "GeminiRealtime",
@@ -10,5 +10,6 @@ __all__ = [
     "GoogleVoiceConfig",
     "GoogleLLM",
     "GoogleSTT",
-    "VertexAIConfig"
+    "VertexAIConfig",
+    "VoiceActivityConfig"
 ]

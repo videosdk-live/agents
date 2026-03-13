@@ -37,11 +37,14 @@ class RealtimeBaseModel(EventEmitter[Union[BaseEventTypes, TEvent]], Generic[TEv
         """Initialize the realtime model"""
         super().__init__()
         self.current_utterance: UtteranceHandle | None = None
+        self.audio_track = None  
+        self.loop = None         
 
     @abstractmethod
     async def aclose(self) -> None:
-        """Cleanup resources - must be implemented by subclasses"""
-        pass
+        """Cleanup resources - must be implemented by subclasses."""
+        self.audio_track = None
+        self.loop = None
     
     async def cleanup(self) -> None:
         """Cleanup resources - calls aclose for compatibility"""

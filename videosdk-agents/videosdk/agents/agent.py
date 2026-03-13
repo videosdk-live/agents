@@ -63,7 +63,7 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
         self._agent_card = None 
         self.id = agent_id or str(uuid.uuid4())
         self.mcp_manager = MCPToolManager()
-        self.session: "AgentSession"
+        self.session: AgentSession | None = None
         self._thinking_background_config: Optional[BackgroundAudioHandlerConfig] = None
         self.knowledge_base = knowledge_base 
         self.inherit_context = inherit_context
@@ -137,9 +137,11 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
     
     async def add_server(self, mcp_server: MCPServiceProvider) -> None:
         """Internal Method: Initialize the MCP server and register the tools"""
+        existing_tool_count = len(self.mcp_manager.tools)
         await self.mcp_manager.add_mcp_server(mcp_server)
-        self._tools.extend(self.mcp_manager.tools)
-    
+        new_tools = self.mcp_manager.tools[existing_tool_count:]
+        self._tools.extend(new_tools)
+        
     @abstractmethod
     async def on_enter(self) -> None:
         """Called when session starts, to be implemented in your custom agent implementation."""

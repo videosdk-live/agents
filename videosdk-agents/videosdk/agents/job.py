@@ -1,5 +1,5 @@
 import logging
-from typing import Callable, Coroutine, Optional, Any, TYPE_CHECKING
+from typing import Callable, Coroutine, Optional, Any, TYPE_CHECKING, Dict
 import os
 import asyncio
 from contextvars import ContextVar
@@ -30,6 +30,8 @@ _current_job_context: ContextVar[Optional["JobContext"]] = ContextVar(
 
 
 class TransportMode(Enum):
+    """Enumeration of supported transport modes for room connections."""
+
     VIDEOSDK = "videosdk"
     WEBSOCKET = "websocket"
     WEBRTC = "webrtc"
@@ -37,12 +39,16 @@ class TransportMode(Enum):
 
 @dataclass
 class WebSocketConfig:
+    """Configuration for WebSocket transport including port and endpoint path."""
+
     port: int = 8080
     path: str = "/ws"
 
 
 @dataclass
 class WebRTCConfig:
+    """Configuration for WebRTC transport including signaling and ICE server settings."""
+
     signaling_url: Optional[str] = None
     signaling_type: str = "websocket"
     ice_servers: Optional[list] = None
@@ -51,9 +57,36 @@ class WebRTCConfig:
         if self.ice_servers is None:
             self.ice_servers = [{"urls": "stun:stun.l.google.com:19302"}]
 
+@dataclass
+class TracesOptions:
+    """Configuration for OpenTelemetry trace export settings."""
+
+    enabled: bool = True
+    export_url: Optional[str] = None
+    export_headers: Optional[Dict[str, str]] = None
+
+@dataclass
+class MetricsOptions:
+    """Configuration for metrics collection and export settings."""
+
+    enabled: bool = True
+    export_url: Optional[str] = None
+    export_headers: Optional[Dict[str, str]] = None
+
+@dataclass
+class LoggingOptions:
+    """Configuration for log collection, level filtering, and export settings."""
+
+    enabled: bool = False
+    level: str = "INFO"
+    export_url: Optional[str] = None
+    export_headers: Optional[Dict[str, str]] = None
+
 
 @dataclass
 class RoomOptions:
+    """Configuration options for connecting to and managing a VideoSDK room, including transport, telemetry, and session settings."""
+
     room_id: Optional[str] = None
     auth_token: Optional[str] = None
     name: Optional[str] = "Agent"
@@ -69,8 +102,16 @@ class RoomOptions:
     auto_end_session: bool = True
     session_timeout_seconds: Optional[int] = 5
     # VideoSDK connection options
-    signaling_base_url: Optional[str] = None
+    signaling_base_url: Optional[str] = "api.videosdk.live"
     background_audio: bool = False
+
+    send_logs_to_dashboard: bool = False
+    dashboard_log_level: str = "INFO"
+
+    # Telemetry and logging configurations
+    traces: Optional[TracesOptions] = None
+    metrics: Optional[MetricsOptions] = None
+    logs: Optional[LoggingOptions] = None
 
     # New Configuration Fields
     _transport_mode: TransportMode = field(default=TransportMode.VIDEOSDK, init=False, repr=False)
@@ -100,11 +141,19 @@ class RoomOptions:
         transport_mode: Optional[str | TransportMode] = None,
         websocket: Optional[WebSocketConfig] = None,
         webrtc: Optional[WebRTCConfig] = None,
+        traces: Optional[TracesOptions] = None,
+        metrics: Optional[MetricsOptions] = None,
+        logs: Optional[LoggingOptions] = None,
         **kwargs,
     ):
         # Initialize internal field
         self._transport_mode = TransportMode.VIDEOSDK
         
+        # Handle telemetry options
+        self.traces = traces or TracesOptions()
+        self.metrics = metrics or MetricsOptions()
+        self.logs = logs or LoggingOptions()
+
         # Handle connection mode
         if transport_mode:
             if isinstance(transport_mode, str):
@@ -198,6 +247,8 @@ class Options:
 
 
 class WorkerJob:
+    """Wraps an async entrypoint function and manages its execution either directly or via a Worker process."""
+
     def __init__(self, entrypoint, jobctx=None, options: Optional[Options] = None):
         """
         :param entrypoint: An async function accepting one argument: jobctx
@@ -269,6 +320,8 @@ class WorkerJob:
 
 
 class JobContext:
+    """Holds the runtime state for a single job, including room connection, pipeline, and shutdown lifecycle management."""
+
     def __init__(
         self,
         *,
@@ -288,6 +341,13 @@ class JobContext:
         self._is_shutting_down: bool = False
         self.want_console = len(sys.argv) > 1 and sys.argv[1].lower() == "console"
         self.playground_manager: Optional["PlaygroundManager"] = None
+        
+        from .metrics import metrics_collector
+        self.metrics_collector = metrics_collector
+        
+        self._log_manager = None
+        self._job_logger = None
+        
     def _set_pipeline_internal(self, pipeline: Any) -> None:
         """Internal method called by pipeline constructors"""
         self._pipeline = pipeline
@@ -331,11 +391,26 @@ class JobContext:
                 cleanup_callback = await setup_console_voice_for_ctx(self)
                 self.add_shutdown_callback(cleanup_callback)
             else:
+                self.metrics_collector.transport_mode = self.room_options.transport_mode
+                self.metrics_collector.analytics_client.configure(self.room_options.metrics)
                 if self.room_options.transport_mode == TransportMode.VIDEOSDK:
                     from .room.room import VideoSDKHandler
                     
                     if not self.room_options.room_id:
                         self.room_options.room_id = self.get_room_id()
+                    if self.room_options.send_logs_to_dashboard or (self.room_options.logs and self.room_options.logs.enabled):
+                        from .metrics.logger_handler import LogManager, JobLogger
+                        self._log_manager = LogManager()
+                        self._log_manager.start(auth_token=self.videosdk_auth or "")
+                        self._job_logger = JobLogger(
+                            queue=self._log_manager.get_queue(),
+                            room_id=self.room_options.room_id or "",
+                            peer_id=self.room_options.agent_participant_id or "agent",
+                            auth_token=self.videosdk_auth or "",
+                            dashboard_log_level=self.room_options.dashboard_log_level if not (self.room_options.logs and self.room_options.logs.level) else self.room_options.logs.level,
+                            send_logs_to_dashboard=True,
+                        )
+
                     if self.room_options.join_meeting:
                         agent_id = self._pipeline.agent.id if self._pipeline and hasattr(self._pipeline, 'agent') else None
                         self.room = VideoSDKHandler(
@@ -356,6 +431,10 @@ class JobContext:
                             auto_end_session=self.room_options.auto_end_session,
                             session_timeout_seconds=self.room_options.session_timeout_seconds,
                             signaling_base_url=self.room_options.signaling_base_url,
+                            job_logger=self._job_logger,
+                            traces_options=self.room_options.traces,
+                            metrics_options=self.room_options.metrics,
+                            logs_options=self.room_options.logs,
                         )
                     if self._pipeline and hasattr(
                         self._pipeline, "_set_loop_and_audio_track"
@@ -448,6 +527,19 @@ class JobContext:
             except Exception as e:
                 logger.error(f"Error during pipeline cleanup: {e}")
             self._pipeline = None
+
+        if self._job_logger:
+            try:
+                self._job_logger.cleanup()
+            except Exception as e:
+                logger.error(f"Error during job logger cleanup: {e}")
+            self._job_logger = None
+        if self._log_manager:
+            try:
+                self._log_manager.stop()
+            except Exception as e:
+                logger.error(f"Error during log manager stop: {e}")
+            self._log_manager = None
 
         if self.room:
             try:
@@ -604,7 +696,8 @@ class JobContext:
             return None
 
         if self.videosdk_auth:
-            url = f"https://api.videosdk.live/v2/rooms"
+            base_url = self.room_options.signaling_base_url
+            url = f"https://{base_url}/v2/rooms"
             headers = {"Authorization": self.videosdk_auth}
 
             try:
@@ -643,13 +736,15 @@ def _reset_current_job_context(token: Any) -> None:
 
 @unique
 class JobExecutorType(Enum):
+    """Enumeration of executor types for running jobs in separate processes or threads."""
+
     PROCESS = "process"
     THREAD = "thread"
 
 
 @dataclass
 class JobAcceptArguments:
-    """Arguments for accepting a job."""
+    """Holds identity, name, and metadata used when accepting a job from the worker pool."""
 
     identity: str
     name: str
@@ -658,7 +753,7 @@ class JobAcceptArguments:
 
 @dataclass
 class RunningJobInfo:
-    """Information about a running job."""
+    """Tracks a running job's context, connection details, and associated worker identity."""
 
     accept_arguments: JobAcceptArguments
     job: JobContext

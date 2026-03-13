@@ -710,6 +710,11 @@ class Worker:
                 join_meeting=self.default_room_options.join_meeting,
                 auto_end_session=self.default_room_options.auto_end_session,
                 session_timeout_seconds=self.default_room_options.session_timeout_seconds,
+                send_logs_to_dashboard=self.default_room_options.send_logs_to_dashboard,
+                dashboard_log_level=self.default_room_options.dashboard_log_level,
+                traces=self.default_room_options.traces,
+                metrics=self.default_room_options.metrics,
+                logs=self.default_room_options.logs,
             )
 
             # Apply RoomOptions from assignment if provided
@@ -753,6 +758,15 @@ class Worker:
                     logger.info(
                         f"Set agent_participant_id: {room_options.agent_participant_id}"
                     )
+                if "traces" in assignment.room_options:
+                    room_options.traces = assignment.room_options["traces"]
+                    logger.info(f"Set traces options via worker assignment")
+                if "metrics" in assignment.room_options:
+                    room_options.metrics = assignment.room_options["metrics"]
+                    logger.info(f"Set metrics options via worker assignment")
+                if "logs" in assignment.room_options:
+                    room_options.logs = assignment.room_options["logs"]
+                    logger.info(f"Set logs options via worker assignment")
             else:
                 logger.warning("No room_options received from assignment")
 

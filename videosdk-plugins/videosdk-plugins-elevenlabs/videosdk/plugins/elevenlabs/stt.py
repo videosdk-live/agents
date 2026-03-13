@@ -36,6 +36,7 @@ class ElevenLabsSTT(BaseSTT):
         min_speech_duration_ms: int = 50,
         min_silence_duration_ms: int = 50,
         base_url: str = "wss://api.elevenlabs.io/v1/speech-to-text/realtime",
+        detect_language:bool = False
     ) -> None:
         """
         Initialize the ElevenLabs STT client.
@@ -73,6 +74,7 @@ class ElevenLabsSTT(BaseSTT):
         self.vad_threshold = vad_threshold
         self.min_speech_duration_ms = min_speech_duration_ms
         self.min_silence_duration_ms = min_silence_duration_ms
+        self.detect_language = detect_language
 
         self._last_final_text = ""
         self._last_final_time = 0.0
@@ -128,9 +130,9 @@ class ElevenLabsSTT(BaseSTT):
         if not self._session:
             self._session = aiohttp.ClientSession()
 
+        language_code = None if self.detect_language else str(self.language_code)
         query_params = {
             "model_id": str(self.model_id),
-            "language_code": str(self.language_code),
             "audio_format": f"pcm_{self.sample_rate}",
             "commit_strategy": str(self.commit_strategy),
             "vad_silence_threshold_secs": self.vad_silence_threshold_secs,
@@ -138,7 +140,11 @@ class ElevenLabsSTT(BaseSTT):
             "min_speech_duration_ms": self.min_speech_duration_ms,
             "min_silence_duration_ms": self.min_silence_duration_ms,
             "include_timestamps": True,
+            "include_language_detection":self.detect_language
         }
+
+        if language_code is not None:
+            query_params["language_code"] = language_code
 
         ws_url = f"{self.base_url}?{urlencode(query_params)}"
         headers = {"xi-api-key": self.api_key}
@@ -267,6 +273,9 @@ class ElevenLabsSTT(BaseSTT):
             logger.debug("==== Received final transcript event: %s", data)
             text = data.get("text", "")
             clean_text = text.strip()
+            if self.detect_language:
+                language_code = data.get("language_code", None)
+                self.language_code = language_code
             avg_conf, duration = self.get_avg_confidence_and_duration(data)
             now = time.time()
 

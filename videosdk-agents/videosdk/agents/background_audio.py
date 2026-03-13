@@ -7,6 +7,8 @@ import numpy as np
 
 @dataclass
 class BackgroundAudioHandlerConfig:
+    """Configuration for background audio playback including file path, volume, mode, and looping settings."""
+
     file_path: str
     enabled: bool = True
     mode: str = 'playback' # 'playback' or 'mixing'
@@ -16,6 +18,8 @@ class BackgroundAudioHandlerConfig:
 logger = logging.getLogger(__name__)
 
 class BackgroundAudioHandler:
+    """Handles reading a WAV file and streaming its audio data to an audio track in playback or mixing mode."""
+
     def __init__(self, config: BackgroundAudioHandlerConfig, audio_track: Any, chunk_size: int = 320):
         self.config = config
         self.audio_track = audio_track
@@ -25,11 +29,13 @@ class BackgroundAudioHandler:
         self.wf: IO[bytes] | None = None
 
     async def start(self):
+        """Start background audio playback if enabled and not already playing."""
         if not self.is_playing and self.config.enabled:
             self.is_playing = True
             self._task = asyncio.create_task(self._loop_sound())
 
     async def stop(self):
+        """Stop background audio playback, cancel the playback task, and close the audio file."""
         if self.is_playing:
             self.is_playing = False
 
@@ -45,6 +51,7 @@ class BackgroundAudioHandler:
             self.wf = None
 
     async def _loop_sound(self):
+        """Read audio frames from the WAV file and send them to the audio track, optionally looping."""
         try:
             self.wf = wave.open(self.config.file_path, 'rb')
             while self.is_playing:

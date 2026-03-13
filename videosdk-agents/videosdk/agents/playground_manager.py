@@ -6,6 +6,8 @@ import json
 logger = logging.getLogger(__name__)
 
 class PlaygroundManager:
+    """Manages publishing agent metrics to the playground via the room's PubSub channel."""
+
     def __init__(self, ctx):
         self.job_context = ctx
         self.job_context.playground_manager = self
