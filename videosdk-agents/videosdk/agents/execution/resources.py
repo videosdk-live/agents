@@ -143,6 +143,7 @@ class ProcessResource(BaseResource):
 
         raise TimeoutError(f"Task {task_id} timed out after {timeout}s")
 
+
     async def _shutdown_impl(self) -> None:
         """Shutdown the process resource."""
         if self.process and self.process.is_alive():
@@ -324,6 +325,7 @@ class ThreadResource(BaseResource):
             await asyncio.sleep(0.1)
 
         raise TimeoutError(f"Task {task_id} timed out after {timeout}s")
+
 
     async def _shutdown_impl(self) -> None:
         """Shutdown the thread resource."""
