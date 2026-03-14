@@ -13,7 +13,7 @@ from mcp import ClientSession, stdio_client
 from mcp.client.sse import sse_client
 from mcp.client.stdio import StdioServerParameters
 from mcp.types import JSONRPCMessage
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import streamable_http_client
 
 from videosdk.agents.utils import RawFunctionTool, ToolError, create_generic_mcp_adapter, FunctionTool
 
@@ -406,7 +406,7 @@ class MCPServerHTTP(MCPServiceProvider):
         timeout_delta = timedelta(seconds=self.connection_timeout)
 
         if self.transport_mode == 'streamable_http':
-            return streamablehttp_client(
+            return streamable_http_client(
                 url=self.endpoint_url,
                 headers=self.request_headers,
                 timeout=timeout_delta,
