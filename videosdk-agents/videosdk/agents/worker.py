@@ -56,8 +56,6 @@ async def _execute_job_entrypoint(
     meeting_joined_event: Any = None,
 ):
     """Execute job entrypoint in a separate process/thread."""
-    import os as _os
-    import multiprocessing
 
     # Create job context
     ctx = JobContext(room_options=room_options, metadata=metadata)
@@ -73,33 +71,6 @@ async def _execute_job_entrypoint(
 
         ctx.notify_meeting_joined = _notify_with_mp_event
 
-    # Detect if we're in a child process or the main process (thread mode)
-    is_child_process = multiprocessing.current_process().name != "MainProcess"
-
-    # Track the entrypoint task so the watchdog can cancel it in thread mode
-    entrypoint_task = None
-
-    # Watchdog: force cleanup after JobContext shutdown completes
-    async def _shutdown_watchdog():
-        """Monitor ctx._is_shutting_down and force cleanup after it."""
-        while not getattr(ctx, "_is_shutting_down", False):
-            await asyncio.sleep(0.5)
-        # Give cleanup 5 seconds to finish
-        for _ in range(10):
-            await asyncio.sleep(0.5)
-
-        if is_child_process:
-            # In subprocess: force-exit the process
-            logger.info("Watchdog: force-exiting child process after job cleanup")
-            _os._exit(0)
-        else:
-            # In thread/main process: cancel the entrypoint task
-            logger.info("Watchdog: cancelling entrypoint task after job cleanup")
-            if entrypoint_task and not entrypoint_task.done():
-                entrypoint_task.cancel()
-
-    asyncio.ensure_future(_shutdown_watchdog())
-
     # Set context var
     token = _set_current_job_context(ctx)
     try:
@@ -110,6 +81,7 @@ async def _execute_job_entrypoint(
         logger.info("Job entrypoint cancelled by shutdown watchdog")
     except Exception as e:
         logger.error(f"Error in job entrypoint: {e}")
+        raise
     finally:
         try:
             _reset_current_job_context(token)
@@ -841,6 +813,9 @@ class Worker:
             import multiprocessing
 
             mp_meeting_joined_event = None
+            logger.info(
+                f"Job {assignment.job_id}: assignment.wait={assignment.wait} (type={type(assignment.wait).__name__})"
+            )
             if assignment.wait:
                 manager = multiprocessing.Manager()
                 mp_meeting_joined_event = manager.Event()
@@ -870,7 +845,7 @@ class Worker:
                         _execute_job_entrypoint,  # entrypoint
                         TaskType.JOB,  # task_type
                         timeout_val,  # timeout
-                        3,  # retry_count
+                        0,  # retry_count (entrypoint errors are not retriable)
                         0,  # priority
                         self.options.entrypoint_fnc,  # arg1
                         room_options,  # arg2
