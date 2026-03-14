@@ -621,7 +621,8 @@ class VideoSDKHandler(BaseTransportHandler):
                     self.audio_listener_tasks[stream.id] = task
                 except Exception as e:
                     logger.error(f"Error creating audio listener task: {e}")
-            if stream.kind in ("video", ".share") and self.vision:
+            if stream.kind in ("video", "share") and self.vision:
+                logger.info(f"{stream.kind} stream enabled for participant: {peer_name}")
                 self.video_listener_tasks[stream.id] = asyncio.create_task(
                     self.add_video_listener(stream)
                 )
@@ -635,7 +636,7 @@ class VideoSDKHandler(BaseTransportHandler):
                 if audio_task is not None:
                     audio_task.cancel()
                     del self.audio_listener_tasks[stream.id]
-            if stream.kind in ("video", ".share"):
+            if stream.kind in ("video", "share"):
                 video_task = self.video_listener_tasks[stream.id]
                 if video_task is not None:
                     video_task.cancel()
