@@ -82,7 +82,7 @@ async def _execute_job_entrypoint(
     # Watchdog: force cleanup after JobContext shutdown completes
     async def _shutdown_watchdog():
         """Monitor ctx._is_shutting_down and force cleanup after it."""
-        while not getattr(ctx, '_is_shutting_down', False):
+        while not getattr(ctx, "_is_shutting_down", False):
             await asyncio.sleep(0.5)
         # Give cleanup 5 seconds to finish
         for _ in range(10):
@@ -115,7 +115,6 @@ async def _execute_job_entrypoint(
             _reset_current_job_context(token)
         except ValueError:
             pass
-
 
 
 class WorkerType(Enum):
@@ -907,21 +906,25 @@ class Worker:
                             f"Job {assignment.job_id}: meeting joined, sending 'running' status"
                         )
 
-                    job_update = JobUpdate(
-                        job_id=assignment.job_id,
-                        status="running" if joined else "failed",
-                        error=(
-                            None
-                            if joined
-                            else "Meeting join timed out or entrypoint failed before join"
-                        ),
-                    )
-                    await self.backend_connection.send_message(job_update)
-
-                    if not joined and not execute_task.done():
-                        # If we sent failed due to timeout but task is still running,
-                        # let it continue — it might still succeed
-                        pass
+                    if joined:
+                        job_update = JobUpdate(
+                            job_id=assignment.job_id,
+                            status="running",
+                        )
+                        await self.backend_connection.send_message(job_update)
+                    elif execute_task.done():
+                        # Entrypoint failed before meeting join — let the result
+                        # handler below send the final status to avoid duplicates
+                        logger.warning(
+                            f"Job {assignment.job_id}: entrypoint failed before meeting join"
+                        )
+                    else:
+                        # Timeout waiting for meeting join but task still running
+                        job_update = JobUpdate(
+                            job_id=assignment.job_id,
+                            status="running",
+                        )
+                        await self.backend_connection.send_message(job_update)
 
                 result = await execute_task
 

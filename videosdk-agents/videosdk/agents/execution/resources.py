@@ -143,7 +143,6 @@ class ProcessResource(BaseResource):
 
         raise TimeoutError(f"Task {task_id} timed out after {timeout}s")
 
-
     async def _shutdown_impl(self) -> None:
         """Shutdown the process resource."""
         if self.process and self.process.is_alive():
@@ -198,7 +197,9 @@ class ProcessResource(BaseResource):
                         args = task_data.get("args", ())
                         kwargs = task_data.get("kwargs", {})
 
-                        logger.info(f"Executing task {task_id} on resource {resource_id}")
+                        logger.info(
+                            f"Executing task {task_id} on resource {resource_id}"
+                        )
 
                         try:
                             # Execute the task
@@ -230,7 +231,7 @@ class ProcessResource(BaseResource):
                 except Exception as e:
                     logger.error(f"Error in process worker {resource_id}: {e}")
                     time.sleep(1.0)
-            
+
             logger.info(f"Process worker {resource_id} shutting down")
 
         except Exception as e:
@@ -323,7 +324,6 @@ class ThreadResource(BaseResource):
             await asyncio.sleep(0.1)
 
         raise TimeoutError(f"Task {task_id} timed out after {timeout}s")
-
 
     async def _shutdown_impl(self) -> None:
         """Shutdown the thread resource."""

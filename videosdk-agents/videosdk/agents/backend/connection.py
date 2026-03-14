@@ -439,6 +439,7 @@ class BackendConnection:
         elif msg_type == "job_assignment":
             if self._on_assignment:
                 import dataclasses
+
                 valid_fields = {f.name for f in dataclasses.fields(JobAssignment)}
                 filtered_data = {k: v for k, v in data.items() if k in valid_fields}
                 assignment = JobAssignment(**filtered_data)
