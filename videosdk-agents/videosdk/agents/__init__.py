@@ -108,12 +108,6 @@ from .stt import FallbackSTT
 from .llm import FallbackLLM
 from .tts import FallbackTTS
 from .utils import run_stt, run_tts
-# from .videosdk_eval import (
-#     Evaluation, EvaluationResult, EvalTurn, EvalMetric, LLMAsJudgeMetric,
-#     STTComponent, STTEvalConfig, LLMComponent, LLMEvalConfig,
-#     TTSComponent, TTSEvalConfig, LLMAsJudge, LLMAsJudgeConfig
-# )
-from . import videosdk_eval
 
 __all__ = [
     "Agent",
