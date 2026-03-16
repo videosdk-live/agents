@@ -280,38 +280,41 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                 logger.error(f"Error synthesizing with external TTS: {e}")
     
     def on(
-        self, 
-        event: Literal["speech_in", "speech_out", "stt", "llm","tts","agent_response", "vision_frame", "user_turn_start", "user_turn_end", "agent_turn_start", "agent_turn_end", "content_generated"] | str,
+        self,
+        event: Literal["speech_in", "speech_out", "stt", "llm", "tts", "vision_frame", "user_turn_start", "user_turn_end", "agent_turn_start", "agent_turn_end"] | str,
         callback: Callable | None = None
     ) -> Callable:
         """
         Register a listener for pipeline events or a hook for processing stages.
-        
+
         Can be used as a decorator or with a callback.
-        
+
         Supported hooks (decorator only):
-        - stt: Process user transcript after STT, before LLM (or stream STT hook)
-        - tts: Stream TTS hook (text -> audio)
-        - llm: Control LLM invocation (can bypass with direct response)
-        - agent_response: Process agent response after LLM, before TTS
+        - stt: STT processing (async iterator: audio -> events)
+        - tts: TTS processing (async iterator: text -> audio)
+        - llm: Called when LLM generates content. Return/yield str to modify, return None to observe.
         - vision_frame: Process video frames when vision is enabled (async iterator)
         - user_turn_start: Called when user turn starts
         - user_turn_end: Called when user turn ends
         - agent_turn_start: Called when agent processing starts
         - agent_turn_end: Called when agent finishes speaking
-        - content_generated: Called when LLM generates content (receives dict with "text" key)
-        
+
         Supported events (listener):
         - transcript_ready
         - synthesis_complete
         - error
-        
+
         Examples:
-            @pipeline.on("content_generated")
-            async def on_content(data):
+            @pipeline.on("llm")
+            async def on_llm(data):
                 print(f"LLM generated: {data['text']}")
+
+            @pipeline.on("llm")
+            async def modify_response(data):
+                text = data.get("text", "")
+                yield text.replace("SSN", "[REDACTED]")
         """
-        if event in ["stt", "tts", "llm", "agent_response", "vision_frame", "user_turn_start", "user_turn_end", "agent_turn_start", "agent_turn_end", "content_generated"]:
+        if event in ["stt", "tts", "llm", "vision_frame", "user_turn_start", "user_turn_end", "agent_turn_start", "agent_turn_end"]:
             return self.hooks.on(event)(callback) if callback else self.hooks.on(event)
             
         return super().on(event, callback)

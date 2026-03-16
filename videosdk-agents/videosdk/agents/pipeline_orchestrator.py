@@ -247,8 +247,10 @@ class PipelineOrchestrator(EventEmitter[Literal[
                     content=full_response
                 )
 
-                if self.hooks and self.hooks.has_content_generated_hooks():
-                    await self.hooks.trigger_content_generated({"text": full_response})
+                if self.hooks and self.hooks.has_llm_hooks():
+                    modified = await self.hooks.trigger_llm({"text": full_response})
+                    if modified is not None:
+                        full_response = modified
 
                 self.emit("content_generated", {"text": full_response})
 
@@ -422,49 +424,15 @@ class PipelineOrchestrator(EventEmitter[Literal[
         
         if self.hooks and self.hooks.has_user_turn_start_hooks():
             await self.hooks.trigger_user_turn_start(user_text)
-        
-        # Process transcript through stt hooks first
-        processed_text = user_text
-        
-        # Then check llm hook with the processed text
-        if self.hooks and self.hooks.has_llm_hook():
-            direct_response = await self.hooks.process_llm_gate(processed_text)
-            
-            if direct_response is not None:
-                logger.info("llm hook is bypassing LLM - using direct response")
-                
-                if self.agent.session:
-                    if self.agent.session.current_utterance and not self.agent.session.current_utterance.done():
-                        if self.agent.session.current_utterance.is_interruptible:
-                            self.agent.session.current_utterance.interrupt()
-                    
-                    handle = UtteranceHandle(utterance_id=f"utt_{uuid.uuid4().hex[:8]}")
-                    self.agent.session.current_utterance = handle
-                else:
-                    handle = UtteranceHandle(utterance_id="utt_fallback")
-                    handle._mark_done()
-                
-                if self.speech_generation:
-                    try:
-                        # direct_response is an AsyncIterator from the hook
-                        await self.speech_generation.synthesize(direct_response)
-                    finally:
-                        if self.hooks and self.hooks.has_user_turn_end_hooks():
-                            await self.hooks.trigger_user_turn_end()
-                        
-                        if not handle.done():
-                            handle._mark_done()
-                
-                return
-        
-        final_user_text = processed_text
+
+        final_user_text = user_text
         if self.agent.knowledge_base:
-            kb_context = await self.agent.knowledge_base.process_query(processed_text)
+            kb_context = await self.agent.knowledge_base.process_query(user_text)
             if kb_context:
-                final_user_text = f"{kb_context}\n\nUser: {processed_text}"
+                final_user_text = f"{kb_context}\n\nUser: {user_text}"
 
         if self.conversational_graph:
-            final_user_text = self.conversational_graph.handle_input(processed_text)
+            final_user_text = self.conversational_graph.handle_input(user_text)
 
         if not metrics_collector.current_turn:
             metrics_collector.start_turn()
@@ -635,8 +603,10 @@ class PipelineOrchestrator(EventEmitter[Literal[
                     role=ChatRole.ASSISTANT,
                     content=full_response
                 )
-                if self.hooks and self.hooks.has_content_generated_hooks():
-                    await self.hooks.trigger_content_generated({"text": full_response})
+                if self.hooks and self.hooks.has_llm_hooks():
+                    modified = await self.hooks.trigger_llm({"text": full_response})
+                    if modified is not None:
+                        full_response = modified
 
                 self.emit("content_generated", {"text": full_response})
 
