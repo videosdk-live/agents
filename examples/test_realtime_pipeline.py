@@ -4,7 +4,7 @@ from videosdk.agents import Agent, AgentSession, RealTimePipeline,WorkerJob, Job
 from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig
 from openai.types.beta.realtime.session import TurnDetection
 
-logging.getLogger().setLevel(logging.CRITICAL)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 class RealtimeAgent(Agent):
     def __init__(self):
         super().__init__(
