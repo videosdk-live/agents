@@ -1,8 +1,7 @@
-# This test script is used to test cascading pipeline.
 import logging
 from videosdk.agents import Agent, AgentSession, CascadingPipeline, WorkerJob, ConversationFlow, JobContext, RoomOptions, MCPServerHTTP, Options, InterruptConfig
 from videosdk.plugins.openai import OpenAILLM
-from videosdk.plugins.sarvamai import SarvamAISTT, SarvamAITTS
+from videosdk.plugins.sarvamai import SarvamAISTT
 from videosdk.plugins.silero import SileroVAD
 from videosdk.plugins.cartesia import CartesiaTTS
 from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
