@@ -591,6 +591,12 @@ class VideoSDKHandler(BaseTransportHandler):
             if participant.meta_data
             else False
         )
+        
+        self.participants_data[participant.id]["enable_agent_events"] = (
+            participant.meta_data.get("enableAgentEvents", False)
+            if participant.meta_data
+            else False
+        )
         logger.info(f"Participant joined: {peer_name}")
 
         if self.recording and len(self.participants_data) == 1:
