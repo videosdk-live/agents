@@ -288,6 +288,8 @@ class JobContext:
         self.room: Optional["BaseTransportHandler"] = None
         self._shutdown_callbacks: list[Callable[[], Coroutine[None, None, None]]] = []
         self._is_shutting_down: bool = False
+        self._meeting_joined_event: asyncio.Event = asyncio.Event()
+        self._wait_for_meeting_join: bool = False
         self.want_console = len(sys.argv) > 1 and sys.argv[1].lower() == "console"
         self.playground_manager: Optional["PlaygroundManager"] = None
     def _set_pipeline_internal(self, pipeline: Any) -> None:
@@ -476,6 +478,19 @@ class JobContext:
     ) -> None:
         """Add a callback to be called during shutdown"""
         self._shutdown_callbacks.append(callback)
+
+    def notify_meeting_joined(self) -> None:
+        """Called when the agent successfully joins the meeting."""
+        self._meeting_joined_event.set()
+
+    async def wait_for_meeting_joined(self, timeout: float = 30.0) -> bool:
+        """Wait until the meeting is joined or timeout. Returns True if joined."""
+        try:
+            await asyncio.wait_for(self._meeting_joined_event.wait(), timeout=timeout)
+            return True
+        except asyncio.TimeoutError:
+            logger.warning(f"Timeout waiting for meeting join after {timeout}s")
+            return False
 
     async def wait_for_participant(self, participant_id: str | None = None) -> str:
         if self.room:

@@ -214,7 +214,7 @@ class VideoSDKHandler(BaseTransportHandler):
         self._left: bool = False
         self.sdk_metadata = {
             "sdk": "agents",
-            "sdk_version": "0.0.69"
+            "sdk_version": "0.0.70"
         }
         self.videosdk_meeting_meta_data= {
             "agent_id": self.agent_id,
@@ -293,6 +293,13 @@ class VideoSDKHandler(BaseTransportHandler):
         """
         logger.info(f"Agent joined the meeting")
         self._meeting_joined_data = data
+
+        # Notify JobContext that meeting has been joined
+        from ..job import get_current_job_context
+        job_ctx = get_current_job_context()
+        if job_ctx:
+            job_ctx.notify_meeting_joined()
+
         asyncio.create_task(self._collect_session_id())
         asyncio.create_task(self._collect_meeting_attributes())
 
@@ -621,7 +628,8 @@ class VideoSDKHandler(BaseTransportHandler):
                     self.audio_listener_tasks[stream.id] = task
                 except Exception as e:
                     logger.error(f"Error creating audio listener task: {e}")
-            if stream.kind == "video" and self.vision:
+            if stream.kind in ("video", "share") and self.vision:
+                logger.info(f"{stream.kind} stream enabled for participant: {peer_name}")
                 self.video_listener_tasks[stream.id] = asyncio.create_task(
                     self.add_video_listener(stream)
                 )
@@ -635,7 +643,7 @@ class VideoSDKHandler(BaseTransportHandler):
                 if audio_task is not None:
                     audio_task.cancel()
                     del self.audio_listener_tasks[stream.id]
-            if stream.kind == "video":
+            if stream.kind in ("video", "share"):
                 video_task = self.video_listener_tasks[stream.id]
                 if video_task is not None:
                     video_task.cancel()

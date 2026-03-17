@@ -198,7 +198,9 @@ class ProcessResource(BaseResource):
                         args = task_data.get("args", ())
                         kwargs = task_data.get("kwargs", {})
 
-                        logger.info(f"Executing task {task_id} on resource {resource_id}")
+                        logger.info(
+                            f"Executing task {task_id} on resource {resource_id}"
+                        )
 
                         try:
                             # Execute the task
@@ -230,7 +232,7 @@ class ProcessResource(BaseResource):
                 except Exception as e:
                     logger.error(f"Error in process worker {resource_id}: {e}")
                     time.sleep(1.0)
-            
+
             logger.info(f"Process worker {resource_id} shutting down")
 
         except Exception as e:
