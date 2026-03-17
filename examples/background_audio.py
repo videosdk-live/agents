@@ -56,7 +56,7 @@ async def entrypoint(ctx: JobContext):
     await session.start(wait_for_participant=True, run_until_shutdown=True)
 
 def make_context() -> JobContext:
-    room_options = RoomOptions(room_id="xjld-g28c-rda8",name="Background Audio Agent", playground=True, background_audio=True)
+    room_options = RoomOptions(room_id="<room_id>",name="Background Audio Agent", playground=True, background_audio=True)
     
     return JobContext(
         room_options=room_options

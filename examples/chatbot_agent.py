@@ -50,8 +50,8 @@ async def entrypoint(ctx: JobContext):
     def on_pubsub_message_wrapper(message):
         asyncio.create_task(on_pubsub_message(message))
 
-    @pipeline.on("content_generated")
-    async def on_content_generated(data: dict):
+    @pipeline.on("llm")
+    async def on_llm(data: dict):
         """Send agent text response to AGENT_RESPONSE topic (avoids re-processing on CHAT)."""
         text = data.get("text", "")
         if text.strip():
