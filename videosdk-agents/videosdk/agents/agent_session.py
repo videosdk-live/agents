@@ -220,7 +220,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
                 room.send_agent_transcript(
                     text=text,
                     peer_id=peer_id,
-                    timestamp=datetime.datetime.now().isoformat(),
+                    timestamp=int(datetime.datetime.now().timestamp() * 1000), 
                 )
             )
 
