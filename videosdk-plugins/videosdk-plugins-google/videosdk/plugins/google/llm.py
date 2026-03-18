@@ -49,23 +49,36 @@ class GoogleLLM(LLM):
         presence_penalty: float | None = None,
         frequency_penalty: float | None = None,
         vertexai: bool = False,
-        vertexai_config: VertexAIConfig| None = None,
+        vertexai_config: VertexAIConfig | None = None,
         thinking_budget: int | None = 0,
+        seed: int | None = None,
+        safety_settings: list | None = None,
+        http_options: Any | None = None,
+        thinking_level: str | None = None,
+        include_thoughts: bool | None = None,
     ) -> None:
-        """Initialize the Google LLM plugin
-        
+        """Initialize the Google LLM plugin.
+
         Args:
-            api_key (str): Google API key. If not provided, will attempt to read from GOOGLE_API_KEY env var
-            model (str): The model to use for the LLM plugin.
-            temperature (float): The temperature to use for the LLM plugin
-            tool_choice (ToolChoice): The tool choice to use for the LLM plugin
-            max_output_tokens (int): The maximum output tokens to use for the LLM plugin
-            top_p (float): The top P to use for the LLM plugin
-            top_k (int): The top K to use for the LLM plugin
-            presence_penalty (float): The presence penalty to use for the LLM plugin
-            frequency_penalty (float): The frequency penalty to use for the LLM plugin
-            vertexai (bool): Whether to use Vertex AI
-            vertexai_config (VertexAIConfig): The Vertex AI config if custom otherwise from env
+            api_key: Google API key. Falls back to ``GOOGLE_API_KEY`` env var.
+            model: Gemini model name. Defaults to "gemini-2.5-flash-lite".
+            temperature: Sampling temperature.
+            tool_choice: Controls which (if any) tool is called.
+            max_output_tokens: Maximum tokens in the response.
+            top_p: Nucleus sampling probability mass.
+            top_k: Top-K tokens considered during sampling.
+            presence_penalty: Penalise tokens that have already appeared.
+            frequency_penalty: Penalise repeated tokens by frequency.
+            vertexai: Use Vertex AI backend instead of the public Gemini API.
+            vertexai_config: Vertex AI project/location override.
+            thinking_budget: Token budget for extended thinking (Gemini 2.5).
+                Set to ``None`` to disable the thinking config entirely.
+            seed: Seed for deterministic sampling.
+            safety_settings: List of ``types.SafetySetting`` / dicts forwarded to the API.
+            http_options: ``types.HttpOptions`` for the underlying Google client.
+            thinking_level: Thinking effort level for Gemini 3+ models
+                (``"low"``, ``"medium"``, ``"high"``, ``"minimal"``).
+            include_thoughts: Whether to surface model thoughts in the response.
         """
         super().__init__()
         
@@ -73,9 +86,11 @@ class GoogleLLM(LLM):
         self.vertexai = vertexai
         self.vertexai_config = vertexai_config
         if not self.vertexai and not self.api_key:
-            raise ValueError("For VertexAI: Set the `GOOGLE_APPLICATION_CREDENTIALS` environment variable to the path of the service account key file"\
-                            "The Google Cloud project and location can be set via VertexAIConfig or the environment variables `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION`. location defaults to `us-central1`"\
-                            "For Google Gemini API: Set the `api_key` argument or the `GOOGLE_API_KEY` environment variable.")
+            raise ValueError(
+                "For VertexAI: Set the `GOOGLE_APPLICATION_CREDENTIALS` environment variable to the path of the service account key file. "
+                "The Google Cloud project and location can be set via VertexAIConfig or the environment variables `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION`. location defaults to `us-central1`. "
+                "For Google Gemini API: Set the `api_key` argument or the `GOOGLE_API_KEY` environment variable."
+            )
         self.model = model
         self.temperature = temperature
         self.tool_choice = tool_choice
@@ -84,8 +99,15 @@ class GoogleLLM(LLM):
         self.top_k = top_k
         self.presence_penalty = presence_penalty
         self.frequency_penalty = frequency_penalty
-        self._cancelled = False
         self.thinking_budget = thinking_budget
+        self.seed = seed
+        self.safety_settings = safety_settings
+        self.http_options = http_options
+        self.thinking_level = thinking_level
+        self.include_thoughts = include_thoughts
+        self._cancelled = False
+        self._thought_signatures: dict[str, bytes] = {}
+        self._http_client: httpx.AsyncClient | None = None
         if self.vertexai:
             project_id = (self.vertexai_config.project_id if self.vertexai_config else None) or os.getenv("GOOGLE_CLOUD_PROJECT")
             if project_id is None:
@@ -106,6 +128,17 @@ class GoogleLLM(LLM):
                 raise ValueError("GOOGLE_API_KEY required")
             self._client = Client(api_key=self.api_key)
 
+    def _build_thinking_config(self) -> "types.ThinkingConfig | None":
+        """Return the appropriate ThinkingConfig for the configured model."""
+        if "gemini-3" in self.model:
+            return types.ThinkingConfig(thinking_level=self.thinking_level or "low")
+        if self.thinking_budget is not None:
+            return types.ThinkingConfig(
+                thinking_budget=self.thinking_budget,
+                **({"include_thoughts": self.include_thoughts} if self.include_thoughts is not None else {}),
+            )
+        return None
+
     async def chat(
         self,
         messages: ChatContext,
@@ -114,15 +147,15 @@ class GoogleLLM(LLM):
         **kwargs: Any
     ) -> AsyncIterator[LLMResponse]:
         """
-        Implement chat functionality using Google's Gemini API
-        
+        Implement chat functionality using Google's Gemini API.
+
         Args:
-            messages: ChatContext containing conversation history
-            tools: Optional list of function tools available to the model
-            **kwargs: Additional arguments passed to the Google API
-            
+            messages: ChatContext containing conversation history.
+            tools: Optional list of function tools available to the model.
+            **kwargs: Additional arguments passed to the Google API.
+
         Yields:
-            LLMResponse objects containing the model's responses
+            LLMResponse objects containing the model's responses.
         """
         self._cancelled = False
         
@@ -131,11 +164,13 @@ class GoogleLLM(LLM):
                 contents,
                 system_instruction,
             ) = await self._convert_messages_to_contents_async(messages)
-            config_params = {
+            config_params: dict = {
                 "temperature": self.temperature,
-                "thinking_config": types.ThinkingConfig(thinking_budget=self.thinking_budget) if self.thinking_budget is not None else None,
                 **kwargs
             }
+            thinking_config = self._build_thinking_config()
+            if thinking_config is not None:
+                config_params["thinking_config"] = thinking_config
             if conversational_graph:
                 config_params["response_mime_type"] = "application/json"
                 config_params["response_json_schema"] = ConversationalGraphResponse.model_json_schema()
@@ -153,6 +188,12 @@ class GoogleLLM(LLM):
                 config_params["presence_penalty"] = self.presence_penalty
             if self.frequency_penalty is not None:
                 config_params["frequency_penalty"] = self.frequency_penalty
+            if self.seed is not None:
+                config_params["seed"] = self.seed
+            if self.safety_settings is not None:
+                config_params["safety_settings"] = self.safety_settings
+            if self.http_options is not None:
+                config_params["http_options"] = self.http_options
 
             if tools:
                 function_declarations = []
@@ -189,85 +230,108 @@ class GoogleLLM(LLM):
 
             config = types.GenerateContentConfig(**config_params)
 
-            response_stream = await self._client.aio.models.generate_content_stream(
-                model=self.model,
-                contents=contents,
-                config=config,
-            )
+            response_stream = None
+            try:
+                response_stream = await self._client.aio.models.generate_content_stream(
+                    model=self.model,
+                    contents=contents,
+                    config=config,
+                )
 
-            current_content = ""
-            current_function_calls = []
-
-            streaming_state = {
-                "in_response": False,
-                "response_start_index": -1,
-                "yielded_content_length": 0
-            }
-            
-            async for response in response_stream:
-                if self._cancelled:
-                    break
-                    
-                if response.prompt_feedback:
-                    error_msg = f"Prompt feedback error: {response.prompt_feedback}"
-                    self.emit("error", Exception(error_msg))
-                    raise Exception(error_msg)
-
-                if not response.candidates or not response.candidates[0].content:
-                    continue
-
-                candidate = response.candidates[0]
-                if not candidate.content.parts:
-                    continue
-                
+                current_content = ""
+                current_function_calls: list = []
                 usage = None
-                if response.usage_metadata:
-                    usage = {
-                        "prompt_tokens": response.usage_metadata.prompt_token_count,
-                        "completion_tokens": response.usage_metadata.candidates_token_count,
-                        "total_tokens": response.usage_metadata.total_token_count,
-                        # Gemini uses cached_content_token_count if caching is enabled
-                        "prompt_cached_tokens": getattr(response.usage_metadata, 'cached_content_token_count', 0)
-                    }
 
-                for part in candidate.content.parts:
-                    if part.function_call:
-                        function_call = {
-                            "name": part.function_call.name,
-                            "arguments": dict(part.function_call.args)
+                streaming_state = {
+                    "in_response": False,
+                    "response_start_index": -1,
+                    "yielded_content_length": 0,
+                }
+
+                async for response in response_stream:
+                    if self._cancelled:
+                        break
+
+                    if response.prompt_feedback:
+                        error_msg = f"Prompt feedback error: {response.prompt_feedback}"
+                        self.emit("error", Exception(error_msg))
+                        raise Exception(error_msg)
+
+                    if not response.candidates or not response.candidates[0].content:
+                        continue
+
+                    candidate = response.candidates[0]
+                    if not candidate.content.parts:
+                        continue
+
+                    if response.usage_metadata:
+                        usage = {
+                            "prompt_tokens": response.usage_metadata.prompt_token_count,
+                            "completion_tokens": response.usage_metadata.candidates_token_count,
+                            "total_tokens": response.usage_metadata.total_token_count,
+                            "prompt_cached_tokens": getattr(
+                                response.usage_metadata, "cached_content_token_count", 0
+                            ),
                         }
-                        current_function_calls.append(function_call)
-                        
-                        yield LLMResponse(
-                            content="",
-                            role=ChatRole.ASSISTANT,
-                            metadata={"function_call": function_call, "usage": usage}
-                        )
-                    elif part.text:
-                        current_content += part.text
-                        if conversational_graph:
-                            for content_chunk in conversational_graph.stream_conversational_graph_response(current_content, streaming_state):
-                                yield LLMResponse(content=content_chunk, role=ChatRole.ASSISTANT, metadata={"usage": usage})
-                        else:
-                            yield LLMResponse(content=part.text, role=ChatRole.ASSISTANT, metadata={"usage": usage})
-            
-            if current_content and not self._cancelled:
-                if conversational_graph:
+
+                    for part in candidate.content.parts:
+                        if part.function_call:
+                            function_call = {
+                                "name": part.function_call.name,
+                                "arguments": dict(part.function_call.args),
+                            }
+                            # Capture thought_signature for multi-turn tool calling continuity
+                            thought_sig = getattr(part, "thought_signature", None)
+                            if thought_sig:
+                                self._thought_signatures[part.function_call.name] = thought_sig
+                                function_call["thought_signature"] = base64.b64encode(thought_sig).decode("utf-8")
+
+                            current_function_calls.append(function_call)
+
+                            yield LLMResponse(
+                                content="",
+                                role=ChatRole.ASSISTANT,
+                                metadata={"function_call": function_call, "usage": usage},
+                            )
+                        elif part.text:
+                            current_content += part.text
+                            if conversational_graph:
+                                for content_chunk in conversational_graph.stream_conversational_graph_response(
+                                    current_content, streaming_state
+                                ):
+                                    yield LLMResponse(
+                                        content=content_chunk,
+                                        role=ChatRole.ASSISTANT,
+                                        metadata={"usage": usage},
+                                    )
+                            else:
+                                yield LLMResponse(
+                                    content=part.text,
+                                    role=ChatRole.ASSISTANT,
+                                    metadata={"usage": usage},
+                                )
+
+                if current_content and not self._cancelled and conversational_graph:
                     try:
                         parsed_json = json.loads(current_content.strip())
                         yield LLMResponse(
                             content="",
                             role=ChatRole.ASSISTANT,
-                            metadata={"graph_response":parsed_json, "usage": usage}
+                            metadata={"graph_response": parsed_json, "usage": usage},
                         )
                     except json.JSONDecodeError:
                         yield LLMResponse(
                             content=current_content,
                             role=ChatRole.ASSISTANT,
-                            metadata={"usage": usage}
+                            metadata={"usage": usage},
                         )
-                else:
-                    pass
+
+            finally:
+                if response_stream is not None:
+                    try:
+                        await response_stream.close()
+                    except Exception:
+                        pass
 
         except (ClientError, ServerError, APIError) as e:
             if not self._cancelled:
@@ -282,10 +346,22 @@ class GoogleLLM(LLM):
     async def cancel_current_generation(self) -> None:
         self._cancelled = True
 
+    def _get_http_client(self) -> httpx.AsyncClient:
+        """Return a shared httpx client (lazy-initialised)."""
+        if self._http_client is None or self._http_client.is_closed:
+            timeout_seconds = None
+            if self.http_options is not None:
+                timeout_seconds = getattr(self.http_options, "timeout", None)
+            self._http_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(timeout_seconds or 30.0),
+                follow_redirects=True,
+            )
+        return self._http_client
+
     async def _convert_messages_to_contents_async(
         self, messages: ChatContext
     ) -> tuple[list[types.Content], str | None]:
-        """Convert ChatContext to Google Content format"""
+        """Convert ChatContext to Google Content format."""
 
         async def _format_content_parts_async(
             content: Union[str, List[ChatContent]]
@@ -306,7 +382,6 @@ class GoogleLLM(LLM):
                         header, b64_data = data_url.split(",", 1)
                         media_type = header.split(";")[0].split(":")[1]
                         image_bytes = base64.b64decode(b64_data)
-
                         formatted_parts.append(
                             types.Part(
                                 inline_data=types.Blob(
@@ -314,25 +389,24 @@ class GoogleLLM(LLM):
                                 )
                             )
                         )
-                    else: # Fetch image from URL
-                        async with httpx.AsyncClient() as client:
-                            try:
-                                response = await client.get(data_url)
-                                response.raise_for_status()
-                                image_bytes = response.content
-                                media_type = response.headers.get(
-                                    "Content-Type", "image/jpeg"
-                                )
-                                formatted_parts.append(
-                                    types.Part(
-                                        inline_data=types.Blob(
-                                            mime_type=media_type, data=image_bytes
-                                        )
+                    else:
+                        # Reuse the shared client; do NOT create a new one per image
+                        client = self._get_http_client()
+                        try:
+                            response = await client.get(data_url)
+                            response.raise_for_status()
+                            image_bytes = response.content
+                            media_type = response.headers.get("Content-Type", "image/jpeg")
+                            formatted_parts.append(
+                                types.Part(
+                                    inline_data=types.Blob(
+                                        mime_type=media_type, data=image_bytes
                                     )
                                 )
-                            except httpx.HTTPStatusError as e:
-                                logger.error(f"Failed to fetch image from URL {data_url}: {e}")
-                                continue 
+                            )
+                        except httpx.HTTPStatusError as e:
+                            logger.error(f"Failed to fetch image from URL {data_url}: {e}")
+                            continue
 
             return formatted_parts
 
@@ -356,16 +430,31 @@ class GoogleLLM(LLM):
                     parts = await _format_content_parts_async(item.content)
                     contents.append(types.Content(role="model", parts=parts))
             elif isinstance(item, FunctionCall):
-                function_call = types.FunctionCall(
-                    name=item.name,
-                    args=(
-                        json.loads(item.arguments)
-                        if isinstance(item.arguments, str)
-                        else item.arguments
-                    ),
+                args = (
+                    json.loads(item.arguments)
+                    if isinstance(item.arguments, str)
+                    else item.arguments
                 )
+                function_call = types.FunctionCall(name=item.name, args=args)
+                fc_part = types.Part(function_call=function_call)
+
+                thought_sig_b64 = (item.metadata or {}).get("thought_signature")
+                if thought_sig_b64:
+                    try:
+                        sig_bytes = base64.b64decode(thought_sig_b64)
+                        fc_part = types.Part(
+                            function_call=function_call,
+                            thought_signature=sig_bytes,
+                        )
+                    except Exception:
+                        pass
+                elif item.name in self._thought_signatures:
+                    fc_part = types.Part(
+                        function_call=function_call,
+                        thought_signature=self._thought_signatures[item.name],
+                    )
                 contents.append(
-                    types.Content(role="model", parts=[types.Part(function_call=function_call)])
+                    types.Content(role="model", parts=[fc_part])
                 )
             elif isinstance(item, FunctionCallOutput):
                 function_response = types.FunctionResponse(
@@ -381,4 +470,6 @@ class GoogleLLM(LLM):
 
     async def aclose(self) -> None:
         await self.cancel_current_generation()
+        if self._http_client is not None and not self._http_client.is_closed:
+            await self._http_client.aclose()
         await super().aclose()
