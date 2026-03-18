@@ -319,9 +319,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
 
         await self.pipeline.start()
 
-        # Attach any deferred A2A model_response listeners now that pipeline is ready
         if hasattr(self.agent, 'a2a'):
-            print(" ONLY HApPING FROM AGENT SESSION WHILE THE A2A IS ENABLE IN AGENT >>>>>>>>>>>>>>>")
             self.agent.a2a._attach_deferred_listeners()
 
         if self._should_delay_for_sip_user():
