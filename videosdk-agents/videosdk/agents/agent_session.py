@@ -75,6 +75,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         self._playground_manager = None
         self._playground = False
         self._send_analytics_to_pubsub = False
+        self._agent_event_enabled = False
 
         if hasattr(self.pipeline, 'set_agent'):
             self.pipeline.set_agent(self.agent)
@@ -145,6 +146,17 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
     def _on_speech_out(self, data: dict) -> None:
         self.emit("on_speech_out", data)
 
+    def _check_agent_event_enabled(self) -> bool:
+        if self._agent_event_enabled:
+            return True
+        room = self._get_room()
+        if room and hasattr(room, "participants_data"):
+            for p in room.participants_data.values():
+                if p.get("enable_agent_events"):
+                    self._agent_event_enabled = True
+                    return True
+        return False
+
     def _start_wake_up_timer(self) -> None:
         if self.wake_up is not None and self.on_wake_up is not None:
             self._wake_up_timer_active = True
@@ -195,6 +207,8 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
 
     def _signal_transport_state(self, state: AgentState) -> None:
         """Signal agent state change via the transport signaling channel."""
+        if not self._check_agent_event_enabled():
+            return
         room = self._get_room()
         if room and hasattr(room, "send_agent_state"):
             asyncio.create_task(room.send_agent_state(state.value))
@@ -208,6 +222,8 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
     def _send_transport_transcript(self, text: str, role: str = "assistant", participant_id: str | None = None) -> None:
         """Send a transcript via the transport signaling channel."""
         import datetime
+        if not self._check_agent_event_enabled():
+            return
         room = self._get_room()
         if room and hasattr(room, "send_agent_transcript"):
             peer_id = participant_id or ""
@@ -220,7 +236,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
                 room.send_agent_transcript(
                     text=text,
                     peer_id=peer_id,
-                    timestamp=datetime.datetime.now().isoformat(),
+                    timestamp=int(datetime.datetime.now().timestamp() * 1000), 
                 )
             )
 
@@ -231,6 +247,8 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         Args:
             data: Arbitrary metrics dictionary to send to connected clients.
         """
+        if not self._check_agent_event_enabled():
+            return
         room = self._get_room()
         if room and hasattr(room, "send_agent_metrics"):
             asyncio.create_task(room.send_agent_metrics(data))
