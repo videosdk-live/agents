@@ -71,6 +71,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         self._playground_manager = None
         self._playground = False
         self._send_analytics_to_pubsub = False
+        self._agent_event_enabled = False
 
         # Set agent on pipeline (pipeline handles all internal wiring)
         if hasattr(self.pipeline, 'set_agent'):
@@ -129,6 +130,17 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             logger.error(f"Error executing voicemail callback: {e}")
 
 
+    def _check_agent_event_enabled(self) -> bool:
+        if self._agent_event_enabled:
+            return True
+        room = self._get_room()
+        if room and hasattr(room, "participants_data"):
+            for p in room.participants_data.values():
+                if p.get("enable_agent_events"):
+                    self._agent_event_enabled = True
+                    return True
+        return False
+
     def _start_wake_up_timer(self) -> None:
         if self.wake_up is not None and self.on_wake_up is not None:
             self._wake_up_timer_active = True
@@ -174,6 +186,56 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             self._agent_state = state
             payload = {"state": state.value, **(data or {})}
             self.emit("agent_state_changed", payload)
+            # Signal state via the transport signaling channel
+            self._signal_transport_state(state)
+
+    def _signal_transport_state(self, state: AgentState) -> None:
+        """Signal agent state change via the transport signaling channel."""
+        if not self._check_agent_event_enabled():
+            return
+        room = self._get_room()
+        if room and hasattr(room, "send_agent_state"):
+            asyncio.create_task(room.send_agent_state(state.value))
+
+    def _get_room(self):
+        """Get the room (transport handler) from job context."""
+        if self._job_context:
+            return getattr(self._job_context, "room", None)
+        return None
+
+    def _send_transport_transcript(self, text: str, role: str = "assistant", participant_id: str | None = None) -> None:
+        """Send a transcript via the transport signaling channel."""
+        import datetime
+        if not self._check_agent_event_enabled():
+            return
+        room = self._get_room()
+        if room and hasattr(room, "send_agent_transcript"):
+            peer_id = participant_id or ""
+            if not peer_id:
+                if role == "user" and hasattr(room, "participants_data") and room.participants_data:
+                    peer_id = next(iter(room.participants_data.keys()))
+                elif room.meeting and room.meeting.local_participant:
+                    peer_id = room.meeting.local_participant.id
+            asyncio.create_task(
+                room.send_agent_transcript(
+                    text=text,
+                    peer_id=peer_id,
+                    timestamp=int(datetime.datetime.now().timestamp() * 1000), 
+                )
+            )
+
+    def send_transport_metrics(self, data: dict) -> None:
+        """
+        Send metrics via the transport signaling channel (in addition to PubSub).
+
+        Args:
+            data: Arbitrary metrics dictionary to send to connected clients.
+        """
+        if not self._check_agent_event_enabled():
+            return
+        room = self._get_room()
+        if room and hasattr(room, "send_agent_metrics"):
+            asyncio.create_task(room.send_agent_metrics(data))
 
     @property
     def user_state(self) -> UserState:
@@ -389,10 +451,13 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             traces_flow_manager.agent_say_called(message)
 
         self.agent.chat_context.add_message(role=ChatRole.ASSISTANT, content=message)
-        
+
+        # Send transcript via transport signaling channel
+        self._send_transport_transcript(text=message, role="assistant")
+
         if hasattr(self.pipeline, 'send_message'):
             await self.pipeline.send_message(message, handle=handle)
-        
+
         return handle
     
     async def play_background_audio(self, config: BackgroundAudioHandlerConfig, override_thinking: bool) -> None:

@@ -355,7 +355,6 @@ class SarvamAITTS(TTS):
                 self._receive_task = asyncio.create_task(self._recv_loop())
                 await self._send_initial_config()
                 self.ws_count = self.ws_count + 1
-                logger.info(f"WS connection numbers: {self.ws_count}")
             except Exception as e:
                 logger.error("error", f"Failed to connect to WebSocket: {e}")
                 raise
@@ -574,6 +573,10 @@ class SarvamAITTS(TTS):
         self._interrupted = True
         if self.audio_track:
             self.audio_track.interrupt()
+        if self._ws_connection and not self._ws_connection.closed:
+            await self._ws_connection.close()
+        if self._ws_session and not self._ws_session.closed:
+            await self._ws_session.close()
         
     async def _close_ws_resources(self) -> None:
         """Helper to clean up all WebSocket-related resources."""

@@ -894,7 +894,6 @@ class HttpServer:
             tracing_data["kv"] = {
                 "task_id": runner_id,  # Changed from job_id to task_id
                 "room_id": getattr(room_options, "room_id", "unknown"),
-                "room_name": getattr(room_options, "name", "unknown"),
                 "status": "running",
                 "worker_id": getattr(job_info, "worker_id", "unknown"),
                 "url": getattr(job_info, "url", "unknown"),

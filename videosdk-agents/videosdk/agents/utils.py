@@ -357,7 +357,7 @@ def simplify_gemini_schema(schema: dict[str, Any]) -> dict[str, Any] | None:
     }
 
     SUPPORTED_TYPES = set(TYPE_MAPPING.keys())
-    FIELDS_TO_REMOVE = ("title", "default", "additionalProperties", "$defs")
+    FIELDS_TO_REMOVE = ("title", "default", "additionalProperties", "$defs", "$schema")
 
     def process_node(node: dict[str, Any]) -> dict[str, Any] | None:
         new_node = node.copy()
