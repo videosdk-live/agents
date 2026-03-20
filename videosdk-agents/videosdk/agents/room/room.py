@@ -410,20 +410,19 @@ class VideoSDKHandler(BaseTransportHandler):
         """
         await self._end_session(reason)
 
-    async def call_transfer(self, token: str, transfer_to: str) -> None:
+    async def call_transfer(self,transfer_to: str) -> None:
         """
         Transfer the call to a provided Phone number or SIP endpoint.
         """
-        # Note: token parameter is kept for backward compatibility but sip_manager uses self.auth_token
         await self.sip_manager.call_transfer(session_id=self._session_id, transfer_to=transfer_to)
 
-    def fetch_call_info(self, token: str, room_id: str, session_id: str):
+    def fetch_call_info(self,session_id: str):
         """
         Fetch SIP call information. Forward to sip_manager.
         """
         return self.sip_manager.fetch_call_info(session_id=session_id)
 
-    def transfer_call(self, token: str, call_id: str, transfer_to: str):
+    def transfer_call(self,call_id: str, transfer_to: str):
         """
         Transfer the call. Forward to sip_manager.
         """
