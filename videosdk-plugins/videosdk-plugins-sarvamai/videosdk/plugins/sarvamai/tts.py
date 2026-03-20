@@ -16,8 +16,8 @@ logger = logging.getLogger(__name__)
 
 SARVAM_SAMPLE_RATE = 24000
 SARVAM_CHANNELS = 1
-DEFAULT_MODEL = "bulbul:v2"
-DEFAULT_SPEAKER = "anushka"
+DEFAULT_MODEL = "bulbul:v3"
+DEFAULT_SPEAKER = "shubh"
 DEFAULT_LANGUAGE = "en-IN"
 SARVAM_TTS_URL_STREAMING = "wss://api.sarvam.ai/text-to-speech/ws"
 SARVAM_TTS_URL_HTTP = "https://api.sarvam.ai/text-to-speech"
@@ -257,7 +257,7 @@ class SarvamAITTS(TTS):
         """
         try:
             if not self.audio_track or not self.loop:
-                logger.error("error", "Audio track or event loop not initialized")
+                logger.error("Audio track or event loop not initialized")
                 return
 
             self.language = language or self.language
@@ -302,7 +302,7 @@ class SarvamAITTS(TTS):
                             break
 
         except Exception as e:
-            logger.error("error", f"Sarvam TTS synthesis failed: {e}")
+            logger.error( f"Sarvam TTS synthesis failed: {e}")
 
     async def _stream_synthesis(self, text: AsyncIterator[str] | str) -> None:
         """
@@ -323,7 +323,7 @@ class SarvamAITTS(TTS):
 
             await self._send_text_chunks(text_iter)
         except Exception as e:
-            logger.error("error", f"WebSocket streaming failed: {e}. Trying HTTP fallback.")
+            logger.error( f"WebSocket streaming failed: {e}. Trying HTTP fallback.")
             try:
                 full_text = ""
                 if isinstance(text, str):
@@ -335,7 +335,7 @@ class SarvamAITTS(TTS):
                 if full_text.strip():
                     await self._http_synthesis(full_text.strip())
             except Exception as http_e:
-                logger.error("error", f"HTTP fallback also failed: {http_e}")
+                logger.error( f"HTTP fallback also failed: {http_e}")
 
     async def _ensure_ws_connection(self) -> None:
         """Establishes and maintains a persistent WebSocket connection."""
@@ -356,7 +356,7 @@ class SarvamAITTS(TTS):
                 await self._send_initial_config()
                 self.ws_count = self.ws_count + 1
             except Exception as e:
-                logger.error("error", f"Failed to connect to WebSocket: {e}")
+                logger.error( f"Failed to connect to WebSocket: {e}")
                 raise
 
     async def _send_initial_config(self) -> None:
@@ -385,7 +385,7 @@ class SarvamAITTS(TTS):
             raise ConnectionError("WebSocket is not connected.")
         try:
             buffer = []
-            MIN_WORDS, MAX_DELAY = 4, 1.0
+            MIN_WORDS, MAX_DELAY = 2, 1.0
             last_send_time = asyncio.get_event_loop().time()
 
             async for text_chunk in text_iterator:
@@ -412,14 +412,11 @@ class SarvamAITTS(TTS):
                 if combined_text:
                     payload = {"type": "text", "data": {"text": combined_text}}
                     await self._ws_connection.send_str(json.dumps(payload))
-                    if not self._first_chunk_sent and hasattr(self, '_first_audio_callback') and self._first_audio_callback:
-                        self._first_chunk_sent = True
-                        asyncio.create_task(self._first_audio_callback())
 
             if not self._interrupted:
                 await self._ws_connection.send_str(json.dumps({"type": "flush"}))
         except Exception as e:
-            logger.error("error", f"Failed to send text chunks via WebSocket: {e}")
+            logger.error( f"Failed to send text chunks via WebSocket: {e}")
 
     async def _recv_loop(self):
         """Continuously listens for and processes incoming WebSocket messages."""
@@ -447,11 +444,11 @@ class SarvamAITTS(TTS):
                 
                 elif msg_type == "error":
                     error_msg = data.get("data", {}).get("message", "Unknown WS error")
-                    logger.error("error", f"Sarvam WebSocket error: {error_msg}")
+                    logger.error( f"Sarvam WebSocket error: {error_msg}")
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.error("error", f"WebSocket receive loop error: {e}")
+            logger.error( f"WebSocket receive loop error: {e}")
 
     async def _handle_audio_data(self, audio_data: Optional[dict[str, Any]]):
         """Processes audio data received from the WebSocket."""
@@ -470,7 +467,7 @@ class SarvamAITTS(TTS):
 
             await self.audio_track.add_new_bytes(audio_bytes)
         except Exception as e:
-            logger.error("error", f"Failed to process WebSocket audio: {e}")
+            logger.error( f"Failed to process WebSocket audio: {e}")
 
 
     async def _reinitialize_http_client(self):
@@ -499,7 +496,7 @@ class SarvamAITTS(TTS):
                 response.raise_for_status()
                 data = response.json()
                 if not data.get("audios"):
-                    logger.error("error", f"No audio data in HTTP response: {data}")
+                    logger.error( f"No audio data in HTTP response: {data}")
                     return
                 audio_b64 = data["audios"][0]
                 audio_bytes = base64.b64decode(audio_b64)
@@ -510,7 +507,7 @@ class SarvamAITTS(TTS):
                 await self._stream_http_audio(audio_bytes)
                 return
             except httpx.HTTPStatusError as e:
-                logger.error("error", f"HTTP error: {e.response.status_code} - {e.response.text}")
+                logger.error( f"HTTP error: {e.response.status_code} - {e.response.text}")
                 logger.info(response)
                 raise e
             except (httpx.NetworkError, httpx.ConnectError, httpx.ReadTimeout) as e:
@@ -519,10 +516,10 @@ class SarvamAITTS(TTS):
                     await self._reinitialize_http_client()
                     continue
                 else:
-                    logger.error("error", f"HTTP synthesis failed after {max_attempts} connection attempts.")
+                    logger.error( f"HTTP synthesis failed after {max_attempts} connection attempts.")
                     raise e
             except Exception as e:
-                logger.error("error", f"An unexpected HTTP synthesis error occurred: {e}")
+                logger.error( f"An unexpected HTTP synthesis error occurred: {e}")
                 raise e
 
     async def _stream_http_audio(self, audio_bytes: bytes) -> None:

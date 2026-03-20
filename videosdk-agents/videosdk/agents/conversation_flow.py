@@ -473,7 +473,7 @@ class ConversationFlow(EventEmitter[Literal["transcription"]], ABC):
         final_transcript = self._accumulated_transcript.strip()
         
         word_count = len(final_transcript.split())
-        if word_count < self.interrupt_min_words and self.agent.session.agent_state != AgentState.IDLE:
+        if word_count < self.interrupt_min_words and (self.agent.session.agent_state in [AgentState.SPEAKING, AgentState.THINKING]):
             logger.info(f"Ignoring transcript '{final_transcript}' - word count {word_count} is less than minimum {self.interrupt_min_words}")
             self._accumulated_transcript = ""
             return
