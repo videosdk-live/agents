@@ -574,7 +574,7 @@ class VideoSDKHandler(BaseTransportHandler):
                 if audio_task is not None:
                     audio_task.cancel()
                     del self.audio_listener_tasks[stream.id]
-            if stream.kind == "video":
+            if stream.kind in ("video", "share"):
                 video_task = self.video_listener_tasks.get(stream.id)
                 if video_task is not None:
                     video_task.cancel()
