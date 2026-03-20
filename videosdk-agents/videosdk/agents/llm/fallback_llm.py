@@ -19,8 +19,7 @@ class FallbackLLM(LLM, FallbackBase):
 
     async def _handle_async_error(self, error_msg: str, failed_provider: Any):
         switched = await self._switch_provider(f"Async Error: {error_msg}", failed_provider=failed_provider)
-        if not switched:
-            self.emit("error", error_msg)
+        self.emit("error", error_msg)
 
     async def _switch_provider(self, reason: str, failed_provider: Any = None):
         provider_to_cleanup = failed_provider if failed_provider else self.active_provider
@@ -54,6 +53,7 @@ class FallbackLLM(LLM, FallbackBase):
                 return 
             except Exception as e:
                 switched = await self._switch_provider(str(e), failed_provider=current_provider)
+                self.emit("error", str(e))
                 if not switched:
                     raise e
 
