@@ -23,7 +23,6 @@ from .metrics import metrics_collector
 
 if TYPE_CHECKING:
     from .agent import Agent
-    from .knowledge_base.base import KnowledgeBase
     from .pipeline_hooks import PipelineHooks
 
 logger = logging.getLogger(__name__)
