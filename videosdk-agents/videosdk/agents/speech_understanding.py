@@ -202,7 +202,6 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
             await self._handle_preflight_transcript(text)
             
         elif stt_response.event_type == SpeechEventType.FINAL:
-            metrics_collector.set_user_transcript(text)
             duration = stt_response.data.duration
             confidence = stt_response.data.confidence
             metrics_collector.on_stt_complete(text, duration, confidence)
