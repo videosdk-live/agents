@@ -8,7 +8,6 @@ from videosdk import (
     PubSubPublishConfig,
     PubSubSubscribeConfig,
     Agent as TransportAgent,
-    AgentState as TransportAgentState,
 )
 from .meeting_event_handler import MeetingHandler
 from .participant_event_handler import ParticipantHandler
@@ -17,13 +16,13 @@ from ._input_stream import InputStreamManager
 from ._sip_manager import SIPManager
 from ._recording_manager import RecordingManager
 from dotenv import load_dotenv
+from ._transport_event_sender import TransportEventSender
 import asyncio
 import os
 from asyncio import AbstractEventLoop
 from ..metrics import TracesFlowManager
 from ..metrics import metrics_collector
 from ..metrics.integration import auto_initialize_telemetry_and_logs
-import requests
 import time
 from ..event_bus import global_event_emitter
 from ..transports.base import BaseTransportHandler
@@ -116,6 +115,7 @@ class VideoSDKHandler(BaseTransportHandler):
         self.input_stream_manager = InputStreamManager(pipeline=pipeline)
         self.sip_manager = SIPManager(room_id=meeting_id, auth_token=self.auth_token)
         self.recording_manager = RecordingManager(room_id=meeting_id, auth_token=self.auth_token)
+        self.transport_event_sender = None
 
         # Session management
         self.auto_end_session = auto_end_session
@@ -508,6 +508,11 @@ class VideoSDKHandler(BaseTransportHandler):
             if participant.meta_data
             else False
         )
+        
+        if self.participants_data[participant.id]["enable_agent_events"] and self.transport_event_sender is None:
+            logger.info("Initializing transport_event_sender because participant has enableAgentEvents=True")
+            self.transport_event_sender = TransportEventSender(self)
+            
         logger.info(f"Participant joined: {peer_name}")
 
         sip_user_flag = self.participants_data[participant.id]["sipUser"]
@@ -757,6 +762,9 @@ class VideoSDKHandler(BaseTransportHandler):
             self._no_participant_timeout_task = None
         
         self.input_stream_manager.cancel_tasks()
+        
+        if hasattr(self, "transport_event_sender") and self.transport_event_sender:
+            self.transport_event_sender.cleanup()
         
         if hasattr(self, "audio_track") and self.audio_track:
             try:

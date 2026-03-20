@@ -26,6 +26,7 @@ from .metrics_schema import (
     FallbackEvent,
 )
 from .analytics import AnalyticsClient
+from ..event_bus import global_event_emitter
 
 if TYPE_CHECKING:
     from .traces_flow import TracesFlowManager
@@ -374,6 +375,8 @@ class MetricsCollector:
             self._remove_provider_fields(transformed_data)
 
         transformed_data = self._remove_negatives(transformed_data)
+        
+        global_event_emitter.emit("TURN_METRICS_ADDED", {"metrics": transformed_data})
 
         self.analytics_client.send_interaction_analytics_safe(transformed_data)
 
@@ -950,6 +953,7 @@ class MetricsCollector:
 
             self.current_turn.user_speech = transcript
             logger.info(f"user input speech: {transcript}")
+            global_event_emitter.emit("USER_TRANSCRIPT_ADDED", {"text": transcript})
 
             # Update timeline
             user_events = [
@@ -970,11 +974,11 @@ class MetricsCollector:
 
     def set_agent_response(self, response: str) -> None:
         """Set the agent response for the current turn."""
-
         if not self.current_turn:
             self.start_turn()
         self.current_turn.agent_speech = response
         logger.info(f"agent output speech: {response}")
+        global_event_emitter.emit("AGENT_TRANSCRIPT_ADDED", {"text": response})
 
         if not any(ev.event_type == "agent_speech" for ev in self.current_turn.timeline_event_metrics):
             current_time = time.perf_counter()
