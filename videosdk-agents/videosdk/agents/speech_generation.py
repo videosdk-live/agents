@@ -195,7 +195,7 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
             async def on_last_audio_byte():
                 """Called when synthesis is complete"""
                 if self.full_transcript and metrics_collector.current_turn:
-                    metrics_collector.set_agent_response(self.full_transcript)
+                    pass
                 metrics_collector.on_agent_speech_end()
                 metrics_collector.complete_turn()
 
