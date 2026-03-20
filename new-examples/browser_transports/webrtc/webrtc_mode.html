@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebRTC Audio Client</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; }
+        button { padding: 10px 20px; margin: 5px; cursor: pointer; }
+        #status { margin-bottom: 20px; padding: 10px; background: #f0f0f0; border-radius: 4px; }
+        .active { background: #d4edda; }
+        video { background: #000; width: 300px; height: 200px; display: none; }
+    </style>
+</head>
+<body>
+    <h1>WebRTC Audio Client</h1>
+    <div id="status">Status: Idle</div>
+
+    <div>
+        <label>Signaling URL: </label>
+        <input type="text" id="signalingUrl" value="ws://localhost:8081" style="width: 300px;">
+    </div>
+    <br>
+    
+    <div>
+        <label>ICE Servers (JSON Array): </label>
+        <textarea id="iceServers" style="width: 100%; min-height: 80px; font-family: monospace;">[
+  { "urls": "stun:stun.l.google.com:19302" }
+]</textarea>
+        <small style="color: #666;">
+            Example with TURN: <br>
+            [{"urls": "stun:stun.l.google.com:19302"}, {"urls": "turn:your-turn-server.com:3478", "username": "user", "credential": "pass"}]
+        </small>
+    </div>
+    <br>
+
+    <button id="startBtn" onclick="startCall()">Start Call</button>
+    <button id="stopBtn" onclick="stopCall()" disabled>Hangup</button>
+
+    <h3>Remote Audio</h3>
+    <audio id="remoteAudio" autoplay controls></audio>
+
+    <script>
+        let pc;
+        let ws;
+        let localStream;
+
+        async function startCall() {
+            const signalingUrl = document.getElementById('signalingUrl').value;
+            
+            updateStatus("Connecting to signaling...");
+            
+            try {
+                let iceServers;
+                try {
+                    const iceServersText = document.getElementById('iceServers').value;
+                    iceServers = JSON.parse(iceServersText);
+                    if (!Array.isArray(iceServers)) {
+                        throw new Error("ICE servers must be an array");
+                    }
+                } catch (parseError) {
+                    updateStatus("Error parsing ICE servers: " + parseError.message);
+                    return;
+                }
+                
+                localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                ws = new WebSocket(signalingUrl);
+                
+                ws.onopen = () => {
+                    updateStatus("Signaling Connected. Waiting for Agent...");
+                    createPeerConnection(iceServers);
+                };
+
+                ws.onmessage = async (event) => {
+                    const data = JSON.parse(event.data);
+                    handleSignalingMessage(data);
+                };
+
+            } catch (e) {
+                console.error(e);
+                updateStatus("Error: " + e.message);
+            }
+        }
+
+        function createPeerConnection(iceServers) {
+            const config = { iceServers: iceServers };
+            console.log("Creating peer connection with config:", config);
+            pc = new RTCPeerConnection(config);
+
+            localStream.getTracks().forEach(track => {
+                pc.addTrack(track, localStream);
+            });
+
+            pc.ontrack = (event) => {
+                console.log("Remote track received");
+                const remoteAudio = document.getElementById('remoteAudio');
+                if (remoteAudio.srcObject !== event.streams[0]) {
+                    remoteAudio.srcObject = event.streams[0];
+                    updateStatus("Connected! Audio Active.", "active");
+                    document.getElementById('startBtn').disabled = true;
+                    document.getElementById('stopBtn').disabled = false;
+                }
+            };
+
+            pc.onicecandidate = (event) => {
+                if (event.candidate && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ candidate: event.candidate }));
+                }
+            };
+        }
+
+        async function handleSignalingMessage(data) {
+            if (data.sdp) {
+                console.log("Received SDP", data.type);
+                await pc.setRemoteDescription(new RTCSessionDescription(data));
+                
+                if (data.type === 'offer') {
+                    const answer = await pc.createAnswer();
+                    await pc.setLocalDescription(answer);
+                    ws.send(JSON.stringify({
+                        sdp: pc.localDescription.sdp,
+                        type: pc.localDescription.type
+                    }));
+                }
+            } else if (data.candidate) {
+                console.log("Received Candidate");
+                try {
+                    await pc.addIceCandidate(data.candidate);
+                } catch (e) {
+                    console.error("Error adding received ice candidate", e);
+                }
+            }
+        }
+
+        function stopCall() {
+            if (pc) pc.close();
+            if (ws) ws.close();
+            if (localStream) localStream.getTracks().forEach(t => t.stop());
+            
+            pc = null;
+            ws = null;
+            localStream = null;
+            
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+            updateStatus("Call Ended");
+        }
+
+        function updateStatus(msg, type) {
+            const el = document.getElementById('status');
+            el.textContent = 'Status: ' + msg;
+            el.className = type || '';
+        }
+    </script>
+</body>
+</html>
+

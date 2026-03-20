@@ -84,12 +84,15 @@ class FunctionCall(BaseModel):
         name (str): Name of the function to be called.
         arguments (str): JSON string containing the function arguments.
         call_id (str): Unique identifier linking this call to its output.
+        metadata (Optional[dict]): Provider-specific metadata, e.g. Gemini thought_signature bytes
+            stored as base64 string, or Anthropic cache control markers.
     """
     id: str = Field(default_factory=lambda: f"call_{int(time.time())}")
     type: Literal["function_call"] = "function_call"
     name: str
     arguments: str
     call_id: str
+    metadata: Optional[dict] = None
 
 
 class FunctionCallOutput(BaseModel):
@@ -357,7 +360,8 @@ class ChatContext:
                     "id": item.id,
                     **({"role": item.role.value, "content": item.content}
                        if isinstance(item, ChatMessage) else {}),
-                    **({"name": item.name, "arguments": item.arguments, "call_id": item.call_id}
+                    **({"name": item.name, "arguments": item.arguments, "call_id": item.call_id,
+                        "metadata": item.metadata}
                        if isinstance(item, FunctionCall) else {}),
                     **({"name": item.name, "output": item.output, "call_id": item.call_id, "is_error": item.is_error}
                        if isinstance(item, FunctionCallOutput) else {})
@@ -390,7 +394,8 @@ class ChatContext:
                     name=item_data["name"],
                     arguments=item_data["arguments"],
                     call_id=item_data["call_id"],
-                    id=item_data["id"]
+                    id=item_data["id"],
+                    metadata=item_data.get("metadata")
                 ))
             elif item_data["type"] == "function_call_output":
                 items.append(FunctionCallOutput(

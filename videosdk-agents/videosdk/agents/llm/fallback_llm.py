@@ -5,6 +5,7 @@ from .chat_context import ChatContext
 from ..fallback_base import FallbackBase
 
 class FallbackLLM(LLM, FallbackBase):
+    """LLM wrapper that automatically fails over to backup providers on errors and attempts recovery of higher-priority ones."""
     def __init__(self, providers: List[LLM], temporary_disable_sec: float = 60.0, permanent_disable_after_attempts: int = 3):
         LLM.__init__(self)
         FallbackBase.__init__(self, providers, "LLM", temporary_disable_sec=temporary_disable_sec, permanent_disable_after_attempts=permanent_disable_after_attempts)
@@ -19,8 +20,7 @@ class FallbackLLM(LLM, FallbackBase):
 
     async def _handle_async_error(self, error_msg: str, failed_provider: Any):
         switched = await self._switch_provider(f"Async Error: {error_msg}", failed_provider=failed_provider)
-        if not switched:
-            self.emit("error", error_msg)
+        self.emit("error", error_msg)
 
     async def _switch_provider(self, reason: str, failed_provider: Any = None):
         provider_to_cleanup = failed_provider if failed_provider else self.active_provider
@@ -54,6 +54,7 @@ class FallbackLLM(LLM, FallbackBase):
                 return 
             except Exception as e:
                 switched = await self._switch_provider(str(e), failed_provider=current_provider)
+                self.emit("error", str(e))
                 if not switched:
                     raise e
 

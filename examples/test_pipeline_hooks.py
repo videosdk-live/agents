@@ -91,26 +91,12 @@ async def entrypoint(ctx: JobContext):
             yield audio
 
     @pipeline.on("llm")
-    async def llm_gate_decision_making(transcript: str):
+    async def on_llm(data: dict):
         """
-        Control LLM invocation.
-        - Yield → bypass LLM
-        - No yield → normal LLM flow
+        Called when LLM generates content.
         """
-        transcript_lower = transcript.lower()
-        normalized = transcript_lower.replace(" ", "")
-
-        TRIGGERS = ("officehours",)
-
-        if any(trigger in normalized for trigger in TRIGGERS):
-            response = (
-                "Our online support is available twenty four seven. "
-                "Store office working hours are nine A M to five P M, "
-                "Monday to Friday."
-            )
-
-            for word in response.split():
-                yield word + " "
+        text = data.get("text", "")
+        logging.info(f"[LLM] Generated: {text[:100]}...")
 
     @pipeline.on("vision_frame")
     async def vision_hook(frame_stream):

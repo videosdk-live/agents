@@ -51,13 +51,12 @@ async def entrypoint(ctx: JobContext):
     
     shutdown_event = asyncio.Event()
     
-    @pipeline.on("content_generated")
-    async def on_content_generated(data: dict):
+    @pipeline.on("llm")
+    async def on_llm(data: dict):
         """Send agent's text response via pubsub"""
         text = data.get("text", "")
         if text.strip():
             print(f"Sending agent response via pubsub: {text}")
-            
             publish_config = PubSubPublishConfig(
                 topic="CHAT",
                 message=text

@@ -38,21 +38,14 @@ class CustomerServiceAgent(Agent):
         }
 
     async def handle_specialist_response(self, message: A2AMessage) -> None:
+        """Handle responses from specialist agents and relay to user via TTS directly."""
         response = message.content.get("response")
         if response:
             await asyncio.sleep(0.5)
-            prompt = f"The loan specialist has responded: {response}"
-            methods_to_try = [
-                (self.session.pipeline.send_text_message, prompt),# While using Cascading as main agent, comment this
-                (self.session.pipeline.model.send_message, response),# While using Cascading as main agent, comment this
-                (self.session.say, response)
-            ]
-            for method, arg in methods_to_try:
-                try:
-                    await method(arg)
-                    break
-                except Exception as e:
-                    print(f"Error with {method.__name__}: {e}")
+            # Use say() to speak the response directly via TTS.
+            # Don't use reply() or send_text_message() here — they trigger another LLM
+            # generation that competes with the function tool response path, causing duplicates.
+            await self.session.say(response)
 
     async def on_enter(self):
         print("CustomerAgent joined the meeting")

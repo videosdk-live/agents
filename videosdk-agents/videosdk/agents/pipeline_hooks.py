@@ -13,48 +13,41 @@ logger = logging.getLogger(__name__)
 class PipelineHooks:
     """
     Manages pipeline hooks/middleware for intercepting and processing data at different stages.
-    
+
     Supported hooks:
-    - speech_in: Process raw incoming user audio (async iterator)
-    - speech_out: Process outgoing agent audio after TTS (async iterator)
-    - stt: Process user transcript after STT, before LLM
-    - llm: Control LLM invocation (can bypass with direct response)
-    - agent_response: Process agent response after LLM, before TTS
+    - stt: STT processing (async iterator: audio -> events)
+    - tts: TTS processing (async iterator: text -> audio)
+    - llm: Called when LLM content is generated. Can observe or modify the response.
+           Return/yield str to replace response, return None to keep original.
     - vision_frame: Process video frames when vision is enabled (async iterator)
     - user_turn_start: Called when user turn starts
     - user_turn_end: Called when user turn ends
     - agent_turn_start: Called when agent processing starts
     - agent_turn_end: Called when agent finishes speaking
-    - content_generated: Called when LLM content is generated (receives dict with "text" key)
     """
-    
+
     def __init__(self) -> None:
         # Vision hooks (async iterator support)
         self._vision_frame_hooks: list[Callable[[AsyncIterator[Any]], AsyncIterator[Any]]] = []
-        
+
         # Stream processing hooks
         self._stt_stream_hook: Callable[[AsyncIterator[bytes]], AsyncIterator[Any]] | None = None
         self._tts_stream_hook: Callable[[AsyncIterator[str]], AsyncIterator[bytes]] | None = None
-        
-        # Gate hook (can yield to bypass LLM, or return None to continue to LLM)
-        self._llm_hook: Callable[[str], AsyncIterator[str] | Awaitable[None]] | None = None
-        
-        self._agent_response_hooks: list[Callable[[str], Awaitable[AsyncIterator[str]] | str]] = []
 
-        # Lifecycle hooks (side effects only)
+        # LLM hooks - can observe or modify the generated response
+        self._llm_hooks: list[Callable[[dict], Awaitable[str | AsyncIterator[str] | None]]] = []
         self._user_turn_start_hooks: list[Callable[[str], Awaitable[None]]] = []
         self._user_turn_end_hooks: list[Callable[[], Awaitable[None]]] = []
         self._agent_turn_start_hooks: list[Callable[[], Awaitable[None]]] = []
         self._agent_turn_end_hooks: list[Callable[[], Awaitable[None]]] = []
-        self._content_generated_hooks: list[Callable[[dict], Awaitable[None]]] = []
     
     def on(
-        self, 
-        event: Literal["stt", "tts", "llm", "agent_response", "vision_frame", "user_turn_start", "user_turn_end", "agent_turn_start", "agent_turn_end", "content_generated"]
+        self,
+        event: Literal["stt", "tts", "llm", "vision_frame", "user_turn_start", "user_turn_end", "agent_turn_start", "agent_turn_end"]
     ) -> Callable:
         """
         Decorator to register a hook for a specific event.
-        
+
         Examples:
             @pipeline.on("stt")
             async def stt_stream_hook(audio_stream):
@@ -67,49 +60,31 @@ class PipelineHooks:
                 '''Stream TTS hook (text -> audio)'''
                 async for audio_frame in run_tts(text_stream):
                     yield audio_frame
-            
+
             @pipeline.on("vision_frame")
             async def process_frames(frame_stream):
                 '''Apply filters to video frames'''
                 async for frame in frame_stream:
-                    # Process av.VideoFrame
                     filtered_frame = apply_filter(frame)
                     yield filtered_frame
-            
+
             @pipeline.on("user_turn_start")
             async def on_user_turn_start(transcript: str) -> None:
                 '''Log when user starts speaking'''
                 print(f"User said: {transcript}")
-            
-            @pipeline.on("user_turn_end")
-            async def on_user_turn_end() -> None:
-                '''Log when user turn ends'''
-                print("User turn ended")
-            
-            @pipeline.on("agent_turn_start")
-            async def on_agent_turn_start() -> None:
-                '''Log when agent starts processing'''
-                print("Agent processing started")
-            
-            @pipeline.on("agent_turn_end")
-            async def on_agent_turn_end() -> None:
-                '''Log when agent finishes speaking'''
-                print("Agent finished speaking")
-            
-            @pipeline.on("content_generated")
-            async def on_content_generated(data: dict) -> None:
-                '''Handle generated content from LLM'''
+
+            @pipeline.on("llm")
+            async def on_llm(data: dict):
+                '''Observe LLM output (return None to keep original)'''
                 text = data.get("text", "")
                 print(f"Generated: {text}")
-            
+
             @pipeline.on("llm")
-            async def custom_processing(transcript: str):
-                '''Bypass LLM with streaming response or don't yield for normal flow'''
-                if "hours" in transcript.lower():
-                    # Yield to bypass LLM and stream response directly to TTS
-                    for word in "We're open 24/7".split():
-                        yield word + " "
-                # If no yields, the generator will be empty and LLM will be used
+            async def modify_llm(data: dict):
+                '''Modify LLM output (yield chunks to replace response)'''
+                text = data.get("text", "")
+                modified = text.replace("SSN", "[REDACTED]")
+                yield modified
         """
         def decorator(func: Callable) -> Callable:
             if event == "stt":
@@ -123,11 +98,7 @@ class PipelineHooks:
                 self._tts_stream_hook = func
                 logger.info("Registered TTS stream hook")
             elif event == "llm":
-                if self._llm_hook is not None:
-                    logger.warning("llm hook already registered, overwriting")
-                self._llm_hook = func
-            elif event == "agent_response":
-                self._agent_response_hooks.append(func)     
+                self._llm_hooks.append(func)
             elif event == "vision_frame":
                 self._vision_frame_hooks.append(func)
             elif event == "user_turn_start":
@@ -138,14 +109,12 @@ class PipelineHooks:
                 self._agent_turn_start_hooks.append(func)
             elif event == "agent_turn_end":
                 self._agent_turn_end_hooks.append(func)
-            elif event == "content_generated":
-                self._content_generated_hooks.append(func)
             else:
                 raise ValueError(f"Unknown event: {event}")
-            
+
             logger.info(f"Registered hook for event: {event}")
             return func
-        
+
         return decorator
     
     async def process_vision_frame(self, frames: AsyncIterator[Any]) -> AsyncIterator[Any]:
@@ -221,97 +190,67 @@ class PipelineHooks:
         """Check if any vision_frame hooks are registered."""
         return len(self._vision_frame_hooks) > 0
     
-    def has_llm_hook(self) -> bool:
-        """Check if a llm hook is registered."""
-        return self._llm_hook is not None
-    
-    def has_agent_response_hooks(self) -> bool:
-        """Check if any agent response hooks are registered."""
-        return len(self._agent_response_hooks) > 0
+    def has_llm_hooks(self) -> bool:
+        """Check if any llm hooks are registered."""
+        return len(self._llm_hooks) > 0
 
     def has_user_turn_start_hooks(self) -> bool:
         """Check if any user_turn_start hooks are registered."""
         return len(self._user_turn_start_hooks) > 0
-    
+
     def has_user_turn_end_hooks(self) -> bool:
         """Check if any user_turn_end hooks are registered."""
         return len(self._user_turn_end_hooks) > 0
-    
+
     def has_agent_turn_start_hooks(self) -> bool:
         """Check if any agent_turn_start hooks are registered."""
         return len(self._agent_turn_start_hooks) > 0
-    
+
     def has_agent_turn_end_hooks(self) -> bool:
         """Check if any agent_turn_end hooks are registered."""
         return len(self._agent_turn_end_hooks) > 0
-    
-    def has_content_generated_hooks(self) -> bool:
-        """Check if any content_generated hooks are registered."""
-        return len(self._content_generated_hooks) > 0
-    
-    async def trigger_content_generated(self, data: dict) -> None:
+
+    async def trigger_llm(self, data: dict) -> str | None:
         """
-        Trigger all content_generated hooks.
-        
+        Trigger all llm hooks. Hooks are chained — each receives the (possibly modified) text.
+
+        If a hook yields/returns a string, it replaces the response text for subsequent
+        hooks and for TTS. If it returns None, the text is kept as-is.
+
         Args:
             data: Dictionary containing "text" key with generated content
-        """
-        for hook in self._content_generated_hooks:
-            try:
-                await hook(data)
-            except Exception as e:
-                logger.error(f"Error in content_generated hook: {e}", exc_info=True)
-    
-    async def process_llm_gate(self, transcript: str) -> AsyncIterator[str] | None:
-        """
-        Process turn through llm gate hook.
-        
-        Args:
-            transcript: User transcript
-            
+
         Returns:
-            AsyncIterator[str] if hook wants to bypass LLM (yields response chunks)
-            None if hook wants to continue to LLM normally (empty generator or no hook)
+            Modified text if any hook modified it, None otherwise.
         """
-        if not self._llm_hook:
-            return None
-        
-        try:
-            result = self._llm_hook(transcript)
-            
-            # Check if result is an async generator (has __anext__)
-            if hasattr(result, '__anext__'):
-                # Peek at the first value to see if generator is empty
-                try:
-                    first_value = await result.__anext__()
-                    
-                    # Generator has at least one value - create a new generator that yields first value + rest
-                    async def full_generator():
-                        yield first_value
-                        async for chunk in result:
-                            yield chunk
-                    
-                    return full_generator()
-                    
-                except StopAsyncIteration:
-                    # Generator is empty - continue to LLM
-                    return None
-                    
-            elif hasattr(result, '__await__'):
-                # It's a coroutine - await it
-                awaited_result = await result
-                if awaited_result is None:
-                    return None
-                elif hasattr(awaited_result, '__anext__'):
-                    return awaited_result
-                else:
-                    return None
-            else:
-                return None
-                
-        except Exception as e:
-            logger.error(f"Error in llm hook: {e}", exc_info=True)
-            return None
+        current_text = data.get("text", "")
+        modified = False
+
+        for hook in self._llm_hooks:
+            try:
+                result = hook({"text": current_text})
+
+                if hasattr(result, '__anext__'):
+                    # Async generator — collect yielded chunks
+                    chunks = []
+                    async for chunk in result:
+                        if chunk is not None:
+                            chunks.append(chunk)
+                    if chunks:
+                        current_text = "".join(chunks)
+                        modified = True
+
+                elif hasattr(result, '__await__'):
+                    # Coroutine — await it
+                    awaited = await result
+                    if isinstance(awaited, str):
+                        current_text = awaited
+                        modified = True
+
+            except Exception as e:
+                logger.error(f"Error in llm hook: {e}", exc_info=True)
+
+        return current_text if modified else None
     
     def has_stt_stream_hook(self) -> bool:
         """Check if STT stream hook is registered."""
@@ -364,13 +303,11 @@ class PipelineHooks:
     def clear_all_hooks(self) -> None:
         """Clear all registered hooks."""
         self._vision_frame_hooks.clear()
-        self._agent_response_hooks.clear()
         self._stt_stream_hook = None
         self._tts_stream_hook = None
-        self._llm_hook = None
+        self._llm_hooks.clear()
         self._user_turn_start_hooks.clear()
         self._user_turn_end_hooks.clear()
         self._agent_turn_start_hooks.clear()
         self._agent_turn_end_hooks.clear()
-        self._content_generated_hooks.clear()
         logger.info("Cleared all pipeline hooks")
