@@ -21,6 +21,8 @@ from .execution import (
 from .job import (
     JobContext,
     RoomOptions,
+    RecordingOptions,
+    _coerce_recording_options_dict,
     JobAcceptArguments,
     RunningJobInfo,
     _set_current_job_context,
@@ -726,6 +728,9 @@ class Worker:
                 auth_token=auth_token,
                 signaling_base_url=self.options.signaling_base_url,
                 recording=self.default_room_options.recording,
+                recording_options=getattr(
+                    self.default_room_options, "recording_options", None
+                ),
                 background_audio=self.default_room_options.background_audio,
                 agent_participant_id=self.default_room_options.agent_participant_id,
                 join_meeting=self.default_room_options.join_meeting,
@@ -769,6 +774,13 @@ class Worker:
                 if "recording" in assignment.room_options:
                     room_options.recording = assignment.room_options["recording"]
                     logger.info(f"Set recording: {room_options.recording}")
+                if "recording_options" in assignment.room_options:
+                    ro = assignment.room_options["recording_options"]
+                    if isinstance(ro, dict):
+                        room_options.recording_options = _coerce_recording_options_dict(ro)
+                    else:
+                        room_options.recording_options = ro
+                    logger.info(f"Set recording_options: {room_options.recording_options}")
                 if "background_audio" in assignment.room_options:
                     room_options.background_audio = assignment.room_options[
                         "background_audio"

@@ -34,6 +34,8 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
+_SCREEN_RECORDING_KINDS: tuple[str, ...] = ("screen_audio", "screen_video")
+
 
 class VideoSDKHandler(BaseTransportHandler):
     """
@@ -52,6 +54,8 @@ class VideoSDKHandler(BaseTransportHandler):
         loop: AbstractEventLoop,
         vision: bool = False,
         recording: bool = False,
+        record_audio: Optional[bool] = None,
+        record_screen_share: bool = True,
         custom_camera_video_track=None,
         custom_microphone_audio_track=None,
         audio_sinks=None,
@@ -151,6 +155,10 @@ class VideoSDKHandler(BaseTransportHandler):
         self._session_id: Optional[str] = None
         self._session_id_collected = False
         self.recording = recording
+        self.record_audio = record_audio
+        self.record_screen_share = record_screen_share
+        self._track_recordings_kinds_by_participant: dict[str, set[str]] = {}
+        self._participant_recording_has_share_at_start: dict[str, bool] = {}
         self.recorded_participants: set = set()
 
         self.traces_flow_manager = TracesFlowManager(room_id=self.meeting_id)
@@ -321,7 +329,10 @@ class VideoSDKHandler(BaseTransportHandler):
         if self.recording:
             self.recorded_participants.add(self.meeting.local_participant.id)
             asyncio.create_task(
-                self.start_participant_recording(self.meeting.local_participant.id)
+                self._start_base_recording_for_participant(
+                    self.meeting.local_participant.id,
+                    self.meeting.local_participant,
+                )
             )
 
     def on_meeting_left(self, data):
@@ -351,6 +362,57 @@ class VideoSDKHandler(BaseTransportHandler):
             if self.meeting and self.meeting.local_participant
             else False
         )
+
+    def _participant_has_share_stream(self, participant: Participant) -> bool:
+        """True if participant already has a share stream (avoids duplicate screen track recording)."""
+        streams = getattr(participant, "streams", None)
+        if not streams:
+            return False
+        try:
+            vals = streams.values() if isinstance(streams, dict) else streams
+            return any(getattr(s, "kind", None) == "share" for s in vals)
+        except Exception:
+            return False
+
+    async def _start_track_recording_kind(self, participant_id: str, kind: str) -> None:
+        kinds = self._track_recordings_kinds_by_participant.setdefault(participant_id, set())
+        if kind in kinds:
+            return
+        await self.recording_manager.start_track_recording(participant_id=participant_id, kind=kind)
+        kinds.add(kind)
+
+    async def _start_screen_track_recordings(self, participant_id: str) -> None:
+        if not self.record_screen_share:
+            return
+        for kind in _SCREEN_RECORDING_KINDS:
+            await self._start_track_recording_kind(participant_id, kind)
+
+    async def _start_base_recording_for_participant(
+        self, participant_id: str, participant_obj: Participant | None = None
+    ) -> None:
+        """Participant composite API (record_audio is None) or track API (audio/video) + optional screen at join."""
+        if self.record_audio is None:
+            has_share = (
+                self._participant_has_share_stream(participant_obj)
+                if participant_obj is not None
+                else False
+            )
+            self._participant_recording_has_share_at_start[participant_id] = has_share
+            await self.recording_manager.start_participant_recording(participant_id)
+            return
+
+        await self._start_track_recording_kind(
+            participant_id, "audio" if self.record_audio else "video"
+        )
+        if participant_obj and self._participant_has_share_stream(participant_obj):
+            await self._start_screen_track_recordings(participant_id)
+
+    async def _maybe_start_screen_track_recording(self, participant: Participant) -> None:
+        """When share starts later: skip if participant recording already included share at start."""
+        pid = participant.id
+        if self.record_audio is None and self._participant_recording_has_share_at_start.get(pid, False):
+            return
+        await self._start_screen_track_recordings(pid)
 
     def _update_non_agent_participant_count(self):
         """
@@ -525,7 +587,9 @@ class VideoSDKHandler(BaseTransportHandler):
 
         if self.recording and len(self.participants_data) == 1:
             self.recorded_participants.add(participant.id)
-            asyncio.create_task(self.start_participant_recording(participant.id))
+            asyncio.create_task(
+                self._start_base_recording_for_participant(participant.id, participant)
+            )
 
         if participant.id in self._participant_joined_events:
             self._participant_joined_events[participant.id].set()
@@ -558,6 +622,10 @@ class VideoSDKHandler(BaseTransportHandler):
                     self.audio_listener_tasks[stream.id] = task
                 except Exception as e:
                     logger.error(f"Error creating audio listener task: {e}")
+
+            if stream.kind == "share" and self.recording:
+                asyncio.create_task(self._maybe_start_screen_track_recording(participant))
+                
             if stream.kind in ("video", "share") and self.vision:
                 logger.info(f"{stream.kind} stream enabled for participant: {peer_name}")
                 self.video_listener_tasks[stream.id] = asyncio.create_task(
@@ -789,6 +857,8 @@ class VideoSDKHandler(BaseTransportHandler):
         
         self.participants_data.clear()
         self.recorded_participants.clear()
+        self._track_recordings_kinds_by_participant.clear()
+        self._participant_recording_has_share_at_start.clear()
         self._participant_joined_events.clear()
         self.meeting = None
         self.pipeline = None
@@ -942,5 +1012,7 @@ class VideoSDKHandler(BaseTransportHandler):
         await self.recording_manager.stop_and_merge_recordings(
             session_id=self._session_id,
             local_participant_id=self.meeting.local_participant.id,
-            participants_data=self.participants_data
+            participants_data=self.participants_data,
+            track_kinds_by_participant=self._track_recordings_kinds_by_participant,
+            stop_participants_recording=self.record_audio is None,
         )

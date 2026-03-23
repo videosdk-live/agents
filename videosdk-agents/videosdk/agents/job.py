@@ -84,6 +84,71 @@ class LoggingOptions:
 
 
 @dataclass
+class RecordingOptions:
+    """
+    Extra recording when RoomOptions.recording is True.
+
+    Audio is always recorded when recording=True (track API, kind=audio).
+    Set video and/or screen_share here only when you need them.
+    screen_share=True requires RoomOptions.vision=True.
+    """
+
+    video: bool = False
+    screen_share: bool = False
+
+
+def _coerce_recording_options_dict(ro: dict) -> RecordingOptions:
+    """Build RecordingOptions from a dict (e.g. backend JSON); ignores unknown keys."""
+    return RecordingOptions(
+        video=bool(ro.get("video", False)),
+        screen_share=bool(ro.get("screen_share", False)),
+    )
+
+
+def validate_room_options_recording(room_options: "RoomOptions") -> None:
+    """Raise ValueError if recording-related options are inconsistent."""
+    if not room_options.recording:
+        return
+    ro = room_options.recording_options
+    if isinstance(ro, dict):
+        room_options.recording_options = _coerce_recording_options_dict(ro)
+        ro = room_options.recording_options
+    if ro is None:
+        return
+    if ro.screen_share and not room_options.vision:
+        raise ValueError(
+            "RoomOptions: recording_options.screen_share=True requires vision=True "
+            "(vision subscribes to video/share streams required for screen recording)."
+        )
+
+
+def resolve_video_sdk_recording(
+    room_options: "RoomOptions",
+) -> tuple[Optional[bool], bool]:
+    """
+    Map RoomOptions recording fields to VideoSDKHandler inputs.
+
+    Returns:
+        (record_audio, record_screen_share)
+        - record_audio: None → participant recording (audio+video composite API);
+          True → track recording, kind=audio only.
+        - record_screen_share: whether to start screen_* track recording APIs.
+    """
+    if not room_options.recording:
+        return None, False
+
+    ro = room_options.recording_options
+    if ro is None:
+        return True, False
+
+    if ro.video:
+        return None, False
+    if ro.screen_share:
+        return True, True
+    return True, False
+
+
+@dataclass
 class RoomOptions:
     """Configuration options for connecting to and managing a VideoSDK room, including transport, telemetry, and session settings."""
 
@@ -94,6 +159,9 @@ class RoomOptions:
     playground: bool = True
     vision: bool = False
     recording: bool = False
+    # recording=True → always record audio (track API). Optional RecordingOptions.video /
+    # RecordingOptions.screen_share for camera video and/or screen share (see validate/resolve).
+    recording_options: Optional[RecordingOptions] = None
     avatar: Optional[Any] = None
     join_meeting: Optional[bool] = True
     on_room_error: Optional[Callable[[Any], None]] = None
@@ -415,6 +483,10 @@ class JobContext:
                         )
 
                     if self.room_options.join_meeting:
+                        validate_room_options_recording(self.room_options)
+                        record_audio_resolved, record_screen_share = resolve_video_sdk_recording(
+                            self.room_options
+                        )
                         agent_id = self._pipeline.agent.id if self._pipeline and hasattr(self._pipeline, 'agent') else None
                         self.room = VideoSDKHandler(
                             meeting_id=self.room_options.room_id,
@@ -426,6 +498,8 @@ class JobContext:
                             loop=self._loop,
                             vision=self.room_options.vision,
                             recording=self.room_options.recording,
+                            record_audio=record_audio_resolved,
+                            record_screen_share=record_screen_share,
                             custom_camera_video_track=custom_camera_video_track,
                             custom_microphone_audio_track=custom_microphone_audio_track,
                             audio_sinks=sinks,
