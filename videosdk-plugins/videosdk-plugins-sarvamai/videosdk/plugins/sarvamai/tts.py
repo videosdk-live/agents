@@ -302,6 +302,7 @@ class SarvamAITTS(TTS):
                             break
 
         except Exception as e:
+            self.emit("error", f"TTS synthesis failed: {str(e)}")
             logger.error( f"Sarvam TTS synthesis failed: {e}")
 
     async def _stream_synthesis(self, text: AsyncIterator[str] | str) -> None:
@@ -345,7 +346,7 @@ class SarvamAITTS(TTS):
                 self.ws_count = self.ws_count + 1
             except Exception as e:
                 logger.error( f"Failed to connect to WebSocket: {e}")
-                raise
+                self.emit("error", f"Failed to connect to TTS WebSocket: {str(e)}")
 
     async def _send_initial_config(self) -> None:
         """Sends the initial configuration message to the WebSocket server."""
@@ -404,6 +405,7 @@ class SarvamAITTS(TTS):
             if not self._interrupted:
                 await self._ws_connection.send_str(json.dumps({"type": "flush"}))
         except Exception as e:
+            self.emit("error", f"TTS synthesis failed: {str(e)}")
             logger.error( f"Failed to send text chunks via WebSocket: {e}")
 
     async def _recv_loop(self):
