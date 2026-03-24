@@ -322,8 +322,8 @@ class SarvamAITTS(TTS):
 
             await self._send_text_chunks(text_iter)
         except Exception as e:
-            logger.error( f"WebSocket streaming failed: {e}. Trying HTTP fallback.")
-            self.emit("error", e)
+            logger.error( f"WebSocket streaming failed: {e}.")
+            self.emit("error", f"TTS synthesis failed: {str(e)}")
 
     async def _ensure_ws_connection(self) -> None:
         """Establishes and maintains a persistent WebSocket connection."""
