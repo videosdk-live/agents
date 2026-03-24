@@ -437,6 +437,7 @@ class SarvamAITTS(TTS):
             pass
         except Exception as e:
             logger.error( f"WebSocket receive loop error: {e}")
+            self.emit("error", f"TTS synthesis failed: {str(e)}")
 
     async def _handle_audio_data(self, audio_data: Optional[dict[str, Any]]):
         """Processes audio data received from the WebSocket."""
