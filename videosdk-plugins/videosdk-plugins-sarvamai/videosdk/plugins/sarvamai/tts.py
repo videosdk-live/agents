@@ -278,28 +278,28 @@ class SarvamAITTS(TTS):
 
                     text_iterator = text.__aiter__()
                     while not self._interrupted:
-                        # try:
-                        chunk = await asyncio.wait_for(text_iterator.__anext__(), timeout=LLM_PAUSE_TIMEOUT)
-                        
-                        if chunk and chunk.strip():
-                            chunk_buffer.append(chunk)
-                        
-                        if len(chunk_buffer) >= HTTP_CHUNK_BUFFER_SIZE:
-                            combined_text = "".join(chunk_buffer)
-                            await self._http_synthesis(combined_text)
-                            chunk_buffer.clear()
+                        try:
+                            chunk = await asyncio.wait_for(text_iterator.__anext__(), timeout=LLM_PAUSE_TIMEOUT)
+                            
+                            if chunk and chunk.strip():
+                                chunk_buffer.append(chunk)
+                            
+                            if len(chunk_buffer) >= HTTP_CHUNK_BUFFER_SIZE:
+                                combined_text = "".join(chunk_buffer)
+                                await self._http_synthesis(combined_text)
+                                chunk_buffer.clear()
 
-                        # except asyncio.TimeoutError:
-                        #     if chunk_buffer:
-                        #         combined_text = "".join(chunk_buffer)
-                        #         await self._http_synthesis(combined_text)
-                        #         chunk_buffer.clear()
+                        except asyncio.TimeoutError:
+                            if chunk_buffer:
+                                combined_text = "".join(chunk_buffer)
+                                await self._http_synthesis(combined_text)
+                                chunk_buffer.clear()
                         
-                        # except StopAsyncIteration:
-                        #     if chunk_buffer:
-                        #         combined_text = "".join(chunk_buffer)
-                        #         await self._http_synthesis(combined_text)
-                        #     break
+                        except StopAsyncIteration:
+                            if chunk_buffer:
+                                combined_text = "".join(chunk_buffer)
+                                await self._http_synthesis(combined_text)
+                            break
 
         except Exception as e:
             logger.error( f"Sarvam TTS synthesis failed: {e}")
@@ -310,7 +310,6 @@ class SarvamAITTS(TTS):
         for each synthesis task to guarantee reliability.
         """
         try:
-            # await self._close_ws_resources()
             await self._ensure_ws_connection()
             
 
