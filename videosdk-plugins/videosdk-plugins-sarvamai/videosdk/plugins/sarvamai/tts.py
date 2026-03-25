@@ -302,6 +302,7 @@ class SarvamAITTS(TTS):
                             break
 
         except Exception as e:
+            self.emit("error", f"TTS synthesis failed: {str(e)}")
             logger.error( f"Sarvam TTS synthesis failed: {e}")
 
     async def _stream_synthesis(self, text: AsyncIterator[str] | str) -> None:
@@ -310,7 +311,6 @@ class SarvamAITTS(TTS):
         for each synthesis task to guarantee reliability.
         """
         try:
-            # await self._close_ws_resources()
             await self._ensure_ws_connection()
             
 
@@ -323,19 +323,8 @@ class SarvamAITTS(TTS):
 
             await self._send_text_chunks(text_iter)
         except Exception as e:
-            logger.error( f"WebSocket streaming failed: {e}. Trying HTTP fallback.")
-            try:
-                full_text = ""
-                if isinstance(text, str):
-                    full_text = text
-                else:
-                    async for chunk in text:
-                        full_text += chunk
-                
-                if full_text.strip():
-                    await self._http_synthesis(full_text.strip())
-            except Exception as http_e:
-                logger.error( f"HTTP fallback also failed: {http_e}")
+            logger.error( f"WebSocket streaming failed: {e}.")
+            self.emit("error", f"TTS synthesis failed: {str(e)}")
 
     async def _ensure_ws_connection(self) -> None:
         """Establishes and maintains a persistent WebSocket connection."""
@@ -357,7 +346,7 @@ class SarvamAITTS(TTS):
                 self.ws_count = self.ws_count + 1
             except Exception as e:
                 logger.error( f"Failed to connect to WebSocket: {e}")
-                raise
+                self.emit("error", f"Failed to connect to TTS WebSocket: {str(e)}")
 
     async def _send_initial_config(self) -> None:
         """Sends the initial configuration message to the WebSocket server."""
@@ -416,6 +405,7 @@ class SarvamAITTS(TTS):
             if not self._interrupted:
                 await self._ws_connection.send_str(json.dumps({"type": "flush"}))
         except Exception as e:
+            self.emit("error", f"TTS synthesis failed: {str(e)}")
             logger.error( f"Failed to send text chunks via WebSocket: {e}")
 
     async def _recv_loop(self):
@@ -449,6 +439,7 @@ class SarvamAITTS(TTS):
             pass
         except Exception as e:
             logger.error( f"WebSocket receive loop error: {e}")
+            self.emit("error", f"TTS synthesis failed: {str(e)}")
 
     async def _handle_audio_data(self, audio_data: Optional[dict[str, Any]]):
         """Processes audio data received from the WebSocket."""
