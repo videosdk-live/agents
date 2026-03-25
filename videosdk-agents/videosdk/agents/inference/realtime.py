@@ -206,12 +206,11 @@ class Realtime(RealtimeBaseModel[RealtimeEventTypes]):
             presence_penalty=presence_penalty,
             frequency_penalty=frequency_penalty,
             response_modalities=response_modalities or ["AUDIO"],
-            model_id=model,
         )
 
         return Realtime(
             provider="google",
-            model_id=model,
+            model=model,
             config=config,
             base_url=base_url,
         )
