@@ -412,17 +412,36 @@ class TeeCustomAudioStreamTrack(CustomAudioStreamTrack):
 
         # Route audio to sinks (avatars, etc.)
         for sink in self.sinks:
-            if hasattr(sink, "handle_audio_input"):
-                await sink.handle_audio_input(audio_data)
-            elif callable(sink):
-                if asyncio.iscoroutinefunction(sink):
-                    await sink(audio_data)
-                else:
-                    sink(audio_data)
+            try:
+                if hasattr(sink, "handle_audio_input"):
+                    await sink.handle_audio_input(audio_data)
+                elif callable(sink):
+                    if asyncio.iscoroutinefunction(sink):
+                        await sink(audio_data)
+                    else:
+                        sink(audio_data)
+            except Exception as e:
+                import logging as _logging
+                _logging.getLogger(__name__).warning("Avatar sink error (audio will continue): %s", e)
 
-        # DO NOT route agent's own TTS audio back to pipeline
-        # The pipeline should only receive audio from other participants
-        # This prevents the agent from hearing itself speak
+    async def recv(self) -> AudioFrame:
+        """
+        When avatar sinks are present the Avatar Server publishes audio to the meeting,
+        so we must NOT publish the raw TTS audio directly (it would cause double audio).
+        We still call super().recv() so that all internal state tracking and callbacks
+        (is_speaking, on_first_audio_byte, on_last_audio_byte) continue to work correctly.
+        The actual audio payload is replaced with silence before handing back to WebRTC.
+        """
+        frame = await super().recv()
+        if self.sinks and frame is not None:
+            silence = AudioFrame(format="s16", layout="mono", samples=self.samples)
+            for p in silence.planes:
+                p.update(bytes(p.buffer_size))
+            silence.pts = frame.pts
+            silence.time_base = frame.time_base
+            silence.sample_rate = frame.sample_rate
+            return silence
+        return frame
 
 class TeeMixingCustomAudioStreamTrack(MixingCustomAudioStreamTrack):
     """Combines mixing and tee functionality, mixing background audio while also forwarding audio bytes to registered sinks."""
@@ -437,5 +456,27 @@ class TeeMixingCustomAudioStreamTrack(MixingCustomAudioStreamTrack):
 
         # Route audio to sinks (avatars, etc.)
         for sink in self.sinks:
-            if hasattr(sink, "handle_audio_input"):
-                await sink.handle_audio_input(audio_data)
+            try:
+                if hasattr(sink, "handle_audio_input"):
+                    await sink.handle_audio_input(audio_data)
+                elif callable(sink):
+                    if asyncio.iscoroutinefunction(sink):
+                        await sink(audio_data)
+                    else:
+                        sink(audio_data)
+            except Exception as e:
+                import logging as _logging
+                _logging.getLogger(__name__).warning("Avatar sink error (audio will continue): %s", e)
+
+    async def recv(self) -> AudioFrame:
+        """Silence the direct WebRTC output when avatar sinks are handling playback."""
+        frame = await super().recv()
+        if self.sinks and frame is not None:
+            silence = AudioFrame(format="s16", layout="mono", samples=self.samples)
+            for p in silence.planes:
+                p.update(bytes(p.buffer_size))
+            silence.pts = frame.pts
+            silence.time_base = frame.time_base
+            silence.sample_rate = frame.sample_rate
+            return silence
+        return frame

@@ -669,3 +669,79 @@ async def run_tts(text_stream: AsyncIterator[str]) -> AsyncIterator[bytes]:
     
     async for frame in ctx._pipeline.tts.stream_synthesize(text_stream):
         yield frame
+
+# Audio utilities (used by avatar server)
+class AudioByteStream:
+    """
+    Buffers raw PCM bytes and emits fixed-size AudioFrame objects.
+
+    Useful for converting variable-size chunks (e.g. data-channel payloads)
+    into the steady frame cadence that AvatarSynchronizer expects.
+    """
+
+    def __init__(self, sample_rate: int, num_channels: int, samples_per_channel: int):
+        import numpy as _np
+        self._np = _np
+        self._sample_rate = sample_rate
+        self._num_channels = num_channels
+        self._samples_per_channel = samples_per_channel
+        self._sample_width = 2  
+        self._bytes_per_frame = samples_per_channel * num_channels * self._sample_width
+        self._buffer = bytearray()
+
+    def push(self, frame_data: bytes) -> list:
+        from av import AudioFrame
+        self._buffer.extend(frame_data)
+        frames = []
+        while len(self._buffer) >= self._bytes_per_frame:
+            chunk = bytes(self._buffer[: self._bytes_per_frame])
+            del self._buffer[: self._bytes_per_frame]
+            arr = self._np.frombuffer(chunk, dtype=self._np.int16).reshape(
+                self._num_channels, self._samples_per_channel
+            )
+            frame = AudioFrame.from_ndarray(
+                arr,
+                format="s16",
+                layout="mono" if self._num_channels == 1 else "stereo",
+            )
+            frame.sample_rate = self._sample_rate
+            frames.append(frame)
+        return frames
+
+    def flush(self) -> list:
+        from av import AudioFrame
+        if not self._buffer:
+            return []
+        chunk = bytes(self._buffer)
+        self._buffer.clear()
+        missing = self._bytes_per_frame - len(chunk)
+        if missing > 0:
+            chunk += bytes(missing)
+        arr = self._np.frombuffer(chunk, dtype=self._np.int16).reshape(
+            self._samples_per_channel, self._num_channels
+        )
+        frame = AudioFrame.from_ndarray(
+            arr.T,
+            format="s16",
+            layout="mono" if self._num_channels == 1 else "stereo",
+        )
+        frame.sample_rate = self._sample_rate
+        return [frame]
+
+
+class _AudioUtils:
+    AudioByteStream = AudioByteStream
+
+
+audio = _AudioUtils()
+
+
+async def cancel_and_wait(task: asyncio.Task | None) -> None:
+    """Cancel a task and wait for it to finish, suppressing CancelledError."""
+    if not task or task.done():
+        return
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass

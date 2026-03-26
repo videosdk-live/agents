@@ -1063,9 +1063,12 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         if self._realtime_model:
             self._realtime_model.current_utterance = None
 
+        if self.avatar and hasattr(self.avatar, 'send_segment_end'):
+            asyncio.create_task(self.avatar.send_segment_end())
+
         if self.agent and hasattr(self.agent, 'on_agent_speech_ended'):
             self.agent.on_agent_speech_ended(data)
-    
+
     def _on_realtime_transcription(self, data: dict) -> None:
         """Handle realtime model transcription"""
         self.emit("realtime_model_transcription", data)

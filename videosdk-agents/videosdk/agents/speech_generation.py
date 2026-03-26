@@ -138,6 +138,9 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
                     if self.hooks and self.hooks.has_agent_turn_end_hooks():
                         await self.hooks.trigger_agent_turn_end()
 
+                    if self.avatar and hasattr(self.avatar, 'send_segment_end'):
+                        await self.avatar.send_segment_end()
+
                     logger.info("TTS stream synthesis complete")
                     self.emit("last_audio_byte", {})
                     
@@ -245,6 +248,9 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
                 # this flag is set AND the buffer is fully drained.
                 if self.audio_track and hasattr(self.audio_track, "mark_synthesis_complete"):
                     self.audio_track.mark_synthesis_complete()
+
+                if self.avatar and hasattr(self.avatar, 'send_segment_end'):
+                    await self.avatar.send_segment_end()
 
             except asyncio.CancelledError:
                 logger.info("Synthesis cancelled")

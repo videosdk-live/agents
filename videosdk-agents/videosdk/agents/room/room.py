@@ -72,6 +72,8 @@ class VideoSDKHandler(BaseTransportHandler):
         traces_options=None,
         metrics_options=None,
         logs_options=None,
+        # Avatar options
+        avatar_participant_id: Optional[str] = None,
     ):
         """
         Initialize the VideoSDK handler.
@@ -114,6 +116,7 @@ class VideoSDKHandler(BaseTransportHandler):
         self.custom_microphone_audio_track = custom_microphone_audio_track
         self.audio_sinks = audio_sinks or []
         self.background_audio = background_audio
+        self._avatar_participant_id = avatar_participant_id
 
         # Managers
         self.input_stream_manager = InputStreamManager(pipeline=pipeline)
@@ -351,9 +354,12 @@ class VideoSDKHandler(BaseTransportHandler):
 
     def _is_agent_participant(self, participant: Participant) -> bool:
         """
-        Internal method: Check if a participant is an agent.
+        Internal method: Check if a participant is an agent (or Avatar Server).
         """
-        # Consider participants with names containing 'agent' or matching our agent name as agents
+        # Avatar Server participant — identified by pre-registered participant_id
+        if self._avatar_participant_id and participant.id == self._avatar_participant_id:
+            return True
+        
         participant_name = participant.display_name.lower()
         return (
             "agent" in participant_name
@@ -575,6 +581,10 @@ class VideoSDKHandler(BaseTransportHandler):
             self.transport_event_sender = TransportEventSender(self)
             
         logger.info(f"Participant joined: {peer_name}")
+
+        if self._is_agent_participant(participant):
+            logger.info(f"Skipping agent/avatar participant in on_participant_joined: {participant.id}")
+            return
 
         sip_user_flag = self.participants_data[participant.id]["sipUser"]
         metrics_collector.add_participant_metrics(

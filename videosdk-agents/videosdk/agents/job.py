@@ -447,10 +447,33 @@ class JobContext:
                 avatar = self._pipeline.avatar
 
             if avatar:
-                await avatar.connect()
-                custom_camera_video_track = avatar.video_track
-                custom_microphone_audio_track = avatar.audio_track
-                sinks.append(avatar)
+                if not self.room_options.room_id:
+                    self.room_options.room_id = self.get_room_id()
+                room_id = self.room_options.room_id
+
+                from .avatar import AvatarAudioOut, generate_avatar_credentials
+
+                if isinstance(avatar, AvatarAudioOut):
+                    avatar.set_room_id(room_id)
+                    await avatar.connect()
+                    audio_out = avatar
+                else:
+                    _api_key = os.getenv("VIDEOSDK_API_KEY")
+                    _secret_key = os.getenv("VIDEOSDK_SECRET_KEY")
+                    credentials = generate_avatar_credentials(
+                        _api_key, _secret_key, participant_id=avatar.participant_id
+                    )
+                    await avatar.connect(room_id, credentials.token)
+                    audio_out = AvatarAudioOut(credentials=credentials, room_id=room_id)
+                    await audio_out.connect()  # no-op (no dispatcher_url)
+
+                custom_camera_video_track = getattr(avatar, 'video_track', None)
+                custom_microphone_audio_track = getattr(avatar, 'audio_track', None)
+                sinks.append(audio_out)
+                self._cloud_avatar = avatar if not isinstance(avatar, AvatarAudioOut) else None
+                self._avatar_audio_out = audio_out
+                if self._pipeline:
+                    self._pipeline.avatar = audio_out
 
             if self.want_console:
                 from .console_mode import setup_console_voice_for_ctx
@@ -513,6 +536,7 @@ class JobContext:
                             traces_options=self.room_options.traces,
                             metrics_options=self.room_options.metrics,
                             logs_options=self.room_options.logs,
+                            avatar_participant_id=avatar.participant_id if avatar and hasattr(avatar, 'participant_id') else None,
                         )
                     if self._pipeline and hasattr(
                         self._pipeline, "_set_loop_and_audio_track"
@@ -606,6 +630,19 @@ class JobContext:
                 logger.error(f"Error during pipeline cleanup: {e}")
             self._pipeline = None
 
+        cloud_avatar = getattr(self, '_cloud_avatar', None)
+        if cloud_avatar and hasattr(cloud_avatar, 'aclose'):
+            try:
+                await cloud_avatar.aclose()
+            except Exception as e:
+                logger.error(f"Error during cloud avatar aclose: {e}")
+        audio_out = getattr(self, '_avatar_audio_out', None)
+        if audio_out:
+            try:
+                await audio_out.aclose()
+            except Exception as e:
+                logger.error(f"Error during avatar audio_out aclose: {e}")
+
         if self._job_logger:
             try:
                 self._job_logger.cleanup()
@@ -649,6 +686,9 @@ class JobContext:
     def notify_meeting_joined(self) -> None:
         """Called when the agent successfully joins the meeting."""
         self._meeting_joined_event.set()
+        audio_out = getattr(self, '_avatar_audio_out', None)
+        if audio_out and self.room and self.room.meeting:
+            audio_out._set_meeting(self.room.meeting)
 
     async def wait_for_meeting_joined(self, timeout: float = 30.0) -> bool:
         """Wait until the meeting is joined or timeout. Returns True if joined."""
