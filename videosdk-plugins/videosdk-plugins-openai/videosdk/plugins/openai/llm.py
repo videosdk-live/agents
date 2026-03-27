@@ -1,6 +1,6 @@
 from __future__ import annotations
 import os
-from typing import Any, AsyncIterator, List, Union
+from typing import Any, AsyncIterator, List, Literal, Union
 import json
 
 import httpx
@@ -66,6 +66,8 @@ class OpenAILLM(LLM):
         extra_body: dict | None = None,
         client: openai.AsyncOpenAI | None = None,
         max_retries: int = 0,
+        reasoning_effort: Literal["none", "low", "medium", "high"] | None = None,
+        verbosity: Literal["low", "medium", "high"] | None = None,
     ) -> None:
         """Initialize the OpenAI LLM plugin.
 
@@ -92,6 +94,11 @@ class OpenAILLM(LLM):
                 testing. When provided, ``api_key``, ``base_url``, ``organization``,
                 ``project``, ``timeout``, and ``max_retries`` are ignored.
             max_retries: Number of automatic retries on transient errors. Defaults to 0.
+            reasoning_effort: Controls reasoning depth for reasoning models.
+                Supported values: "none", "low", "medium", "high". Defaults to None
+                (uses the model's default). Only applied for reasoning / GPT-5 models.
+            verbosity: Controls output verbosity for reasoning / GPT-5 models.
+                Supported values: "low", "medium", "high". Defaults to None.
         """
         super().__init__()
 
@@ -107,6 +114,8 @@ class OpenAILLM(LLM):
         self.extra_headers = extra_headers
         self.extra_query = extra_query
         self.extra_body = extra_body
+        self.reasoning_effort = reasoning_effort
+        self.verbosity = verbosity
         self._cancelled = False
 
         self._owns_client = client is None
@@ -137,6 +146,16 @@ class OpenAILLM(LLM):
                 ),
             )
 
+    def _is_reasoning_model(self) -> bool:
+        """Return True if the configured model is a reasoning / GPT-5 family model
+        that requires special parameter handling."""
+        model_lower = self.model.lower()
+        if model_lower.startswith(("o1", "o3", "o4")):
+            return True
+        if model_lower.startswith("gpt-5"):
+            return True
+        return False
+
     @staticmethod
     def azure(
         *,
@@ -163,6 +182,8 @@ class OpenAILLM(LLM):
         extra_body: dict | None = None,
         client: openai.AsyncAzureOpenAI | None = None,
         max_retries: int = 0,
+        reasoning_effort: Literal["none", "low", "medium", "high"] | None = "none",
+        verbosity: Literal["low", "medium", "high"] | None = "low",
     ) -> "OpenAILLM":
         """
         Create a new instance of Azure OpenAI LLM.
@@ -194,6 +215,8 @@ class OpenAILLM(LLM):
                 extra_query=extra_query,
                 extra_body=extra_body,
                 client=client,
+                reasoning_effort=reasoning_effort,
+                verbosity=verbosity,
             )
             return instance
 
@@ -245,6 +268,8 @@ class OpenAILLM(LLM):
             extra_query=extra_query,
             extra_body=extra_body,
             client=azure_client,
+            reasoning_effort=reasoning_effort,
+            verbosity=verbosity,
         )
         return instance
 
@@ -288,6 +313,8 @@ class OpenAILLM(LLM):
                     )
             return formatted_parts
 
+        is_reasoning = self._is_reasoning_model()
+
         # Build the messages list using the modern tool_calls / tool role format.
         # FunctionCall → assistant turn with tool_calls; FunctionCallOutput → tool role.
         openai_messages = []
@@ -299,8 +326,11 @@ class OpenAILLM(LLM):
                 i += 1
                 continue
             if isinstance(msg, ChatMessage):
+                role = msg.role.value
+                if is_reasoning and role == "system":
+                    role = "developer"
                 openai_messages.append({
-                    "role": msg.role.value,
+                    "role": role,
                     "content": _format_content(msg.content),
                     **({"name": msg.name} if hasattr(msg, "name") and msg.name else {}),
                 })
@@ -338,19 +368,29 @@ class OpenAILLM(LLM):
         completion_params: dict = {
             "model": self.model,
             "messages": openai_messages,
-            "temperature": self.temperature,
             "stream": True,
-            "max_tokens": self.max_completion_tokens,
             "stream_options": {"include_usage": True},
         }
 
-        # Optional generation knobs
-        if self.top_p is not None:
-            completion_params["top_p"] = self.top_p
-        if self.frequency_penalty is not None:
-            completion_params["frequency_penalty"] = self.frequency_penalty
-        if self.presence_penalty is not None:
-            completion_params["presence_penalty"] = self.presence_penalty
+        if is_reasoning:
+            if self.max_completion_tokens is not None:
+                completion_params["max_completion_tokens"] = self.max_completion_tokens
+            if self.reasoning_effort is not None:
+                completion_params["reasoning_effort"] = self.reasoning_effort
+            if self.verbosity is not None:
+                completion_params["text"] = {"format": {"type": "text"}, "verbosity": self.verbosity}
+        else:
+            completion_params["temperature"] = self.temperature
+            if self.max_completion_tokens is not None:
+                completion_params["max_completion_tokens"] = self.max_completion_tokens
+
+            if self.top_p is not None:
+                completion_params["top_p"] = self.top_p
+            if self.frequency_penalty is not None:
+                completion_params["frequency_penalty"] = self.frequency_penalty
+            if self.presence_penalty is not None:
+                completion_params["presence_penalty"] = self.presence_penalty
+
         if self.seed is not None:
             completion_params["seed"] = self.seed
 
