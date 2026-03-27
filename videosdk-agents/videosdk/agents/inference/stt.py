@@ -213,7 +213,7 @@ class STT(BaseSTT):
             **(config or {}),
         }
         return STT(
-            provider="sarvamai",
+            provider="sarvam",
             model_id=model_id,
             language=language,
             config=config,
