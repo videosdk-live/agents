@@ -88,7 +88,7 @@ async def entrypoint(ctx: JobContext):
 
     # --- P2: Pure realtime pipeline with Simli avatar (primary) ---
     model = GeminiRealtime(
-        model="gemini-2.5-flash-native-audio-preview-12-2025",
+        model="gemini-3.1-flash-live-preview",
         config=GeminiLiveConfig(
             voice="Leda",
             response_modalities=["AUDIO"],

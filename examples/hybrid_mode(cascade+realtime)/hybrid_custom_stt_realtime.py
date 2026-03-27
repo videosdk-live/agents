@@ -85,7 +85,7 @@ class AddtionalSTTAndRealtime(Agent):
 
 async def entrypoint(ctx: JobContext):
     llm = GeminiRealtime(
-        model="gemini-2.5-flash-native-audio-preview-12-2025",
+        model="gemini-3.1-flash-live-preview",
         config=GeminiLiveConfig(
             voice="Puck",  
             response_modalities=["AUDIO"],  

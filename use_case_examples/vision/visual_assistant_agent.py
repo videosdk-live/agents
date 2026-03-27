@@ -62,7 +62,7 @@ async def entrypoint(ctx: JobContext):
     # --- P2: Realtime pipeline with vision (alternative — lower latency) ---
     # from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig
     # model = GeminiRealtime(
-    #     model="gemini-2.5-flash-native-audio-preview-12-2025",
+    #     model="gemini-3.1-flash-live-preview",
     #     config=GeminiLiveConfig(voice="Puck", response_modalities=["AUDIO"]),
     # )
     # pipeline = Pipeline(llm=model)
