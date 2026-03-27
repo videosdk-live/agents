@@ -5,7 +5,7 @@
 <!--END_BANNER_IMAGE-->
 
 # VideoSDK AI Agents
-Open-source framework for building real-time multimodal conversational AI agents.
+Open-source Python framework for building production-ready, real-time voice and multimodal AI agents.
 
 ![PyPI - Version](https://img.shields.io/pypi/v/videosdk-agents)
 [![PyPI Downloads](https://static.pepy.tech/badge/videosdk-agents/month)](https://pepy.tech/projects/videosdk-agents)
@@ -15,8 +15,7 @@ Open-source framework for building real-time multimodal conversational AI agents
 [![Discord](https://img.shields.io/badge/Discord-Join%20Us-7289DA)](https://discord.com/invite/f2WsNDN9S5)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/videosdk-live/agents)
 
-
-The **VideoSDK AI Agents framework** connects your infrastructure, agent worker, VideoSDK room, and user devices, enabling **real-time, natural voice and multimodal interactions** between users and intelligent agents.
+The **VideoSDK AI Agents framework** is a Python SDK for building AI agents that join VideoSDK rooms as real-time participants. It connects your agent worker, AI models, and user devices into a single low-latency pipeline — handling audio streaming, turn detection, interruptions, and media routing automatically so you can focus on agent logic.
 
 <!-- ![VideoSDK AI Agents High Level Architecture](https://strapi.videosdk.live/uploads/Group_15_1_5610ce9c7e.png) -->
 <!-- ![VideoSDK AI Agents High Level Architecture](https://cdn.videosdk.live/website-resources/docs-resources/voice_agent_intro.png) -->
@@ -26,16 +25,18 @@ The **VideoSDK AI Agents framework** connects your infrastructure, agent worker,
 
 ## Overview
 
-The AI Agent SDK is a Python framework built on top of the VideoSDK Python SDK that enables AI-powered agents to join VideoSDK rooms as participants. This SDK serves as a real-time bridge between AI models (like OpenAI or Gemini) and your users, facilitating seamless voice and media interactions.
+**VideoSDK AI Agents** is a Python framework that lets you build voice and multimodal AI agents that participate directly in VideoSDK rooms. The framework manages the full agent lifecycle — from joining a room and processing live audio, to running STT → LLM → TTS pipelines or connecting to unified realtime models, to handling turn detection, VAD, interruptions, and clean teardown.
+
+**v1.0.0** introduces a unified `Pipeline` class that replaces the previous `CascadingPipeline` and `RealtimePipeline`. Pass in any combination of components — STT, LLM, TTS, VAD, turn detector, avatar — and the framework wires them together and selects the optimal execution mode automatically. A decorator-based hooks system (`@pipeline.on(...)`) lets you intercept and transform data at any stage without subclassing.
 
 <table width="100%">
   <tr>
     <td width="50%" valign="top" style="padding-left: 20px;">
-      <h3>🎙️ <a href="examples/cascade_basic.py" target="_blank">Agent with Cascading Pipeline</a></h3>
-      <p>Build an AI Voice Agent using a Cascading Pipeline (STT → LLM → TTS).</p>
+      <h3>🎙️ <a href="examples/cascade_basic.py" target="_blank">Agent with Cascade Mode</a></h3>
+      <p>Build an AI Voice Agent using Cascade Mode (STT → LLM → TTS).</p>
     </td>
     <td width="50%" valign="top" style="padding-left: 20px;">
-      <h3>⚡ <a href="examples/realtime_basic.py" target="_blank">Agent with Realtime Pipeline</a></h3>
+      <h3>⚡ <a href="examples/realtime_basic.py" target="_blank">Agent with Realtime Mode</a></h3>
       <p>Build an AI Voice Agent using a unified Realtime model (e.g. Gemini Live).</p>
     </td>
   </tr>
@@ -434,6 +435,49 @@ For deployment options and guide, checkout the official documentation here: [Dep
 <!-- - For detailed guides, tutorials, and API references, check out our official [VideoSDK AI Agents Documentation](https://docs.videosdk.live/ai_agents/introduction).
 - To see the framework in action, explore the code in the [Examples](examples/) directory. It is a great place to quickstart. -->
 
+## VideoSDK Inference
+
+VideoSDK Inference provides a **unified gateway** to access STT, LLM, TTS, Denoise, and Realtime models — without managing individual provider API keys. Authentication is handled via your `VIDEOSDK_AUTH_TOKEN` and usage is billed from your VideoSDK account balance.
+
+```python
+from videosdk.agents.inference import STT, LLM, TTS, Denoise, Realtime
+```
+
+**Cascade Mode with VideoSDK Inference:**
+
+```python
+async def start_session(context: JobContext):
+    pipeline = Pipeline(
+        stt=STT.sarvam(model_id="saarika:v2.5", language="en-IN"),
+        llm=LLM.google(model_id="gemini-2.5-flash"),
+        tts=TTS.sarvam(model_id="bulbul:v2", speaker="anushka", language="en-IN"),
+        denoise=Denoise.sanas(),
+        vad=SileroVAD(),
+    )
+    session = AgentSession(agent=MyAgent(), pipeline=pipeline)
+    await session.start(wait_for_participant=True, run_until_shutdown=True)
+```
+
+**Realtime Mode with VideoSDK Inference:**
+
+```python
+async def start_session(context: JobContext):
+    pipeline = Pipeline(
+        llm=Realtime.gemini(
+            model_id="gemini-3.1-flash-live-preview",
+            voice="Puck",
+            language_code="en-US",
+            response_modalities=["AUDIO"],
+        )
+    )
+    session = AgentSession(agent=MyAgent(), pipeline=pipeline)
+    await session.start(wait_for_participant=True, run_until_shutdown=True)
+```
+
+> See [Inference Pricing](https://docs.videosdk.live/help_docs/pricing-inference) for provider-wise billing details.
+
+---
+
 ## Supported Libraries and Plugins
 
 The framework supports integration with various AI models and tools, across multiple categories:
@@ -469,37 +513,37 @@ The framework supports integration with various AI models and tools, across mult
 
 Explore the following examples to see the framework in action:
 
-### Core Pipeline Examples
+### Core Mode Examples
 
 <table width="100%">
   <tr>
     <td width="50%" valign="top" style="padding-left: 20px;">
-      <h3>🎙️ <a href="examples/cascade_basic.py" target="_blank">Cascading Pipeline (Basic)</a></h3>
-      <p>Simple STT → LLM → TTS voice agent using Google LLM + Deepgram STT.</p>
+      <h3>🎙️ <a href="examples/cascade_basic.py" target="_blank">Cascade Mode (Basic)</a></h3>
+      <p>Simple STT → LLM → TTS voice agent using Google LLM + Deepgram STT + Cartesia TTS.</p>
     </td>
     <td width="50%" valign="top" style="padding-left: 20px;">
-      <h3>🔧 <a href="examples/cascade_advanced.py" target="_blank">Cascading Pipeline (Advanced)</a></h3>
-      <p>Advanced cascading agent with VAD, turn detection, EOU config, and interrupt handling.</p>
+      <h3>🔧 <a href="examples/cascade_advanced.py" target="_blank">Cascade Mode (Advanced)</a></h3>
+      <p>Advanced cascade agent with VAD, turn detection, and interruption handling.</p>
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top" style="padding-left: 20px;">
-      <h3>⚡ <a href="examples/realtime_basic.py" target="_blank">Realtime Pipeline (Basic)</a></h3>
-      <p>Minimal Realtime pipeline agent using Gemini Live for lowest-latency interactions.</p>
+      <h3>⚡ <a href="examples/realtime_basic.py" target="_blank">Realtime Mode</a></h3>
+      <p>Minimal realtime agent using Gemini Live for lowest-latency voice interactions.</p>
     </td>
     <td width="50%" valign="top" style="padding-left: 20px;">
-      <h3>🔀 <a href="examples/hybrid_mode(cascade+realtime)/" target="_blank">Hybrid Mode (Cascade + Realtime)</a></h3>
-      <p>Mix cascading and realtime components — e.g. custom STT with a realtime model, or realtime with custom TTS.</p>
+      <h3>🔀 <a href="examples/hybrid_mode(cascade+realtime)/" target="_blank">Hybrid Mode</a></h3>
+      <p>Mix cascade and realtime — custom STT with a realtime model, or realtime with custom TTS.</p>
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top" style="padding-left: 20px;">
       <h3>🧩 <a href="examples/composable_pipelines/" target="_blank">Composable Pipelines</a></h3>
-      <p>Modular pipeline modes: LLM-only, voice-to-text, text-to-voice, and multimodal (chat + voice).</p>
+      <p>Flexible Pipeline configs — transcription-only, LLM-only, voice+chat, full voice agent.</p>
     </td>
     <td width="50%" valign="top" style="padding-left: 20px;">
       <h3>🪝 <a href="examples/voice_pipeline_hooks.py" target="_blank">Pipeline Hooks</a></h3>
-      <p>Hook into pipeline events (STT, LLM, TTS) to log, transform, or intercept data mid-stream.</p>
+      <p>Intercept and transform STT, LLM, and TTS data at any stage using <code>@pipeline.on(...)</code>.</p>
     </td>
   </tr>
 </table>
