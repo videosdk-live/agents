@@ -31,12 +31,12 @@ The AI Agent SDK is a Python framework built on top of the VideoSDK Python SDK t
 <table width="100%">
   <tr>
     <td width="50%" valign="top" style="padding-left: 20px;">
-      <h3>🎙️ <a href="examples/test_cascading_pipeline.py" target="_blank">Agent with Cascading Pipeline</a></h3>
-      <p>Test an AI Voice Agent that uses a Cascading Pipeline for STT → LLM → TTS.</p>
+      <h3>🎙️ <a href="examples/cascade_basic.py" target="_blank">Agent with Cascading Pipeline</a></h3>
+      <p>Build an AI Voice Agent using a Cascading Pipeline (STT → LLM → TTS).</p>
     </td>
     <td width="50%" valign="top" style="padding-left: 20px;">
-      <h3>📞 <a href="examples/sip_agent_example.py" target="_blank">AI Telephony Agent</a></h3>
-      <p>Test an AI Agent that answers and interacts over phone calls using SIP.</p>
+      <h3>⚡ <a href="examples/realtime_basic.py" target="_blank">Agent with Realtime Pipeline</a></h3>
+      <p>Build an AI Voice Agent using a unified Realtime model (e.g. Gemini Live).</p>
     </td>
   </tr>
   <tr>
@@ -58,16 +58,17 @@ The AI Agent SDK is a Python framework built on top of the VideoSDK Python SDK t
 |----|----------------------------------|-----------------------------------------------------------------------------|
 | 1  | **🎤 Real-time Communication (Audio/Video)**       | Agents can listen, speak, and interact live in meetings.                   |
 | 2  | **📞 SIP & Telephony Integration**   | Seamlessly connect agents to phone systems via SIP for call handling, routing, and PSTN access. |
-| 3  | **🧍 Virtual Avatars**               | Add lifelike avatars to enhance interaction and presence using Simli.     |
-| 4  | **🤖 Multi-Model Support**           | Integrate with OpenAI, Gemini, AWS NovaSonic, and more.                    |
-| 5  | **🧩 Cascading Pipeline**            | Integrates with different providers of STT, LLM, and TTS seamlessly.       |
-| 6  | **⚡ Realtime Pipeline**         | Use unified realtime models (OpenAI Realtime, AWS Nova, Gemini Live) for lowest latency | 
-| 7  | **🧠 Conversational Flow**           | Manages turn detection and VAD for smooth interactions.                    |
-| 8  | **🛠️ Function Tools**               | Extend agent capabilities with event scheduling, expense tracking, and more. |
-| 9  | **🌐 MCP Integration**               | Connect agents to external data sources and tools using Model Context Protocol. |
-| 10  | **🔗 A2A Protocol**                  | Enable agent-to-agent interactions for complex workflows.                  |
-| 11 | **📊 Observability**             | Built-in OpenTelemetry tracing and metrics collection |  
-| 12 | **🚀 CLI Tool**                  | Run agents locally and test with `videosdk` CLI ⚠️ Deprecated: Removed in versions > 1.0.0b1. |
+| 3  | **🧍 Virtual Avatars**               | Build or plug in any avatar provider — the framework handles audio routing, sync, and teardown automatically. |
+| 4  | **🤖 Multi-Model Support**           | Integrate with OpenAI, Gemini, AWS NovaSonic, Anthropic, and more.         |
+| 5  | **🧩 Cascade Mode**                  | Compose any STT → LLM → TTS chain across providers for full control and flexibility. |
+| 6  | **⚡ Realtime Mode**                  | Use unified realtime models (OpenAI Realtime, AWS Nova Sonic, Gemini Live) for lowest latency. |
+| 7  | **🔀 Hybrid Mode**                   | Mix cascade and realtime components — custom STT with a realtime model, or realtime with custom TTS. |
+| 8  | **🪝 Pipeline Hooks**                | Intercept and transform data at any stage (STT, LLM, TTS, turns) using `@pipeline.on(...)`. |
+| 9  | **🛠️ Function Tools**               | Extend agent capabilities with any external tool or API call.               |
+| 10 | **🌐 MCP Integration**               | Connect agents to external data sources and tools using Model Context Protocol. |
+| 11 | **🔗 A2A Protocol**                  | Reliable agent-to-agent routing with correlation-based request tracking.    |
+| 12 | **🦜 LangChain & LangGraph**         | Plug in any LangChain `BaseChatModel` or LangGraph `StateGraph` as the agent's LLM. |
+| 13 | **📊 Observability**                 | Built-in metrics, OpenTelemetry tracing, and structured logging per component. |
 
 > \[!IMPORTANT]
 >
@@ -75,6 +76,81 @@ The AI Agent SDK is a Python framework built on top of the VideoSDK Python SDK t
 >
 > Get instant notifications for new releases and updates. Your support helps us grow and improve VideoSDK!
 
+---
+
+## Pipeline Modes
+
+All agents are built around a single `Pipeline` class. Pass in your components — the SDK picks the right execution mode automatically.
+
+### Cascade Mode — STT → LLM → TTS
+
+Mix and match any provider for each stage. Best when you need custom STT, specific LLM behaviour, or a particular TTS voice.
+
+```python
+async def start_session(context: JobContext):
+    pipeline = Pipeline(
+        stt=DeepgramSTT(),
+        llm=GoogleLLM(),
+        tts=CartesiaTTS(),
+        vad=SileroVAD(),
+        turn_detector=TurnDetector(),
+    )
+    session = AgentSession(agent=MyAgent(), pipeline=pipeline)
+    await session.start(wait_for_participant=True, run_until_shutdown=True)
+```
+
+### Realtime Mode — Lowest Latency with Unified Models
+
+Use a single realtime model for the entire voice pipeline. Best for sub-500ms response latency.
+
+```python
+async def start_session(context: JobContext):
+    pipeline = Pipeline(
+        llm=GeminiRealtime(
+            model="gemini-3.1-flash-live-preview",
+            config=GeminiLiveConfig(voice="Leda", response_modalities=["AUDIO"]),
+        )
+    )
+    session = AgentSession(agent=MyAgent(), pipeline=pipeline)
+    await session.start(wait_for_participant=True, run_until_shutdown=True)
+```
+
+### Hybrid Mode — Mix & Match
+
+Use an external STT with a Realtime LLM, or a Realtime model with a custom TTS:
+
+```python
+# External STT → Realtime LLM
+pipeline = Pipeline(stt=DeepgramSTT(), llm=OpenAIRealtime(...))
+
+# Realtime LLM → External TTS
+pipeline = Pipeline(llm=OpenAIRealtime(...), tts=ElevenLabsTTS(...))
+```
+
+### Pipeline Hooks — Intercept Any Stage
+
+```python
+@pipeline.on("stt")
+async def clean_transcript(text: str) -> str:
+    return text.strip()
+
+@pipeline.on("llm")
+async def route_llm(messages):
+    if "transfer" in messages[-1].content:
+        yield "Transferring you now."  # bypass LLM entirely
+
+@pipeline.on("tts")
+async def fix_pronunciation(text: str) -> str:
+    return text.replace("VideoSDK", "Video S D K")
+
+@pipeline.on("user_turn_start")
+async def on_user_starts():
+    print("User is speaking...")
+```
+
+Available hook points: `stt` · `tts` · `llm` · `vision_frame` · `user_turn_start` · `user_turn_end` · `agent_turn_start` · `agent_turn_end`
+
+---
 
 ## Pre-requisites
 
@@ -150,7 +226,7 @@ To set up the project locally, clone the repo and install all packages (core + a
 git clone https://github.com/videosdk-live/agents.git
 cd agents
 uv sync
-uv run python examples/test_cascading_pipeline.py
+uv run python examples/cascade_basic.py
 ```
 
 **Using pip:**
@@ -159,7 +235,7 @@ git clone https://github.com/videosdk-live/agents.git
 cd agents
 bash setup.sh
 source venv/bin/activate
-python examples/test_cascading_pipeline.py
+python examples/cascade_basic.py
 ```
 
 
@@ -268,66 +344,54 @@ class VoiceAgent(Agent):
 
 ### Step 3: Setting Up the Pipeline
 
-The pipeline connects your agent to an AI model. Here, we are using Google's Gemini for a [Real-time Pipeline](https://docs.videosdk.live/ai_agents/core-components/realtime-pipeline). You could also use a [Cascading Pipeline](https://docs.videosdk.live/ai_agents/core-components/cascading-pipeline).
+Connect your agent to an AI model using the unified `Pipeline` class. Pass in whichever components you need — the SDK handles the rest.
 
+**Realtime mode** (single model, lowest latency):
 
 ```python
-from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig
-from videosdk.agents import RealTimePipeline, JobContext
-
 async def start_session(context: JobContext):
-    # Initialize the AI model
-    model = GeminiRealtime(
-        model="gemini-2.5-flash-native-audio-preview-12-2025",
-        # When GOOGLE_API_KEY is set in .env - DON'T pass api_key parameter
-        api_key="AKZSXXXXXXXXXXXXXXXXXXXX",
-        config=GeminiLiveConfig(
-            voice="Leda", # Puck, Charon, Kore, Fenrir, Aoede, Leda, Orus, and Zephyr.
-            response_modalities=["AUDIO"]
+    pipeline = Pipeline(
+        llm=GeminiRealtime(
+            model="gemini-3.1-flash-live-preview",
+            config=GeminiLiveConfig(voice="Leda", response_modalities=["AUDIO"]),
         )
     )
+    session = AgentSession(agent=VoiceAgent(), pipeline=pipeline)
+    await session.start(wait_for_participant=True, run_until_shutdown=True)
+```
 
-    pipeline = RealTimePipeline(model=model)
+**Cascade mode** (STT → LLM → TTS, full provider control):
 
-    # Continue to the next steps...
+```python
+async def start_session(context: JobContext):
+    pipeline = Pipeline(
+        stt=DeepgramSTT(),
+        llm=GoogleLLM(),
+        tts=CartesiaTTS(),
+        vad=SileroVAD(),
+        turn_detector=TurnDetector(),
+    )
+    session = AgentSession(agent=VoiceAgent(), pipeline=pipeline)
+    await session.start(wait_for_participant=True, run_until_shutdown=True)
 ```
 ### Step 4: Assembling and Starting the Agent Session
 
-Now, let's put everything together and start the agent session:
-
 ```python
-import asyncio
 from videosdk.agents import AgentSession, WorkerJob, RoomOptions, JobContext
 
 async def start_session(context: JobContext):
-    # ... previous setup code ...
-
-    # Create the agent session
     session = AgentSession(
         agent=VoiceAgent(),
-        pipeline=pipeline
+        pipeline=pipeline,
     )
-
-    try:
-       await context.connect()
-        # Start the session
-        await session.start()
-        # Keep the session running until manually terminated
-        await asyncio.Event().wait()
-    finally:
-        # Clean up resources when done
-        await session.close()
-        await context.shutdown()
+    await session.start(wait_for_participant=True, run_until_shutdown=True)
 
 def make_context() -> JobContext:
     room_options = RoomOptions(
-        room_id="<meeting_id>", # Replace it with your actual meetingID
-        auth_token = "<VIDEOSDK_AUTH_TOKEN>", # When VIDEOSDK_AUTH_TOKEN is set in .env - DON'T include videosdk_auth
-        name="Test Agent", 
+        room_id="<meeting_id>",
+        name="Test Agent",
         playground=True,
-        # vision= True # Only available when using the Google Gemini Live API
     )
-    
     return JobContext(room_options=room_options)
 
 if __name__ == "__main__":
@@ -356,17 +420,9 @@ Once you have completed the setup, you can run your AI Voice Agent project using
 python main.py
 ```
 > [!TIP]
-> 
-> **Test Your Agent Instantly with the CLI Tool**
 >
-> Run your agent locally using:
->
-> ```bash
-> python main.py console
-> ```
->
-> Experience real-time interactions right from your terminal - no meeting room required!  
-> Speak and listen through your system’s mic and speakers for quick testing and rapid development.
+> **Console Mode** — test your agent locally without a meeting room.
+> Set `playground=True` in `RoomOptions` and run `python main.py` to interact via your mic and speakers directly from the terminal.
 
 
 ### Step 7: Deployment
@@ -391,7 +447,8 @@ The framework supports integration with various AI models and tools, across mult
 | **Text-to-Speech (TTS)** | [OpenAI](https://docs.videosdk.live/ai_agents/plugins/tts/openai) &#124; [Google](https://docs.videosdk.live/ai_agents/plugins/tts/google-tts) &#124; [AWS Polly](https://docs.videosdk.live/ai_agents/plugins/tts/aws-polly-tts) &#124; [Azure AI Speech](https://docs.videosdk.live/ai_agents/plugins/tts/azure-ai-tts) &#124; [Azure OpenAI](https://docs.videosdk.live/ai_agents/plugins/tts/azureopenai) &#124; [Deepgram](https://docs.videosdk.live/ai_agents/plugins/tts/deepgram) &#124; [Sarvam AI](https://docs.videosdk.live/ai_agents/plugins/tts/sarvam-ai-tts) &#124; [ElevenLabs](https://docs.videosdk.live/ai_agents/plugins/tts/eleven-labs) &#124; [Cartesia](https://docs.videosdk.live/ai_agents/plugins/tts/cartesia-tts) &#124; [Resemble AI](https://docs.videosdk.live/ai_agents/plugins/tts/resemble-ai-tts) &#124; [Smallest AI](https://docs.videosdk.live/ai_agents/plugins/tts/smallestai-tts) &#124; [Speechify](https://docs.videosdk.live/ai_agents/plugins/tts/speechify-tts) &#124; [InWorld](https://docs.videosdk.live/ai_agents/plugins/tts/inworld-ai-tts) &#124; [Neuphonic](https://docs.videosdk.live/ai_agents/plugins/tts/neuphonic-tts) &#124; [Rime AI](https://docs.videosdk.live/ai_agents/plugins/tts/rime-ai-tts) &#124; [Hume AI](https://docs.videosdk.live/ai_agents/plugins/tts/hume-ai-tts) &#124; [Groq](https://docs.videosdk.live/ai_agents/plugins/tts/groq-ai-tts) &#124; [LMNT AI](https://docs.videosdk.live/ai_agents/plugins/tts/lmnt-ai-tts) &#124; [Papla Media](https://docs.videosdk.live/ai_agents/plugins/tts/papla-media) |
 | **Voice Activity Detection (VAD)** | [SileroVAD](https://docs.videosdk.live/ai_agents/plugins/silero-vad) |
 | **Turn Detection Model** | [Namo Turn Detector](https://docs.videosdk.live/ai_agents/plugins/namo-turn-detector) |
-| **Virtual Avatar** | [Simli](https://docs.videosdk.live/ai_agents/core-components/avatar) |
+| **Virtual Avatar** | [Simli](https://docs.videosdk.live/ai_agents/core-components/avatar) &#124; [Anam](https://docs.videosdk.live/ai_agents/plugins/avatar/anam) &#124; Custom (implement `connect` / `aclose` protocol) |
+| **LLM Orchestration** | [LangChain](https://docs.videosdk.live/ai_agents/plugins/llm/langchain) &#124; [LangGraph](https://docs.videosdk.live/ai_agents/plugins/llm/langgraph) |
 | **Denoise** | [RNNoise](https://docs.videosdk.live/ai_agents/core-components/de-noise) |
 
 > [!TIP]
@@ -412,37 +469,127 @@ The framework supports integration with various AI models and tools, across mult
 
 Explore the following examples to see the framework in action:
 
-<h2>🤖 AI Voice Agent Usecases</h2>
+### Core Pipeline Examples
 
 <table width="100%">
   <tr>
     <td width="50%" valign="top" style="padding-left: 20px;">
-      <h3>📞 <a href="https://github.com/videosdk-community/ai-telephony-demo" target="_blank">AI Telephony Agent Quickstart</a></h3>
-      <p>Use case: Hospital appointment booking via a voice-enabled agent.</p>
+      <h3>🎙️ <a href="examples/cascade_basic.py" target="_blank">Cascading Pipeline (Basic)</a></h3>
+      <p>Simple STT → LLM → TTS voice agent using Google LLM + Deepgram STT.</p>
     </td>
     <td width="50%" valign="top" style="padding-left: 20px;">
-      <h3>✈️ <a href="https://github.com/videosdk-community/videosdk-whatsapp-ai-calling-agent" target="_blank">AI Whatsapp Agent Quickstart</a></h3>
-      <p>Use case: Ask about available hotel rooms and book on the go.</p>
+      <h3>🔧 <a href="examples/cascade_advanced.py" target="_blank">Cascading Pipeline (Advanced)</a></h3>
+      <p>Advanced cascading agent with VAD, turn detection, EOU config, and interrupt handling.</p>
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top" style="padding-left: 20px;">
-      <h3>👨‍🏫 <a href="https://github.com/videosdk-live/agents-quickstart/tree/main/A2A" target="_blank">Multi Agent System</a></h3>
-      <p>Use case: Customer care agent that transfers loan related to queries to Loan Specialist Agent.</p>
+      <h3>⚡ <a href="examples/realtime_basic.py" target="_blank">Realtime Pipeline (Basic)</a></h3>
+      <p>Minimal Realtime pipeline agent using Gemini Live for lowest-latency interactions.</p>
     </td>
+    <td width="50%" valign="top" style="padding-left: 20px;">
+      <h3>🔀 <a href="examples/hybrid_mode(cascade+realtime)/" target="_blank">Hybrid Mode (Cascade + Realtime)</a></h3>
+      <p>Mix cascading and realtime components — e.g. custom STT with a realtime model, or realtime with custom TTS.</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top" style="padding-left: 20px;">
+      <h3>🧩 <a href="examples/composable_pipelines/" target="_blank">Composable Pipelines</a></h3>
+      <p>Modular pipeline modes: LLM-only, voice-to-text, text-to-voice, and multimodal (chat + voice).</p>
+    </td>
+    <td width="50%" valign="top" style="padding-left: 20px;">
+      <h3>🪝 <a href="examples/voice_pipeline_hooks.py" target="_blank">Pipeline Hooks</a></h3>
+      <p>Hook into pipeline events (STT, LLM, TTS) to log, transform, or intercept data mid-stream.</p>
+    </td>
+  </tr>
+</table>
+
+### Integrations & Advanced Features
+
+<table width="100%">
+  <tr>
+    <td width="50%" valign="top" style="padding-left: 20px;">
+      <h3>🌐 <a href="examples/mcp_server_examples/" target="_blank">Agent with MCP Server</a></h3>
+      <p>Stock Market Analyst Agent with real-time market data access via Model Context Protocol.</p>
+    </td>
+    <td width="50%" valign="top" style="padding-left: 20px;">
+      <h3>🤝 <a href="examples/a2a/" target="_blank">Agent-to-Agent (A2A)</a></h3>
+      <p>Multi-agent workflow: customer agent that transfers loan queries to a Loan Specialist Agent.</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top" style="padding-left: 20px;">
+      <h3>🦜 <a href="examples/langchain/" target="_blank">LangChain Integration</a></h3>
+      <p>Use LangChain tools and agents within the VideoSDK agent framework.</p>
+    </td>
+    <td width="50%" valign="top" style="padding-left: 20px;">
+      <h3>🕸️ <a href="examples/langgraph/" target="_blank">LangGraph Integration</a></h3>
+      <p>Orchestrate multi-step agent workflows using LangGraph state machines.</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top" style="padding-left: 20px;">
+      <h3>🧠 <a href="examples/mem0/" target="_blank">Memory Agent (Mem0)</a></h3>
+      <p>Persistent memory across sessions using Mem0 for long-term context retention.</p>
+    </td>
+    <td width="50%" valign="top" style="padding-left: 20px;">
+      <h3>👁️ <a href="examples/vision/" target="_blank">Vision Agent</a></h3>
+      <p>Multimodal agent that processes video frames alongside voice using cascading or realtime pipelines.</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top" style="padding-left: 20px;">
+      <h3>🔄 <a href="examples/n8n_workflow/" target="_blank">n8n Workflow Integration</a></h3>
+      <p>Trigger n8n automation workflows from within your agent using webhooks.</p>
+    </td>
+    <td width="50%" valign="top" style="padding-left: 20px;">
+      <h3>🧑‍💼 <a href="examples/human_in_the_loop/" target="_blank">Human in the Loop</a></h3>
+      <p>Escalate to a human agent mid-conversation via Discord or other channels.</p>
+    </td>
+  </tr>
+</table>
+
+### Use Case Examples
+
+<table width="100%">
+  <tr>
+    <td width="50%" valign="top" style="padding-left: 20px;">
+      <h3>📞 <a href="https://github.com/videosdk-community/ai-telephony-demo" target="_blank">AI Telephony Agent</a></h3>
+      <p>Hospital appointment booking via a voice-enabled telephony agent.</p>
+    </td>
+    <td width="50%" valign="top" style="padding-left: 20px;">
+      <h3>✈️ <a href="https://github.com/videosdk-community/videosdk-whatsapp-ai-calling-agent" target="_blank">AI WhatsApp Agent</a></h3>
+      <p>Ask about available hotel rooms and book on the go.</p>
+    </td>
+  </tr>
+  <tr>
     <td width="50%" valign="top" style="padding-left: 20px;">
       <h3>🛒 <a href="https://github.com/videosdk-live/agents-quickstart/tree/main/RAG" target="_blank">Agent with Knowledge (RAG)</a></h3>
-      <p>Use case: Agent that answers questions based on documentation knowledge.</p>
+      <p>Agent that answers questions based on documentation knowledge.</p>
+    </td>
+    <td width="50%" valign="top" style="padding-left: 20px;">
+      <h3>🎭 <a href="https://github.com/videosdk-live/agents-quickstart/tree/main/Virtual%20Avatar" target="_blank">Virtual Avatar Agent</a></h3>
+      <p>A Virtual Avatar Agent that presents a weather forecast.</p>
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top" style="padding-left: 20px;">
-      <h3>👨‍🏫 <a href="https://github.com/videosdk-live/agents/tree/main/examples/mcp_server_examples" target="_blank">Agent with MCP Server</a></h3>
-      <p>Use case: Stock Market Analyst Agent with realtime Market Data Access.</p>
+      <h3>🏥 <a href="use_case_examples/appointment_booking_agent.py" target="_blank">Appointment Booking</a></h3>
+      <p>Healthcare front-desk receptionist for scheduling clinic appointments.</p>
     </td>
     <td width="50%" valign="top" style="padding-left: 20px;">
-      <h3>🛒 <a href="https://github.com/videosdk-live/agents-quickstart/tree/main/Virtual%20Avatar" target="_blank">Virtual Avatar Agent</a></h3>
-      <p>Use case: A Virtual Avatar Agent that presents weather forecast. </p>
+      <h3>📣 <a href="use_case_examples/announcement_agent.py" target="_blank">Announcement Agent</a></h3>
+      <p>Proactive outbound agent for broadcasting announcements.</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top" style="padding-left: 20px;">
+      <h3>🎧 <a href="use_case_examples/customer_support_agent.py" target="_blank">Customer Support</a></h3>
+      <p>AI-powered customer support agent with escalation and knowledge base.</p>
+    </td>
+    <td width="50%" valign="top" style="padding-left: 20px;">
+      <h3>📂 <a href="use_case_examples/" target="_blank">More Use Cases</a></h3>
+      <p>Call center, IVR, medical triage, language tutor, meeting notes, and more.</p>
     </td>
   </tr>
 </table>
