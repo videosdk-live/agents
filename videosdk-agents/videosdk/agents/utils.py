@@ -16,18 +16,21 @@ import asyncio
 
 @dataclass
 class FunctionToolInfo:
+    """Holds metadata about a function tool, including its name, description, and parameter schema."""
     name: str
     description: str | None = None
     parameters_schema: Optional[dict] = None
 
 @enum.unique
 class UserState(enum.Enum):
+    """Represents the current state of the user in a conversation session."""
     IDLE = "idle"
     SPEAKING = "speaking"
     LISTENING = "listening"
 
 @enum.unique
 class AgentState(enum.Enum):
+    """Represents the current state of the agent in a conversation session."""
     STARTING = "starting"
     IDLE = "idle"
     SPEAKING = "speaking"
@@ -240,6 +243,7 @@ def build_pydantic_args_model(func: Callable[..., Any]) -> type[BaseModel]:
     return ModelBuilder(func).construct()
 
 class ModelBuilder:
+    """Constructs a Pydantic BaseModel from a function's signature, type hints, and docstring."""
     def __init__(self, func: Callable[..., Any]):
         self.func = func
         self.sig = inspect.signature(func)
@@ -275,6 +279,7 @@ class ModelBuilder:
         return "".join(part.title() for part in self.func.__name__.split("_")) + "Args"
 
 class TypeProcessor:
+    """Extracts the base type and Pydantic FieldInfo from a possibly Annotated type hint."""
     def __init__(self, hint: Any):
         self.original_hint = hint
         self.base_type = hint
@@ -294,6 +299,7 @@ class TypeProcessor:
                 break
 
 class FieldBuilder:
+    """Builds a Pydantic field tuple from a function parameter, its processed type, and docstring description."""
     def __init__(self, param: inspect.Parameter, type_processor: TypeProcessor, description: str | None):
         self.param = param
         self.type_processor = type_processor
@@ -351,7 +357,7 @@ def simplify_gemini_schema(schema: dict[str, Any]) -> dict[str, Any] | None:
     }
 
     SUPPORTED_TYPES = set(TYPE_MAPPING.keys())
-    FIELDS_TO_REMOVE = ("title", "default", "additionalProperties", "$defs")
+    FIELDS_TO_REMOVE = ("title", "default", "additionalProperties", "$defs", "$schema")
 
     def process_node(node: dict[str, Any]) -> dict[str, Any] | None:
         new_node = node.copy()
@@ -600,6 +606,7 @@ async def graceful_cancel(*tasks: asyncio.Task) -> None:
 
 
 class AsyncIteratorQueue:
+    """An async iterator backed by an asyncio.Queue, allowing producers to put items and consumers to async-iterate until closed."""
     def __init__(self):
         self.queue = asyncio.Queue()
         self.closed = False
@@ -662,3 +669,79 @@ async def run_tts(text_stream: AsyncIterator[str]) -> AsyncIterator[bytes]:
     
     async for frame in ctx._pipeline.tts.stream_synthesize(text_stream):
         yield frame
+
+# Audio utilities (used by avatar server)
+class AudioByteStream:
+    """
+    Buffers raw PCM bytes and emits fixed-size AudioFrame objects.
+
+    Useful for converting variable-size chunks (e.g. data-channel payloads)
+    into the steady frame cadence that AvatarSynchronizer expects.
+    """
+
+    def __init__(self, sample_rate: int, num_channels: int, samples_per_channel: int):
+        import numpy as _np
+        self._np = _np
+        self._sample_rate = sample_rate
+        self._num_channels = num_channels
+        self._samples_per_channel = samples_per_channel
+        self._sample_width = 2  
+        self._bytes_per_frame = samples_per_channel * num_channels * self._sample_width
+        self._buffer = bytearray()
+
+    def push(self, frame_data: bytes) -> list:
+        from av import AudioFrame
+        self._buffer.extend(frame_data)
+        frames = []
+        while len(self._buffer) >= self._bytes_per_frame:
+            chunk = bytes(self._buffer[: self._bytes_per_frame])
+            del self._buffer[: self._bytes_per_frame]
+            arr = self._np.frombuffer(chunk, dtype=self._np.int16).reshape(
+                self._num_channels, self._samples_per_channel
+            )
+            frame = AudioFrame.from_ndarray(
+                arr,
+                format="s16",
+                layout="mono" if self._num_channels == 1 else "stereo",
+            )
+            frame.sample_rate = self._sample_rate
+            frames.append(frame)
+        return frames
+
+    def flush(self) -> list:
+        from av import AudioFrame
+        if not self._buffer:
+            return []
+        chunk = bytes(self._buffer)
+        self._buffer.clear()
+        missing = self._bytes_per_frame - len(chunk)
+        if missing > 0:
+            chunk += bytes(missing)
+        arr = self._np.frombuffer(chunk, dtype=self._np.int16).reshape(
+            self._samples_per_channel, self._num_channels
+        )
+        frame = AudioFrame.from_ndarray(
+            arr.T,
+            format="s16",
+            layout="mono" if self._num_channels == 1 else "stereo",
+        )
+        frame.sample_rate = self._sample_rate
+        return [frame]
+
+
+class _AudioUtils:
+    AudioByteStream = AudioByteStream
+
+
+audio = _AudioUtils()
+
+
+async def cancel_and_wait(task: asyncio.Task | None) -> None:
+    """Cancel a task and wait for it to finish, suppressing CancelledError."""
+    if not task or task.done():
+        return
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass

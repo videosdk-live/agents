@@ -21,6 +21,8 @@ from .execution import (
 from .job import (
     JobContext,
     RoomOptions,
+    RecordingOptions,
+    _coerce_recording_options_dict,
     JobAcceptArguments,
     RunningJobInfo,
     _set_current_job_context,
@@ -52,19 +54,41 @@ async def _execute_job_entrypoint(
     entrypoint: Callable,
     room_options: RoomOptions,
     metadata: Dict[str, Any],
+    wait_for_meeting_join: bool = False,
+    meeting_joined_event: Any = None,
 ):
     """Execute job entrypoint in a separate process/thread."""
+
     # Create job context
     ctx = JobContext(room_options=room_options, metadata=metadata)
+    ctx._wait_for_meeting_join = wait_for_meeting_join
+
+    if meeting_joined_event is not None:
+        # Override notify_meeting_joined to signal the cross-process event
+        _original_notify = ctx.notify_meeting_joined
+
+        def _notify_with_mp_event():
+            _original_notify()
+            meeting_joined_event.set()
+
+        ctx.notify_meeting_joined = _notify_with_mp_event
 
     # Set context var
     token = _set_current_job_context(ctx)
     try:
-        # Execute entrypoint
-        await entrypoint(ctx)
+        # Wrap in a task so the watchdog can cancel it
+        entrypoint_task = asyncio.ensure_future(entrypoint(ctx))
+        await entrypoint_task
+    except asyncio.CancelledError:
+        logger.info("Job entrypoint cancelled by shutdown watchdog")
+    except Exception as e:
+        logger.error(f"Error in job entrypoint: {e}")
+        raise
     finally:
-        _reset_current_job_context(token)
-
+        try:
+            _reset_current_job_context(token)
+        except ValueError:
+            pass
 
 
 class WorkerType(Enum):
@@ -385,7 +409,6 @@ class Worker:
             auth_token=self.options.auth_token,
             agent_id=self.options.agent_id,
             worker_type=self.options.worker_type.value,
-            version="1.0.0",
             max_retry=self.options.max_retry,
             backend_url=registry_url,
             load_threshold=self.options.load_threshold,
@@ -701,15 +724,23 @@ class Worker:
             # Create room options from assignment (this was already done in _handle_job_assignment)
             room_options = RoomOptions(
                 room_id=assignment.room_id,
-                name=assignment.room_name,  # Use 'name' instead of 'room_name'
+                name=self.default_room_options.name,
                 auth_token=auth_token,
                 signaling_base_url=self.options.signaling_base_url,
                 recording=self.default_room_options.recording,
+                recording_options=getattr(
+                    self.default_room_options, "recording_options", None
+                ),
                 background_audio=self.default_room_options.background_audio,
                 agent_participant_id=self.default_room_options.agent_participant_id,
                 join_meeting=self.default_room_options.join_meeting,
                 auto_end_session=self.default_room_options.auto_end_session,
                 session_timeout_seconds=self.default_room_options.session_timeout_seconds,
+                send_logs_to_dashboard=self.default_room_options.send_logs_to_dashboard,
+                dashboard_log_level=self.default_room_options.dashboard_log_level,
+                traces=self.default_room_options.traces,
+                metrics=self.default_room_options.metrics,
+                logs=self.default_room_options.logs,
             )
 
             # Apply RoomOptions from assignment if provided
@@ -743,9 +774,20 @@ class Worker:
                 if "recording" in assignment.room_options:
                     room_options.recording = assignment.room_options["recording"]
                     logger.info(f"Set recording: {room_options.recording}")
+                if "recording_options" in assignment.room_options:
+                    ro = assignment.room_options["recording_options"]
+                    if isinstance(ro, dict):
+                        room_options.recording_options = _coerce_recording_options_dict(ro)
+                    else:
+                        room_options.recording_options = ro
+                    logger.info(f"Set recording_options: {room_options.recording_options}")
                 if "background_audio" in assignment.room_options:
-                    room_options.background_audio = assignment.room_options["background_audio"]
-                    logger.info(f"Set background_audio: {room_options.background_audio}")
+                    room_options.background_audio = assignment.room_options[
+                        "background_audio"
+                    ]
+                    logger.info(
+                        f"Set background_audio: {room_options.background_audio}"
+                    )
                 if "agent_participant_id" in assignment.room_options:
                     room_options.agent_participant_id = assignment.room_options[
                         "agent_participant_id"
@@ -753,6 +795,15 @@ class Worker:
                     logger.info(
                         f"Set agent_participant_id: {room_options.agent_participant_id}"
                     )
+                if "traces" in assignment.room_options:
+                    room_options.traces = assignment.room_options["traces"]
+                    logger.info(f"Set traces options via worker assignment")
+                if "metrics" in assignment.room_options:
+                    room_options.metrics = assignment.room_options["metrics"]
+                    logger.info(f"Set metrics options via worker assignment")
+                if "logs" in assignment.room_options:
+                    room_options.logs = assignment.room_options["logs"]
+                    logger.info(f"Set logs options via worker assignment")
             else:
                 logger.warning("No room_options received from assignment")
 
@@ -777,18 +828,33 @@ class Worker:
                 f"Added job {assignment.job_id} to worker's current jobs. Total jobs: {len(self._current_jobs)}"
             )
 
-            # Send job update to registry
-            job_update = JobUpdate(
-                job_id=assignment.job_id,
-                status="running",
-            )
-            await self.backend_connection.send_message(job_update)
-
             # Execute the job using the process manager
             logger.info(f"Executing job {assignment.job_id} via process manager")
 
             if not self.process_manager:
                 raise RuntimeError("Task executor not initialized")
+
+            # If wait=True, create a cross-process event to wait for meeting join
+            # before sending the "running" status to registry
+            import multiprocessing
+
+            mp_meeting_joined_event = None
+            logger.info(
+                f"Job {assignment.job_id}: assignment.wait={assignment.wait} (type={type(assignment.wait).__name__})"
+            )
+            if assignment.wait:
+                manager = multiprocessing.Manager()
+                mp_meeting_joined_event = manager.Event()
+                logger.info(
+                    f"Job {assignment.job_id}: wait=True, deferring 'running' status until meeting joined"
+                )
+            else:
+                # Send immediate "running" status when wait is not requested
+                job_update = JobUpdate(
+                    job_id=assignment.job_id,
+                    status="running",
+                )
+                await self.backend_connection.send_message(job_update)
 
             try:
                 # Execute in separate process/thread
@@ -798,19 +864,74 @@ class Worker:
                     if hasattr(assignment, "timeout") and assignment.timeout
                     else 3600.0
                 )
-                
-                result = await self.process_manager.execute(
-                    _execute_job_entrypoint,       # entrypoint
-                    TaskType.JOB,                  # task_type
-                    timeout_val,                   # timeout
-                    3,                             # retry_count
-                    0,                             # priority
-                    self.options.entrypoint_fnc,   # arg1
-                    room_options,                  # arg2
-                    assignment.metadata,           # arg3
+
+                # Start execution as a background task so we can await meeting join in parallel
+                execute_task = asyncio.create_task(
+                    self.process_manager.execute(
+                        _execute_job_entrypoint,  # entrypoint
+                        TaskType.JOB,  # task_type
+                        timeout_val,  # timeout
+                        0,  # retry_count (entrypoint errors are not retriable)
+                        0,  # priority
+                        self.options.entrypoint_fnc,  # arg1
+                        room_options,  # arg2
+                        assignment.metadata,  # arg3
+                        assignment.wait,  # arg4: wait_for_meeting_join
+                        mp_meeting_joined_event,  # arg5: cross-process event
+                    )
                 )
 
-                logger.info(f"Job {assignment.job_id} execution completed: {result.status}")
+                # If wait=True, poll the multiprocessing event until meeting joins or execution fails
+                if mp_meeting_joined_event is not None:
+                    meeting_join_timeout = 30.0
+                    poll_start = asyncio.get_event_loop().time()
+                    joined = False
+                    while not joined:
+                        if mp_meeting_joined_event.is_set():
+                            joined = True
+                            break
+                        if execute_task.done():
+                            # Entrypoint finished/failed before meeting join
+                            break
+                        if (
+                            asyncio.get_event_loop().time() - poll_start
+                        ) > meeting_join_timeout:
+                            logger.warning(
+                                f"Job {assignment.job_id}: timeout waiting for meeting join, sending 'running' anyway"
+                            )
+                            break
+                        await asyncio.sleep(0.1)
+
+                    if joined:
+                        logger.info(
+                            f"Job {assignment.job_id}: meeting joined, sending 'running' status"
+                        )
+
+                    if joined:
+                        job_update = JobUpdate(
+                            job_id=assignment.job_id,
+                            status="running",
+                        )
+                        await self.backend_connection.send_message(job_update)
+                    elif execute_task.done():
+                        # Entrypoint failed before meeting join — let the result
+                        # handler below send the final status to avoid duplicates
+                        logger.warning(
+                            f"Job {assignment.job_id}: entrypoint failed before meeting join"
+                        )
+                    else:
+                        # Timeout waiting for meeting join but task still running
+                        job_update = JobUpdate(
+                            job_id=assignment.job_id,
+                            status="running",
+                        )
+                        await self.backend_connection.send_message(job_update)
+
+                result = await execute_task
+
+                logger.info(
+                    f"Job {assignment.job_id} execution completed: {result.status}"
+                )
 
                 if result.status.value == "completed":
                     final_update = JobUpdate(
@@ -839,6 +960,13 @@ class Worker:
 
             self._current_jobs.pop(assignment.job_id, None)
             logger.info(f"Removed job {assignment.job_id} from current jobs")
+
+            # Clean up the multiprocessing manager if we created one
+            if mp_meeting_joined_event is not None:
+                try:
+                    manager.shutdown()
+                except Exception:
+                    pass
 
             await self._send_immediate_status_update()
 

@@ -9,6 +9,7 @@ from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
 from videosdk.plugins.anthropic import AnthropicLLM
 
 import logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 import pathlib
 import sys
 import aiohttp

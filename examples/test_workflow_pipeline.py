@@ -1,5 +1,6 @@
 
 import logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 from pydantic import Field
 from videosdk.agents import Agent, AgentSession, Pipeline, WorkerJob, JobContext, RoomOptions
 from videosdk.plugins.deepgram import DeepgramSTT

@@ -7,6 +7,7 @@ from ..fallback_base import FallbackBase
 logger = logging.getLogger(__name__)
 
 class FallbackTTS(TTS, FallbackBase):
+    """TTS wrapper that automatically fails over to backup providers on errors and attempts recovery of higher-priority ones."""
     def __init__(self, providers: List[TTS], temporary_disable_sec: float = 60.0, permanent_disable_after_attempts: int = 3):
         TTS.__init__(
             self,
@@ -26,8 +27,7 @@ class FallbackTTS(TTS, FallbackBase):
 
     async def _handle_async_error(self, error_msg: str, failed_provider: Any):
         switched = await self._switch_provider(f"Async Error: {error_msg}", failed_provider=failed_provider)
-        if not switched:
-            self.emit("error", error_msg)
+        self.emit("error", error_msg)
 
     async def _switch_provider(self, reason: str, failed_provider: Any = None):
         provider_to_cleanup = failed_provider if failed_provider else self.active_provider
@@ -112,6 +112,7 @@ class FallbackTTS(TTS, FallbackBase):
                 return
             except Exception as e:
                 logger.error(f"[TTS] Synthesis failed with {current_provider.label}: {e}")
+                self.emit("error", str(e))
                 switched = await self._switch_provider(str(e), failed_provider=current_provider)
                 if not switched:
                     logger.error(f"[TTS] All providers exhausted. Raising error.")

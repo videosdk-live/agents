@@ -1,5 +1,8 @@
+import logging
 from mcp.server.fastmcp import FastMCP
 import datetime
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 
 mcp = FastMCP("CurrentTimeServer")
 

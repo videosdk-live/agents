@@ -309,15 +309,18 @@ class AssemblyAISTT(BaseSTT):
         max_end = None
 
         for w in words:
+            # only consider final words (optional but recommended)
             if not w.get("word_is_final", True):
                 continue
 
             conf = w.get("confidence")
 
+            # confidence average
             if conf is not None:
                 total_conf += conf
                 count += 1
 
+            # duration bounds
             min_start = words[0].get("start")
             max_end = words[-1].get("end")
 

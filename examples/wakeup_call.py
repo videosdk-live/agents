@@ -7,6 +7,7 @@ from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
 from videosdk.plugins.anthropic import AnthropicLLM
 from videosdk.plugins.google import GoogleTTS
 import logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 
 pre_download_model()
 logging.getLogger().setLevel(logging.CRITICAL)

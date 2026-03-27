@@ -1,10 +1,15 @@
 import os
+import logging
 import asyncio
 from dotenv import load_dotenv
 
 import discord
 from discord.ext import commands
 from mcp.server.fastmcp import FastMCP
+
+load_dotenv()
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 
 class DiscordHuman:
     def __init__(self, user_id: int, channel_id: int):
@@ -45,8 +50,6 @@ class DiscordHuman:
             return await asyncio.wait_for(self.response_future, timeout=600)
         except asyncio.TimeoutError:
             return "⏱️ Timed out waiting for a human response"
-
-load_dotenv()
 
 async def main():
     discord_token = os.getenv("DISCORD_TOKEN")

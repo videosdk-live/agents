@@ -1,8 +1,9 @@
-import ctypes,numpy,os
+import ctypes
+import numpy
+import os
 import platform
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
-
 
 sys_name = platform.system()
 if sys_name == "Darwin":
@@ -25,19 +26,42 @@ except OSError as e:
         f"Original error: {e}"
     ) from e
 
-lib.rnnoise_process_frame.argtypes = [ctypes.c_void_p,ctypes.POINTER(ctypes.c_float),ctypes.POINTER(ctypes.c_float)]
-lib.rnnoise_process_frame.restype = ctypes.c_float
+lib.rnnoise_create.argtypes = [ctypes.c_void_p]
 lib.rnnoise_create.restype = ctypes.c_void_p
 lib.rnnoise_destroy.argtypes = [ctypes.c_void_p]
 
-class RNN(object):
-	def __init__(self):
-		self.obj = lib.rnnoise_create()
-	def process_frame(self,inbuf):
-		outbuf = numpy.ndarray((480,), 'h', inbuf).astype(ctypes.c_float)
-		outbuf_ptr = outbuf.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
-		VodProb =  lib.rnnoise_process_frame(self.obj,outbuf_ptr,outbuf_ptr)
-		return (VodProb,outbuf.astype(ctypes.c_short).tobytes())
+lib.rnnoise_process_frame.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float)]
+lib.rnnoise_process_frame.restype = ctypes.c_float
 
-	def destroy(self):
-		lib.rnnoise_destroy(self.obj)
+class RNN(object):
+    def __init__(self):
+        self.obj = lib.rnnoise_create(None)
+        
+        if not self.obj:
+             raise RuntimeError("RNNoise library failed to create internal state (returned NULL).")
+
+    def process_frame(self, inbuf):
+        if len(inbuf) != 960:
+            return (0.0, inbuf)
+
+        indata = numpy.frombuffer(inbuf, dtype=numpy.int16).astype(numpy.float32)
+
+        if not indata.flags['C_CONTIGUOUS']:
+            indata = numpy.ascontiguousarray(indata)
+
+        outdata = numpy.zeros(480, dtype=numpy.float32)
+
+        in_ptr = indata.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+        out_ptr = outdata.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+
+        try:
+            prob = lib.rnnoise_process_frame(self.obj, out_ptr, in_ptr)
+        except Exception:
+            return (0.0, inbuf)
+
+        return (prob, outdata.astype(numpy.int16).tobytes())
+
+    def destroy(self):
+        if self.obj:
+            lib.rnnoise_destroy(self.obj)
+            self.obj = None

@@ -42,7 +42,7 @@ from .pipeline import Pipeline, EOUConfig, InterruptConfig
 from .realtime_base_model import RealtimeBaseModel
 from .realtime_llm_adapter import RealtimeLLMAdapter
 
-from .metrics import realtime_metrics_collector
+from .metrics import metrics_collector
 from .utils import (
     function_tool,
     is_function_tool,
@@ -57,7 +57,7 @@ from .utils import (
 )
 from .room.output_stream import CustomAudioStreamTrack, TeeCustomAudioStreamTrack, TeeMixingCustomAudioStreamTrack
 from .event_emitter import EventEmitter
-from .job import WorkerJob, JobContext, RoomOptions, Options, WebSocketConfig, WebRTCConfig
+from .job import WorkerJob, JobContext, RoomOptions, RecordingOptions, Options, WebSocketConfig, WebRTCConfig, TracesOptions, MetricsOptions, LoggingOptions
 from .worker import Worker, WorkerOptions, WorkerType
 from .utterance_handle import UtteranceHandle
 from .playground_manager import PlaygroundManager
@@ -108,12 +108,6 @@ from .stt import FallbackSTT
 from .llm import FallbackLLM
 from .tts import FallbackTTS
 from .utils import run_stt, run_tts
-# from .videosdk_eval import (
-#     Evaluation, EvaluationResult, EvalTurn, EvalMetric, LLMAsJudgeMetric,
-#     STTComponent, STTEvalConfig, LLMComponent, LLMEvalConfig,
-#     TTSComponent, TTSEvalConfig, LLMAsJudge, LLMAsJudgeConfig
-# )
-from . import videosdk_eval
 
 __all__ = [
     "Agent",
@@ -172,10 +166,14 @@ __all__ = [
     "encode",
     "JobContext",
     "RoomOptions",
+    "RecordingOptions",
     "Options",
     "WebSocketConfig",
     "WebRTCConfig",
-    "realtime_metrics_collector",
+    "TracesOptions",
+    "MetricsOptions",
+    "LoggingOptions",
+    "metrics_collector",
     "ImageContent",
     "segment_text",
     "Worker",

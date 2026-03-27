@@ -41,8 +41,11 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         self.time_base_fraction = Fraction(1, self.sample_rate)
         self.samples = int(AUDIO_PTIME * self.sample_rate)
         self.chunk_size = int(self.samples * self.channels * self.sample_width)
-        self._is_speaking = False
-        
+        self._synthesis_complete = False
+        self._needs_last_audio_callback = False
+        self._last_speaking_time = 0.0
+        self._speaking_grace_period = 0.5 # 500ms grace period for jitter
+
         # Pause/resume support - simple flag-based (no blocking)
         self._is_paused = False
         self._paused_frames = []  # Separate buffer for paused content
@@ -61,6 +64,9 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         self.audio_data_buffer.clear()
         self._paused_frames.clear()
         self._is_paused = False
+        self._last_speaking_time = 0.0
+        self._synthesis_complete = False
+        self._needs_last_audio_callback = False
         
         # Handle manual audio control mode
         if self._manual_audio_control:
@@ -116,8 +122,36 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         """Set callback for when the final audio byte of synthesis is produced"""
         logger.info("on last audio callback")
         self._last_audio_callback = callback
-    
-            
+        self._synthesis_complete = False
+        self._needs_last_audio_callback = False
+
+    @property
+    def is_speaking(self) -> bool:
+        """
+        True if the track is currently playing audio or has buffered data,
+        including a small grace period to bridge gaps in streaming TTS.
+        """
+        has_data = len(self.frame_buffer) > 0 or len(self.audio_data_buffer) > 0
+        if has_data:
+            return True
+        return (time() - self._last_speaking_time) < self._speaking_grace_period
+
+    def mark_synthesis_complete(self) -> None:
+        """
+        Mark that TTS synthesis has finished sending all audio data.
+        If the buffer is already empty (all audio consumed), fires the
+        on_last_audio_byte callback immediately. Otherwise, the callback
+        will fire when recv() drains the remaining buffer.
+        """
+        self._synthesis_complete = True
+        # If we're not currently speaking (grace period passed) and buffer is empty, fire immediately
+        if not self.is_speaking and self._needs_last_audio_callback:
+            self._needs_last_audio_callback = False
+            self._synthesis_complete = False
+            logger.info("[AudioTrack] Synthesis complete and buffer already empty — triggering last_audio_callback.")
+            if hasattr(self, "_last_audio_callback") and self._last_audio_callback:
+                asyncio.create_task(self._last_audio_callback())
+
     async def add_new_bytes(self, audio_data: bytes):
         """
         Add new audio bytes to the buffer. Respects _accepting_audio flag
@@ -204,14 +238,26 @@ class CustomAudioStreamTrack(CustomAudioTrack):
             elif len(self.frame_buffer) > 0:
                 frame = self.frame_buffer.pop(0)
                 self._is_speaking = True
+                self._last_speaking_time = time()
             else:
                 # No audio data available — silence
                 if getattr(self, "_is_speaking", False):
-                    logger.info("[AudioTrack] Agent finished speaking — triggering last_audio_callback.")
-                    self._is_speaking = False
+                    # Only declare we've stopped speaking if the grace period has passed
+                    # This bridges gaps in streaming TTS (like Sarvam jitter)
+                    if (time() - self._last_speaking_time) >= self._speaking_grace_period:
+                        self._is_speaking = False
 
-                    if hasattr(self, "_last_audio_callback") and self._last_audio_callback:
-                        asyncio.create_task(self._last_audio_callback())
+                        if self._synthesis_complete:
+                            # TTS finished and buffer drained — fire callback
+                            self._synthesis_complete = False
+                            self._needs_last_audio_callback = False
+                            logger.info("[AudioTrack] Agent finished speaking — triggering last_audio_callback.")
+                            if hasattr(self, "_last_audio_callback") and self._last_audio_callback:
+                                asyncio.create_task(self._last_audio_callback())
+                        else:
+                            # Buffer temporarily empty but synthesis still in progress
+                            logger.debug("[AudioTrack] Buffer empty — waiting for more TTS audio.")
+                            self._needs_last_audio_callback = True
 
                 # Produce silence frame
                 frame = AudioFrame(format="s16", layout="mono", samples=self.samples)
@@ -222,6 +268,8 @@ class CustomAudioStreamTrack(CustomAudioTrack):
             frame.time_base = time_base
             frame.sample_rate = self.sample_rate
             return frame
+        except MediaStreamError:
+            raise
         except Exception as e:
             traceback.print_exc()
             logger.error(f"Error while creating tts->rtc frame: {e}")
@@ -231,11 +279,7 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         self.stop()
 
 class MixingCustomAudioStreamTrack(CustomAudioStreamTrack):
-    """
-    Audio track implementation with mixing capabilities.
-    Inherits from CustomAudioStreamTrack and overrides methods to handle mixing.
-    Frames are created just-in-time in the recv method.
-    """
+    """Audio track that mixes primary TTS audio with a background audio buffer, creating frames just-in-time during recv."""
     def __init__(self, loop):
         super().__init__(loop)
         self.background_audio_buffer = bytearray()
@@ -270,6 +314,8 @@ class MixingCustomAudioStreamTrack(CustomAudioStreamTrack):
         """Set callback for when the final audio byte of synthesis is produced"""
         logger.info("on last audio callback")
         self._last_audio_callback = callback
+        self._synthesis_complete = False
+        self._needs_last_audio_callback = False
 
     async def recv(self) -> AudioFrame:
         """
@@ -297,12 +343,23 @@ class MixingCustomAudioStreamTrack(CustomAudioStreamTrack):
                 primary_chunk = self.audio_data_buffer[: self.chunk_size]
                 self.audio_data_buffer = self.audio_data_buffer[self.chunk_size :]
                 self._is_speaking = True
+                self._last_speaking_time = time()
             elif getattr(self, "_is_speaking", False):
-                logger.info("[AudioTrack] Agent finished speaking — triggering last_audio_callback.")
-                self._is_speaking = False
+                # Apply grace period for mixing track as well
+                if (time() - self._last_speaking_time) >= self._speaking_grace_period:
+                    self._is_speaking = False
 
-                if hasattr(self, "_last_audio_callback") and self._last_audio_callback:
-                    asyncio.create_task(self._last_audio_callback())
+                    if self._synthesis_complete:
+                        # TTS finished and buffer drained — fire callback
+                        self._synthesis_complete = False
+                        self._needs_last_audio_callback = False
+                        logger.info("[AudioTrack] Agent finished speaking — triggering last_audio_callback.")
+                        if hasattr(self, "_last_audio_callback") and self._last_audio_callback:
+                            asyncio.create_task(self._last_audio_callback())
+                    else:
+                        # Buffer temporarily empty but synthesis still in progress
+                        logger.debug("[AudioTrack] Buffer empty — waiting for more TTS audio.")
+                        self._needs_last_audio_callback = True
 
             background_chunk = b''
             has_background = len(self.background_audio_buffer) >= self.chunk_size
@@ -327,11 +384,15 @@ class MixingCustomAudioStreamTrack(CustomAudioStreamTrack):
             frame.time_base = time_base
             frame.sample_rate = self.sample_rate
             return frame
+        except MediaStreamError:
+            raise
         except Exception as e:
             traceback.print_exc()
             logger.error(f"Error while creating tts->rtc frame: {e}")
 
 class TeeCustomAudioStreamTrack(CustomAudioStreamTrack):
+    """Audio track that duplicates outgoing audio bytes to registered sinks such as avatar plugins or local speakers."""
+
     def __init__(self, loop, sinks=None, pipeline=None):
         super().__init__(loop)
         self.sinks = sinks if sinks is not None else []
@@ -351,19 +412,40 @@ class TeeCustomAudioStreamTrack(CustomAudioStreamTrack):
 
         # Route audio to sinks (avatars, etc.)
         for sink in self.sinks:
-            if hasattr(sink, "handle_audio_input"):
-                await sink.handle_audio_input(audio_data)
-            elif callable(sink):
-                if asyncio.iscoroutinefunction(sink):
-                    await sink(audio_data)
-                else:
-                    sink(audio_data)
+            try:
+                if hasattr(sink, "handle_audio_input"):
+                    await sink.handle_audio_input(audio_data)
+                elif callable(sink):
+                    if asyncio.iscoroutinefunction(sink):
+                        await sink(audio_data)
+                    else:
+                        sink(audio_data)
+            except Exception as e:
+                import logging as _logging
+                _logging.getLogger(__name__).warning("Avatar sink error (audio will continue): %s", e)
 
-        # DO NOT route agent's own TTS audio back to pipeline
-        # The pipeline should only receive audio from other participants
-        # This prevents the agent from hearing itself speak
+    async def recv(self) -> AudioFrame:
+        """
+        When avatar sinks are present the Avatar Server publishes audio to the meeting,
+        so we must NOT publish the raw TTS audio directly (it would cause double audio).
+        We still call super().recv() so that all internal state tracking and callbacks
+        (is_speaking, on_first_audio_byte, on_last_audio_byte) continue to work correctly.
+        The actual audio payload is replaced with silence before handing back to WebRTC.
+        """
+        frame = await super().recv()
+        if self.sinks and frame is not None:
+            silence = AudioFrame(format="s16", layout="mono", samples=self.samples)
+            for p in silence.planes:
+                p.update(bytes(p.buffer_size))
+            silence.pts = frame.pts
+            silence.time_base = frame.time_base
+            silence.sample_rate = frame.sample_rate
+            return silence
+        return frame
 
 class TeeMixingCustomAudioStreamTrack(MixingCustomAudioStreamTrack):
+    """Combines mixing and tee functionality, mixing background audio while also forwarding audio bytes to registered sinks."""
+
     def __init__(self, loop, sinks=None, pipeline=None):
         super().__init__(loop)
         self.sinks = sinks if sinks is not None else []
@@ -374,5 +456,27 @@ class TeeMixingCustomAudioStreamTrack(MixingCustomAudioStreamTrack):
 
         # Route audio to sinks (avatars, etc.)
         for sink in self.sinks:
-            if hasattr(sink, "handle_audio_input"):
-                await sink.handle_audio_input(audio_data)
+            try:
+                if hasattr(sink, "handle_audio_input"):
+                    await sink.handle_audio_input(audio_data)
+                elif callable(sink):
+                    if asyncio.iscoroutinefunction(sink):
+                        await sink(audio_data)
+                    else:
+                        sink(audio_data)
+            except Exception as e:
+                import logging as _logging
+                _logging.getLogger(__name__).warning("Avatar sink error (audio will continue): %s", e)
+
+    async def recv(self) -> AudioFrame:
+        """Silence the direct WebRTC output when avatar sinks are handling playback."""
+        frame = await super().recv()
+        if self.sinks and frame is not None:
+            silence = AudioFrame(format="s16", layout="mono", samples=self.samples)
+            for p in silence.planes:
+                p.update(bytes(p.buffer_size))
+            silence.pts = frame.pts
+            silence.time_base = frame.time_base
+            silence.sample_rate = frame.sample_rate
+            return silence
+        return frame

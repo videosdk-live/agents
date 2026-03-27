@@ -2,7 +2,9 @@ from typing import Any, Literal, Optional, Callable, Dict, List, Tuple
 import asyncio
 import logging
 import av
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
+import time
+from .agent import Agent
 from .utterance_handle import UtteranceHandle
 from .event_emitter import EventEmitter
 from .room.output_stream import CustomAudioStreamTrack
@@ -19,13 +21,26 @@ from .eou import EOU
 from .denoise import Denoise
 from .voice_mail_detector import VoiceMailDetector
 from .job import get_current_job_context
-from .utils import PipelineMode, RealtimeMode, PipelineComponent, PipelineConfig, build_pipeline_config
+from .utils import PipelineMode, RealtimeMode,PipelineConfig, build_pipeline_config
+from .metrics import metrics_collector
+from .utils import UserState, AgentState
 
 logger = logging.getLogger(__name__)
+
+from .pipeline_utils import (
+    NO_CHANGE, 
+    cleanup_pipeline, 
+    check_mode_shift, 
+    swap_component_in_orchestrator, 
+    swap_llm, 
+    swap_tts, 
+    register_stt_transcript_listener
+)
 
 
 @dataclass
 class EOUConfig:
+    """Configuration for end-of-utterance detection behavior and speech wait timeouts."""
     mode: Literal["ADAPTIVE", "DEFAULT"] = "DEFAULT"
     min_max_speech_wait_timeout: List[float] | Tuple[float, float] = field(default_factory=lambda: [0.5, 0.8])
 
@@ -43,6 +58,7 @@ class EOUConfig:
 
 @dataclass
 class InterruptConfig:
+    """Configuration for interruption handling, including mode, duration thresholds, and false interrupt behavior."""
     mode: Literal["VAD_ONLY", "STT_ONLY", "HYBRID"] = "HYBRID"
     interrupt_min_duration: float = 0.5
     interrupt_min_words: int = 2
@@ -123,6 +139,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         self.hooks = PipelineHooks()
         
         # Realtime configuration
+        self.agent : Agent | None = None
         self.realtime_config = realtime_config
 
         # Detect and handle realtime models
@@ -132,6 +149,8 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         if isinstance(llm, RealtimeBaseModel):
             self._realtime_model = llm
             self.llm = RealtimeLLMAdapter(llm)
+            if self.agent:
+                self.llm.set_agent(self.agent)
         else:
             self.llm = llm
 
@@ -154,7 +173,6 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         self.interrupt_config = interrupt_config or InterruptConfig()
         
         # Pipeline state
-        self.agent = None
         self.orchestrator: PipelineOrchestrator | None = None
         self.speech_generation: SpeechGeneration | None = None
         self.vision = False
@@ -262,38 +280,41 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                 logger.error(f"Error synthesizing with external TTS: {e}")
     
     def on(
-        self, 
-        event: Literal["speech_in", "speech_out", "stt", "llm","tts","agent_response", "vision_frame", "user_turn_start", "user_turn_end", "agent_turn_start", "agent_turn_end", "content_generated"] | str,
+        self,
+        event: Literal["speech_in", "speech_out", "stt", "llm", "tts", "vision_frame", "user_turn_start", "user_turn_end", "agent_turn_start", "agent_turn_end"] | str,
         callback: Callable | None = None
     ) -> Callable:
         """
         Register a listener for pipeline events or a hook for processing stages.
-        
+
         Can be used as a decorator or with a callback.
-        
+
         Supported hooks (decorator only):
-        - stt: Process user transcript after STT, before LLM (or stream STT hook)
-        - tts: Stream TTS hook (text -> audio)
-        - llm: Control LLM invocation (can bypass with direct response)
-        - agent_response: Process agent response after LLM, before TTS
+        - stt: STT processing (async iterator: audio -> events)
+        - tts: TTS processing (async iterator: text -> audio)
+        - llm: Called when LLM generates content. Return/yield str to modify, return None to observe.
         - vision_frame: Process video frames when vision is enabled (async iterator)
         - user_turn_start: Called when user turn starts
         - user_turn_end: Called when user turn ends
         - agent_turn_start: Called when agent processing starts
         - agent_turn_end: Called when agent finishes speaking
-        - content_generated: Called when LLM generates content (receives dict with "text" key)
-        
+
         Supported events (listener):
         - transcript_ready
         - synthesis_complete
         - error
-        
+
         Examples:
-            @pipeline.on("content_generated")
-            async def on_content(data):
+            @pipeline.on("llm")
+            async def on_llm(data):
                 print(f"LLM generated: {data['text']}")
+
+            @pipeline.on("llm")
+            async def modify_response(data):
+                text = data.get("text", "")
+                yield text.replace("SSN", "[REDACTED]")
         """
-        if event in ["stt", "tts", "llm", "agent_response", "vision_frame", "user_turn_start", "user_turn_end", "agent_turn_start", "agent_turn_end", "content_generated"]:
+        if event in ["stt", "tts", "llm", "vision_frame", "user_turn_start", "user_turn_end", "agent_turn_start", "agent_turn_end"]:
             return self.hooks.on(event)(callback) if callback else self.hooks.on(event)
             
         return super().on(event, callback)
@@ -314,6 +335,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
     def on_component_error(self, source: str, error_data: Any) -> None:
         """Handle error events from components"""
         logger.error(f"[{source}] Component error: {error_data}")
+        metrics_collector.add_error(source, error_data)
         self.emit("error", {"source": source, "error": str(error_data)})
     
     def get_session_metrics_snapshot(self) -> dict:
@@ -324,9 +346,18 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         }
 
     def set_agent(self, agent: Any) -> None:
-        """Set the agent for this pipeline"""
+        """Associate an agent with this pipeline and configure the orchestrator based on the pipeline mode."""
         self.agent = agent
-        
+
+        # Configure metrics with pipeline info
+        metrics_collector.configure_pipeline(
+            pipeline_mode=self.config.pipeline_mode,
+            realtime_mode=self.config.realtime_mode,
+            active_components=self.config.active_components,
+        )
+        metrics_collector.set_eou_config(self.eou_config)
+        metrics_collector.set_interrupt_config(self.interrupt_config)
+
         if self.config.realtime_mode in (RealtimeMode.HYBRID_STT, RealtimeMode.LLM_ONLY):
             logger.info(f"Creating orchestrator for {self.config.realtime_mode.value} mode")
             self.orchestrator = PipelineOrchestrator(
@@ -417,13 +448,305 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
             self.orchestrator.on("voicemail_result", lambda data: self.emit("voicemail_result", data))
     
     def _set_loop_and_audio_track(self, loop: asyncio.AbstractEventLoop, audio_track: CustomAudioStreamTrack) -> None:
-        """Set the event loop and configure components"""
+        """Set the event loop and audio output track, then configure all pipeline components."""
         self.loop = loop
         self.audio_track = audio_track
         self._configure_components()
     
+    async def change_pipeline(
+        self,
+        stt: STT | None = None,
+        llm: LLM | RealtimeBaseModel | None = None,
+        tts: TTS | None = None,
+        vad: VAD | None = None,
+        turn_detector: EOU | None = None,
+        avatar: Any | None = None,
+        denoise: Denoise | None = None,
+        eou_config: EOUConfig | None = None,
+        interrupt_config: InterruptConfig | None = None,
+        conversational_graph: Any | None = None,
+        max_context_items: int | None = None,
+        voice_mail_detector: VoiceMailDetector | None = None,
+        realtime_config: RealtimeConfig | None = None
+        ) -> None:
+        """
+        Dynamically change pipeline configuration and components.
+        
+        This method allows switching between different modes (Realtime, Cascading, Hybrid)
+        and updating individual components.
+        """
+        logger.info("Changing pipeline configuration...")
+        if self.orchestrator:
+            await self.orchestrator.interrupt()
+        get_provider_info = self.agent.session._get_provider_info
+        start_time = time.perf_counter()
+        original_pipeline_config = {}
+        if not self.config.is_realtime:
+            if self.stt:
+                p_class, p_model = get_provider_info(self.stt, 'stt')
+                original_pipeline_config["stt"] = {"class": p_class, "model": p_model}
+            if self.llm:
+                p_class, p_model = get_provider_info(self.llm, 'llm')
+                original_pipeline_config["llm"] = {"class": p_class, "model": p_model}
+            if self.tts:
+                p_class, p_model = get_provider_info(self.tts, 'tts')
+                original_pipeline_config["tts"] = {"class": p_class, "model": p_model}
+            if hasattr(self, 'vad') and self.vad:
+                p_class, p_model = get_provider_info(self.vad, 'vad')
+                original_pipeline_config["vad"] = {"class": p_class, "model": p_model}
+            if hasattr(self, 'turn_detector') and self.turn_detector:
+                p_class, p_model = get_provider_info(self.turn_detector, 'eou')
+                original_pipeline_config["eou"] = {"class": p_class, "model": p_model}
+        else:
+            if self._realtime_model:
+                original_pipeline_config["realtime"] = {"class": self._realtime_model.__class__.__name__, "model": getattr(self._realtime_model, 'model', '')}
+            if self.stt:
+                p_class, p_model = get_provider_info(self.stt, 'stt')
+                original_pipeline_config["stt"] = {"class": p_class, "model": p_model}
+            if self.tts:
+                p_class, p_model = get_provider_info(self.tts, 'tts')
+                original_pipeline_config["tts"] = {"class": p_class, "model": p_model}
+
+        original_pipeline_config["pipeline_mode"] = self.config.pipeline_mode.value
+        original_pipeline_config["denoise"] = self.denoise.__class__.__name__
+        original_pipeline_config["eou_config"] = asdict(self.eou_config)
+        original_pipeline_config["interrupt_config"] = asdict(self.interrupt_config)
+        original_pipeline_config["max_context_items"] = self.max_context_items
+
+        if self._realtime_model and hasattr(self._realtime_model, 'audio_track'):
+            self._realtime_model.audio_track = None
+        await cleanup_pipeline(self, llm_changing=True)
+
+        # 2.Update components
+        await swap_component_in_orchestrator(
+            self, 'stt', stt, 'speech_understanding', 'stt_lock', 
+            register_stt_transcript_listener
+        )
+        await swap_tts(self, tts)
+        await swap_component_in_orchestrator(self, 'vad', vad, 'speech_understanding')
+        await swap_component_in_orchestrator(self, 'turn_detector', turn_detector, 'speech_understanding', 'turn_detector_lock')
+        await swap_component_in_orchestrator(self, 'denoise', denoise, 'speech_understanding', 'denoise_lock')
+            
+        if self.avatar and self.avatar != avatar: await self.avatar.aclose()
+        self.avatar = avatar
+
+        # Update configs
+        if eou_config is not None: self.eou_config = eou_config
+        if interrupt_config is not None: self.interrupt_config = interrupt_config
+        if max_context_items is not None: self.max_context_items = max_context_items
+        if voice_mail_detector is not None: self.voice_mail_detector = voice_mail_detector
+        if realtime_config is not None: self.realtime_config = realtime_config   
+        if conversational_graph is not None:
+            self.conversational_graph = conversational_graph
+            if self.conversational_graph and hasattr(self.conversational_graph, 'compile'):
+                self.conversational_graph.compile()
+            
+        # Update LLM / Realtime Model
+        await swap_llm(self, llm)
+
+        # 3. REBOOT: Detect mode and restart
+        self.config = build_pipeline_config(
+            stt=self.stt,
+            llm=self.llm,
+            tts=self.tts,
+            vad=self.vad,
+            turn_detector=self.turn_detector,
+            avatar=self.avatar,
+            denoise=self.denoise,
+            realtime_model=self._realtime_model,
+            realtime_config_mode=(
+                self.realtime_config.mode if self.realtime_config and self.realtime_config.mode else None
+            ),
+        )
+        new_mode = self.config.pipeline_mode.value
+        logger.info(f"New pipeline mode: {new_mode}")
+        
+        if self.agent:
+            logger.info("Restarting pipeline with updated components")
+            self.set_agent(self.agent)
+            
+        self._configure_components()
+        end_time = time.perf_counter()
+        time_data = {
+            "start_time": start_time,
+            "end_time": end_time
+        }
+        new_pipeline_config = {}
+
+        if not self.config.is_realtime:
+            if self.stt:
+                p_class, p_model = get_provider_info(self.stt, 'stt')
+                new_pipeline_config["stt"] = {"class": p_class, "model": p_model}
+            if self.llm:
+                p_class, p_model = get_provider_info(self.llm, 'llm')
+                new_pipeline_config["llm"] = {"class": p_class, "model": p_model}
+            if self.tts:
+                p_class, p_model = get_provider_info(self.tts, 'tts')
+                new_pipeline_config["tts"] = {"class": p_class, "model": p_model}
+            if hasattr(self, 'vad') and self.vad:
+                p_class, p_model = get_provider_info(self.vad, 'vad')
+                new_pipeline_config["vad"] = {"class": p_class, "model": p_model}
+            if hasattr(self, 'turn_detector') and self.turn_detector:
+                p_class, p_model = get_provider_info(self.turn_detector, 'eou')
+                new_pipeline_config["eou"] = {"class": p_class, "model": p_model}
+        else:
+            if self._realtime_model:
+                new_pipeline_config["realtime"] = {"class": self._realtime_model.__class__.__name__, "model": getattr(self._realtime_model, 'model', '')}
+            if self.stt:
+                p_class, p_model = get_provider_info(self.stt, 'stt')
+                new_pipeline_config["stt"] = {"class": p_class, "model": p_model}
+            if self.tts:
+                p_class, p_model = get_provider_info(self.tts, 'tts')
+                new_pipeline_config["tts"] = {"class": p_class, "model": p_model}
+
+        new_pipeline_config["pipeline_mode"] = self.config.pipeline_mode.value
+        new_pipeline_config["eou_config"] = asdict(self.eou_config)
+        new_pipeline_config["interrupt_config"] = asdict(self.interrupt_config)
+        new_pipeline_config["max_context_items"] = self.max_context_items
+
+        metrics_collector.traces_flow_manager.create_pipeline_change_trace(time_data, original_pipeline_config, new_pipeline_config)
+        self._setup_error_handlers()
+        await self.start()
+
+    async def change_component(
+        self,
+        stt: STT | None = NO_CHANGE,
+        llm: LLM | RealtimeBaseModel | None = NO_CHANGE,
+        tts: TTS | None = NO_CHANGE,
+        vad: VAD | None = NO_CHANGE,
+        turn_detector: EOU | None = NO_CHANGE,
+        denoise: Denoise | None = NO_CHANGE,
+        ) -> None:
+        """Dynamically change components.
+        This will close the old components and set the new ones.
+        """
+        logger.info("Changing pipeline component(s)...")
+        start_time = time.perf_counter()
+        components_change_data = {
+            "new_stt": stt.__class__.__name__ if stt is not NO_CHANGE else None,
+            "new_tts": tts.__class__.__name__ if tts is not NO_CHANGE else None,
+            "new_llm": llm.__class__.__name__ if llm is not NO_CHANGE else None,
+            "new_vad": vad.__class__.__name__ if vad is not NO_CHANGE else None,
+            "new_turn_detector": turn_detector.__class__.__name__ if turn_detector is not NO_CHANGE else None,
+            "new_denoise": denoise.__class__.__name__ if denoise is not NO_CHANGE else None
+        }
+
+        # 0 Change components only if present earlier
+        validation_map = {
+            'STT': (stt, self.stt),
+            'TTS': (tts, self.tts),
+            'LLM': (llm, self.llm),
+            'VAD': (vad, self.vad),
+            'Turn Detector': (turn_detector, self.turn_detector),
+            'Denoise': (denoise, self.denoise)
+        }
+
+        for name, (new_val, current_val) in validation_map.items():
+            if new_val is not NO_CHANGE and current_val is None:
+                raise ValueError(
+                    f"Cannot change component '{name}' because it is not present in the current pipeline. "
+                    "Use change_pipeline() for full reconfiguration."
+                )
+
+        logger.info(f"Performing swap in {self.config.pipeline_mode.value} mode")
+
+        # Detect pipeline mode shift
+        mode_shift = check_mode_shift(self, llm, stt, tts)
+        if mode_shift:
+            logger.info("Component change triggers mode shift. Delegating to change_pipeline for full reconfiguration.")
+            
+            # Resolve sentinels to current values for resettlement
+            target_stt = self.stt if stt is NO_CHANGE else stt
+            target_tts = self.tts if tts is NO_CHANGE else tts
+            target_vad = self.vad if vad is NO_CHANGE else vad
+            target_turn_detector = self.turn_detector if turn_detector is NO_CHANGE else turn_detector
+            target_denoise = self.denoise if denoise is NO_CHANGE else denoise
+
+            if llm is NO_CHANGE:
+                target_llm = self._realtime_model if self._realtime_model else self.llm
+            else:
+                target_llm = llm
+
+            await self.change_pipeline(
+                stt=target_stt,
+                llm=target_llm,
+                tts=target_tts,
+                vad=target_vad,
+                turn_detector=target_turn_detector,
+                denoise=target_denoise,
+                avatar=self.avatar,
+                eou_config=self.eou_config,
+                interrupt_config=self.interrupt_config,
+                conversational_graph=self.conversational_graph,
+                max_context_items=self.max_context_items,
+                voice_mail_detector=self.voice_mail_detector,
+                realtime_config=self.realtime_config
+            )
+            return
+        
+        components_change_status = {}
+
+        if stt is not NO_CHANGE and self.stt != stt:
+            await swap_component_in_orchestrator(
+                self, 'stt', stt, 'speech_understanding', 'stt_lock', 
+                register_stt_transcript_listener
+            )
+            components_change_status["new_stt"] = "success"
+
+        if llm is not NO_CHANGE and self.llm != llm:
+            await swap_llm(self, llm)
+            components_change_status["new_llm"] = "success"
+
+        if tts is not NO_CHANGE and self.tts != tts:
+            await swap_tts(self, tts)
+            components_change_status["new_tts"] = "success"
+
+        if vad is not NO_CHANGE and self.vad != vad:
+            await swap_component_in_orchestrator(self, 'vad', vad, 'speech_understanding')
+            components_change_status["new_vad"] = "success"
+
+
+        if turn_detector is not NO_CHANGE and self.turn_detector != turn_detector:
+            await swap_component_in_orchestrator(self, 'turn_detector', turn_detector, 'speech_understanding', 'turn_detector_lock')
+            components_change_status["new_turn_detector"] = "success"
+
+        if denoise is not NO_CHANGE and self.denoise != denoise:
+            await swap_component_in_orchestrator(self, 'denoise', denoise, 'speech_understanding', 'denoise_lock')
+            components_change_status["new_denoise"] = "success"
+
+        # 3. REBOOT: Rebuild config with updated components
+        self.config = build_pipeline_config(
+            stt=self.stt,
+            llm=self.llm,
+            tts=self.tts,
+            vad=self.vad,
+            turn_detector=self.turn_detector,
+            avatar=self.avatar,
+            denoise=self.denoise,
+            realtime_model=self._realtime_model,
+            realtime_config_mode=(
+                self.realtime_config.mode if self.realtime_config and self.realtime_config.mode else None
+            ),
+        )
+        end_time = time.perf_counter()
+        time_data = {
+            "start_time": start_time,
+            "end_time": end_time
+        }
+       
+        if self._is_realtime_mode:
+            self._configure_components()
+            self._setup_error_handlers()
+            await self.start()
+
+        metrics_collector.traces_flow_manager.create_components_change_trace(components_change_status, components_change_data, time_data)
+        new_mode = self.config.pipeline_mode.value
+        logger.info(f"New pipeline mode: {new_mode}")
+
+        return
+
     def _configure_components(self) -> None:
-        """Configure pipeline components with loop and audio track"""
+        """Configure pipeline components with the event loop, audio track, and vision settings based on pipeline mode."""
         if not self.loop:
             return
         
@@ -478,9 +801,13 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                 
                 if self._realtime_model.audio_track and hasattr(self._realtime_model.audio_track, 'set_pipeline_hooks'):
                     self._realtime_model.audio_track.set_pipeline_hooks(self.hooks)
+                async def _audio_track_callback():
+                    self._realtime_model.emit("agent_speech_ended", {})
+                    self._on_agent_speech_ended_realtime({})
+                self._realtime_model.audio_track.on_last_audio_byte(_audio_track_callback)
     
     def set_wake_up_callback(self, callback: Callable[[], None]) -> None:
-        """Set wake-up callback for speech detection"""
+        """Set a callback to be invoked when user speech is first detected."""
         self._wake_up_callback = callback
     
     def _notify_speech_started(self) -> None:
@@ -509,7 +836,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                     self.llm.on_user_speech_started(lambda data: self._on_user_speech_started_realtime(data))
                     self.llm.on_user_speech_ended(lambda data: asyncio.create_task(self._on_user_speech_ended_realtime(data)))
                     self.llm.on_agent_speech_started(lambda data: asyncio.create_task(self._on_agent_speech_started_realtime(data)))
-                    self.llm.on_agent_speech_ended(lambda data: self._on_agent_speech_ended_realtime(data))
+                    # self.llm.on_agent_speech_ended(lambda data: self._on_agent_speech_ended_realtime(data))
                     self.llm.on_transcription(self._on_realtime_transcription)            
             if self.config.realtime_mode == RealtimeMode.HYBRID_STT and self.orchestrator:
                 await self.orchestrator.start()
@@ -634,7 +961,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         return self._recent_frames[-num_frames:]
     
     def interrupt(self) -> None:
-        """Interrupt the pipeline"""
+        """Interrupt the current agent speech, cancelling ongoing generation and playback if interruptible."""
         if self.config.is_realtime:
             if self._realtime_model:
                 if self._realtime_model.current_utterance and not self._realtime_model.current_utterance.is_interruptible:
@@ -695,36 +1022,53 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
     def _on_user_speech_started_realtime(self, data: dict) -> None:
         """Handle user speech started in realtime mode"""
         self._notify_speech_started()
-        
+        metrics_collector.on_user_speech_start()
+
         if self.config.realtime_mode == RealtimeMode.HYBRID_TTS and self.speech_generation:
             asyncio.create_task(self.speech_generation.interrupt())
-            
+
         if self.agent and self.agent.session:
-            from .utils import UserState, AgentState
             self.agent.session._emit_user_state(UserState.SPEAKING)
             self.agent.session._emit_agent_state(AgentState.LISTENING)
     
     async def _on_user_speech_ended_realtime(self, data: dict) -> None:
         """Handle user speech ended in realtime mode"""
-        if self.agent and self.agent.session and self.agent.session.is_background_audio_enabled:
-            await self.agent.session.start_thinking_audio()
+        metrics_collector.on_user_speech_end()
+        if self.agent and self.agent.session:
+            self.agent.session._emit_user_state(UserState.IDLE)
+            self.agent.session._emit_agent_state(AgentState.THINKING)
+            if self.agent.session.is_background_audio_enabled:
+                await self.agent.session.start_thinking_audio()
     
     async def _on_agent_speech_started_realtime(self, data: dict) -> None:
         """Handle agent speech started in realtime mode"""
-        if self.agent and self.agent.session and self.agent.session.is_background_audio_enabled:
-            await self.agent.session.stop_thinking_audio()
+        metrics_collector.on_agent_speech_start()
+        if self.agent and self.agent.session:
+            self.agent.session._emit_agent_state(AgentState.SPEAKING)
+            self.agent.session._emit_user_state(UserState.LISTENING)
+            if self.agent.session.is_background_audio_enabled:
+                await self.agent.session.stop_thinking_audio()
     
     def _on_agent_speech_ended_realtime(self, data: dict) -> None:
         """Handle agent speech ended in realtime mode"""
+        metrics_collector.on_agent_speech_end()
+        metrics_collector.schedule_turn_complete(timeout=1.0)
+        if self.agent:
+            self.agent.session._emit_user_state(UserState.IDLE)
+            self.agent.session._emit_agent_state(AgentState.IDLE)
+
         if self._current_utterance_handle and not self._current_utterance_handle.done():
             self._current_utterance_handle._mark_done()
-        
+
         if self._realtime_model:
             self._realtime_model.current_utterance = None
-        
+
+        if self.avatar and hasattr(self.avatar, 'send_segment_end'):
+            asyncio.create_task(self.avatar.send_segment_end())
+
         if self.agent and hasattr(self.agent, 'on_agent_speech_ended'):
             self.agent.on_agent_speech_ended(data)
-    
+
     def _on_realtime_transcription(self, data: dict) -> None:
         """Handle realtime model transcription"""
         self.emit("realtime_model_transcription", data)
@@ -733,7 +1077,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
             pass
     
     def set_voice_mail_detector(self, detector: VoiceMailDetector | None) -> None:
-        """Set voicemail detector"""
+        """Set or replace the voicemail detector on the pipeline and its orchestrator."""
         self.voice_mail_detector = detector
         if self.orchestrator:
             self.orchestrator.set_voice_mail_detector(detector)
@@ -756,7 +1100,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
     
     
     def get_component_configs(self) -> Dict[str, Dict[str, Any]]:
-        """Get component configurations"""
+        """Return a dictionary of public configuration attributes for each active pipeline component."""
         configs: Dict[str, Dict[str, Any]] = {}
         
         for comp_name, comp in [
@@ -778,7 +1122,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         return configs
     
     async def cleanup(self) -> None:
-        """Cleanup pipeline resources"""
+        """Release all pipeline resources, close components, and reset internal state."""
         logger.info("Cleaning up pipeline")
         
         if self.config.is_realtime:
@@ -836,5 +1180,5 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         logger.info("Pipeline cleaned up")
     
     async def leave(self) -> None:
-        """Leave the pipeline"""
+        """Leave the pipeline by performing a full cleanup of all resources."""
         await self.cleanup()

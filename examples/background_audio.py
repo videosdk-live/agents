@@ -4,7 +4,7 @@ from videosdk.plugins.deepgram import DeepgramSTT
 from videosdk.plugins.silero import SileroVAD
 from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
 import logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 
 pre_download_model()
 
@@ -56,7 +56,7 @@ async def entrypoint(ctx: JobContext):
     await session.start(wait_for_participant=True, run_until_shutdown=True)
 
 def make_context() -> JobContext:
-    room_options = RoomOptions(room_id="xjld-g28c-rda8",name="Background Audio Agent", playground=True, background_audio=True)
+    room_options = RoomOptions(room_id="<room_id>",name="Background Audio Agent", playground=True, background_audio=True)
     
     return JobContext(
         room_options=room_options

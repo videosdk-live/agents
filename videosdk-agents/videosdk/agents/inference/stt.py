@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from dataclasses import dataclass
+from enum import Enum
 import json
 import os
 import time
 import logging
 from typing import Any, Optional, Dict
+from pydantic import BaseModel, ConfigDict
 
 import aiohttp
+import re
 
 from videosdk.agents import (
     STT as BaseSTT,
@@ -22,6 +26,36 @@ logger = logging.getLogger(__name__)
 
 # Default inference gateway URLs
 VIDEOSDK_INFERENCE_URL = "wss://inference-gateway.videosdk.live"
+
+
+class InferenceProvider(str, Enum):
+    DEEPGRAM = "deepgram"
+    SARVAM = "sarvam"
+    GOOGLE = "google"
+    CARTESIA = "cartesia"
+
+
+class BaseInferenceConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+
+class DeepgramSTTInferenceConfig(BaseInferenceConfig):
+    input_sample_rate: int = 48000
+    interim_results: bool = True
+    punctuate: bool = True
+    smart_format: bool = True
+    endpointing: int = 50
+    # v2 flux
+    eager_eot_threshold: float = 0.6
+    eot_threshold: float = 0.8
+    eot_timeout_ms: int = 7000
+    keyterm: list[str] | None = None
+
+
+# def _has_enough_content(self, text: str) -> bool:
+#     # Remove everything except letters & numbers
+#     cleaned = re.sub(r"[^a-zA-Z0-9\u0900-\u097F]", "", text)
+#     return len(cleaned.strip()) >= 3  # minimum threshold
 
 
 class STT(BaseSTT):
@@ -43,6 +77,7 @@ class STT(BaseSTT):
     def __init__(
         self,
         *,
+        # provider: InferenceProvider,
         provider: str,
         model_id: str,
         language: str = "en-US",
@@ -88,6 +123,7 @@ class STT(BaseSTT):
 
         # Metrics tracking
         self._stt_start_time: Optional[float] = None
+        self._connecting: bool = False
 
     # ==================== Factory Methods ====================
 
@@ -104,6 +140,7 @@ class STT(BaseSTT):
         output_sample_rate: int = 16000,
         enable_streaming: bool = True,
         base_url: str | None = None,
+        config: Optional[Dict] = None,
     ) -> "STT":
         """
         Create an STT instance configured for Google Cloud Speech-to-Text.
@@ -132,8 +169,8 @@ class STT(BaseSTT):
             "interim_results": interim_results,
             "punctuate": punctuate,
             "location": location,
+            **(config or {}),
         }
-
         return STT(
             provider="google",
             model_id=model_id,
@@ -152,6 +189,7 @@ class STT(BaseSTT):
         output_sample_rate: int = 16000,
         enable_streaming: bool = True,
         base_url: str | None = None,
+        config: Optional[Dict] = None,
     ) -> "STT":
         """
         Create an STT instance configured for Sarvam AI.
@@ -172,8 +210,8 @@ class STT(BaseSTT):
             "language": language,
             "input_sample_rate": input_sample_rate,
             "output_sample_rate": output_sample_rate,
+            **(config or {}),
         }
-
         return STT(
             provider="sarvamai",
             model_id=model_id,
@@ -195,6 +233,11 @@ class STT(BaseSTT):
         endpointing: int = 50,
         enable_streaming: bool = True,
         base_url: str | None = None,
+        config: Optional[Dict] = None,
+        eager_eot_threshold: float = 0.6,
+        eot_threshold: float = 0.8,
+        eot_timeout_ms: int = 7000,
+        keyterm: list[str] | None = None,
     ) -> "STT":
         """
         Create an STT instance configured for Deepgram.
@@ -213,6 +256,14 @@ class STT(BaseSTT):
         Returns:
             Configured STT instance for Deepgram
         """
+        # config = config or DeepgramSTTInferenceConfig()
+
+        # default_config = config.model_dump(exclude_none=True)
+        # _config = {
+        #     "model": model_id,
+        #     "language": language,
+        #     **default_config,
+        # }
         config = {
             "model": model_id,
             "language": language,
@@ -221,18 +272,31 @@ class STT(BaseSTT):
             "punctuate": punctuate,
             "smart_format": smart_format,
             "endpointing": endpointing,
+            "eager_eot_threshold": eager_eot_threshold,
+            "eot_threshold": eot_threshold,
+            "eot_timeout_ms": eot_timeout_ms,
+            "keyterm": keyterm,
+            **(config or {}),
         }
-
         return STT(
             provider="deepgram",
             model_id=model_id,
             language=language,
-            config=config,
             enable_streaming=enable_streaming,
+            config=config,
             base_url=base_url,
         )
 
     # ==================== Core Methods ====================
+
+    async def flush(self) -> None:
+        """Signal end-of-speech to the inference server."""
+        if not self._ws or self._ws.closed:
+            return
+        try:
+            await self._ws.send_str(json.dumps({"type": "flush"}))
+        except Exception as e:
+            logger.debug(f"[InferenceSTT] Flush error: {e}")
 
     async def process_audio(
         self,
@@ -248,23 +312,31 @@ class STT(BaseSTT):
             language: Optional language override
             **kwargs: Additional arguments (unused)
         """
+        # logger.info(f"[STT DEBUG] process_audio called | bytes={len(audio_frames)}")
         if not self.enable_streaming:
             logger.warning("Non-streaming mode not yet supported for inference STT")
             return
 
         try:
-            # Ensure WebSocket connection
-            if not self._ws or self._ws.closed:
-                await self._connect_ws()
-                if not self._ws_task or self._ws_task.done():
-                    self._ws_task = asyncio.create_task(self._listen_for_responses())
+            if self._connecting:
+                return
 
-            # Send config on first audio (after connection)
+            if not self._ws or self._ws.closed:
+                self._connecting = True
+                try:
+                    await self._connect_ws()
+                    if not self._ws_task or self._ws_task.done():
+                        self._ws_task = asyncio.create_task(
+                            self._listen_for_responses()
+                        )
+                finally:
+                    self._connecting = False
+
             if not self._config_sent:
                 await self._send_config()
 
-            # Send audio data
             await self._send_audio(audio_frames)
+            await asyncio.sleep(0)
 
         except Exception as e:
             logger.error(f"[InferenceSTT] Error in process_audio: {e}")
@@ -273,6 +345,8 @@ class STT(BaseSTT):
 
     async def _connect_ws(self) -> None:
         """Establish WebSocket connection to the inference gateway."""
+        # logger.info(f"[STT DEBUG] WS URL: {ws_url}")
+
         if not self._session:
             self._session = aiohttp.ClientSession()
 
@@ -283,12 +357,12 @@ class STT(BaseSTT):
             f"&secret={self._videosdk_token}"
             f"&modelId={self.model_id}"
         )
-
+        # logger.info(f"[STT DEBUG] Connecting to: {ws_url}")
         try:
             logger.info(
                 f"[InferenceSTT] Connecting to {self.base_url} (provider={self.provider})"
             )
-            self._ws = await self._session.ws_connect(ws_url)
+            self._ws = await self._session.ws_connect(ws_url, heartbeat=20)
             self._config_sent = False
             logger.info(f"[InferenceSTT] Connected successfully")
         except Exception as e:
@@ -300,11 +374,7 @@ class STT(BaseSTT):
         if not self._ws:
             return
 
-        config_message = {
-            "type": "config",
-            "data": self.config,
-        }
-
+        config_message = {"type": "config", "data": self.config}
         try:
             await self._ws.send_str(json.dumps(config_message))
             self._config_sent = True
@@ -315,6 +385,7 @@ class STT(BaseSTT):
 
     async def _send_audio(self, audio_bytes: bytes) -> None:
         """Send audio data to the inference server."""
+        # logger.info(f"[STT DEBUG] sending audio chunk | bytes={len(audio_bytes)}")
         if not self._ws:
             return
 
@@ -327,7 +398,6 @@ class STT(BaseSTT):
             "type": "audio",
             "data": base64.b64encode(audio_bytes).decode("utf-8"),
         }
-
         try:
             await self._ws.send_str(json.dumps(audio_message))
         except Exception as e:
@@ -368,6 +438,7 @@ class STT(BaseSTT):
         Args:
             raw_message: Raw JSON message string from server
         """
+        # logger.info(f"[STT DEBUG] raw message from server: {raw_message}")
         try:
             data = json.loads(raw_message)
             msg_type = data.get("type")
@@ -401,39 +472,34 @@ class STT(BaseSTT):
             is_final = event_data.get("is_final", True)
             confidence = event_data.get("confidence", 1.0)
 
+            # before we send the text if there is an small intruption like khasi and it trigger the endspeech and send the blank text to llm so sarvam tts cant processed that blank space
+            # if not self._has_enough_content(text):
+            #     logger.debug(f"[InferenceSTT] Invalid transcript skipped: '{text}'")
+            #     return
             if text.strip():
-                self._last_transcript = text.strip()
+                logger.info(f"[STT] {text} | Final: {is_final}")
+            self._last_transcript = text.strip()
 
-                # Create STT response
-                response = STTResponse(
-                    event_type=(
-                        SpeechEventType.FINAL if is_final else SpeechEventType.INTERIM
-                    ),
-                    data=SpeechData(
-                        text=text.strip(),
-                        language=language,
-                        confidence=confidence,
-                    ),
-                    metadata={
-                        "provider": self.provider,
-                        "model": self.model_id,
-                    },
-                )
+            response = STTResponse(
+                event_type=(
+                    SpeechEventType.FINAL if is_final else SpeechEventType.INTERIM
+                ),
+                data=SpeechData(
+                    text=text.strip(),
+                    language=language,
+                    confidence=confidence,
+                ),
+                metadata={
+                    "provider": self.provider,
+                    "model": self.model_id,
+                },
+            )
 
-                # Call transcript callback
-                if self._transcript_callback:
-                    await self._transcript_callback(response)
+            if self._transcript_callback:
+                await self._transcript_callback(response)
 
-                # Log for debugging
-                transcript_type = "FINAL" if is_final else "INTERIM"
-                logger.debug(
-                    f"[InferenceSTT] [{transcript_type}] {text} "
-                    f"(lang={language}, conf={confidence:.2f})"
-                )
-
-                # Reset STT timing on final transcript
-                if is_final:
-                    self._stt_start_time = None
+            if is_final:
+                self._stt_start_time = None
 
         elif event_type == "START_SPEECH":
             if not self._is_speaking:
@@ -444,8 +510,16 @@ class STT(BaseSTT):
         elif event_type == "END_SPEECH":
             if self._is_speaking:
                 self._is_speaking = False
-                global_event_emitter.emit("speech_stopped")
-                logger.debug("[InferenceSTT] Speech ended")
+                if self._last_transcript:
+                    global_event_emitter.emit("speech_stopped")
+                    logger.debug("[InferenceSTT] Speech ended (transcript present)")
+                else:
+                    logger.debug(
+                        "[InferenceSTT] Speech ended but no transcript — suppressing speech_stopped"
+                    )
+        elif event_type == "DENOISE_AUDIO":
+            logger.warning("[STT] Received DENOISE_AUDIO event — ignoring")
+            return
 
     async def _cleanup_connection(self) -> None:
         """Clean up WebSocket connection resources."""
@@ -480,7 +554,6 @@ class STT(BaseSTT):
 
         # Call parent cleanup
         await super().aclose()
-
         logger.info(f"[InferenceSTT] Closed successfully")
 
     # ==================== Properties ====================
