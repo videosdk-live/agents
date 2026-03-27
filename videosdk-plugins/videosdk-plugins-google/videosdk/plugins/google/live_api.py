@@ -135,7 +135,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         self,
         *,
         api_key: str | None = None,
-        model: str,
+        model: str | None = "gemini-3.1-flash-live-preview",
         config: GeminiLiveConfig | None = None,
         service_account_path: str | None = None,
         vertexai: bool = False,
@@ -634,6 +634,24 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
             traceback.print_exc()
             self._session_should_close.set()
 
+    def _is_gemini_3(self) -> bool:
+        """Check if the model is a Gemini 3.x family model."""
+        return "gemini-3" in self.model
+
+    async def _send_text(self, session: AsyncSession, text: str, *, turn_complete: bool = True) -> None:
+        """Send text via the appropriate method for the current model.
+
+        Gemini 3.x restricts ``send_client_content`` to initial history
+        seeding, so all runtime text must go through ``send_realtime_input``.
+        """
+        if self._is_gemini_3():
+            await session.send_realtime_input(text=text)
+        else:
+            await session.send_client_content(
+                turns=Content(parts=[Part(text=text)], role="user"),
+                turn_complete=turn_complete,
+            )
+
     async def _keep_alive(self, session: GeminiSession) -> None:
         """Send periodic keep-alive messages"""
         try:
@@ -644,10 +662,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                     break
 
                 try:
-                    await session.session.send_client_content(
-                        turns=Content(parts=[Part(text=".")], role="user"),
-                        turn_complete=False,
-                    )
+                    await self._send_text(session.session, ".", turn_complete=False)
                 except Exception as e:
                     if "closed" in str(e).lower() or "1011" in str(e):
                         logger.info("Keep-alive detected closed session. Stopping.")
@@ -728,10 +743,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
             return
         
         try:
-            await self._session.session.send_client_content(
-                turns=Content(parts=[Part(text="stop")], role="user"),
-                turn_complete=True,
-            )
+            await self._send_text(self._session.session, "stop")
             self.emit("agent_speech_ended", {})
             metrics_collector.on_interrupted()
             if self.audio_track and "AUDIO" in self.config.response_modalities:
@@ -751,19 +763,8 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
             retry_count += 1
 
         try:
-            await self._session.session.send_client_content(
-                turns=[
-                    Content(
-                        parts=[
-                            Part(
-                                text="Please start the conversation by saying exactly this, without any additional text: '" + message + "'"
-                            )
-                        ],
-                        role="user",
-                    ),
-                ],
-                turn_complete=True,
-            )
+            prompt_text = "Please start the conversation by saying exactly this, without any additional text: '" + message + "'"
+            await self._send_text(self._session.session, prompt_text)
             await asyncio.sleep(0.1)
         except Exception as e:
             self.emit("error", f"Error sending message: {e}")
@@ -781,10 +782,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
             retry_count += 1
 
         try:
-            await self._session.session.send_client_content(
-                turns=Content(parts=[Part(text=message)], role="user"),
-                turn_complete=True,
-            )
+            await self._send_text(self._session.session, message)
         except Exception as e:
             self.emit("error", f"Error sending text message: {e}")
             self._session_should_close.set()
@@ -940,10 +938,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         )
     def is_native_audio_model(self) -> bool:
         """Check if the model is a native audio model based on its name"""
-        native_audio_indicators = [
-            "gemini-2.5-flash-native-audio-preview-12-2025"
-        ]
-        return any(indicator in self.model for indicator in native_audio_indicators)
+        return self._is_gemini_3() or "gemini-2.5-flash-native-audio-preview-12-2025" in self.model
 
 
     def get_usage_details(self,usage_metadata) -> dict:
