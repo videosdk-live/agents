@@ -3,6 +3,7 @@ import os
 import pathlib
 import sys
 import logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 from typing import Optional
 from videosdk.agents import Agent, AgentSession, Pipeline,MCPServerStdio, MCPServerHTTP, WorkerJob, JobContext, RoomOptions
 from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig

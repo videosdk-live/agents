@@ -1,4 +1,7 @@
+import logging
 from videosdk.agents import Agent, AgentCard, A2AMessage
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 
 
 class LoanAgent(Agent):

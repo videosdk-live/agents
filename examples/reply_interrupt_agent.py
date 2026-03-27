@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from typing import Optional
 from videosdk import PubSubSubscribeConfig
 from videosdk.agents import Agent, AgentSession, Pipeline,WorkerJob,JobContext, RoomOptions
@@ -7,6 +8,8 @@ from videosdk.plugins.elevenlabs import ElevenLabsTTS
 from videosdk.plugins.anthropic import AnthropicLLM
 from videosdk.plugins.silero import SileroVAD
 from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 pre_download_model()
 
 class PubSubAgent(Agent):

@@ -1,8 +1,11 @@
+import logging
 from mcp.server.fastmcp import FastMCP
 import datetime
 import json
 import urllib.request
 from mcp_current_time_example import get_current_time
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 
 ALPHA_VANTAGE_API_KEY = "YOUR_API_KEY"
 

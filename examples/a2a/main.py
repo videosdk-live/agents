@@ -1,6 +1,9 @@
 import asyncio
+import logging
 from contextlib import suppress
 from agents.customer_agent import CustomerServiceAgent
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 from agents.loan_agent import LoanAgent
 from session_manager import create_pipeline, create_session
 from videosdk.agents import JobContext, RoomOptions, WorkerJob

@@ -1,6 +1,9 @@
-from videosdk.agents import Agent, AgentCard, A2AMessage, function_tool
+import logging
 import asyncio
 from typing import Dict, Any
+from videosdk.agents import Agent, AgentCard, A2AMessage, function_tool
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 
 
 class CustomerServiceAgent(Agent):
