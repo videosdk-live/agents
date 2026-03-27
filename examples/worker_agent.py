@@ -107,11 +107,19 @@ def make_context() -> JobContext:
 
 
 if __name__ == "__main__":
+    worker_options = Options(agent_id="YOUR_AGENT_ID",
+        register=True,
+        max_processes=3,
+        port="9000",
+        host="localhost",  
+        log_level="INFO",
+        num_idle_processes=2,
+   )
+    
     job = WorkerJob(
         entrypoint=entrypoint,
         jobctx=make_context,
-        options=Options(
-            log_level="INFO", register=True,
-        ),
+        options=worker_options
     )
+
     job.start()
