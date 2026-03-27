@@ -643,17 +643,35 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
 
         Gemini 3.x restricts ``send_client_content`` to initial history
         seeding, so all runtime text must go through ``send_realtime_input``.
+        When ``turn_complete`` is True, we bracket the text with
+        activity_start / activity_end signals so the model treats it as
+        a complete user turn and generates a response.
         """
         if self._is_gemini_3():
+            if turn_complete:
+                await session.send_realtime_input(activity_start={})
             await session.send_realtime_input(text=text)
+            if turn_complete:
+                await session.send_realtime_input(activity_end={})
         else:
             await session.send_client_content(
-                turns=Content(parts=[Part(text=text)], role="user"),
+                turns=[Content(parts=[Part(text=text)], role="user")],
                 turn_complete=turn_complete,
             )
 
     async def _keep_alive(self, session: GeminiSession) -> None:
-        """Send periodic keep-alive messages"""
+        """Send periodic keep-alive messages via silent audio.
+
+        Uses a tiny silent audio chunk instead of text to avoid being
+        interpreted as user input (which would trigger model responses).
+        """
+        # Use the same sample rate as handle_audio_input to avoid
+        # "Sample rate changed" errors (API locks to the first rate it sees).
+        sample_rate = 24000 if self.vertexai else 48000
+        # 10ms of silence at the chosen rate (16-bit PCM = 2 bytes/sample)
+        silence_samples = sample_rate // 100  # 10ms worth
+        SILENT_AUDIO = b"\x00" * (silence_samples * 2)
+
         try:
             while not self._closing:
                 await asyncio.sleep(10)
@@ -662,11 +680,13 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                     break
 
                 try:
-                    await self._send_text(session.session, ".", turn_complete=False)
+                    await session.session.send_realtime_input(
+                        audio=Blob(data=SILENT_AUDIO, mime_type=f"audio/pcm;rate={sample_rate}")
+                    )
                 except Exception as e:
                     if "closed" in str(e).lower() or "1011" in str(e):
                         logger.info("Keep-alive detected closed session. Stopping.")
-                        self._closing = True  # Stop the outer loop
+                        self._closing = True
                         self._session_should_close.set()
                         break
                     self.emit("error", f"Keep-alive error: {e}")
@@ -763,7 +783,17 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
             retry_count += 1
 
         try:
-            prompt_text = "Please start the conversation by saying exactly this, without any additional text: '" + message + "'"
+            if self._is_gemini_3():
+                prompt_text = (
+                    "[SYSTEM INSTRUCTION] Repeat the following message out loud VERBATIM. "
+                    "Do NOT add any commentary, do NOT answer or continue the conversation. "
+                    "Only say these exact words then stop: " + message
+                )
+            else:
+                prompt_text = (
+                    "Please start the conversation by saying exactly this, "
+                    "without any additional text: '" + message + "'"
+                )
             await self._send_text(self._session.session, prompt_text)
             await asyncio.sleep(0.1)
         except Exception as e:
