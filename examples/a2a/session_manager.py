@@ -1,4 +1,4 @@
-# Realtime pipeline for customer agent, cascading LLM-only for specialist
+# Realtime for customer agent, cascade LLM-only for specialist
 
 from videosdk.agents import AgentSession, Pipeline
 from videosdk.plugins.openai import OpenAILLM
@@ -33,7 +33,7 @@ def create_session(agent, pipeline) -> AgentSession:
     )
 
 
-### Alternative: Both agents using Cascading pipeline
+### Alternative: Both agents using Cascade
 
 # from videosdk.agents import AgentSession, Pipeline
 # from videosdk.plugins.google import GoogleSTT, GoogleLLM, GoogleTTS

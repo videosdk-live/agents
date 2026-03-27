@@ -1,5 +1,5 @@
 """
-VideoSDK Avatar — Cascading Pipeline Agent
+VideoSDK Avatar — Cascade Agent
 
 This example shows how to wire the VideoSDK data-channel avatar into the
 Agents framework's Pipeline.  The avatar service is a separate process (see videosdk_avatar_service.py)

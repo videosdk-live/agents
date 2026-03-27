@@ -18,7 +18,7 @@ Agent  ──(data channel)──►  Avatar Dispatcher  ──►  Avatar Servi
 | `videosdk_avatar_launcher.py` | Dispatcher — HTTP server that spawns one Avatar Service per room |
 | `videosdk_avatar_service.py` | Avatar Service — joins room, receives audio, renders and publishes |
 | `waterfall_viz.py` | Waterfall spectrogram renderer (FFT heat-map, scrolls upward) |
-| `videosdk_avatar_agent.py` | Agent using cascading pipeline (STT → LLM → TTS) |
+| `videosdk_avatar_agent.py` | Agent using cascade (STT → LLM → TTS) |
 
 ## Setup
 

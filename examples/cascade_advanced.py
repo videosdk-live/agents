@@ -14,7 +14,7 @@ class VoiceAgent(Agent):
         super().__init__(instructions="You are a helpful voice assistant that can answer questions and help with tasks.")
 
     async def on_enter(self) -> None:
-       await self.session.say("This example script showcases advanced cascading pipeline features, including interruptible speech this message can not be interrupted.",interruptible=False)
+       await self.session.say("This example script showcases advanced cascade features, including interruptible speech this message can not be interrupted.",interruptible=False)
 
     async def on_exit(self) -> None:
         await self.session.say("Goodbye!")

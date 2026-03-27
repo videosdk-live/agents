@@ -1,16 +1,17 @@
 import aiohttp
 import os
-
 from videosdk.agents import Agent, AgentSession, Pipeline, function_tool, JobContext, RoomOptions, WorkerJob
 from videosdk.plugins.silero import SileroVAD
 from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
-from videosdk.plugins.simli import SimliAvatar, SimliConfig
+from videosdk.plugins.anam import AnamAvatar
 from videosdk.plugins.openai import OpenAILLM
 from videosdk.plugins.deepgram import DeepgramSTT
 from videosdk.plugins.elevenlabs import ElevenLabsTTS
-import logging 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 
+import logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
+from dotenv import load_dotenv
+load_dotenv(override=True)
 # Pre-downloading the Turn Detector model
 pre_download_model()
 
@@ -71,20 +72,13 @@ async def start_session(context: JobContext):
     vad = SileroVAD()
     turn_detector = TurnDetector(threshold=0.8)
 
-    # Initialize Simli Avatar
-    simli_config = SimliConfig(
-        faceId="cace3ef7-a4c4-425d-a8cf-a5358eb0c427",
-        maxSessionLength=1800,
-        maxIdleTime=600,
-    )
-   
-    simli_avatar = SimliAvatar(
-        api_key=os.getenv("SIMLI_API_KEY"),
-        config=simli_config,
-        is_trinity_avatar=True,
+    # Initialize Anam Avatar
+    anam_avatar = AnamAvatar(
+        api_key=os.getenv("ANAM_API_KEY"),
+        avatar_id=os.getenv("ANAM_AVATAR_ID"),
     )
 
-    # Create agent and conversation flow
+    # Create agent
     agent = MyVoiceAgent()
 
     # Create pipeline with avatar
@@ -94,7 +88,7 @@ async def start_session(context: JobContext):
         tts=tts, 
         vad=vad, 
         turn_detector=turn_detector,
-        avatar=simli_avatar
+        avatar=anam_avatar
     )
 
     session = AgentSession(
@@ -107,8 +101,8 @@ async def start_session(context: JobContext):
 def make_context() -> JobContext:
     room_options = RoomOptions(
         room_id="<room_id>",
-        name="Simli Avatar Cascading Agent",
-        playground=True
+        name="Anam Avatar Cascade Agent",
+        playground=False
     )
 
     return JobContext(room_options=room_options)
@@ -116,4 +110,4 @@ def make_context() -> JobContext:
 
 if __name__ == "__main__":
     job = WorkerJob(entrypoint=start_session, jobctx=make_context)
-    job.start() 
+    job.start()
