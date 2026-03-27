@@ -26,12 +26,12 @@ class SileroVAD(BaseVAD):
         input_sample_rate: int = 48000,
         model_sample_rate: Literal[8000, 16000] = 16000,
         threshold: float = 0.5,
-        start_threshold: float = 0.5,
+        start_threshold: float = 0.4,
         end_threshold: float = 0.25,
-        min_speech_duration: float = 0.1,
-        min_silence_duration: float = 0.3,
-        padding_duration: float = .25,
-        max_buffered_speech: float = 30.0,
+        min_speech_duration: float = 0.3,
+        min_silence_duration: float = 0.4,
+        padding_duration: float = 0.5,
+        max_buffered_speech: float = 60.0,
         force_cpu: bool = True,
     ) -> None:
         if model_sample_rate not in SAMPLE_RATES:
@@ -170,6 +170,7 @@ class SileroVAD(BaseVAD):
                             self._active_silence_time = 0.0
                             self._active_speech_time = self._speech_run_time
                             self._dispatch_event(VADEventType.START_OF_SPEECH)
+                            logger.info("[VAD DEBUG]: START_OF_SPEECH")
                 else:
                     self._silence_run_time += step_time
                     self._speech_run_time = 0.0
@@ -181,6 +182,7 @@ class SileroVAD(BaseVAD):
                         self._is_active = False
                         self._active_silence_time = self._silence_run_time
                         self._dispatch_event(VADEventType.END_OF_SPEECH)
+                        logger.info("[VAD DEBUG]: END_OF_SPEECH")
                         self._active_speech_time = 0.0
                         self._flush_capture_buffer()
 

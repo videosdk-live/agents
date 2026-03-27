@@ -1,155 +1,67 @@
+# Realtime pipeline for customer agent, cascading LLM-only for specialist
 
-# Real time pipeline main ----- And cacading for text ....
-
-from videosdk.agents import AgentSession, CascadingPipeline, RealTimePipeline, ConversationFlow
+from videosdk.agents import AgentSession, Pipeline
 from videosdk.plugins.openai import OpenAILLM
 from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig
 import os
+import logging 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 
-class MyConversationFlow(ConversationFlow):
-    async def on_turn_start(self, transcript: str) -> None:
-        pass
-
-    async def on_turn_end(self) -> None:
-        pass
-
-def create_pipeline(agent_type: str):
+def create_pipeline(agent_type: str) -> Pipeline:
     if agent_type == "customer":
-        return RealTimePipeline(
-            model=GeminiRealtime(
-                model="gemini-2.5-flash-native-audio-preview-12-2025",
+        # Customer agent: Realtime model for voice interaction
+        return Pipeline(
+            llm=GeminiRealtime(
+                model="gemini-3.1-flash-live-preview",
                 config=GeminiLiveConfig(
-                    voice="Leda", 
+                    voice="Leda",
                     response_modalities=["AUDIO"]
                 )
             )
         )
     else:
-        return CascadingPipeline(
+        # Specialist agent: Text-only LLM for background processing
+        return Pipeline(
             llm=OpenAILLM(api_key=os.getenv("OPENAI_API_KEY")),
         )
+
 
 def create_session(agent, pipeline) -> AgentSession:
     return AgentSession(
         agent=agent,
         pipeline=pipeline,
-        conversation_flow=MyConversationFlow(agent=agent),
     )
 
-### RealTime Pipline Example 
 
-# from videosdk.agents import AgentSession, RealTimePipeline
-# from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig
-# from openai.types.beta.realtime.session import TurnDetection
-# from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig
-# from typing import Dict
+### Alternative: Both agents using Cascading pipeline
 
-# def create_pipeline(agent_type: str) -> RealTimePipeline:
-#     if agent_type == "customer":
-#         model = GeminiRealtime(
-#         model="gemini-2.5-flash-native-audio-preview-12-2025",
-#         config=GeminiLiveConfig(
-#             voice="Leda",
-#             response_modalities=["AUDIO"]
-#         )
-#     )
-#     else:
-#         model = GeminiRealtime(
-#             model="gemini-2.5-flash-native-audio-preview-12-2025",
-#             config=GeminiLiveConfig(response_modalities=["TEXT"])
-#         )
-
-#     return RealTimePipeline(model=model)
-
-
-# def create_session(agent, pipeline) -> AgentSession:
-#     return AgentSession(agent=agent, pipeline=pipeline)
-
-
-
-### Cascading Pipeline  Example 
-
-# from videosdk.agents import AgentSession, CascadingPipeline, ConversationFlow
+# from videosdk.agents import AgentSession, Pipeline
 # from videosdk.plugins.google import GoogleSTT, GoogleLLM, GoogleTTS
 # from videosdk.plugins.openai import OpenAILLM
+# from videosdk.plugins.deepgram import DeepgramSTT
 # from videosdk.plugins.silero import SileroVAD
 # from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
 # import os
+# import logging 
+# logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
+
 
 # pre_download_model()
 
-# class MyConversationFlow(ConversationFlow):
-#     async def on_turn_start(self, transcript: str) -> None:
-#         pass
-
-#     async def on_turn_end(self) -> None:
-#         pass
-
-# def create_pipeline(agent_type: str) -> CascadingPipeline:
+# def create_pipeline(agent_type: str) -> Pipeline:
 #     if agent_type == "customer":
-#         return CascadingPipeline(
-#             stt=GoogleSTT( model="latest_long"),
+#         return Pipeline(
+#             # stt=GoogleSTT(model="latest_long"),
+#             stt=DeepgramSTT(),
 #             llm=GoogleLLM(api_key=os.getenv("GOOGLE_API_KEY")),
 #             tts=GoogleTTS(api_key=os.getenv("GOOGLE_API_KEY")),
 #             vad=SileroVAD(),
 #             turn_detector=TurnDetector(),
 #         )
 #     else:
-#         return CascadingPipeline(
+#         return Pipeline(
 #             llm=OpenAILLM(api_key=os.getenv("OPENAI_API_KEY")),
 #         )
 
-
 # def create_session(agent, pipeline) -> AgentSession:
-#     return AgentSession(
-#         agent=agent,
-#         pipeline=pipeline,
-#         conversation_flow=MyConversationFlow(agent=agent),
-#     )
-
-
-
-### Cascading pipeline main ----- And realtime pipeline for text ....
-
-# from videosdk.agents import AgentSession, CascadingPipeline, RealTimePipeline, ConversationFlow
-# from videosdk.plugins.google import GoogleSTT, GoogleLLM, GoogleTTS, GeminiRealtime, GeminiLiveConfig
-# from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig
-# from videosdk.plugins.silero import SileroVAD
-# from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
-# import os
-
-# pre_download_model()
-
-# class MyConversationFlow(ConversationFlow):
-#     async def on_turn_start(self, transcript: str) -> None:
-#         pass
-
-#     async def on_turn_end(self) -> None:
-#         pass
-
-# def create_pipeline(agent_type: str):
-#     if agent_type == "customer":
-#         return CascadingPipeline(
-#             stt=GoogleSTT(model="latest_long"),
-#             llm=GoogleLLM(api_key=os.getenv("GOOGLE_API_KEY")),
-#             tts=GoogleTTS(api_key=os.getenv("GOOGLE_API_KEY")),
-#             vad=SileroVAD(),
-#             turn_detector=TurnDetector(),
-#         )
-#     else:
-#         return RealTimePipeline(
-#             model=OpenAIRealtime(
-#             model="gpt-4o-realtime-preview",
-#             config=OpenAIRealtimeConfig(
-#                 modalities=["text"],
-#                 tool_choice="auto"
-#             )
-#     )
-#         )
-
-# def create_session(agent, pipeline) -> AgentSession:
-#     return AgentSession(
-#         agent=agent,
-#         pipeline=pipeline,
-#         conversation_flow=MyConversationFlow(agent=agent),
-#     )
+#     return AgentSession(agent=agent, pipeline=pipeline)

@@ -34,6 +34,7 @@ class VideoSDKTelemetry:
         self.observability_jwt = observability_jwt
         self.traces_enabled = traces_config.get('enabled', False)
         self.pb_endpoint = traces_config.get('pbEndPoint')
+        self.export_headers = traces_config.get('export_headers')
         self.metadata = metadata
         self.sdk_metadata = sdk_metadata
         
@@ -63,7 +64,9 @@ class VideoSDKTelemetry:
             })
             
             headers = {}
-            if self.observability_jwt:
+            if self.export_headers:
+                headers.update(self.export_headers)
+            elif self.observability_jwt:
                 headers["Authorization"] = self.observability_jwt
             
             otlp_exporter = OTLPSpanExporter(
@@ -100,11 +103,20 @@ class VideoSDKTelemetry:
             attributes = {} if attributes is None else attributes
             attributes["attiribute_id"] = attiribute_id
             span_kwargs = {"context": ctx}
-            start_time = time.perf_counter() if start_time is None else start_time
-            start_absolute_time = time.time_ns()
+            
+            current_perf = time.perf_counter()
+            current_abs = time.time_ns()
+            
+            if start_time is None:
+                start_time = current_perf
+                start_absolute_time = current_abs
+            else:
+                diff_ns = int((current_perf - start_time) * 1_000_000_000)
+                start_absolute_time = current_abs - diff_ns
+
             self.span_details[attiribute_id] = {
                 "start_time": start_time, # perf_counter
-                "start_absolute_time": start_absolute_time # time.time()
+                "start_absolute_time": start_absolute_time # absolute ns
             }
             span_kwargs["start_time"] = int(start_absolute_time)
             span = self.tracer.start_span(span_name, **span_kwargs)

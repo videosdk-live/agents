@@ -5,6 +5,7 @@ from .chat_context import ChatContext
 from ..fallback_base import FallbackBase
 
 class FallbackLLM(LLM, FallbackBase):
+    """LLM wrapper that automatically fails over to backup providers on errors and attempts recovery of higher-priority ones."""
     def __init__(self, providers: List[LLM], temporary_disable_sec: float = 60.0, permanent_disable_after_attempts: int = 3):
         LLM.__init__(self)
         FallbackBase.__init__(self, providers, "LLM", temporary_disable_sec=temporary_disable_sec, permanent_disable_after_attempts=permanent_disable_after_attempts)

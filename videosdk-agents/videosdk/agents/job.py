@@ -1,21 +1,20 @@
 import logging
-from .room.room import VideoSDKHandler
-from .pipeline import Pipeline
-from typing import Callable, Coroutine, Optional, Any
+from typing import Callable, Coroutine, Optional, Any, TYPE_CHECKING, Dict
 import os
 import asyncio
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum, unique
-from typing import TYPE_CHECKING
 import logging
 import requests
 import sys
 from .playground_manager import PlaygroundManager
 
 if TYPE_CHECKING:
+    from .pipeline import Pipeline
     from .worker import ExecutorType, WorkerPermissions, _default_executor_type
     from .transports.base import BaseTransportHandler
+    from .room.room import VideoSDKHandler
 else:
     # Import at runtime to avoid circular imports
     ExecutorType = None
@@ -31,6 +30,8 @@ _current_job_context: ContextVar[Optional["JobContext"]] = ContextVar(
 
 
 class TransportMode(Enum):
+    """Enumeration of supported transport modes for room connections."""
+
     VIDEOSDK = "videosdk"
     WEBSOCKET = "websocket"
     WEBRTC = "webrtc"
@@ -38,12 +39,16 @@ class TransportMode(Enum):
 
 @dataclass
 class WebSocketConfig:
+    """Configuration for WebSocket transport including port and endpoint path."""
+
     port: int = 8080
     path: str = "/ws"
 
 
 @dataclass
 class WebRTCConfig:
+    """Configuration for WebRTC transport including signaling and ICE server settings."""
+
     signaling_url: Optional[str] = None
     signaling_type: str = "websocket"
     ice_servers: Optional[list] = None
@@ -52,9 +57,101 @@ class WebRTCConfig:
         if self.ice_servers is None:
             self.ice_servers = [{"urls": "stun:stun.l.google.com:19302"}]
 
+@dataclass
+class TracesOptions:
+    """Configuration for OpenTelemetry trace export settings."""
+
+    enabled: bool = True
+    export_url: Optional[str] = None
+    export_headers: Optional[Dict[str, str]] = None
+
+@dataclass
+class MetricsOptions:
+    """Configuration for metrics collection and export settings."""
+
+    enabled: bool = True
+    export_url: Optional[str] = None
+    export_headers: Optional[Dict[str, str]] = None
+
+@dataclass
+class LoggingOptions:
+    """Configuration for log collection, level filtering, and export settings."""
+
+    enabled: bool = False
+    level: str = "INFO"
+    export_url: Optional[str] = None
+    export_headers: Optional[Dict[str, str]] = None
+
+
+@dataclass
+class RecordingOptions:
+    """
+    Extra recording when RoomOptions.recording is True.
+
+    Audio is always recorded when recording=True (track API, kind=audio).
+    Set video and/or screen_share here only when you need them.
+    screen_share=True requires RoomOptions.vision=True.
+    """
+
+    video: bool = False
+    screen_share: bool = False
+
+
+def _coerce_recording_options_dict(ro: dict) -> RecordingOptions:
+    """Build RecordingOptions from a dict (e.g. backend JSON); ignores unknown keys."""
+    return RecordingOptions(
+        video=bool(ro.get("video", False)),
+        screen_share=bool(ro.get("screen_share", False)),
+    )
+
+
+def validate_room_options_recording(room_options: "RoomOptions") -> None:
+    """Raise ValueError if recording-related options are inconsistent."""
+    if not room_options.recording:
+        return
+    ro = room_options.recording_options
+    if isinstance(ro, dict):
+        room_options.recording_options = _coerce_recording_options_dict(ro)
+        ro = room_options.recording_options
+    if ro is None:
+        return
+    if ro.screen_share and not room_options.vision:
+        raise ValueError(
+            "RoomOptions: recording_options.screen_share=True requires vision=True "
+            "(vision subscribes to video/share streams required for screen recording)."
+        )
+
+
+def resolve_video_sdk_recording(
+    room_options: "RoomOptions",
+) -> tuple[Optional[bool], bool]:
+    """
+    Map RoomOptions recording fields to VideoSDKHandler inputs.
+
+    Returns:
+        (record_audio, record_screen_share)
+        - record_audio: None → participant recording (audio+video composite API);
+          True → track recording, kind=audio only.
+        - record_screen_share: whether to start screen_* track recording APIs.
+    """
+    if not room_options.recording:
+        return None, False
+
+    ro = room_options.recording_options
+    if ro is None:
+        return True, False
+
+    if ro.video:
+        return None, False
+    if ro.screen_share:
+        return True, True
+    return True, False
+
 
 @dataclass
 class RoomOptions:
+    """Configuration options for connecting to and managing a VideoSDK room, including transport, telemetry, and session settings."""
+
     room_id: Optional[str] = None
     auth_token: Optional[str] = None
     name: Optional[str] = "Agent"
@@ -62,6 +159,9 @@ class RoomOptions:
     playground: bool = True
     vision: bool = False
     recording: bool = False
+    # recording=True → always record audio (track API). Optional RecordingOptions.video /
+    # RecordingOptions.screen_share for camera video and/or screen share (see validate/resolve).
+    recording_options: Optional[RecordingOptions] = None
     avatar: Optional[Any] = None
     join_meeting: Optional[bool] = True
     on_room_error: Optional[Callable[[Any], None]] = None
@@ -73,6 +173,14 @@ class RoomOptions:
     # VideoSDK connection options
     signaling_base_url: Optional[str] = "api.videosdk.live"
     background_audio: bool = False
+
+    send_logs_to_dashboard: bool = False
+    dashboard_log_level: str = "INFO"
+
+    # Telemetry and logging configurations
+    traces: Optional[TracesOptions] = None
+    metrics: Optional[MetricsOptions] = None
+    logs: Optional[LoggingOptions] = None
 
     # New Configuration Fields
     _transport_mode: TransportMode = field(default=TransportMode.VIDEOSDK, init=False, repr=False)
@@ -102,11 +210,19 @@ class RoomOptions:
         transport_mode: Optional[str | TransportMode] = None,
         websocket: Optional[WebSocketConfig] = None,
         webrtc: Optional[WebRTCConfig] = None,
+        traces: Optional[TracesOptions] = None,
+        metrics: Optional[MetricsOptions] = None,
+        logs: Optional[LoggingOptions] = None,
         **kwargs,
     ):
         # Initialize internal field
         self._transport_mode = TransportMode.VIDEOSDK
         
+        # Handle telemetry options
+        self.traces = traces or TracesOptions()
+        self.metrics = metrics or MetricsOptions()
+        self.logs = logs or LoggingOptions()
+
         # Handle connection mode
         if transport_mode:
             if isinstance(transport_mode, str):
@@ -200,6 +316,8 @@ class Options:
 
 
 class WorkerJob:
+    """Wraps an async entrypoint function and manages its execution either directly or via a Worker process."""
+
     def __init__(self, entrypoint, jobctx=None, options: Optional[Options] = None):
         """
         :param entrypoint: An async function accepting one argument: jobctx
@@ -271,6 +389,8 @@ class WorkerJob:
 
 
 class JobContext:
+    """Holds the runtime state for a single job, including room connection, pipeline, and shutdown lifecycle management."""
+
     def __init__(
         self,
         *,
@@ -281,7 +401,7 @@ class JobContext:
         self.room_options = room_options
         self.metadata = metadata or {}
         self._loop = loop or asyncio.get_event_loop()
-        self._pipeline: Optional[Pipeline] = None
+        self._pipeline: Optional["Pipeline"] = None
         self.videosdk_auth = self.room_options.auth_token or os.getenv(
             "VIDEOSDK_AUTH_TOKEN"
         )
@@ -292,6 +412,13 @@ class JobContext:
         self._wait_for_meeting_join: bool = False
         self.want_console = len(sys.argv) > 1 and sys.argv[1].lower() == "console"
         self.playground_manager: Optional["PlaygroundManager"] = None
+        
+        from .metrics import metrics_collector
+        self.metrics_collector = metrics_collector
+        
+        self._log_manager = None
+        self._job_logger = None
+        
     def _set_pipeline_internal(self, pipeline: Any) -> None:
         """Internal method called by pipeline constructors"""
         self._pipeline = pipeline
@@ -320,10 +447,33 @@ class JobContext:
                 avatar = self._pipeline.avatar
 
             if avatar:
-                await avatar.connect()
-                custom_camera_video_track = avatar.video_track
-                custom_microphone_audio_track = avatar.audio_track
-                sinks.append(avatar)
+                if not self.room_options.room_id:
+                    self.room_options.room_id = self.get_room_id()
+                room_id = self.room_options.room_id
+
+                from .avatar import AvatarAudioOut, generate_avatar_credentials
+
+                if isinstance(avatar, AvatarAudioOut):
+                    avatar.set_room_id(room_id)
+                    await avatar.connect()
+                    audio_out = avatar
+                else:
+                    _api_key = os.getenv("VIDEOSDK_API_KEY")
+                    _secret_key = os.getenv("VIDEOSDK_SECRET_KEY")
+                    credentials = generate_avatar_credentials(
+                        _api_key, _secret_key, participant_id=avatar.participant_id
+                    )
+                    await avatar.connect(room_id, credentials.token)
+                    audio_out = AvatarAudioOut(credentials=credentials, room_id=room_id)
+                    await audio_out.connect()  # no-op (no dispatcher_url)
+
+                custom_camera_video_track = getattr(avatar, 'video_track', None)
+                custom_microphone_audio_track = getattr(avatar, 'audio_track', None)
+                sinks.append(audio_out)
+                self._cloud_avatar = avatar if not isinstance(avatar, AvatarAudioOut) else None
+                self._avatar_audio_out = audio_out
+                if self._pipeline:
+                    self._pipeline.avatar = audio_out
 
             if self.want_console:
                 from .console_mode import setup_console_voice_for_ctx
@@ -335,10 +485,31 @@ class JobContext:
                 cleanup_callback = await setup_console_voice_for_ctx(self)
                 self.add_shutdown_callback(cleanup_callback)
             else:
+                self.metrics_collector.transport_mode = self.room_options.transport_mode
+                self.metrics_collector.analytics_client.configure(self.room_options.metrics)
                 if self.room_options.transport_mode == TransportMode.VIDEOSDK:
+                    from .room.room import VideoSDKHandler
+                    
                     if not self.room_options.room_id:
                         self.room_options.room_id = self.get_room_id()
+                    if self.room_options.send_logs_to_dashboard or (self.room_options.logs and self.room_options.logs.enabled):
+                        from .metrics.logger_handler import LogManager, JobLogger
+                        self._log_manager = LogManager()
+                        self._log_manager.start(auth_token=self.videosdk_auth or "")
+                        self._job_logger = JobLogger(
+                            queue=self._log_manager.get_queue(),
+                            room_id=self.room_options.room_id or "",
+                            peer_id=self.room_options.agent_participant_id or "agent",
+                            auth_token=self.videosdk_auth or "",
+                            dashboard_log_level=self.room_options.dashboard_log_level if not (self.room_options.logs and self.room_options.logs.level) else self.room_options.logs.level,
+                            send_logs_to_dashboard=True,
+                        )
+
                     if self.room_options.join_meeting:
+                        validate_room_options_recording(self.room_options)
+                        record_audio_resolved, record_screen_share = resolve_video_sdk_recording(
+                            self.room_options
+                        )
                         agent_id = self._pipeline.agent.id if self._pipeline and hasattr(self._pipeline, 'agent') else None
                         self.room = VideoSDKHandler(
                             meeting_id=self.room_options.room_id,
@@ -350,6 +521,8 @@ class JobContext:
                             loop=self._loop,
                             vision=self.room_options.vision,
                             recording=self.room_options.recording,
+                            record_audio=record_audio_resolved,
+                            record_screen_share=record_screen_share,
                             custom_camera_video_track=custom_camera_video_track,
                             custom_microphone_audio_track=custom_microphone_audio_track,
                             audio_sinks=sinks,
@@ -359,6 +532,11 @@ class JobContext:
                             session_timeout_seconds=self.room_options.session_timeout_seconds,
                             no_participant_timeout_seconds=self.room_options.no_participant_timeout_seconds,
                             signaling_base_url=self.room_options.signaling_base_url,
+                            job_logger=self._job_logger,
+                            traces_options=self.room_options.traces,
+                            metrics_options=self.room_options.metrics,
+                            logs_options=self.room_options.logs,
+                            avatar_participant_id=avatar.participant_id if avatar and hasattr(avatar, 'participant_id') else None,
                         )
                     if self._pipeline and hasattr(
                         self._pipeline, "_set_loop_and_audio_track"
@@ -452,6 +630,32 @@ class JobContext:
                 logger.error(f"Error during pipeline cleanup: {e}")
             self._pipeline = None
 
+        cloud_avatar = getattr(self, '_cloud_avatar', None)
+        if cloud_avatar and hasattr(cloud_avatar, 'aclose'):
+            try:
+                await cloud_avatar.aclose()
+            except Exception as e:
+                logger.error(f"Error during cloud avatar aclose: {e}")
+        audio_out = getattr(self, '_avatar_audio_out', None)
+        if audio_out:
+            try:
+                await audio_out.aclose()
+            except Exception as e:
+                logger.error(f"Error during avatar audio_out aclose: {e}")
+
+        if self._job_logger:
+            try:
+                self._job_logger.cleanup()
+            except Exception as e:
+                logger.error(f"Error during job logger cleanup: {e}")
+            self._job_logger = None
+        if self._log_manager:
+            try:
+                self._log_manager.stop()
+            except Exception as e:
+                logger.error(f"Error during log manager stop: {e}")
+            self._log_manager = None
+
         if self.room:
             try:
                 if not getattr(self.room, "_left", False):
@@ -482,6 +686,9 @@ class JobContext:
     def notify_meeting_joined(self) -> None:
         """Called when the agent successfully joins the meeting."""
         self._meeting_joined_event.set()
+        audio_out = getattr(self, '_avatar_audio_out', None)
+        if audio_out and self.room and self.room.meeting:
+            audio_out._set_meeting(self.room.meeting)
 
     async def wait_for_meeting_joined(self, timeout: float = 30.0) -> bool:
         """Wait until the meeting is joined or timeout. Returns True if joined."""
@@ -663,13 +870,15 @@ def _reset_current_job_context(token: Any) -> None:
 
 @unique
 class JobExecutorType(Enum):
+    """Enumeration of executor types for running jobs in separate processes or threads."""
+
     PROCESS = "process"
     THREAD = "thread"
 
 
 @dataclass
 class JobAcceptArguments:
-    """Arguments for accepting a job."""
+    """Holds identity, name, and metadata used when accepting a job from the worker pool."""
 
     identity: str
     name: str
@@ -678,7 +887,7 @@ class JobAcceptArguments:
 
 @dataclass
 class RunningJobInfo:
-    """Information about a running job."""
+    """Tracks a running job's context, connection details, and associated worker identity."""
 
     accept_arguments: JobAcceptArguments
     job: JobContext

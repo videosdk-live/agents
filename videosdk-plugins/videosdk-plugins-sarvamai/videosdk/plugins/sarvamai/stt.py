@@ -256,7 +256,7 @@ class SarvamAISTT(STT):
             await self._session.close()
         
         await super().aclose()
-    
+
     async def flush(self) -> None:
         """Send flush signal to Sarvam to trigger immediate transcription."""
         if self._ws and not self._ws.closed:

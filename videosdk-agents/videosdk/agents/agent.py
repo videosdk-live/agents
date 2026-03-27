@@ -63,7 +63,7 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
         self._agent_card = None 
         self.id = agent_id or str(uuid.uuid4())
         self.mcp_manager = MCPToolManager()
-        self.session: "AgentSession"
+        self.session: AgentSession | None = None
         self._thinking_background_config: Optional[BackgroundAudioHandlerConfig] = None
         self.knowledge_base = knowledge_base 
         self.inherit_context = inherit_context
@@ -141,19 +141,12 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
         await self.mcp_manager.add_mcp_server(mcp_server)
         new_tools = self.mcp_manager.tools[existing_tool_count:]
         self._tools.extend(new_tools)
-
+        
     @abstractmethod
     async def on_enter(self) -> None:
         """Called when session starts, to be implemented in your custom agent implementation."""
         pass
 
-    def on_speech_in(self, data: dict) -> None:
-        """Called when user speech is detected, to be implemented in your custom agent implementation."""
-        pass
-
-    def on_speech_out(self, data: dict) -> None:
-        """Called when agent speech is generated, to be implemented in your custom agent implementation."""
-        pass
 
     async def register_a2a(self, card: AgentCard) -> None:
         """ Register the agent for A2A communication"""

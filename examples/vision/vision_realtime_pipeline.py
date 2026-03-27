@@ -1,7 +1,7 @@
 import asyncio
 from videosdk import PubSubSubscribeConfig
 from typing import Optional
-from videosdk.agents import Agent, AgentSession, WorkerJob,JobContext, RoomOptions, RealTimePipeline
+from videosdk.agents import Agent, AgentSession, WorkerJob,JobContext, RoomOptions, Pipeline
 from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig
 from openai.types.beta.realtime.session import InputAudioTranscription, TurnDetection
 
@@ -43,7 +43,7 @@ async def entrypoint(ctx: JobContext):
             tool_choice="auto",
         )
     )
-    pipeline = RealTimePipeline(model=model)
+    pipeline = Pipeline(llm=model)
 
 
     session = AgentSession(

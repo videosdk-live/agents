@@ -5,14 +5,17 @@ EventTypes = Literal[
     "AUDIO_STREAM_ENABLED",
     "PARTICIPANT_LEFT",
     "AGENT_STARTED",
-    "ON_SPEECH_IN",
-    "ON_SPEECH_OUT",
-    "ON_LLM_DECISION"
+    "AGENT_STATE_CHANGED",
+    "USER_TRANSCRIPT_ADDED",
+    "AGENT_TRANSCRIPT_ADDED",
+    "TURN_METRICS_ADDED"
 ]
 
 T = TypeVar('T')
 
 class EventBus(EventEmitter[EventTypes]):
+    """Singleton event emitter for broadcasting and subscribing to global agent lifecycle events."""
+
     _instance = None
 
     def __new__(cls):
@@ -28,6 +31,7 @@ class EventBus(EventEmitter[EventTypes]):
 
     @classmethod
     def get_instance(cls) -> 'EventBus':
+        """Return the singleton EventBus instance, creating it if necessary."""
         return cls()
     
 global_event_emitter = EventBus()

@@ -26,7 +26,7 @@ from videosdk.agents import (
     ResizeOptions,
     encode as encode_image,
 )
-from videosdk.agents import realtime_metrics_collector
+from videosdk.agents.metrics import metrics_collector
 from videosdk.agents.event_bus import global_event_emitter
 
 logger = logging.getLogger(__name__)
@@ -141,8 +141,6 @@ class Realtime(RealtimeBaseModel[RealtimeEventTypes]):
         self._closing: bool = False
 
         # Audio state
-        self.audio_track: Optional[CustomAudioStreamTrack] = None
-        self.loop: Optional[asyncio.AbstractEventLoop] = None
         self.target_sample_rate = 24000
         self.input_sample_rate = 48000
 
@@ -251,20 +249,8 @@ class Realtime(RealtimeBaseModel[RealtimeEventTypes]):
 
         try:
             # Create audio track if needed
-            if (
-                not self.audio_track
-                and self.loop
-                and "AUDIO" in self.config.response_modalities
-            ):
-                self.audio_track = CustomAudioStreamTrack(self.loop)
-            elif not self.loop and "AUDIO" in self.config.response_modalities:
-
-                self.emit(
-                    "error", "Event loop not initialized. Audio playback will not work."
-                )
-                raise RuntimeError(
-                    "Event loop not initialized. Audio playback will not work."
-                )
+            if not self.audio_track and "AUDIO" in self.config.response_modalities:
+                logger.warning("[InferenceRealtime] audio_track not set — it should be assigned externally by the pipeline before connect().")
 
             # Connect to WebSocket
             await self._connect_ws()
@@ -536,7 +522,7 @@ class Realtime(RealtimeBaseModel[RealtimeEventTypes]):
             await self._ws.send_str(json.dumps(interrupt_message))
 
             self.emit("agent_speech_ended", {})
-            await realtime_metrics_collector.set_interrupted()
+            metrics_collector.on_interrupted()
 
             if self.audio_track and "AUDIO" in self.config.response_modalities:
                 self.audio_track.interrupt()
@@ -645,7 +631,7 @@ class Realtime(RealtimeBaseModel[RealtimeEventTypes]):
             if not self._agent_speaking:
                 self._agent_speaking = True
                 self.emit("agent_speech_started", {})
-                await realtime_metrics_collector.set_agent_speech_start()
+                metrics_collector.on_agent_speech_start()
 
             await self.audio_track.add_new_bytes(audio_bytes)
 
@@ -664,26 +650,28 @@ class Realtime(RealtimeBaseModel[RealtimeEventTypes]):
         if event_type == "user_speech_started":
             if not self._user_speaking:
                 self._user_speaking = True
-                await realtime_metrics_collector.set_user_speech_start()
+                metrics_collector.on_user_speech_start()
+                metrics_collector.start_turn()
                 self.emit("user_speech_started", {"type": "done"})
 
         elif event_type == "user_speech_ended":
             if self._user_speaking:
                 self._user_speaking = False
-                await realtime_metrics_collector.set_user_speech_end()
+                metrics_collector.on_user_speech_end()
                 self.emit("user_speech_ended", {})
 
         elif event_type == "agent_speech_started":
             if not self._agent_speaking:
                 self._agent_speaking = True
                 self.emit("agent_speech_started", {})
-                await realtime_metrics_collector.set_agent_speech_start()
+                metrics_collector.on_agent_speech_start()
 
         elif event_type == "agent_speech_ended":
             if self._agent_speaking:
                 self._agent_speaking = False
                 self.emit("agent_speech_ended", {})
-                await realtime_metrics_collector.set_agent_speech_end(timeout=1.0)
+                metrics_collector.on_agent_speech_end()
+                metrics_collector.schedule_turn_complete(timeout=1.0)
 
         elif event_type == "input_transcription":
             text = event_data.get("text", "")
@@ -706,7 +694,7 @@ class Realtime(RealtimeBaseModel[RealtimeEventTypes]):
         elif event_type == "user_transcript":
             text = event_data.get("text", "")
             if text:
-                await realtime_metrics_collector.set_user_transcript(text)
+                metrics_collector.set_user_transcript(text)
                 self.emit(
                     "realtime_model_transcription",
                     {"role": "user", "text": text, "is_final": True},
@@ -717,7 +705,7 @@ class Realtime(RealtimeBaseModel[RealtimeEventTypes]):
             text = event_data.get("text", "")
             is_final = event_data.get("is_final", False)
             if text and is_final:
-                await realtime_metrics_collector.set_agent_response(text)
+                metrics_collector.set_agent_response(text)
                 self.emit(
                     "realtime_model_transcription",
                     {"role": "agent", "text": text, "is_final": True},
@@ -778,12 +766,7 @@ class Realtime(RealtimeBaseModel[RealtimeEventTypes]):
             await self._session.close()
             self._session = None
 
-        # Cleanup audio track
-        if hasattr(self.audio_track, "cleanup") and self.audio_track:
-            try:
-                await self.audio_track.cleanup()
-            except Exception as e:
-                logger.error(f"[InferenceRealtime] Error cleaning up audio track: {e}")
+        await super().aclose()  # Nulls audio_track and loop
 
         logger.info("[InferenceRealtime] Closed successfully")
 

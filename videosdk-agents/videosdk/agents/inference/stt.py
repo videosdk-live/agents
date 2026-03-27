@@ -289,6 +289,15 @@ class STT(BaseSTT):
 
     # ==================== Core Methods ====================
 
+    async def flush(self) -> None:
+        """Signal end-of-speech to the inference server."""
+        if not self._ws or self._ws.closed:
+            return
+        try:
+            await self._ws.send_str(json.dumps({"type": "flush"}))
+        except Exception as e:
+            logger.debug(f"[InferenceSTT] Flush error: {e}")
+
     async def process_audio(
         self,
         audio_frames: bytes,

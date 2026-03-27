@@ -5,11 +5,7 @@ import uuid
 
 from .agent import Agent
 from .llm.chat_context import ChatRole
-from .conversation_flow import ConversationFlow
 from .pipeline import Pipeline
-from .metrics import cascading_metrics_collector, realtime_metrics_collector
-from .realtime_pipeline import RealTimePipeline
-from .cascading_pipeline import CascadingPipeline
 from .utils import get_tool_info, UserState, AgentState
 from .utterance_handle import UtteranceHandle 
 import time
@@ -20,11 +16,12 @@ from .background_audio import BackgroundAudioHandler,BackgroundAudioHandlerConfi
 from .dtmf_handler import DTMFHandler
 from .voice_mail_detector import VoiceMailDetector
 from .playground_manager import PlaygroundManager
+from .metrics import metrics_collector
 import logging
 import av
 logger = logging.getLogger(__name__)
 
-class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_changed", "on_speech_in", "on_speech_out"]]):
+class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_changed"]]):
     """
     Manages an agent session with its associated conversation flow and pipeline.
     """
@@ -33,7 +30,6 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         self,
         agent: Agent,
         pipeline: Pipeline,
-        conversation_flow: Optional[ConversationFlow] = None,
         wake_up: Optional[int] = None,
         background_audio: Optional[BackgroundAudioHandlerConfig] = None,
         dtmf_handler: Optional[DTMFHandler] = None,
@@ -45,14 +41,14 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         Args:
             agent: Instance of an Agent class that handles the core logic
             pipeline: Pipeline instance to process the agent's operations
-            conversation_flow: ConversationFlow instance to manage conversation state
             wake_up: Time in seconds after which to trigger wake-up callback if no speech detected
             background_audio: Configuration for background audio (optional)
+            dtmf_handler: DTMF handler for phone number input (optional)
+            voice_mail_detector: Voicemail detector (optional)
         """
         super().__init__()
         self.agent = agent
         self.pipeline = pipeline
-        self.conversation_flow = conversation_flow
         self.agent.session = self
         self.wake_up = wake_up
         self.on_wake_up: Optional[Callable[[], None] | Callable[[], Any]] = None
@@ -75,33 +71,25 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         self._playground_manager = None
         self._playground = False
         self._send_analytics_to_pubsub = False
-        self._agent_event_enabled = False
 
+        # Set agent on pipeline (pipeline handles all internal wiring)
         if hasattr(self.pipeline, 'set_agent'):
             self.pipeline.set_agent(self.agent)
         
-        if (
-            hasattr(self.pipeline, "set_conversation_flow")
-            and self.conversation_flow is not None
-        ):
-            self.pipeline.set_conversation_flow(self.conversation_flow)
-            if hasattr(self.conversation_flow, "set_voice_mail_detector"):
-                self.conversation_flow.set_voice_mail_detector(self.voice_mail_detector)
-            
-
-            self.conversation_flow.on("voicemail_result", self._handle_voicemail_result)
-        elif hasattr(self.pipeline, "set_voice_mail_detector") and self.voice_mail_detector:
-            self.pipeline.set_voice_mail_detector(self.voice_mail_detector)
+        # Setup voicemail detection
+        if self.voice_mail_detector:
+            if hasattr(self.pipeline, "set_voice_mail_detector"):
+                self.pipeline.set_voice_mail_detector(self.voice_mail_detector)
             
             if hasattr(self.pipeline, "on"):
                 self.pipeline.on("voicemail_result", self._handle_voicemail_result)
 
+        # Setup wake-up callback
         if hasattr(self.pipeline, 'set_wake_up_callback'):
             self.pipeline.set_wake_up_callback(self._reset_wake_up_timer)
 
-        global_event_emitter.on("ON_SPEECH_IN", self._on_speech_in)
-        global_event_emitter.on("ON_SPEECH_OUT", self._on_speech_out)
 
+        # Get job context
         try:
             job_ctx = get_current_job_context()
             if job_ctx:
@@ -140,22 +128,6 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         except Exception as e:
             logger.error(f"Error executing voicemail callback: {e}")
 
-    def _on_speech_in(self, data: dict) -> None:
-        self.emit("on_speech_in", data)
-
-    def _on_speech_out(self, data: dict) -> None:
-        self.emit("on_speech_out", data)
-
-    def _check_agent_event_enabled(self) -> bool:
-        if self._agent_event_enabled:
-            return True
-        room = self._get_room()
-        if room and hasattr(room, "participants_data"):
-            for p in room.participants_data.values():
-                if p.get("enable_agent_events"):
-                    self._agent_event_enabled = True
-                    return True
-        return False
 
     def _start_wake_up_timer(self) -> None:
         if self.wake_up is not None and self.on_wake_up is not None:
@@ -202,56 +174,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             self._agent_state = state
             payload = {"state": state.value, **(data or {})}
             self.emit("agent_state_changed", payload)
-            # Signal state via the transport signaling channel
-            self._signal_transport_state(state)
-
-    def _signal_transport_state(self, state: AgentState) -> None:
-        """Signal agent state change via the transport signaling channel."""
-        if not self._check_agent_event_enabled():
-            return
-        room = self._get_room()
-        if room and hasattr(room, "send_agent_state"):
-            asyncio.create_task(room.send_agent_state(state.value))
-
-    def _get_room(self):
-        """Get the room (transport handler) from job context."""
-        if self._job_context:
-            return getattr(self._job_context, "room", None)
-        return None
-
-    def _send_transport_transcript(self, text: str, role: str = "assistant", participant_id: str | None = None) -> None:
-        """Send a transcript via the transport signaling channel."""
-        import datetime
-        if not self._check_agent_event_enabled():
-            return
-        room = self._get_room()
-        if room and hasattr(room, "send_agent_transcript"):
-            peer_id = participant_id or ""
-            if not peer_id:
-                if role == "user" and hasattr(room, "participants_data") and room.participants_data:
-                    peer_id = next(iter(room.participants_data.keys()))
-                elif room.meeting and room.meeting.local_participant:
-                    peer_id = room.meeting.local_participant.id
-            asyncio.create_task(
-                room.send_agent_transcript(
-                    text=text,
-                    peer_id=peer_id,
-                    timestamp=int(datetime.datetime.now().timestamp() * 1000), 
-                )
-            )
-
-    def send_transport_metrics(self, data: dict) -> None:
-        """
-        Send metrics via the transport signaling channel (in addition to PubSub).
-
-        Args:
-            data: Arbitrary metrics dictionary to send to connected clients.
-        """
-        if not self._check_agent_event_enabled():
-            return
-        room = self._get_room()
-        if room and hasattr(room, "send_agent_metrics"):
-            asyncio.create_task(room.send_agent_metrics(data))
+            global_event_emitter.emit("AGENT_STATE_CHANGED", {"state": state.value})
 
     @property
     def user_state(self) -> UserState:
@@ -322,7 +245,9 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
                 )
         
         self._emit_agent_state(AgentState.STARTING)
-        await self.agent.initialize_mcp()
+        
+        if self.agent._mcp_servers:
+            await self.agent.initialize_mcp()
 
         if self.dtmf_handler:
             await self.dtmf_handler.start()
@@ -330,98 +255,73 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         if self._playground or self._send_analytics_to_pubsub:
             job_ctx = get_current_job_context()
             self.playground_manager = PlaygroundManager(job_ctx)
-            if isinstance(self.pipeline, RealTimePipeline):
-                realtime_metrics_collector.set_playground_manager(self.playground_manager)
+            metrics_collector.set_playground_manager(self.playground_manager)
 
-            elif isinstance(self.pipeline, CascadingPipeline):
-                cascading_metrics_collector.set_playground_manager(self.playground_manager)
+        # Configure metrics with session info
+        metrics_collector.set_system_instructions(self.agent.instructions)
 
-        if isinstance(self.pipeline, RealTimePipeline):
-            await realtime_metrics_collector.start_session(self.agent, self.pipeline)
+        # Set provider info based on pipeline components
+
+
+        if not self.pipeline.config.is_realtime:
+            if self.pipeline.stt:
+                p_class, p_model = self._get_provider_info(self.pipeline.stt, 'stt')
+                metrics_collector.set_provider_info("stt", p_class, p_model)
+            if self.pipeline.llm:
+                p_class, p_model = self._get_provider_info(self.pipeline.llm, 'llm')
+                metrics_collector.set_provider_info("llm", p_class, p_model)
+            if self.pipeline.tts:
+                p_class, p_model = self._get_provider_info(self.pipeline.tts, 'tts')
+                metrics_collector.set_provider_info("tts", p_class, p_model)
+            if hasattr(self.pipeline, 'vad') and self.pipeline.vad:
+                p_class, p_model = self._get_provider_info(self.pipeline.vad, 'vad')
+                metrics_collector.set_provider_info("vad", p_class, p_model)
+            if hasattr(self.pipeline, 'turn_detector') and self.pipeline.turn_detector:
+                p_class, p_model = self._get_provider_info(self.pipeline.turn_detector, 'eou')
+                metrics_collector.set_provider_info("eou", p_class, p_model)
         else:
-            traces_flow_manager = cascading_metrics_collector.traces_flow_manager
-            if traces_flow_manager:
-                config_attributes = {
-                    "system_instructions": self.agent.instructions,
-                    "function_tools": [
-                        get_tool_info(tool).name
-                        for tool in (
-                            [tool for tool in self.agent.tools if tool not in self.agent.mcp_manager.tools]
-                            if self.agent.mcp_manager else self.agent.tools
-                        )
-                    ] if self.agent.tools else [],
+            if self.pipeline._realtime_model:
+                metrics_collector.set_provider_info("realtime", self.pipeline._realtime_model.__class__.__name__, getattr(self.pipeline._realtime_model, 'model', ''))
+            if self.pipeline.stt:
+                p_class, p_model = self._get_provider_info(self.pipeline.stt, 'stt')
+                metrics_collector.set_provider_info("stt", p_class, p_model)
+            if self.pipeline.tts:
+                p_class, p_model = self._get_provider_info(self.pipeline.tts, 'tts')
+                metrics_collector.set_provider_info("tts", p_class, p_model)
 
-                    "mcp_tools": [
-                        get_tool_info(tool).name
-                        for tool in self.agent.mcp_manager.tools
-                    ] if self.agent.mcp_manager else [],
-
-                    "pipeline": self.pipeline.__class__.__name__,
-                    **({
-                        "stt_provider": self.pipeline.stt.__class__.__name__ if self.pipeline.stt else None,
-                        "tts_provider": self.pipeline.tts.__class__.__name__ if self.pipeline.tts else None, 
-                        "llm_provider": self.pipeline.llm.__class__.__name__ if self.pipeline.llm else None,
-                        "vad_provider": self.pipeline.vad.__class__.__name__ if hasattr(self.pipeline, 'vad') and self.pipeline.vad else None,
-                        "eou_provider": self.pipeline.turn_detector.__class__.__name__ if hasattr(self.pipeline, 'turn_detector') and self.pipeline.turn_detector else None,
-                        "stt_model": self.pipeline.get_component_configs()['stt'].get('model') if hasattr(self.pipeline, 'get_component_configs') and self.pipeline.stt else None,
-                        "llm_model": self.pipeline.get_component_configs()['llm'].get('model') if hasattr(self.pipeline, 'get_component_configs') and self.pipeline.llm else None,
-                        "tts_model": self.pipeline.get_component_configs()['tts'].get('model') if hasattr(self.pipeline, 'get_component_configs') and self.pipeline.tts else None,
-                        "vad_model": self.pipeline.get_component_configs()['vad'].get('model') if hasattr(self.pipeline, 'get_component_configs') and hasattr(self.pipeline, 'vad') and self.pipeline.vad else None,
-                        "eou_model": self.pipeline.get_component_configs()['eou'].get('model') if hasattr(self.pipeline, 'get_component_configs') and hasattr(self.pipeline, 'turn_detector') and self.pipeline.turn_detector else None
-                    } if self.pipeline.__class__.__name__ == "CascadingPipeline" else {}),
-                }
-                start_time = time.perf_counter()
-                config_attributes["start_time"] = start_time
-                await traces_flow_manager.start_agent_session_config(config_attributes)
-                await traces_flow_manager.start_agent_session({"start_time": start_time})
-
-            if self.pipeline.__class__.__name__ == "CascadingPipeline":
-                configs = self.pipeline.get_component_configs() if hasattr(self.pipeline, 'get_component_configs') else {}
-                
-                # Helper to get the actual provider class name (unwrap FallbackBase)
-                from .fallback_base import FallbackBase
-                def get_provider_class(component):
-                    if component is None:
-                        return ""
-                    if isinstance(component, FallbackBase):
-                        return component.active_provider_class
-                    return component.__class__.__name__
-                
-                cascading_metrics_collector.set_provider_info(
-                    llm_provider=get_provider_class(self.pipeline.llm),
-                    llm_model=configs.get('llm', {}).get('model', "") if self.pipeline.llm else "",
-                    stt_provider=get_provider_class(self.pipeline.stt),
-                    stt_model=configs.get('stt', {}).get('model', "") if self.pipeline.stt else "",
-                    tts_provider=get_provider_class(self.pipeline.tts),
-                    tts_model=configs.get('tts', {}).get('model', "") if self.pipeline.tts else "",
-                    vad_provider=self.pipeline.vad.__class__.__name__ if hasattr(self.pipeline, 'vad') and self.pipeline.vad else "",
-                    vad_model=configs.get('vad', {}).get('model', "") if hasattr(self.pipeline, 'vad') and self.pipeline.vad else "",
-                    eou_provider=self.pipeline.turn_detector.__class__.__name__ if hasattr(self.pipeline, 'turn_detector') and self.pipeline.turn_detector else "",
-                    eou_model=configs.get('eou', {}).get('model', "") if hasattr(self.pipeline, 'turn_detector') and self.pipeline.turn_detector else ""
-                )
-                
-                # Configure VAD parameters for metrics tracking
-                if hasattr(self.pipeline, 'vad') and self.pipeline.vad:
-                    vad = self.pipeline.vad
-                    cascading_metrics_collector.config_vad(
-                        min_silence_duration=getattr(vad, '_min_silence_duration', None),
-                        min_speech_duration=getattr(vad, '_min_speech_duration', None),
-                        threshold=getattr(vad, '_threshold', None)
+        # Traces flow manager setup
+        traces_flow_manager = metrics_collector.traces_flow_manager
+        if traces_flow_manager:
+            config_attributes = {
+                "system_instructions": self.agent.instructions,
+                "function_tools": [
+                    get_tool_info(tool).name
+                    for tool in (
+                        [tool for tool in self.agent.tools if tool not in self.agent.mcp_manager.tools]
+                        if self.agent.mcp_manager else self.agent.tools
                     )
-                
-                # Wire up metrics collector to fallback adapters for fallback tracing
-                from .fallback_base import FallbackBase
-                for component in [self.pipeline.stt, self.pipeline.llm, self.pipeline.tts]:
-                    if component and isinstance(component, FallbackBase):
-                        component.set_metrics_collector(cascading_metrics_collector)
-        
+                ] if self.agent.tools else [],
+                "mcp_tools": [
+                    tool._tool_info.name
+                    for tool in self.agent.mcp_manager.tools
+                ] if self.agent.mcp_manager else [],
+                "pipeline": self.pipeline.__class__.__name__,
+                "pipeline_mode": self.pipeline.config.pipeline_mode.value,
+                "transport_mode": metrics_collector.transport_mode
+            }
+            start_time = time.perf_counter()
+            config_attributes["start_time"] = start_time
+            await traces_flow_manager.start_agent_session_config(config_attributes)
+            await traces_flow_manager.start_agent_session({"start_time": start_time})
+
         if hasattr(self.pipeline, 'set_agent'):
             self.pipeline.set_agent(self.agent)
 
-        self.on("on_speech_in", self.agent.on_speech_in)
-        self.on("on_speech_out", self.agent.on_speech_out)
 
         await self.pipeline.start()
+
+        if hasattr(self.agent, 'a2a'):
+            self.agent.a2a._attach_deferred_listeners()
 
         if self._should_delay_for_sip_user():
             logger.info("SIP user detected, waiting for audio stream to be enabled before calling on_enter")
@@ -458,7 +358,20 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         if self.on_wake_up is not None:
             self._start_wake_up_timer()
         self._emit_agent_state(AgentState.IDLE)
-        
+    
+    def _get_provider_info(self, component, comp_name):
+        configs = self.pipeline.get_component_configs() if hasattr(self.pipeline, 'get_component_configs') else {}
+        if not component:
+            return "", ""
+        default_model = configs.get(comp_name, {}).get('model', '')
+        if hasattr(component, 'active_provider') and component.active_provider is not None:
+            provider_class = component.active_provider.__class__.__name__
+            model = getattr(component.active_provider, 'model', getattr(component.active_provider, 'model_id', getattr(component.active_provider, 'speech_model', getattr(component.active_provider, 'voice_id', getattr(component.active_provider, 'voice', getattr(component.active_provider, 'speaker', default_model))))))
+        else:
+            provider_class = component.__class__.__name__
+            model = getattr(component, 'model', getattr(component, 'model_id', getattr(component, 'speech_model', getattr(component, 'voice_id', getattr(component, 'voice', getattr(component, 'speaker', default_model))))))
+        return provider_class, str(model)
+
     async def say(self, message: str, interruptible: bool = True) -> UtteranceHandle:
         """
         Send an initial message to the agent and return a handle to track it.
@@ -472,15 +385,11 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
                 self.current_utterance.interrupt()
             self.current_utterance = handle
 
-        if not isinstance(self.pipeline, RealTimePipeline):
-            traces_flow_manager = cascading_metrics_collector.traces_flow_manager
-            if traces_flow_manager:
-                traces_flow_manager.agent_say_called(message)
+        traces_flow_manager = metrics_collector.traces_flow_manager
+        if traces_flow_manager:
+            traces_flow_manager.agent_say_called(message)
 
         self.agent.chat_context.add_message(role=ChatRole.ASSISTANT, content=message)
-
-        # Send transcript via transport signaling channel
-        self._send_transport_transcript(text=message, role="assistant")
 
         if hasattr(self.pipeline, 'send_message'):
             await self.pipeline.send_message(message, handle=handle)
@@ -506,7 +415,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             
             await self._background_audio_player.start()
             # Track background audio start for metrics
-            cascading_metrics_collector.on_background_audio_start(
+            metrics_collector.on_background_audio_start(
                 file_path=config.file_path,
                 looping=config.looping
             )
@@ -518,7 +427,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             await self._background_audio_player.stop()
             self._background_audio_player = None
             # Track background audio stop for metrics
-            cascading_metrics_collector.on_background_audio_stop()
+            metrics_collector.on_background_audio_stop()
 
         if self._thinking_was_playing:
             await self.start_thinking_audio()
@@ -526,10 +435,14 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
 
     def _get_audio_track(self):
         """Get audio track from pipeline"""
-        if hasattr(self.pipeline, 'tts') and self.pipeline.tts and self.pipeline.tts.audio_track: # Cascading
+        if self.pipeline is None:
+            return None
+        if self.pipeline.config.is_realtime:
+            model = getattr(self.pipeline, '_realtime_model', None)
+            if model and hasattr(model, 'audio_track'):
+                return model.audio_track
+        if self.pipeline.tts and hasattr(self.pipeline.tts, 'audio_track'):
             return self.pipeline.tts.audio_track
-        elif hasattr(self.pipeline, 'model') and self.pipeline.model and self.pipeline.model.audio_track: # Realtime
-            return self.pipeline.model.audio_track
         return None
     
     async def start_thinking_audio(self):
@@ -549,7 +462,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             self._thinking_audio_player = BackgroundAudioHandler(self.agent._thinking_background_config, audio_track)
             await self._thinking_audio_player.start()
             # Track thinking audio start for metrics
-            cascading_metrics_collector.on_thinking_audio_start(
+            metrics_collector.on_thinking_audio_start(
                 file_path=self.agent._thinking_background_config.file_path,
                 looping=self.agent._thinking_background_config.looping
             )
@@ -560,7 +473,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             await self._thinking_audio_player.stop()
             self._thinking_audio_player = None
             # Track thinking audio stop for metrics
-            cascading_metrics_collector.on_thinking_audio_stop()
+            metrics_collector.on_thinking_audio_stop()
     
 
     async def reply(self, instructions: str, wait_for_playback: bool = True, frames: list[av.VideoFrame] | None = None, interruptible: bool = True) -> UtteranceHandle:
@@ -608,11 +521,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         self._pause_wake_up_timer()
         
         try:
-            if not isinstance(self.pipeline, RealTimePipeline):
-                traces_flow_manager = cascading_metrics_collector.traces_flow_manager
-                if traces_flow_manager:
-                    traces_flow_manager.agent_reply_called(instructions)
-
+            # Call pipeline's reply_with_context
             if hasattr(self.pipeline, 'reply_with_context'):
                 await self.pipeline.reply_with_context(instructions, wait_for_playback, handle=handle, frames=frames)
 
@@ -648,27 +557,16 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             return
         self._closed = True
         self._emit_agent_state(AgentState.CLOSING)
-        if isinstance(self.pipeline, RealTimePipeline):
-            realtime_metrics_collector.finalize_session()
-            traces_flow_manager = realtime_metrics_collector.traces_flow_manager
-            if traces_flow_manager:
-                start_time = time.perf_counter()
-                await traces_flow_manager.start_agent_session_closed({"start_time": start_time})
-                traces_flow_manager.end_agent_session_closed()
-        else:
-            traces_flow_manager = cascading_metrics_collector.traces_flow_manager
-            if traces_flow_manager:
-                start_time = time.perf_counter()
-                await traces_flow_manager.start_agent_session_closed({"start_time": start_time})
-                traces_flow_manager.end_agent_session_closed()
+
+        metrics_collector.finalize_session()
+        traces_flow_manager = metrics_collector.traces_flow_manager
+        if traces_flow_manager:
+            start_time = time.perf_counter()
+            await traces_flow_manager.start_agent_session_closed({"start_time": start_time})
+            traces_flow_manager.end_agent_session_closed()
 
         self._cancel_wake_up_timer()
         
-        global_event_emitter.off("ON_SPEECH_IN", self._on_speech_in)
-        global_event_emitter.off("ON_SPEECH_OUT", self._on_speech_out)
-
-        self.off("on_speech_in", self.agent.on_speech_in)
-        self.off("on_speech_out", self.agent.on_speech_out)
 
         logger.info("Cleaning up agent session")
         try:
@@ -686,13 +584,6 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             await self.pipeline.cleanup()
         except Exception as e:
             logger.error(f"Error cleaning up pipeline: {e}")
-        
-        if self.conversation_flow:
-            try:
-                await self.conversation_flow.cleanup()
-            except Exception as e:
-                logger.error(f"Error cleaning up conversation flow: {e}")
-            self.conversation_flow = None
         
         try:
             await self.agent.cleanup()

@@ -27,6 +27,7 @@ videosdk-plugins-google = { workspace = true }
 videosdk-plugins-groq = { workspace = true }
 videosdk-plugins-humeai = { workspace = true }
 videosdk-plugins-inworldai = { workspace = true }
+videosdk-plugins-langchain = { workspace = true }
 videosdk-plugins-lmnt = { workspace = true }
 videosdk-plugins-murfai = { workspace = true }
 videosdk-plugins-navana = { workspace = true }

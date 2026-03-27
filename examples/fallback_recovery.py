@@ -1,5 +1,5 @@
 import logging
-from videosdk.agents import Agent, AgentSession, CascadingPipeline,WorkerJob, ConversationFlow, JobContext, RoomOptions,FallbackSTT,FallbackLLM,FallbackTTS
+from videosdk.agents import Agent, AgentSession,Pipeline,WorkerJob, JobContext, RoomOptions,FallbackSTT,FallbackLLM,FallbackTTS
 from videosdk.plugins.openai import OpenAISTT,OpenAILLM,OpenAITTS
 from videosdk.plugins.silero import SileroVAD
 from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
@@ -23,7 +23,6 @@ class ResilientAgent(Agent):
 async def entrypoint(ctx: JobContext):
     
     agent = ResilientAgent()
-    conversation_flow = ConversationFlow(agent)
 
     # Fallback configuration:
     # 1. Define a list of providers (in priority order).
@@ -35,7 +34,7 @@ async def entrypoint(ctx: JobContext):
     tts_provider = FallbackTTS([OpenAITTS(voice="alloy"),CartesiaTTS()],temporary_disable_sec=30.0, permanent_disable_after_attempts=3)
 
 
-    pipeline = CascadingPipeline(
+    pipeline = Pipeline(
         stt= stt_provider,
         llm=llm_provider,
         tts=tts_provider,
@@ -45,7 +44,6 @@ async def entrypoint(ctx: JobContext):
     session = AgentSession(
         agent=agent, 
         pipeline=pipeline,
-        conversation_flow=conversation_flow
     )
 
     await session.start(wait_for_participant=True, run_until_shutdown=True)

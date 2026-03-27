@@ -38,7 +38,7 @@ class ResizeOptions:
     """The target height for resizing the image."""
 
 def encode(frame: av.VideoFrame, options: EncodeOptions) -> bytes:
-    """Encode with optimized pipeline"""
+    """Encode an av.VideoFrame into bytes by resizing and compressing it according to the given options."""
     img = frame.to_image()
     
     

@@ -1,7 +1,7 @@
 import aiohttp
 import os
 
-from videosdk.agents import Agent, AgentSession, RealTimePipeline, function_tool, JobContext, RoomOptions, WorkerJob
+from videosdk.agents import Agent, AgentSession, Pipeline, function_tool, JobContext, RoomOptions, WorkerJob
 from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig
 from videosdk.plugins.anam import AnamAvatar
 import logging
@@ -57,7 +57,7 @@ class MyVoiceAgent(Agent):
 async def start_session(context: JobContext):
     # Initialize Gemini Realtime model
     model = GeminiRealtime(
-        model="gemini-2.5-flash-native-audio-preview-12-2025",
+        model="gemini-3.1-flash-live-preview",
         # When GOOGLE_API_KEY is set in .env - DON'T pass api_key parameter
         # api_key="AIXXXXXXXXXXXXXXXXXXXX", 
         config=GeminiLiveConfig(
@@ -73,7 +73,7 @@ async def start_session(context: JobContext):
     )
 
     # Create pipeline with avatar
-    pipeline = RealTimePipeline(model=model, avatar=anam_avatar)
+    pipeline = Pipeline(llm=model, avatar=anam_avatar)
 
     session = AgentSession(agent=MyVoiceAgent(), pipeline=pipeline)
 

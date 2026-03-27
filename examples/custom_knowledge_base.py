@@ -1,7 +1,7 @@
 import logging
 import os
 from typing import List
-from videosdk.agents import Agent,AgentSession,CascadingPipeline,ConversationFlow,JobContext,RoomOptions,WorkerJob,KnowledgeBase,KnowledgeBaseConfig
+from videosdk.agents import Agent,AgentSession,Pipeline,JobContext,RoomOptions,WorkerJob,KnowledgeBase,KnowledgeBaseConfig
 from videosdk.plugins.google import GoogleLLM, GoogleTTS
 from videosdk.plugins.sarvamai import SarvamAISTT
 from videosdk.plugins.silero import SileroVAD
@@ -10,13 +10,17 @@ import logging
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 pre_download_model()
+from dotenv import load_dotenv
+load_dotenv(override=True)
+
+KNOWLEDGE_BASE_ID = os.getenv("KNOWLEDGE_BASE_ID")
 
 class CustomKnowledgeBase(KnowledgeBase):
     """
     Custom knowledge base handler to demonstrate overriding retrieval logic.
     """
 
-    TRIGGER_PHRASES = ["search for", "look up", "what do you know about"]
+    TRIGGER_PHRASES = ["Context Engineering", "context engineering", "contextengineerring" "Context Engineering is a technique", "context engineering is a technique", "Coding", "coding", "search for", "look up", "what do you know about"]
 
     def allow_retrieval(self, transcript: str) -> bool:
         """
@@ -83,15 +87,14 @@ class VoiceAgent(Agent):
 
 async def entrypoint(ctx: JobContext):
     agent = VoiceAgent()
-    conversation_flow = ConversationFlow(agent)
-    pipeline = CascadingPipeline(
+    pipeline = Pipeline(
         stt=SarvamAISTT(),
         llm=GoogleLLM(),
         tts=GoogleTTS(),
         vad=SileroVAD(),
         turn_detector=TurnDetector(),
     )
-    session = AgentSession(agent=agent, pipeline=pipeline, conversation_flow=conversation_flow)
+    session = AgentSession(agent=agent, pipeline=pipeline)
     await session.start(wait_for_participant=True, run_until_shutdown=True)
 
 def make_context() -> JobContext:

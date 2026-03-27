@@ -1,5 +1,6 @@
 from functools import partial
 import logging
+from typing import Callable, Optional, Any, TYPE_CHECKING
 from videosdk import (
     VideoSDK,
     Participant,
@@ -7,37 +8,33 @@ from videosdk import (
     PubSubPublishConfig,
     PubSubSubscribeConfig,
     Agent as TransportAgent,
-    AgentState as TransportAgentState,
 )
 from .meeting_event_handler import MeetingHandler
 from .participant_event_handler import ParticipantHandler
-from .audio_stream import TeeCustomAudioStreamTrack, TeeMixingCustomAudioStreamTrack
-from ..pipeline import Pipeline
+from .output_stream import TeeCustomAudioStreamTrack, TeeMixingCustomAudioStreamTrack
+from ._input_stream import InputStreamManager
+from ._sip_manager import SIPManager
+from ._recording_manager import RecordingManager
 from dotenv import load_dotenv
-import numpy as np
+from ._transport_event_sender import TransportEventSender
 import asyncio
 import os
 from asyncio import AbstractEventLoop
-from ..metrics.traces_flow import TracesFlowManager
-from ..metrics import cascading_metrics_collector
+from ..metrics import TracesFlowManager
+from ..metrics import metrics_collector
 from ..metrics.integration import auto_initialize_telemetry_and_logs
-from typing import Callable, Optional, Any
-from ..metrics.realtime_metrics_collector import realtime_metrics_collector
-import requests
 import time
-import logging
 from ..event_bus import global_event_emitter
 from ..transports.base import BaseTransportHandler
 
+if TYPE_CHECKING:
+    from ..pipeline import Pipeline
+
 logger = logging.getLogger(__name__)
 
-START_RECORDING_URL = "https://api.videosdk.live/v2/recordings/participant/start"
-STOP_RECORDING_URL = "https://api.videosdk.live/v2/recordings/participant/stop"
-MERGE_RECORDINGS_URL = "https://api.videosdk.live/v2/recordings/participant/merge"
-FETCH_CALL_INFO_URL = "https://api.videosdk.live/v2/sip/call"
-TRANSFER_CALL_URL = "https://api.videosdk.live/v2/sip/call/transfer"
-
 load_dotenv()
+
+_SCREEN_RECORDING_KINDS: tuple[str, ...] = ("screen_audio", "screen_video")
 
 
 class VideoSDKHandler(BaseTransportHandler):
@@ -53,10 +50,12 @@ class VideoSDKHandler(BaseTransportHandler):
         name: str,
         agent_participant_id: str,
         agent_id: str,
-        pipeline: Pipeline,
+        pipeline: "Pipeline",
         loop: AbstractEventLoop,
         vision: bool = False,
         recording: bool = False,
+        record_audio: Optional[bool] = None,
+        record_screen_share: bool = True,
         custom_camera_video_track=None,
         custom_microphone_audio_track=None,
         audio_sinks=None,
@@ -69,6 +68,12 @@ class VideoSDKHandler(BaseTransportHandler):
         on_session_end: Optional[Callable[[str], None]] = None,
         # VideoSDK connection options
         signaling_base_url: Optional[str] = None,
+        job_logger=None,
+        traces_options=None,
+        metrics_options=None,
+        logs_options=None,
+        # Avatar options
+        avatar_participant_id: Optional[str] = None,
     ):
         """
         Initialize the VideoSDK handler.
@@ -97,7 +102,10 @@ class VideoSDKHandler(BaseTransportHandler):
             ValueError: If VIDEOSDK_AUTH_TOKEN is not set in environment or parameters.
         """
         self.meeting_id = meeting_id
-        self.auth_token = auth_token
+        self.auth_token = auth_token or os.getenv("VIDEOSDK_AUTH_TOKEN")
+        if not self.auth_token:
+            raise ValueError("VIDEOSDK_AUTH_TOKEN is not set")
+            
         self.name = name
         self.agent_id = agent_id
         self.agent_participant_id = agent_participant_id
@@ -108,6 +116,13 @@ class VideoSDKHandler(BaseTransportHandler):
         self.custom_microphone_audio_track = custom_microphone_audio_track
         self.audio_sinks = audio_sinks or []
         self.background_audio = background_audio
+        self._avatar_participant_id = avatar_participant_id
+
+        # Managers
+        self.input_stream_manager = InputStreamManager(pipeline=pipeline)
+        self.sip_manager = SIPManager(room_id=meeting_id, auth_token=self.auth_token)
+        self.recording_manager = RecordingManager(room_id=meeting_id, auth_token=self.auth_token)
+        self.transport_event_sender = None
 
         # Session management
         self.auto_end_session = auto_end_session
@@ -120,6 +135,9 @@ class VideoSDKHandler(BaseTransportHandler):
 
         # VideoSDK connection
         self.signaling_base_url = signaling_base_url
+        self.traces_options = traces_options
+        self.metrics_options = metrics_options
+        self.logs_options = logs_options
 
         super().__init__(loop, pipeline)
 
@@ -131,18 +149,24 @@ class VideoSDKHandler(BaseTransportHandler):
         # Meeting and event handling
         self.meeting = None
         self.participants_data = {}
-        self.recorded_participants = set()
-        self.audio_listener_tasks = {}
-        self.video_listener_tasks = {}
+
+        self.audio_listener_tasks = self.input_stream_manager.audio_listener_tasks
+        self.video_listener_tasks = self.input_stream_manager.video_listener_tasks
 
         self._meeting_joined_data = None
         self.agent_meeting = None
         self._session_id: Optional[str] = None
         self._session_id_collected = False
         self.recording = recording
+        self.record_audio = record_audio
+        self.record_screen_share = record_screen_share
+        self._track_recordings_kinds_by_participant: dict[str, set[str]] = {}
+        self._participant_recording_has_share_at_start: dict[str, bool] = {}
+        self.recorded_participants: set = set()
 
         self.traces_flow_manager = TracesFlowManager(room_id=self.meeting_id)
-        cascading_metrics_collector.set_traces_flow_manager(self.traces_flow_manager)
+        metrics_collector.set_traces_flow_manager(
+            self.traces_flow_manager)
 
         if custom_microphone_audio_track:
             self.audio_track = custom_microphone_audio_track
@@ -168,11 +192,7 @@ class VideoSDKHandler(BaseTransportHandler):
                 )
             self.agent_audio_track = None
 
-        self.auth_token = auth_token or os.getenv("VIDEOSDK_AUTH_TOKEN")
-        if not self.auth_token:
-            raise ValueError("VIDEOSDK_AUTH_TOKEN is not set")
-
-        # Create meeting config as a dictionary instead of using MeetingConfig
+        # Create meeting config
         self.meeting_config = {
             "name": self.name,
             "participant_id": self.agent_participant_id,
@@ -191,8 +211,7 @@ class VideoSDKHandler(BaseTransportHandler):
         self.on_room_error = on_room_error
         self._participant_joined_events: dict[str, asyncio.Event] = {}
         self._left: bool = False
-        # Session management
-        self.auto_end_session = auto_end_session
+        self._job_logger = job_logger
 
     async def connect(self):
         """
@@ -214,7 +233,7 @@ class VideoSDKHandler(BaseTransportHandler):
         self._left: bool = False
         self.sdk_metadata = {
             "sdk": "agents",
-            "sdk_version": "0.0.73"
+            "sdk_version": "1.0.0b1"
         }
         self.videosdk_meeting_meta_data= {
             "agent_id": self.agent_id,
@@ -313,7 +332,10 @@ class VideoSDKHandler(BaseTransportHandler):
         if self.recording:
             self.recorded_participants.add(self.meeting.local_participant.id)
             asyncio.create_task(
-                self.start_participant_recording(self.meeting.local_participant.id)
+                self._start_base_recording_for_participant(
+                    self.meeting.local_participant.id,
+                    self.meeting.local_participant,
+                )
             )
 
     def on_meeting_left(self, data):
@@ -332,9 +354,12 @@ class VideoSDKHandler(BaseTransportHandler):
 
     def _is_agent_participant(self, participant: Participant) -> bool:
         """
-        Internal method: Check if a participant is an agent.
+        Internal method: Check if a participant is an agent (or Avatar Server).
         """
-        # Consider participants with names containing 'agent' or matching our agent name as agents
+        # Avatar Server participant — identified by pre-registered participant_id
+        if self._avatar_participant_id and participant.id == self._avatar_participant_id:
+            return True
+        
         participant_name = participant.display_name.lower()
         return (
             "agent" in participant_name
@@ -343,6 +368,57 @@ class VideoSDKHandler(BaseTransportHandler):
             if self.meeting and self.meeting.local_participant
             else False
         )
+
+    def _participant_has_share_stream(self, participant: Participant) -> bool:
+        """True if participant already has a share stream (avoids duplicate screen track recording)."""
+        streams = getattr(participant, "streams", None)
+        if not streams:
+            return False
+        try:
+            vals = streams.values() if isinstance(streams, dict) else streams
+            return any(getattr(s, "kind", None) == "share" for s in vals)
+        except Exception:
+            return False
+
+    async def _start_track_recording_kind(self, participant_id: str, kind: str) -> None:
+        kinds = self._track_recordings_kinds_by_participant.setdefault(participant_id, set())
+        if kind in kinds:
+            return
+        await self.recording_manager.start_track_recording(participant_id=participant_id, kind=kind)
+        kinds.add(kind)
+
+    async def _start_screen_track_recordings(self, participant_id: str) -> None:
+        if not self.record_screen_share:
+            return
+        for kind in _SCREEN_RECORDING_KINDS:
+            await self._start_track_recording_kind(participant_id, kind)
+
+    async def _start_base_recording_for_participant(
+        self, participant_id: str, participant_obj: Participant | None = None
+    ) -> None:
+        """Participant composite API (record_audio is None) or track API (audio/video) + optional screen at join."""
+        if self.record_audio is None:
+            has_share = (
+                self._participant_has_share_stream(participant_obj)
+                if participant_obj is not None
+                else False
+            )
+            self._participant_recording_has_share_at_start[participant_id] = has_share
+            await self.recording_manager.start_participant_recording(participant_id)
+            return
+
+        await self._start_track_recording_kind(
+            participant_id, "audio" if self.record_audio else "video"
+        )
+        if participant_obj and self._participant_has_share_stream(participant_obj):
+            await self._start_screen_track_recordings(participant_id)
+
+    async def _maybe_start_screen_track_recording(self, participant: Participant) -> None:
+        """When share starts later: skip if participant recording already included share at start."""
+        pid = participant.id
+        if self.record_audio is None and self._participant_recording_has_share_at_start.get(pid, False):
+            return
+        await self._start_screen_track_recordings(pid)
 
     def _update_non_agent_participant_count(self):
         """
@@ -384,10 +460,7 @@ class VideoSDKHandler(BaseTransportHandler):
             except Exception as e:
                 logger.error(f"Error in session end callback: {e}")
 
-        # Leave the meeting FIRST, then mark session as ended
         await self.leave()
-
-        # Mark session as ended AFTER leaving
         self._session_ended = True
 
         if not self._first_participant_event.is_set():
@@ -405,122 +478,27 @@ class VideoSDKHandler(BaseTransportHandler):
         """
         await self._end_session(reason)
 
-    async def call_transfer(self, token: str, transfer_to: str) -> None:
+    async def call_transfer(self,transfer_to: str) -> None:
         """
         Transfer the call to a provided Phone number or SIP endpoint.
-
-        Args:
-            token: VideoSDK auth token.
-            transfer_to: Phone number or SIP endpoint to transfer the call to.
         """
-        try:
-            session_id = self._session_id
-            room_id = self.meeting_id
+        await self.sip_manager.call_transfer(session_id=self._session_id, transfer_to=transfer_to)
 
-            if not session_id:
-                raise ValueError("Session ID is not set.")
-
-            if not room_id:
-                raise ValueError("Room ID is not set.")
-
-            logger.info(
-                f"[CALL TRANSFER] Fetching SIP call info | roomId={room_id}, sessionId={session_id}"
-            )
-
-            sip_call = self.fetch_call_info(token, room_id, session_id)
-
-            if not sip_call:
-                logger.error(
-                    "[CALL TRANSFER] No active SIP call found for given session ID."
-                )
-                raise RuntimeError(
-                    "Unable to perform transfer: No active SIP call found."
-                )
-
-            call_id = sip_call["callId"]
-            logger.info(f"[CALL TRANSFER] Found SIP Call ID: {call_id}")
-
-            result = self.transfer_call(
-                token=token, call_id=call_id, transfer_to=transfer_to
-            )
-
-            logger.info(f"[CALL TRANSFER] Transfer successful: {result}")
-
-        except Exception as e:
-            logger.error(
-                "[CALL TRANSFER] Error occurred during call transfer", exc_info=True
-            )
-            raise
-
-    def fetch_call_info(self, token: str, room_id: str, session_id: str):
+    def fetch_call_info(self,session_id: str):
         """
-        Fetch SIP call information for the given room, then match by sessionId.
+        Fetch SIP call information. Forward to sip_manager.
         """
-        try:
-            headers = {"Authorization": token}
-            params = {"roomId": room_id}
+        return self.sip_manager.fetch_call_info(session_id=session_id)
 
-            logger.info(f"[FETCH CALL INFO] Requesting call info | roomId={room_id}")
-
-            response = requests.get(FETCH_CALL_INFO_URL, headers=headers, params=params)
-            response.raise_for_status()
-
-            data = response.json()
-            calls = data.get("data", [])
-
-            for call in calls:
-                if call.get("sessionId") == session_id:
-                    logger.info(
-                        f"[FETCH CALL INFO] Matching call found: {call.get('callId')}"
-                    )
-                    return call
-
-            logger.warning("[FETCH CALL INFO] No SIP call matched with sessionId")
-            return None
-
-        except requests.RequestException as e:
-            logger.error("[FETCH CALL INFO] HTTP request failed", exc_info=True)
-            raise
-
-        except Exception as e:
-            logger.error("[FETCH CALL INFO] Unexpected error", exc_info=True)
-            raise
-
-    def transfer_call(self, token: str, call_id: str, transfer_to: str):
+    def transfer_call(self,call_id: str, transfer_to: str):
         """
-        Transfer the call to a new number.
+        Transfer the call. Forward to sip_manager.
         """
-        try:
-            logger.info(
-                f"[TRANSFER CALL] Initiating transfer | callId={call_id}, transferTo={transfer_to}"
-            )
-
-            headers = {"Authorization": token, "Content-Type": "application/json"}
-
-            payload = {"callId": call_id, "transferTo": transfer_to}
-
-            response = requests.post(TRANSFER_CALL_URL, json=payload, headers=headers)
-            response.raise_for_status()
-
-            return response.json()
-
-        except requests.RequestException as e:
-            logger.error("[TRANSFER CALL] HTTP request failed", exc_info=True)
-            raise
-
-        except Exception as e:
-            logger.error("[TRANSFER CALL] Unexpected error", exc_info=True)
-            raise
+        return self.sip_manager.transfer_call(call_id=call_id, transfer_to=transfer_to)
 
     def setup_session_end_callback(self, callback):
         """
         Set up the session end callback.
-
-        This chains callbacks - if there's already a callback set (e.g., from worker),
-        both will be called.
-
-        Args:
-            callback: Function to call when session ends.
         """
         existing_callback = self.on_session_end
 
@@ -597,11 +575,31 @@ class VideoSDKHandler(BaseTransportHandler):
             if participant.meta_data
             else False
         )
+        
+        if self.participants_data[participant.id]["enable_agent_events"] and self.transport_event_sender is None:
+            logger.info("Initializing transport_event_sender because participant has enableAgentEvents=True")
+            self.transport_event_sender = TransportEventSender(self)
+            
         logger.info(f"Participant joined: {peer_name}")
+
+        if self._is_agent_participant(participant):
+            logger.info(f"Skipping agent/avatar participant in on_participant_joined: {participant.id}")
+            return
+
+        sip_user_flag = self.participants_data[participant.id]["sipUser"]
+        metrics_collector.add_participant_metrics(
+            participant_id=participant.id,
+            kind="user",
+            sip_user=sip_user_flag,
+            join_time=time.time(),
+            meta=self.participants_data[participant.id],
+        )
 
         if self.recording and len(self.participants_data) == 1:
             self.recorded_participants.add(participant.id)
-            asyncio.create_task(self.start_participant_recording(participant.id))
+            asyncio.create_task(
+                self._start_base_recording_for_participant(participant.id, participant)
+            )
 
         if participant.id in self._participant_joined_events:
             self._participant_joined_events[participant.id].set()
@@ -634,6 +632,10 @@ class VideoSDKHandler(BaseTransportHandler):
                     self.audio_listener_tasks[stream.id] = task
                 except Exception as e:
                     logger.error(f"Error creating audio listener task: {e}")
+
+            if stream.kind == "share" and self.recording:
+                asyncio.create_task(self._maybe_start_screen_track_recording(participant))
+                
             if stream.kind in ("video", "share") and self.vision:
                 logger.info(f"{stream.kind} stream enabled for participant: {peer_name}")
                 self.video_listener_tasks[stream.id] = asyncio.create_task(
@@ -645,12 +647,12 @@ class VideoSDKHandler(BaseTransportHandler):
             Internal method: Handle stream disabled event.
             """
             if stream.kind == "audio":
-                audio_task = self.audio_listener_tasks[stream.id]
+                audio_task = self.audio_listener_tasks.get(stream.id)
                 if audio_task is not None:
                     audio_task.cancel()
                     del self.audio_listener_tasks[stream.id]
             if stream.kind in ("video", "share"):
-                video_task = self.video_listener_tasks[stream.id]
+                video_task = self.video_listener_tasks.get(stream.id)
                 if video_task is not None:
                     video_task.cancel()
                     del self.video_listener_tasks[stream.id]
@@ -738,51 +740,19 @@ class VideoSDKHandler(BaseTransportHandler):
 
     async def add_audio_listener(self, stream: Stream):
         """
-        Add audio listener for a participant stream.
+        Forward to input_stream_manager.
         """
-        while True:
-            try:
-                await asyncio.sleep(0.01)
-                frame = await stream.track.recv()
-                global_event_emitter.emit(
-                    "ON_SPEECH_IN", {"frame": frame, "stream": stream}
-                )
-                audio_data = frame.to_ndarray()[0]
-                pcm_frame = audio_data.flatten().astype(np.int16).tobytes()
-                if self.pipeline:
-                    await self.pipeline.on_audio_delta(pcm_frame)
-                else:
-                    logger.warning("No pipeline available for audio processing")
-
-            except Exception as e:
-                logger.error(f"Audio processing error: {e}")
-                break
+        await self.input_stream_manager.add_audio_listener(stream)
 
     async def add_video_listener(self, stream: Stream):
         """
-        Add video listener for a participant stream.
+        Forward to input_stream_manager.
         """
-        while True:
-            try:
-                await asyncio.sleep(0.01)
-
-                frame = await stream.track.recv()
-                if self.pipeline:
-                    await self.pipeline.on_video_delta(frame)
-
-            except Exception as e:
-                logger.error("Video processing error:", e)
-                break
+        await self.input_stream_manager.add_video_listener(stream)
 
     async def wait_for_participant(self, participant_id: str | None = None) -> str:
         """
-        Wait for a specific participant to join, or wait for the first participant if none specified.
-
-        Args:
-            participant_id (str | None, optional): Optional participant ID to wait for. If None, waits for first participant.
-
-        Returns:
-            str: The participant ID that joined.
+        Wait for a specific participant to join.
         """
         if participant_id:
             if participant_id in self.participants_data:
@@ -868,32 +838,11 @@ class VideoSDKHandler(BaseTransportHandler):
             self._no_participant_timeout_task.cancel()
             self._no_participant_timeout_task = None
         
-        self.participants_data.clear()
-
-        for task_id, task in list(self.audio_listener_tasks.items()):
-            try:
-                if not task.done():
-                    task.cancel()
-                    try:
-                        await task
-                    except asyncio.CancelledError:
-                        pass
-            except Exception as e:
-                logger.error(f"Error cancelling audio listener task {task_id}: {e}")
-        self.audio_listener_tasks.clear()
-
-        for task_id, task in list(self.video_listener_tasks.items()):
-            try:
-                if not task.done():
-                    task.cancel()
-                    try:
-                        await task
-                    except asyncio.CancelledError:
-                        pass
-            except Exception as e:
-                logger.error(f"Error cancelling video listener task {task_id}: {e}")
-        self.video_listener_tasks.clear()
-
+        self.input_stream_manager.cancel_tasks()
+        
+        if hasattr(self, "transport_event_sender") and self.transport_event_sender:
+            self.transport_event_sender.cleanup()
+        
         if hasattr(self, "audio_track") and self.audio_track:
             try:
                 await self.audio_track.cleanup()
@@ -914,10 +863,12 @@ class VideoSDKHandler(BaseTransportHandler):
             except Exception as e:
                 logger.error(f"Error ending traces flow manager: {e}")
             self.traces_flow_manager = None
-            cascading_metrics_collector.set_traces_flow_manager(None)
-
+            metrics_collector.set_traces_flow_manager(None)
+        
         self.participants_data.clear()
         self.recorded_participants.clear()
+        self._track_recordings_kinds_by_participant.clear()
+        self._participant_recording_has_share_at_start.clear()
         self._participant_joined_events.clear()
         self.meeting = None
         self.pipeline = None
@@ -926,6 +877,7 @@ class VideoSDKHandler(BaseTransportHandler):
         self.audio_sinks = None
         self.on_room_error = None
         self.on_session_end = None
+        self._job_logger = None
         self._session_ended = True
         self._session_id = None
         self._session_id_collected = False
@@ -942,11 +894,20 @@ class VideoSDKHandler(BaseTransportHandler):
                 session_id = getattr(self.meeting, "session_id", None)
                 if session_id:
                     self._session_id = session_id
-                    cascading_metrics_collector.set_session_id(session_id)
-                    realtime_metrics_collector.set_session_id(session_id)
+                    logger.info(f"Session ID collected: {session_id}")
+                    metrics_collector.set_session_id(session_id)
+                    metrics_collector.add_participant_metrics(
+                        participant_id=self.meeting.local_participant.id,
+                        kind="agent",
+                        sip_user=False,
+                        join_time=time.time(),
+                        meta={"name": self.name},
+                    )
                     self._session_id_collected = True
                     if self.traces_flow_manager:
                         self.traces_flow_manager.set_session_id(session_id)
+                    if self._job_logger:
+                        self._job_logger.update_context(sessionId=session_id)
             except Exception as e:
                 logger.error(f"Error collecting session ID: {e}")
 
@@ -964,13 +925,44 @@ class VideoSDKHandler(BaseTransportHandler):
 
                 if attributes:
                     peer_id = getattr(self.meeting, "participant_id", "agent")
+
+                    traces_config = attributes.get("traces", {})
+                    if self.traces_options:
+                        if not self.traces_options.enabled:
+                            traces_config["enabled"] = False
+                        elif self.traces_options.enabled and self.traces_options.export_url:
+                            traces_config["enabled"] = True
+                            traces_config["pbEndPoint"] = self.traces_options.export_url
+                            traces_config["export_headers"] = self.traces_options.export_headers
+
                     auto_initialize_telemetry_and_logs(
                         room_id=self.meeting_id,
                         peer_id=peer_id,
                         room_attributes=attributes,
                         session_id=self._session_id,
                         sdk_metadata=self.sdk_metadata,
+                        custom_traces_config=traces_config,
                     )
+
+                    if self._job_logger:
+                        logs_config = attributes.get("logs", {})
+                        observability_jwt = attributes.get("observability", "")
+                        
+                        is_logs_enabled = logs_config.get("enabled", False)
+                        log_endpoint = logs_config.get("endPoint", "")
+                        custom_headers = None
+                        
+                        if self.logs_options:
+                            if not self.logs_options.enabled:
+                                is_logs_enabled = False
+                            elif self.logs_options.enabled and self.logs_options.export_url:
+                                is_logs_enabled = True
+                                log_endpoint = self.logs_options.export_url
+                                custom_headers = self.logs_options.export_headers
+
+                        if is_logs_enabled and log_endpoint:
+                            self._job_logger.set_endpoint(log_endpoint, observability_jwt, custom_headers)
+                            logger.debug(f"Log endpoint configured: {log_endpoint}")
                 else:
                     logger.error("No meeting attributes found")
             else:
@@ -995,144 +987,42 @@ class VideoSDKHandler(BaseTransportHandler):
 
     async def stop_participants_recording(self):
         """
-        Stop recording for all participants.
+        Stop recording for all participants. Forward to recording_manager.
         """
-        for participant_id in list(self.recorded_participants):
-            logger.info(f"stopping participant recording for id {participant_id}")
-            await self.stop_participant_recording(participant_id)
+        await self.recording_manager.stop_participant_recording(self.meeting.local_participant.id)
+        for participant_id in self.participants_data.keys():
+            await self.recording_manager.stop_participant_recording(participant_id)
 
     async def start_participant_recording(self, id: str):
         """
-        Start recording for a specific participant.
-
-        Args:
-            id (str): Participant ID to start recording for.
+        Start recording. Forward to recording_manager.
         """
-        headers = {"Authorization": self.auth_token, "Content-Type": "application/json"}
-        response = requests.request(
-            "POST",
-            START_RECORDING_URL,
-            json={"roomId": self.meeting_id, "participantId": id},
-            headers=headers,
-        )
-        logger.info(
-            f"starting participant recording response completed for id {id} and response{response.text}"
-        )
+        await self.recording_manager.start_participant_recording(id)
 
     async def stop_participant_recording(self, id: str):
         """
-        Stop recording for a specific participant.
-
-        Args:
-            id (str): Participant ID to stop recording for.
+        Stop recording. Forward to recording_manager.
         """
-        headers = {"Authorization": self.auth_token, "Content-Type": "application/json"}
-        response = requests.request(
-            "POST",
-            STOP_RECORDING_URL,
-            json={"roomId": self.meeting_id, "participantId": id},
-            headers=headers,
-        )
-        logger.info(
-            f"stop participant recording response for id {id} and response{response.text}"
-        )
+        await self.recording_manager.stop_participant_recording(id)
 
     async def merge_participant_recordings(self):
         """
-        Merge recordings from all participants.
+        Merge recordings. Forward to recording_manager.
         """
-        remote_recorded_ids = [
-            pid
-            for pid in self.recorded_participants
-            if pid != self.meeting.local_participant.id
-        ]
-
-        headers = {"Authorization": self.auth_token, "Content-Type": "application/json"}
-        response = requests.request(
-            "POST",
-            MERGE_RECORDINGS_URL,
-            json={
-                "sessionId": self.meeting.session_id,
-                "channel1": [{"participantId": self.meeting.local_participant.id}],
-                "channel2": [
-                    {"participantId": participant_id}
-                    for participant_id in remote_recorded_ids
-                ],
-            },
-            headers=headers,
-        )
-        logger.info(
-            f"merging participant recordings completed response:{response.text}"
+        await self.recording_manager.merge_participant_recordings(
+            session_id=self._session_id,
+            local_participant_id=self.meeting.local_participant.id,
+            participants_data=self.participants_data
         )
 
     async def stop_and_merge_recordings(self):
         """
-        Stop all recordings and merge them.
+        Stop and merge recordings. Forward to recording_manager.
         """
-        await self.stop_participants_recording()
-        await self.merge_participant_recordings()
-        logger.info("stopped and merged recordings")
-
-    # --- Transport-level Agent signaling ---
-    _AGENT_STATE_MAP = {
-        "idle": TransportAgentState.IDLE,
-        "speaking": TransportAgentState.SPEAKING,
-        "listening": TransportAgentState.LISTENING,
-        "thinking": TransportAgentState.THINKING,
-    }
-
-    def _get_transport_agent(self) -> TransportAgent | None:
-        """Get the transport-level Agent instance (from videosdk SDK)."""
-        if self.meeting and self.meeting.local_participant:
-            participant = self.meeting.local_participant
-            if isinstance(participant, TransportAgent):
-                return participant
-        return None
-
-    async def send_agent_state(self, state_value: str) -> None:
-        """
-        Send agent state change via the transport signaling channel.
-
-        Args:
-            state_value: The AgentState value string (e.g. "idle", "speaking").
-        """
-        agent = self._get_transport_agent()
-        if agent:
-            transport_state = self._AGENT_STATE_MAP.get(state_value)
-            if transport_state:
-                try:
-                    await agent.async_send_state_changed(transport_state)
-                except Exception as e:
-                    logger.error(f"Error sending agent state via transport: {e}")
-
-    async def send_agent_transcript(
-        self, text: str, peer_id: str, timestamp: str
-    ) -> None:
-        """
-        Send agent transcript via the transport signaling channel.
-
-        Args:
-            text: The transcript text.
-            peer_id: The peer ID associated with the transcript.
-            timestamp: The ISO timestamp of the transcript.
-        """
-        agent = self._get_transport_agent()
-        if agent:
-            try:
-                await agent.async_send_transcript(text, peer_id, timestamp)
-            except Exception as e:
-                logger.error(f"Error sending agent transcript via transport: {e}")
-
-    async def send_agent_metrics(self, data: dict) -> None:
-        """
-        Send agent metrics via the transport signaling channel.
-
-        Args:
-            data: Arbitrary metrics dictionary.
-        """
-        agent = self._get_transport_agent()
-        if agent:
-            try:
-                await agent.async_send_metrics(data)
-            except Exception as e:
-                logger.error(f"Error sending agent metrics via transport: {e}")
+        await self.recording_manager.stop_and_merge_recordings(
+            session_id=self._session_id,
+            local_participant_id=self.meeting.local_participant.id,
+            participants_data=self.participants_data,
+            track_kinds_by_participant=self._track_recordings_kinds_by_participant,
+            stop_participants_recording=self.record_audio is None,
+        )

@@ -3,13 +3,12 @@ import asyncio
 import time
 from typing import List, Any, Optional, TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from .metrics.cascading_metrics_collector import CascadingMetricsCollector
+from .metrics import metrics_collector
 
 logger = logging.getLogger(__name__)
 
 class FallbackBase:
-    """Shared logic for switching providers and cleanup."""
+    """Base class providing provider failover, recovery, and metrics emission for fallback-capable components."""
     def __init__(self, providers: List[Any], component_name: str, temporary_disable_sec: float = 60.0, permanent_disable_after_attempts: int = 3):
         if not providers:
             raise ValueError(f"{component_name} requires at least one provider")
@@ -21,10 +20,6 @@ class FallbackBase:
         self.permanent_disable_after_attempts = permanent_disable_after_attempts
         self._failed_providers: dict[int, float] = {} 
         self._recovery_attempts: dict[int, int] = {}
-        self._metrics_collector: Optional['CascadingMetricsCollector'] = None
-
-    def set_metrics_collector(self, metrics_collector: 'CascadingMetricsCollector'):
-        """Set the metrics collector for fallback event tracking"""
         self._metrics_collector = metrics_collector
 
     @property
@@ -42,11 +37,13 @@ class FallbackBase:
 
     def _emit_fallback_event(self, event_data: dict):
         """Emit fallback event to metrics collector if available"""
+        print(f"Emitting fallback event: {event_data}")  # Debug print for emitted event data
         if self._metrics_collector:
             # Update provider info when fallback occurs
-            if event_data.get("new_provider_label"):
+            if event_data.get("new_provider_label") or event_data.get("is_recovery"):
                 new_provider_class = self.active_provider_class
-                self._metrics_collector.update_provider_class(self._component_name, new_provider_class)
+                new_provider_model = getattr(self.active_provider, 'model', getattr(self.active_provider, 'model_id', getattr(self.active_provider, 'speech_model', getattr(self.active_provider, 'voice_id', getattr(self.active_provider, 'voice', '')))))
+                self._metrics_collector.update_provider_class(self._component_name, new_provider_class, str(new_provider_model))
             self._metrics_collector.on_fallback_event(event_data)
 
     async def _switch_provider(self, reason: str, failed_provider: Any = None):

@@ -16,24 +16,172 @@ import asyncio
 
 @dataclass
 class FunctionToolInfo:
+    """Holds metadata about a function tool, including its name, description, and parameter schema."""
     name: str
     description: str | None = None
     parameters_schema: Optional[dict] = None
 
 @enum.unique
 class UserState(enum.Enum):
+    """Represents the current state of the user in a conversation session."""
     IDLE = "idle"
     SPEAKING = "speaking"
     LISTENING = "listening"
 
 @enum.unique
 class AgentState(enum.Enum):
+    """Represents the current state of the agent in a conversation session."""
     STARTING = "starting"
     IDLE = "idle"
     SPEAKING = "speaking"
     LISTENING = "listening"
     THINKING = "thinking"
     CLOSING = "closing"
+
+@enum.unique
+class PipelineMode(enum.Enum):
+    """The overall pipeline architecture mode based on which components are present."""
+    REALTIME = "realtime"
+    FULL_CASCADING = "full_cascading"
+    LLM_TTS_ONLY = "llm_tts_only"
+    STT_LLM_ONLY = "stt_llm_only"
+    LLM_ONLY = "llm_only"
+    STT_ONLY = "stt_only"
+    TTS_ONLY = "tts_only"
+    STT_TTS_ONLY = "stt_tts_only"
+    HYBRID = "hybrid"
+    PARTIAL_CASCADING = "partial_cascading"
+
+
+@enum.unique
+class RealtimeMode(enum.Enum):
+    """The realtime sub-mode when a RealtimeBaseModel is used as the LLM."""
+    FULL_S2S = "full_s2s"
+    HYBRID_STT = "hybrid_stt"
+    HYBRID_TTS = "hybrid_tts"
+    LLM_ONLY = "llm_only"
+
+
+@enum.unique
+class PipelineComponent(enum.Enum):
+    """Identifiers for each component slot in the pipeline."""
+    STT = "stt"
+    LLM = "llm"
+    TTS = "tts"
+    VAD = "vad"
+    TURN_DETECTOR = "turn_detector"
+    AVATAR = "avatar"
+    DENOISE = "denoise"
+    REALTIME_MODEL = "realtime_model"
+
+
+@dataclass(frozen=True)
+class PipelineConfig:
+    """
+    Immutable snapshot of the pipeline's detected configuration.
+    Computed once during Pipeline.__init__ and accessible everywhere via pipeline.config.
+    """
+    pipeline_mode: PipelineMode
+    realtime_mode: RealtimeMode | None
+    is_realtime: bool
+    active_components: frozenset[PipelineComponent]
+
+    def has_component(self, component: PipelineComponent) -> bool:
+        """Check whether a specific component is present."""
+        return component in self.active_components
+
+    @property
+    def component_names(self) -> list[str]:
+        """Return sorted list of active component value strings (for metrics/logging)."""
+        return sorted(c.value for c in self.active_components)
+
+
+def build_pipeline_config(
+    *,
+    stt: Any | None,
+    llm: Any | None,
+    tts: Any | None,
+    vad: Any | None,
+    turn_detector: Any | None,
+    avatar: Any | None,
+    denoise: Any | None,
+    realtime_model: Any | None,
+    realtime_config_mode: str | None,
+) -> PipelineConfig:
+    """
+    Detect pipeline mode, realtime mode, and active components from
+    the raw component references provided at Pipeline construction.
+    """
+    # Build active component set
+    components: set[PipelineComponent] = set()
+    if stt is not None:
+        components.add(PipelineComponent.STT)
+    if llm is not None:
+        components.add(PipelineComponent.LLM)
+    if tts is not None:
+        components.add(PipelineComponent.TTS)
+    if vad is not None:
+        components.add(PipelineComponent.VAD)
+    if turn_detector is not None:
+        components.add(PipelineComponent.TURN_DETECTOR)
+    if avatar is not None:
+        components.add(PipelineComponent.AVATAR)
+    if denoise is not None:
+        components.add(PipelineComponent.DENOISE)
+    if realtime_model is not None:
+        components.add(PipelineComponent.REALTIME_MODEL)
+
+    # Detect realtime mode
+    realtime_mode: RealtimeMode | None = None
+    is_realtime = False
+
+    if realtime_model is not None:
+        has_external_stt = stt is not None
+        has_external_tts = tts is not None
+
+        if realtime_config_mode:
+            realtime_mode = RealtimeMode(realtime_config_mode)
+            is_realtime = (realtime_mode != RealtimeMode.LLM_ONLY)
+        elif has_external_stt and has_external_tts:
+            realtime_mode = RealtimeMode.LLM_ONLY
+            is_realtime = False
+        elif has_external_stt:
+            realtime_mode = RealtimeMode.HYBRID_STT
+            is_realtime = True
+        elif has_external_tts:
+            realtime_mode = RealtimeMode.HYBRID_TTS
+            is_realtime = True
+        else:
+            realtime_mode = RealtimeMode.FULL_S2S
+            is_realtime = True
+
+    # Detect pipeline mode
+    if is_realtime:
+        pipeline_mode = PipelineMode.REALTIME
+    elif stt and llm and tts and vad and turn_detector:
+        pipeline_mode = PipelineMode.FULL_CASCADING
+    elif llm and tts and not stt:
+        pipeline_mode = PipelineMode.LLM_TTS_ONLY
+    elif stt and llm and not tts:
+        pipeline_mode = PipelineMode.STT_LLM_ONLY
+    elif llm and not stt and not tts:
+        pipeline_mode = PipelineMode.LLM_ONLY
+    elif stt and tts and not llm:
+        pipeline_mode = PipelineMode.STT_TTS_ONLY
+    elif stt and not llm and not tts:
+        pipeline_mode = PipelineMode.STT_ONLY
+    elif tts and not llm and not stt:
+        pipeline_mode = PipelineMode.TTS_ONLY
+    else:
+        pipeline_mode = PipelineMode.PARTIAL_CASCADING
+
+    return PipelineConfig(
+        pipeline_mode=pipeline_mode,
+        realtime_mode=realtime_mode,
+        is_realtime=is_realtime,
+        active_components=frozenset(components),
+    )
+
 
 @runtime_checkable
 class FunctionTool(Protocol):
@@ -95,6 +243,7 @@ def build_pydantic_args_model(func: Callable[..., Any]) -> type[BaseModel]:
     return ModelBuilder(func).construct()
 
 class ModelBuilder:
+    """Constructs a Pydantic BaseModel from a function's signature, type hints, and docstring."""
     def __init__(self, func: Callable[..., Any]):
         self.func = func
         self.sig = inspect.signature(func)
@@ -130,6 +279,7 @@ class ModelBuilder:
         return "".join(part.title() for part in self.func.__name__.split("_")) + "Args"
 
 class TypeProcessor:
+    """Extracts the base type and Pydantic FieldInfo from a possibly Annotated type hint."""
     def __init__(self, hint: Any):
         self.original_hint = hint
         self.base_type = hint
@@ -149,6 +299,7 @@ class TypeProcessor:
                 break
 
 class FieldBuilder:
+    """Builds a Pydantic field tuple from a function parameter, its processed type, and docstring description."""
     def __init__(self, param: inspect.Parameter, type_processor: TypeProcessor, description: str | None):
         self.param = param
         self.type_processor = type_processor
@@ -451,4 +602,146 @@ async def graceful_cancel(*tasks: asyncio.Task) -> None:
             timeout=0.5
         )
     except asyncio.TimeoutError:
+        pass
+
+
+class AsyncIteratorQueue:
+    """An async iterator backed by an asyncio.Queue, allowing producers to put items and consumers to async-iterate until closed."""
+    def __init__(self):
+        self.queue = asyncio.Queue()
+        self.closed = False
+
+    async def put(self, item):
+        if not self.closed:
+            await self.queue.put(item)
+
+    def close(self):
+        self.closed = True
+        self.queue.put_nowait(None)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        item = await self.queue.get()
+        if item is None:
+            raise StopAsyncIteration
+        return item
+
+
+async def run_stt(audio_stream: AsyncIterator[bytes]) -> AsyncIterator[Any]:
+    """
+    Run STT on an audio stream.
+    
+    Delegates to the STT component's stream_transcribe method.
+    
+    Args:
+        audio_stream: Async iterator of audio bytes
+        
+    Yields:
+        SpeechEvent objects (with text, etc.)
+    """
+    from .job import get_current_job_context
+    ctx = get_current_job_context()
+    if not ctx or not ctx._pipeline or not ctx._pipeline.stt:
+        raise RuntimeError("No STT component available in current context")
+    
+    async for event in ctx._pipeline.stt.stream_transcribe(audio_stream):
+        yield event
+
+
+async def run_tts(text_stream: AsyncIterator[str]) -> AsyncIterator[bytes]:
+    """
+    Run TTS on a text stream.
+    
+    Delegates to the TTS component's stream_synthesize method.
+    
+    Args:
+        text_stream: Async iterator of text
+        
+    Yields:
+        Audio bytes
+    """
+    from .job import get_current_job_context
+    ctx = get_current_job_context()
+    if not ctx or not ctx._pipeline or not ctx._pipeline.tts:
+        raise RuntimeError("No TTS component available in current context")
+    
+    async for frame in ctx._pipeline.tts.stream_synthesize(text_stream):
+        yield frame
+
+# Audio utilities (used by avatar server)
+class AudioByteStream:
+    """
+    Buffers raw PCM bytes and emits fixed-size AudioFrame objects.
+
+    Useful for converting variable-size chunks (e.g. data-channel payloads)
+    into the steady frame cadence that AvatarSynchronizer expects.
+    """
+
+    def __init__(self, sample_rate: int, num_channels: int, samples_per_channel: int):
+        import numpy as _np
+        self._np = _np
+        self._sample_rate = sample_rate
+        self._num_channels = num_channels
+        self._samples_per_channel = samples_per_channel
+        self._sample_width = 2  
+        self._bytes_per_frame = samples_per_channel * num_channels * self._sample_width
+        self._buffer = bytearray()
+
+    def push(self, frame_data: bytes) -> list:
+        from av import AudioFrame
+        self._buffer.extend(frame_data)
+        frames = []
+        while len(self._buffer) >= self._bytes_per_frame:
+            chunk = bytes(self._buffer[: self._bytes_per_frame])
+            del self._buffer[: self._bytes_per_frame]
+            arr = self._np.frombuffer(chunk, dtype=self._np.int16).reshape(
+                self._num_channels, self._samples_per_channel
+            )
+            frame = AudioFrame.from_ndarray(
+                arr,
+                format="s16",
+                layout="mono" if self._num_channels == 1 else "stereo",
+            )
+            frame.sample_rate = self._sample_rate
+            frames.append(frame)
+        return frames
+
+    def flush(self) -> list:
+        from av import AudioFrame
+        if not self._buffer:
+            return []
+        chunk = bytes(self._buffer)
+        self._buffer.clear()
+        missing = self._bytes_per_frame - len(chunk)
+        if missing > 0:
+            chunk += bytes(missing)
+        arr = self._np.frombuffer(chunk, dtype=self._np.int16).reshape(
+            self._samples_per_channel, self._num_channels
+        )
+        frame = AudioFrame.from_ndarray(
+            arr.T,
+            format="s16",
+            layout="mono" if self._num_channels == 1 else "stereo",
+        )
+        frame.sample_rate = self._sample_rate
+        return [frame]
+
+
+class _AudioUtils:
+    AudioByteStream = AudioByteStream
+
+
+audio = _AudioUtils()
+
+
+async def cancel_and_wait(task: asyncio.Task | None) -> None:
+    """Cancel a task and wait for it to finish, suppressing CancelledError."""
+    if not task or task.done():
+        return
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
         pass

@@ -1,7 +1,7 @@
 import asyncio
 from typing import Optional
 from videosdk import PubSubSubscribeConfig
-from videosdk.agents import Agent, AgentSession, CascadingPipeline,WorkerJob,ConversationFlow,JobContext, RoomOptions, RealTimePipeline
+from videosdk.agents import Agent, AgentSession,Pipeline,WorkerJob,JobContext, RoomOptions
 from videosdk.plugins.deepgram import DeepgramSTT
 from videosdk.plugins.elevenlabs import ElevenLabsTTS
 from videosdk.plugins.silero import SileroVAD
@@ -32,9 +32,8 @@ class VisionAgent(Agent):
 async def entrypoint(ctx: JobContext):
     
     agent = VisionAgent(ctx)
-    conversation_flow = ConversationFlow(agent)
 
-    pipeline = CascadingPipeline(
+    pipeline = Pipeline(
         stt=DeepgramSTT(),
         llm=GoogleLLM(),
         tts=ElevenLabsTTS(),
@@ -45,7 +44,6 @@ async def entrypoint(ctx: JobContext):
     session = AgentSession(
         agent=agent, 
         pipeline=pipeline,
-        conversation_flow=conversation_flow,
     )
 
     shutdown_event = asyncio.Event()
