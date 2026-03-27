@@ -1,5 +1,6 @@
 # This test script is used to test DTMF Event and Voicemail Detection and it's handling.
 import logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 from videosdk.agents import Agent, AgentSession, Pipeline, DTMFHandler, VoiceMailDetector, WorkerJob, JobContext, RoomOptions, Options
 from videosdk.plugins.deepgram import DeepgramSTT
 from videosdk.plugins.openai import OpenAILLM
