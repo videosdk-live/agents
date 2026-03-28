@@ -75,6 +75,7 @@ async def _execute_job_entrypoint(
     token = _set_current_job_context(ctx)
     try:
         # Wrap in a task so the watchdog can cancel it
+        logger.info("3. ==========> Creating the entrypoint task")
         entrypoint_task = asyncio.ensure_future(entrypoint(ctx))
         await entrypoint_task
     except asyncio.CancelledError:
@@ -824,6 +825,7 @@ class Worker:
                 )
             else:
                 # Send immediate "running" status when wait is not requested
+                logger.info("1. Sending Job Update here ============>")
                 job_update = JobUpdate(
                     job_id=assignment.job_id,
                     status="running",
@@ -838,7 +840,7 @@ class Worker:
                     if hasattr(assignment, "timeout") and assignment.timeout
                     else 3600.0
                 )
-
+                logger.info("2. ==========> Creating the entrypoint task")
                 # Start execution as a background task so we can await meeting join in parallel
                 execute_task = asyncio.create_task(
                     self.process_manager.execute(
