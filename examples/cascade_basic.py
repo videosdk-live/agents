@@ -74,13 +74,6 @@ class MyVoiceAgent(Agent):
             "horoscope": horoscopes.get(sign, "The stars are aligned for you today!"),
         }
 
-    @function_tool
-    async def end_call(self) -> None:
-        """End the call upon request by the user"""
-        await self.session.say("Goodbye!")
-        await asyncio.sleep(1)
-        await self.session.leave()
-
 
 async def start_session(context: JobContext):
 
