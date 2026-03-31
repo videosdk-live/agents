@@ -457,7 +457,7 @@ class JobContext:
                     avatar.set_room_id(room_id)
                     await avatar.connect()
                     audio_out = avatar
-                else:
+                elif hasattr(avatar, 'participant_id'):
                     _api_key = os.getenv("VIDEOSDK_API_KEY")
                     _secret_key = os.getenv("VIDEOSDK_SECRET_KEY")
                     credentials = generate_avatar_credentials(
@@ -466,12 +466,15 @@ class JobContext:
                     await avatar.connect(room_id, credentials.token)
                     audio_out = AvatarAudioOut(credentials=credentials, room_id=room_id)
                     await audio_out.connect()  # no-op (no dispatcher_url)
+                else:
+                    await avatar.connect()
+                    audio_out = avatar
 
                 custom_camera_video_track = getattr(avatar, 'video_track', None)
                 custom_microphone_audio_track = getattr(avatar, 'audio_track', None)
                 sinks.append(audio_out)
                 self._cloud_avatar = avatar if not isinstance(avatar, AvatarAudioOut) else None
-                self._avatar_audio_out = audio_out
+                self._avatar_audio_out = audio_out if isinstance(audio_out, AvatarAudioOut) else None
                 if self._pipeline:
                     self._pipeline.avatar = audio_out
 
