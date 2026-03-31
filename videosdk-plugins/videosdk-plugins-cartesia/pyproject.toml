@@ -20,7 +20,7 @@ classifiers = [
     "Topic :: Multimedia :: Video",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-dependencies = ["videosdk-agents>=1.0.0", "cartesia"]
+dependencies = ["videosdk-agents>=1.0.1", "cartesia"]
 
 [tool.hatch.version]
 path = "videosdk/plugins/cartesia/version.py"
