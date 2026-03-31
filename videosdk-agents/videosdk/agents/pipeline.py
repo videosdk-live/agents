@@ -1027,6 +1027,9 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         if self.config.realtime_mode == RealtimeMode.HYBRID_TTS and self.speech_generation:
             asyncio.create_task(self.speech_generation.interrupt())
 
+        if self.avatar and hasattr(self.avatar, 'interrupt'):
+            asyncio.create_task(self.avatar.interrupt())
+
         if self.agent and self.agent.session:
             self.agent.session._emit_user_state(UserState.SPEAKING)
             self.agent.session._emit_agent_state(AgentState.LISTENING)
