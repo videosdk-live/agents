@@ -283,6 +283,44 @@ class TTS(BaseTTS):
             base_url=base_url,
         )
 
+    
+    @staticmethod
+    def videosdk(
+        *,
+        model_id="namo",
+        voice_id="amalthea",
+        language="en",
+        enable_streaming=True,
+        config=None,
+    ) -> "TTS":
+        """
+        Create a TTS instance configured for the VideoSDK native provider.
+
+        Args:
+            model_id: VideoSDK model identifier (default: "namo")
+            voice_id: Voice identifier (default: "amalthea")
+            language: Language code (default: "en")
+            enable_streaming: Enable streaming mode (default: True)
+            config: Optional provider-specific configuration overrides
+
+        Returns:
+            Configured TTS instance for VideoSDK
+        """
+        config = {
+            "model": model_id,
+            "voice_id": voice_id,
+            "language": language,
+            "sample_rate": DEFAULT_SAMPLE_RATE,
+            **(config or {}),
+        }
+        return TTS(
+            provider="videosdk",
+            model_id=model_id,
+            language=language,
+            config=config,
+            enable_streaming=enable_streaming,
+        )
+
     # ==================== Core ====================
 
     def reset_first_audio_tracking(self) -> None:
