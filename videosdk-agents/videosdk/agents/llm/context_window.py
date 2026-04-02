@@ -17,22 +17,26 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class ContextCompressor:
+class ContextWindow:
     """
-    Generates and maintains a running summary of old conversation history.
-    Uses the agent's existing LLM by default — no extra model configuration needed.
+    Manages the conversation context window for LLM interactions.
 
-    When the context exceeds a token budget, older turns are compressed into a
-    single summary message while recent turns are kept verbatim. The summary is
-    tagged so it won't be re-summarized redundantly.
+    Handles two responsibilities:
+    1. **Compression** — summarizes old conversation turns using an LLM so the
+       agent retains long-term memory instead of losing it to truncation.
+    2. **Truncation** — removes oldest items when the context exceeds the
+       token or item budget, preserving system messages, summaries, and the
+       last user message.
 
-    Usage::
-
-        Pipeline(
-            ...,
-            max_context_tokens=8000,
-            context_compressor=ContextCompressor(keep_recent_turns=3),
-        )
+    Args:
+        max_tokens: Maximum estimated token budget for the context.
+            When exceeded, compression (if enough turns) then truncation kicks in.
+        max_context_items: Maximum number of items in the context.
+            When exceeded, same behavior as max_tokens.
+        keep_recent_turns: Number of recent user-assistant exchanges to keep
+            verbatim during compression. Everything older gets summarized.
+        summary_llm: Optional dedicated LLM for generating summaries.
+            If None, the agent's main LLM is used automatically.
     """
 
     SUMMARIZE_PROMPT = (
@@ -41,7 +45,8 @@ class ContextCompressor:
         "- Decisions made and their reasoning\n"
         "- Tool/function call results and their outcomes\n"
         "- Any commitments or promises the assistant made\n"
-        "- Emphasize user objectives, limitations, decisions made, important details, preferences, relevant items, and any outstanding or unresolved tasks.\n"
+        "- Emphasize user objectives, limitations, decisions made, important details, "
+        "preferences, relevant items, and any outstanding or unresolved tasks.\n"
         "- Avoid greetings, extra wording, and casual remarks.\n"
         "Keep it concise but complete. Output ONLY the summary, nothing else."
     )
@@ -49,37 +54,65 @@ class ContextCompressor:
     def __init__(
         self,
         *,
+        max_tokens: int | None = None,
+        max_context_items: int | None = None,
         keep_recent_turns: int = 3,
-        llm: LLM | None = None,
+        max_tool_calls_per_turn: int = 10,
+        summary_llm: LLM | None = None,
     ) -> None:
-        """
-        Args:
-            keep_recent_turns: Number of recent user-assistant exchanges to keep
-                              verbatim. Everything older gets compressed.
-            llm: Optional dedicated LLM for summarization. If None, the agent's
-                 main LLM is used (passed at call time by ContentGeneration).
-        """
+        self.max_tokens = max_tokens
+        self.max_context_items = max_context_items
+        self.max_tool_calls_per_turn = max_tool_calls_per_turn
         self._keep_recent = keep_recent_turns
-        self._dedicated_llm = llm
+        self._summary_llm = summary_llm
 
-    def needs_compression(self, ctx: ChatContext, max_tokens: int) -> bool:
+    async def manage(self, ctx: ChatContext, llm: LLM) -> None:
+        """
+        Run the full context management cycle: compress then truncate.
+
+        Called automatically before each LLM call by ContentGeneration.
+
+        Args:
+            ctx: The chat context to manage (modified in-place).
+            llm: The agent's main LLM (used for summarization if no summary_llm set).
+        """
+        # Step 1: Compress old turns into a summary if budget exceeded
+        if self._needs_compression(ctx):
+            try:
+                logger.info("Compressing context via summary generation")
+                await self._compress(ctx, llm)
+                logger.info(f"Context compression complete. Size: {len(ctx.items)} items")
+            except Exception as e:
+                logger.error(f"Error during context compression: {e}", exc_info=True)
+
+        # Step 2: Truncate remaining items if still over budget
+        if self.max_tokens is not None or self.max_context_items is not None:
+            before = len(ctx.items)
+            ctx.truncate(max_items=self.max_context_items, max_tokens=self.max_tokens)
+            after = len(ctx.items)
+            if after < before:
+                logger.info(f"Truncated context from {before} to {after} items")
+
+    # ── Compression ───────────────────────────────────────────────────
+
+    def _needs_compression(self, ctx: ChatContext) -> bool:
         """Check if context exceeds budget and has enough old turns to compress."""
         est = ctx.estimated_tokens()
+        items = len(ctx.items)
         turns = ctx.turn_count()
-        needed = est > max_tokens and turns > self._keep_recent + 1
-        logger.debug(f"Compression check: {est}/{max_tokens} tokens, {turns} turns, needed={needed}")
+        exceeds_tokens = self.max_tokens is not None and est > self.max_tokens
+        exceeds_items = self.max_context_items is not None and items > self.max_context_items
+        enough_turns = turns > self._keep_recent + 1
+        needed = (exceeds_tokens or exceeds_items) and enough_turns
+        logger.debug(
+            f"Compression check: {est} tokens (max={self.max_tokens}), "
+            f"{items} items (max={self.max_context_items}), {turns} turns, needed={needed}"
+        )
         return needed
 
-    async def compress(self, ctx: ChatContext, llm: LLM) -> None:
-        """
-        Compress old conversation turns into a summary, in-place.
-
-        Args:
-            ctx: The chat context to compress.
-            llm: The LLM to use for summarization (typically the agent's main LLM).
-                 Ignored if a dedicated LLM was provided at init.
-        """
-        active_llm = self._dedicated_llm or llm
+    async def _compress(self, ctx: ChatContext, llm: LLM) -> None:
+        """Compress old conversation turns into a summary, in-place."""
+        active_llm = self._summary_llm or llm
         if not active_llm:
             logger.warning("No LLM available for context compression")
             return
@@ -142,9 +175,7 @@ class ContextCompressor:
                 and (item.role == ChatRole.SYSTEM or item.extra.get("summary"))
             )
         ]
-        recent_items = [
-            item for item in items[split_idx:]
-        ]
+        recent_items = list(items[split_idx:])
 
         return old_items, recent_items
 

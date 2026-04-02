@@ -32,21 +32,22 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
         agent: Agent | None = None,
         llm: LLM | None = None,
         conversational_graph: Any | None = None,
-        max_context_items: int | None = None,
-        max_context_tokens: int | None = None,
-        context_compressor: Any | None = None,
-        max_tool_calls: int = 10,
+        context_window: Any | None = None,
     ) -> None:
         super().__init__()
         self.agent = agent
         self.llm = llm
         self.conversational_graph = conversational_graph
-        self.max_context_items = max_context_items
-        self.max_context_tokens = max_context_tokens
-        self.context_compressor = context_compressor
-        self.max_tool_calls = max_tool_calls
+        self.context_window = context_window
         self.llm_lock = asyncio.Lock()
         self._is_interrupted = False
+
+    @property
+    def max_tool_calls_per_turn(self) -> int:
+        """Get max_tool_calls_per_turn from context_window, or default to 10."""
+        if self.context_window and hasattr(self.context_window, 'max_tool_calls_per_turn'):
+            return self.context_window.max_tool_calls_per_turn
+        return 10
     
     async def start(self) -> None:
         """Start the content generation component"""
@@ -73,29 +74,9 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                 logger.warning("Agent not available for LLM processing")
                 return
             
-            if self.context_compressor and self.llm:
-                budget = self.max_context_tokens or 8000
-                logger.debug(f"Compression check: budget={budget} tokens")
-                if self.context_compressor.needs_compression(self.agent.chat_context, budget):
-                    try:
-                        logger.info("Compressing context via summary generation")
-                        await self.context_compressor.compress(self.agent.chat_context, self.llm)
-                        logger.info(f"Context compression complete. Size: {len(self.agent.chat_context.items)} items")
-                    except Exception as e:
-                        logger.error(f"Error during context compression: {e}", exc_info=True)
-
-            if self.max_context_items or self.max_context_tokens:
-                try:
-                    before = len(self.agent.chat_context.items)
-                    self.agent.chat_context.truncate(
-                        max_items=self.max_context_items,
-                        max_tokens=self.max_context_tokens,
-                    )
-                    after = len(self.agent.chat_context.items)
-                    if after < before:
-                        logger.info(f"Truncated context from {before} to {after} items")
-                except Exception as e:
-                    logger.error(f"Error during truncation: {e}", exc_info=True)
+            # Context window handles compression + truncation in one call
+            if self.context_window and self.llm:
+                await self.context_window.manage(self.agent.chat_context, self.llm)
             
             self.emit("generation_started", {
                 "user_text": user_text,
@@ -107,7 +88,7 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
 
             first_chunk_received = False
             _total_tool_calls = 0
-            _max_total_tool_calls = self.max_tool_calls
+            _max_total_tool_calls = self.max_tool_calls_per_turn
             _call_id_counter = 0 
 
             _prefix_original_content = None

@@ -70,10 +70,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
         false_interrupt_pause_duration: float = 2.0,
         resume_on_false_interrupt: bool = False,
         conversational_graph: Any | None = None,
-        max_context_items: int | None = None,
-        max_context_tokens: int | None = None,
-        context_compressor: Any | None = None,
-        max_tool_calls: int = 10,
+        context_window: Any | None = None,
         voice_mail_detector: VoiceMailDetector | None = None,
         hooks: "PipelineHooks | None" = None,
     ) -> None:
@@ -135,10 +132,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 agent=agent,
                 llm=llm,
                 conversational_graph=conversational_graph,
-                max_context_items=max_context_items,
-                max_context_tokens=max_context_tokens,
-                context_compressor=context_compressor,
-                max_tool_calls=max_tool_calls,
+                context_window=context_window,
             )
             # Setup event listeners
             self.content_generation.on("generation_started", lambda data: logger.info("Content generation started"))

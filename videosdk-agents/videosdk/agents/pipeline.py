@@ -102,10 +102,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         eou_config: End of utterance configuration
         interrupt_config: Interruption configuration
         conversational_graph: Conversational graph for structured dialogs (optional)
-        max_context_items: Maximum chat context items (auto-truncates when exceeded)
-        max_context_tokens: Maximum estimated token budget for context (auto-truncates when exceeded)
-        context_compressor: Optional ContextCompressor for summarizing old conversation history
-        max_tool_calls: Maximum tool calls per turn (default 10). Increase for multi-step tool chains.
+        context_window: ContextWindow for managing conversation history (compression, truncation, tool limits)
         voice_mail_detector: Voicemail detection (optional)
     """
 
@@ -121,10 +118,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         eou_config: EOUConfig | None = None,
         interrupt_config: InterruptConfig | None = None,
         conversational_graph: Any | None = None,
-        max_context_items: int | None = None,
-        max_context_tokens: int | None = None,
-        context_compressor: Any | None = None,
-        max_tool_calls: int = 10,
+        context_window: Any | None = None,
         voice_mail_detector: VoiceMailDetector | None = None,
         realtime_config: RealtimeConfig | None = None,
     ) -> None:
@@ -138,10 +132,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         self.avatar = avatar
         self.denoise = denoise
         self.conversational_graph = conversational_graph
-        self.max_context_items = max_context_items
-        self.max_context_tokens = max_context_tokens
-        self.context_compressor = context_compressor
-        self.max_tool_calls = max_tool_calls
+        self.context_window = context_window
         self.voice_mail_detector = voice_mail_detector
         
         # Pipeline hooks for middleware/interception
@@ -386,10 +377,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                 false_interrupt_pause_duration=self.interrupt_config.false_interrupt_pause_duration,
                 resume_on_false_interrupt=self.interrupt_config.resume_on_false_interrupt,
                 conversational_graph=None, 
-                max_context_items=self.max_context_items,
-                max_context_tokens=self.max_context_tokens,
-                context_compressor=self.context_compressor,
-                max_tool_calls=self.max_tool_calls,
+                context_window=self.context_window,
                 voice_mail_detector=self.voice_mail_detector,
                 hooks=self.hooks,
             )
@@ -449,10 +437,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                 false_interrupt_pause_duration=self.interrupt_config.false_interrupt_pause_duration,
                 resume_on_false_interrupt=self.interrupt_config.resume_on_false_interrupt,
                 conversational_graph=self.conversational_graph,
-                max_context_items=self.max_context_items,
-                max_context_tokens=self.max_context_tokens,
-                context_compressor=self.context_compressor,
-                max_tool_calls=self.max_tool_calls,
+                context_window=self.context_window,
                 voice_mail_detector=self.voice_mail_detector,
                 hooks=self.hooks,
             )
@@ -480,8 +465,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         eou_config: EOUConfig | None = None,
         interrupt_config: InterruptConfig | None = None,
         conversational_graph: Any | None = None,
-        max_context_items: int | None = None,
-        max_context_tokens: int | None = None,
+        context_window: Any | None = None,
         voice_mail_detector: VoiceMailDetector | None = None,
         realtime_config: RealtimeConfig | None = None
         ) -> None:
@@ -527,8 +511,8 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         original_pipeline_config["denoise"] = self.denoise.__class__.__name__
         original_pipeline_config["eou_config"] = asdict(self.eou_config)
         original_pipeline_config["interrupt_config"] = asdict(self.interrupt_config)
-        original_pipeline_config["max_context_items"] = self.max_context_items
-        original_pipeline_config["max_context_tokens"] = self.max_context_tokens
+        original_pipeline_config["context_window"] = self.context_window
+        original_pipeline_config["context_window"] = self.context_window
 
         if self._realtime_model and hasattr(self._realtime_model, 'audio_track'):
             self._realtime_model.audio_track = None
@@ -550,8 +534,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         # Update configs
         if eou_config is not None: self.eou_config = eou_config
         if interrupt_config is not None: self.interrupt_config = interrupt_config
-        if max_context_items is not None: self.max_context_items = max_context_items
-        if max_context_tokens is not None: self.max_context_tokens = max_context_tokens
+        if context_window is not None: self.context_window = context_window
         if voice_mail_detector is not None: self.voice_mail_detector = voice_mail_detector
         if realtime_config is not None: self.realtime_config = realtime_config   
         if conversational_graph is not None:
@@ -620,8 +603,8 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         new_pipeline_config["pipeline_mode"] = self.config.pipeline_mode.value
         new_pipeline_config["eou_config"] = asdict(self.eou_config)
         new_pipeline_config["interrupt_config"] = asdict(self.interrupt_config)
-        new_pipeline_config["max_context_items"] = self.max_context_items
-        new_pipeline_config["max_context_tokens"] = self.max_context_tokens
+        new_pipeline_config["context_window"] = self.context_window
+        new_pipeline_config["context_window"] = self.context_window
 
         metrics_collector.traces_flow_manager.create_pipeline_change_trace(time_data, original_pipeline_config, new_pipeline_config)
         self._setup_error_handlers()
@@ -697,9 +680,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                 eou_config=self.eou_config,
                 interrupt_config=self.interrupt_config,
                 conversational_graph=self.conversational_graph,
-                max_context_items=self.max_context_items,
-                max_context_tokens=self.max_context_tokens,
-                max_tool_calls=self.max_tool_calls,
+                context_window=self.context_window,
                 voice_mail_detector=self.voice_mail_detector,
                 realtime_config=self.realtime_config
             )

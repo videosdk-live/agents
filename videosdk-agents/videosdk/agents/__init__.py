@@ -106,7 +106,7 @@ from .dtmf_handler import DTMFHandler
 from .voice_mail_detector import VoiceMailDetector
 from .stt import FallbackSTT
 from .llm import FallbackLLM
-from .llm.context_compressor import ContextCompressor
+from .llm.context_window import ContextWindow
 from .tts import FallbackTTS
 from .utils import run_stt, run_tts
 
@@ -208,5 +208,5 @@ __all__ = [
     "run_stt",
     "run_tts",
     "PlaygroundManager",
-    "ContextCompressor",
+    "ContextWindow",
 ]
