@@ -745,3 +745,79 @@ async def cancel_and_wait(task: asyncio.Task | None) -> None:
         await task
     except asyncio.CancelledError:
         pass
+    
+def format_metrics(raw: dict) -> dict:
+    if not hasattr(format_metrics, "_is_first"):
+        format_metrics._is_first = True
+
+    def clean(data):
+        if not isinstance(data, dict):
+            return data
+        return {
+            k: clean(v)
+            for k, v in data.items()
+            if v is not None and v != {}
+        }
+
+    latency = {
+        "e2eLatency": raw.get("e2eLatency"),
+        "ttfb": raw.get("ttfb")
+    }
+
+    if not raw.get("realtimeProviderClass"):
+        latency.update({
+            "sttLatency": raw.get("sttLatency"),
+            "ttft": raw.get("ttft"),
+            "eouLatency": raw.get("eouLatency")
+        })
+
+    user_text = None
+    agent_text = None
+
+    for event in raw.get("timeline", []):
+        if event.get("eventType") == "user_speech":
+            user_text = event.get("text")
+        elif event.get("eventType") == "agent_speech":
+            agent_text = event.get("text")
+
+    user_text = user_text or raw.get("user_speech")
+    agent_text = agent_text or raw.get("agent_speech")
+
+    speech = {
+        "user": {
+            "eventType": "user_speech",
+            "text": user_text
+        } if user_text else None,
+        "agent": {
+            "eventType": "agent_speech",
+            "text": agent_text
+        } if agent_text else None
+    }
+
+    payload = {
+        "latency": latency,
+        "speech": speech
+    }
+
+    if format_metrics._is_first:
+
+        if raw.get("realtimeProviderClass"):
+            payload["providers"] = {
+                "providerClass": raw.get("realtimeProviderClass"),
+                "modelName": raw.get("realtimeModelName")
+            }
+        else:
+            payload["providers"] = {
+                "llmProviderClass": raw.get("llmProviderClass"),
+                "llmModelName": raw.get("llmModelName"),
+                "sttProviderClass": raw.get("sttProviderClass"),
+                "sttModelName": raw.get("sttModelName"),
+                "ttsProviderClass": raw.get("ttsProviderClass"),
+                "ttsModelName": raw.get("ttsModelName")
+            }
+
+        payload["systemInstructions"] = raw.get("systemInstructions")
+
+        format_metrics._is_first = False
+
+    return clean(payload)    
