@@ -29,6 +29,13 @@ class ConversationalGraphResponse(BaseModel):
     current_state_id:str = Field(None, description="exact state_id of current state")
     
 
+class TokenBudget(BaseModel):
+    """Structured token usage from an LLM response."""
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    cached_tokens: int = 0
+
 class LLMResponse(BaseModel):
     """
     Data model to hold LLM response data.
