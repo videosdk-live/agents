@@ -90,7 +90,6 @@ class SarvamAILLM(LLM):
         while i < len(message_items):
             msg = message_items[i]
 
-            # Handle FunctionCall items — batch consecutive ones into a single assistant message
             if isinstance(msg, FunctionCall):
                 tool_calls = []
                 while i < len(message_items) and isinstance(message_items[i], FunctionCall):
