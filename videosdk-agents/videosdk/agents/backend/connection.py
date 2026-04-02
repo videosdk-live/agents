@@ -362,7 +362,12 @@ class BackendConnection:
         # Wait for registration response
         msg = await self._ws.receive()
         if msg.type == aiohttp.WSMsgType.TEXT:
-            data = json.loads(msg.data)
+            try:
+                data = json.loads(msg.data)
+            except json.JSONDecodeError as e:
+                raise RuntimeError(
+                    f"Failed to parse registration response from backend: {e}"
+                )
             if data.get("type") == "register" and data.get("success"):
                 assigned_worker_id = data.get("worker_id")
                 self._worker_id = assigned_worker_id
@@ -420,7 +425,12 @@ class BackendConnection:
                     logger.warning(f"Unexpected message type: {msg.type}")
                     continue
 
-                data = json.loads(msg.data)
+                try:
+                    data = json.loads(msg.data)
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse server message as JSON: {e}")
+                    continue
+
                 await self._handle_server_message(data)
 
             except Exception as e:
