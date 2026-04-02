@@ -1,5 +1,5 @@
 import aiohttp
-from videosdk.agents import Agent, AgentSession, Pipeline, function_tool, JobContext, RoomOptions, WorkerJob, ContextCompressor
+from videosdk.agents import Agent, AgentSession, Pipeline, function_tool, JobContext, RoomOptions, WorkerJob, ContextWindow
 from videosdk.plugins.google import GoogleLLM
 from videosdk.plugins.deepgram import DeepgramSTT
 from videosdk.plugins.cartesia import CartesiaTTS
@@ -137,18 +137,27 @@ async def start_session(context: JobContext):
         vad=SileroVAD(),
         turn_detector=TurnDetector(),
 
-        # ── Context Management ──────────────────────────────────────
+        # ── Context Window ──────────────────────────────────────────
         #
-        # max_context_tokens: Total token budget for the entire conversation
-        # history sent to the LLM on each call. When exceeded, the oldest
-        # non-protected items are removed. Protected items (system message,
-        # summary, last user message) are never removed.
-        # With 3 tools per city, each city adds ~200 tokens of tool
-        # call/output data. 4000 tokens fits ~5 city plans + conversation.
-        max_context_tokens=4000,
+        # ContextWindow bundles all context management into one object:
+        #   - max_tokens: Token budget for the entire conversation history.
+        #     When exceeded, old turns are compressed then truncated.
+        #     With 3 tools per city, each city adds ~200 tokens.
+        #     4000 tokens fits ~5 city plans + conversation.
+        #
+        #   - max_context_items: Maximum number of items (messages + tool calls).
+        #     Either limit can trigger compression/truncation.
+        #
+        #   - keep_recent_turns: Number of recent user-assistant exchanges
+        #     kept verbatim. Everything older gets summarized by the LLM.
+        #
+        #   - summary_llm: Optional separate LLM for generating summaries.
+        #     If not set, the agent's main LLM is used automatically.
+        #     Example: summary_llm=OpenAILLM(model="gpt-4o-mini")
+        
         # ── Tool Execution ──────────────────────────────────────────
         #
-        # max_tool_calls: Maximum number of tool calls allowed in a single
+        # max_tool_calls_per_turn: Maximum number of tool calls allowed in a single
         # user turn. This is a safety limit to prevent infinite loops where
         # the LLM keeps requesting tools without ever producing a text response.
         #
@@ -173,20 +182,12 @@ async def start_session(context: JobContext):
         #   asyncio.gather, then all results are added to context before the
         #   next LLM call. This is faster than sequential execution.
         #   Google Gemini sends one tool call at a time (always sequential).
-        max_tool_calls=10,
-
-        # context_compressor: Instead of just deleting old messages when
-        # the token budget is exceeded, the compressor first summarizes
-        # them using the agent's own LLM. The summary is stored as a
-        # tagged message so the agent remembers the full conversation arc.
-        #
-        # keep_recent_turns=3 means the last 3 user-assistant exchanges
-        # are always kept verbatim — only older turns get compressed.
-        # You can optionally pass a separate LLM for summaries:
-        #   ContextCompressor(keep_recent_turns=3, llm=OpenAILLM(model="gpt-4o-mini"))
-        context_compressor=ContextCompressor(keep_recent_turns=3),
-
-      
+        context_window=ContextWindow(
+            max_tokens=4000,
+            max_context_items=20,
+            keep_recent_turns=3,
+            max_tool_calls_per_turn=10,
+        ),
     )
 
     session = AgentSession(
