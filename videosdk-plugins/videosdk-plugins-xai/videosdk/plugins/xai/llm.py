@@ -107,58 +107,8 @@ class XAILLM(LLM):
         Implement chat functionality using xAI's API via OpenAI SDK compatibility.
         """
         self._cancelled = False
-        
-        def _format_content(content: Union[str, List[ChatContent]]):
-            if isinstance(content, str):
-                return content
 
-            formatted_parts = []
-            for part in content:
-                if isinstance(part, str):
-                    formatted_parts.append({"type": "text", "text": part})
-                elif isinstance(part, ImageContent):
-                    image_url_data = {"url": part.to_data_url()}
-                    if part.inference_detail != "auto":
-                        image_url_data["detail"] = part.inference_detail
-                    formatted_parts.append(
-                        {
-                            "type": "image_url",
-                            "image_url": image_url_data,
-                        }
-                    )
-            return formatted_parts
-
-            
-        openai_messages = []
-        for msg in messages.items:
-            if msg is None:
-                continue
-
-            if isinstance(msg, ChatMessage):
-                openai_messages.append({
-                    "role": msg.role.value,
-                    "content": _format_content(msg.content),
-                    **({"name": msg.name} if hasattr(msg, "name") else {}),
-                })
-            elif isinstance(msg, FunctionCall):
-                openai_messages.append({
-                    "role": "assistant",
-                    "content": None,
-                    "tool_calls": [{
-                        "id": getattr(msg, "call_id", getattr(msg, "id", "call_unknown")),
-                        "type": "function",
-                        "function": {
-                            "name": msg.name,
-                            "arguments": msg.arguments
-                        }
-                    }]
-                })
-            elif isinstance(msg, FunctionCallOutput):
-                openai_messages.append({
-                    "role": "tool",
-                    "tool_call_id": getattr(msg, "call_id", getattr(msg, "id", "call_unknown")),
-                    "content": msg.output,
-                })
+        openai_messages = messages.to_openai_messages()
 
         completion_params = {
             "model": self.model,

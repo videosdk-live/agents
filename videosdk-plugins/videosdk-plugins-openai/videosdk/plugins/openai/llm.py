@@ -292,78 +292,12 @@ class OpenAILLM(LLM):
             LLMResponse objects containing the model's responses.
         """
         self._cancelled = False
-        
-        def _format_content(content: Union[str, List[ChatContent]]):
-            if isinstance(content, str):
-                return content
-
-            formatted_parts = []
-            for part in content:
-                if isinstance(part, str):
-                    formatted_parts.append({"type": "text", "text": part})
-                elif isinstance(part, ImageContent):
-                    image_url_data = {"url": part.to_data_url()}
-                    if part.inference_detail != "auto":
-                        image_url_data["detail"] = part.inference_detail
-                    formatted_parts.append(
-                        {
-                            "type": "image_url",
-                            "image_url": image_url_data,
-                        }
-                    )
-            return formatted_parts
 
         is_reasoning = self._is_reasoning_model()
 
-        # Build the messages list using the modern tool_calls / tool role format.
-        # FunctionCall → assistant turn with tool_calls; FunctionCallOutput → tool role.
-        openai_messages = []
-        i = 0
-        items = messages.items
-        while i < len(items):
-            msg = items[i]
-            if msg is None:
-                i += 1
-                continue
-            if isinstance(msg, ChatMessage):
-                role = msg.role.value
-                if is_reasoning and role == "system":
-                    role = "developer"
-                openai_messages.append({
-                    "role": role,
-                    "content": _format_content(msg.content),
-                    **({"name": msg.name} if hasattr(msg, "name") and msg.name else {}),
-                })
-                i += 1
-            elif isinstance(msg, FunctionCall):
-                # Collect all consecutive FunctionCall items (parallel tool calls) into one
-                # assistant message with a tool_calls list.
-                tool_calls = []
-                while i < len(items) and isinstance(items[i], FunctionCall):
-                    fc = items[i]
-                    tool_calls.append({
-                        "id": fc.call_id,
-                        "type": "function",
-                        "function": {
-                            "name": fc.name,
-                            "arguments": fc.arguments,
-                        },
-                    })
-                    i += 1
-                openai_messages.append({
-                    "role": "assistant",
-                    "content": None,
-                    "tool_calls": tool_calls,
-                })
-            elif isinstance(msg, FunctionCallOutput):
-                openai_messages.append({
-                    "role": "tool",
-                    "tool_call_id": msg.call_id,
-                    "content": msg.output,
-                })
-                i += 1
-            else:
-                i += 1
+        openai_messages = messages.to_openai_messages(
+            reasoning_model=is_reasoning
+        )
 
         completion_params: dict = {
             "model": self.model,
