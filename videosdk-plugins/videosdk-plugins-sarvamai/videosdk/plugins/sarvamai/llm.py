@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import json
-from typing import Any, AsyncIterator, List, Union, Literal
+from typing import Any, AsyncIterator, List, Union, Literal,Optional
 import traceback
 
 import httpx
@@ -15,7 +15,7 @@ from videosdk.agents import (
 from videosdk.agents.utils import build_openai_schema, is_function_tool
 
 SARVAM_CHAT_COMPLETION_URL = "https://api.sarvam.ai/v1/chat/completions" 
-DEFAULT_MODEL = "sarvam-m" 
+DEFAULT_MODEL = "sarvam-30b" 
 
 class SarvamAILLM(LLM):
     def __init__(
@@ -27,7 +27,11 @@ class SarvamAILLM(LLM):
         tool_choice: ToolChoice = "auto",
         max_completion_tokens: int | None = None,
         reasoning_effort: Literal["low", "medium", "high"] | None = None,
-        wiki_grounding:bool = False
+        wiki_grounding:bool = False,
+        top_p:Optional[int]=None,
+        frequency_penalty:Optional[float]=None,
+        presence_penalty:Optional[float]=None,
+        stop:str|List[str] = None,
     ) -> None:
         """Initialize the SarvamAI LLM plugin.
 
@@ -39,6 +43,10 @@ class SarvamAILLM(LLM):
             max_completion_tokens (Optional[int], optional): The maximum completion tokens to use for the LLM plugin. Defaults to None.
             reasoning_effort (Optional[Literal["low", "medium", "high"]], optional): The reasoning effort to use for the LLM plugin. Defaults to None.
             wiki_grounding (bool): enables Wikipedia search. Defaults to False
+            top_p (int,optional): An alternative to sampling with temperature. Defaults to None. 
+            frequency_penalty (float): Number between -2.0 and 2.0. Positive values penalize new tokens based on their existing frequency in the text so far.
+            presence_penalty (float): Number between -2.0 and 2.0. Positive values penalize new tokens based on whether they appear in the text so far
+            stop (str|List[str]): Up to 4 sequences where the API will stop generating further tokens. The returned text will not contain the stop sequence.
         """
         super().__init__()
         self.api_key = api_key or os.getenv("SARVAMAI_API_KEY")
@@ -51,6 +59,10 @@ class SarvamAILLM(LLM):
         self.max_completion_tokens = max_completion_tokens
         self.reasoning_effort = reasoning_effort
         self.wiki_grounding = wiki_grounding
+        self.top_p = top_p
+        self.frequency_penalty = frequency_penalty
+        self.presence_penalty = presence_penalty
+        self.stop = stop
         self._cancelled = False
         
         self._client = httpx.AsyncClient(
@@ -158,7 +170,10 @@ class SarvamAILLM(LLM):
                 "stream": True,
                 "reasoning_effort": self.reasoning_effort,
                 "wiki_grounding": self.wiki_grounding,
-                "top_p":1
+                "top_p":self.top_p,
+                "frequency_penalty":self.frequency_penalty,
+                "presence_penalty":self.presence_penalty,
+                "stop":self.stop
             }
 
             if tools:
