@@ -246,15 +246,26 @@ class PipelineOrchestrator(EventEmitter[Literal[
                     content=full_response
                 )
 
-                if self.hooks and self.hooks.has_llm_hooks():
-                    modified = await self.hooks.trigger_llm({"text": full_response})
-                    if modified is not None:
-                        full_response = modified
-
                 self.emit("content_generated", {"text": full_response})
 
+                if self.hooks and self.hooks.has_llm_hooks():
+                    try:
+                        await self.hooks.trigger_llm({"text": full_response})
+                    except Exception as e:
+                        logger.error(f"Error in legacy LLM hook: {e}", exc_info=True)
+
+                tts_text = full_response
+                if self.hooks and self.hooks.has_llm_stream_hook():
+                    async def _single_chunk():
+                        yield full_response
+                    parts = []
+                    async for chunk in self.hooks.process_llm_stream(_single_chunk()):
+                        parts.append(chunk)
+                    if parts:
+                        tts_text = "".join(parts)
+
                 if self.speech_generation:
-                    await self.speech_generation.synthesize(full_response)
+                    await self.speech_generation.synthesize(tts_text)
                 else:
                     # No TTS - complete the turn after LLM
                     self.agent.session._emit_agent_state(AgentState.IDLE)
@@ -490,15 +501,17 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 
             self.agent.session._emit_agent_state(AgentState.THINKING)
             llm_stream = self.content_generation.generate(user_text)
-            
+
             q = asyncio.Queue(maxsize=50)
-            
+
             async def collector():
-                """Collect LLM chunks"""
+                """Collect LLM chunks and feed queue for TTS"""
                 response_parts = []
 
                 def _safe_set_agent_response(text: str) -> None:
                     """Only set agent response if this collector still owns the current generation."""
+                    if self.hooks and self.hooks.has_tts_stream_hook():
+                        return
                     if text and self._generation_id == my_generation_id and metrics_collector.current_turn:
                         metrics_collector.set_agent_response(text)
 
@@ -574,7 +587,10 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 
                 if self.speech_generation:
                     try:
-                        await self.speech_generation.synthesize(tts_stream_gen())
+                        text_source = tts_stream_gen()
+                        if self.hooks:
+                            text_source = self.hooks.process_llm_stream(text_source)
+                        await self.speech_generation.synthesize(text_source)
                     except asyncio.CancelledError:
                         if self.speech_generation:
                             await self.speech_generation.interrupt()
@@ -602,12 +618,13 @@ class PipelineOrchestrator(EventEmitter[Literal[
                     role=ChatRole.ASSISTANT,
                     content=full_response
                 )
-                if self.hooks and self.hooks.has_llm_hooks():
-                    modified = await self.hooks.trigger_llm({"text": full_response})
-                    if modified is not None:
-                        full_response = modified
-
                 self.emit("content_generated", {"text": full_response})
+
+                if self.hooks and self.hooks.has_llm_hooks():
+                    try:
+                        await self.hooks.trigger_llm({"text": full_response})
+                    except Exception as e:
+                        logger.error(f"Error in legacy LLM hook: {e}", exc_info=True)
 
                 # For no-TTS modes, complete the turn here since there's no speech_generation
                 if not self.speech_generation:
@@ -636,7 +653,8 @@ class PipelineOrchestrator(EventEmitter[Literal[
         """
         if self.speech_generation:
             try:
-                metrics_collector.set_agent_response(message)
+                if not (self.hooks and self.hooks.has_tts_stream_hook()):
+                    metrics_collector.set_agent_response(message)
                 await self.speech_generation.synthesize(message)
             finally:
                 handle._mark_done()
