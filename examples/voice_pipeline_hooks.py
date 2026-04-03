@@ -78,6 +78,30 @@ async def entrypoint(ctx: JobContext):
     async def on_agent_turn_end():
         logging.info("[AGENT TURN END]")
 
+    @pipeline.on("llm")
+    async def llm_text_filter(text_stream):
+        """
+        Streaming LLM hook: modifies text chunks in real-time before TTS.
+        Strips markdown formatting so TTS doesn't speak asterisks, hashes, etc.
+        each chunk is processed as it arrives from the LLM.
+        """
+        async for chunk in text_stream:
+            chunk = chunk.replace("**", "").replace("__", "")
+            chunk = chunk.replace("# ", "").replace("## ", "").replace("### ", "")
+            chunk = chunk.replace("- ", "").replace("* ", "")
+        
+            yield chunk
+
+    @pipeline.on("llm")
+    async def on_llm(data: dict):
+        """
+        Observation LLM hook: fires after the full response is collected.
+        Use for logging, analytics, or storing to memory.
+        Cannot modify what TTS speaks — use a streaming hook (with yield) for that.
+        """
+        text = data.get("text", "")
+        logging.info(f"[LLM] Generated  {text[:100]}...")
+
     @pipeline.on("tts")
     async def tts_hook(text_stream):
         """
@@ -85,18 +109,11 @@ async def entrypoint(ctx: JobContext):
         """
         async def preprocess_text():
             async for text in text_stream:
-                yield text.replace("AM", "A M").replace("PM", "P M")
+                yield text.replace("Hello", "Heyy")
 
         async for audio in run_tts(preprocess_text()):
             yield audio
 
-    @pipeline.on("llm")
-    async def on_llm(data: dict):
-        """
-        Called when LLM generates content.
-        """
-        text = data.get("text", "")
-        logging.info(f"[LLM] Generated: {text[:100]}...")
 
     @pipeline.on("vision_frame")
     async def vision_hook(frame_stream):
