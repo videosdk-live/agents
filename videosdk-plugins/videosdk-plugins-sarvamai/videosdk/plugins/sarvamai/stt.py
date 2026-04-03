@@ -79,6 +79,12 @@ class SarvamAISTT(STT):
     async def _ensure_websocket(self) -> aiohttp.ClientWebSocketResponse:
         """Ensure WebSocket connection is established."""
         if self._ws is None or self._ws.closed:
+            close_code = self._ws.close_code if self._ws else None
+            if close_code and close_code != 1000:
+                raise RuntimeError(
+                    f"[SarvamAISTT] WebSocket closed with code {close_code}. "
+                    "Please check your SARVAMAI_API_KEY."
+                )
             await self._connect_websocket()
         
         if self._ws is None:
@@ -108,8 +114,17 @@ class SarvamAISTT(STT):
 
         headers = {"api-subscription-key": self.api_key}
         
-        self._ws = await self._session.ws_connect(ws_url, headers=headers)
-        
+        try:
+            self._ws = await self._session.ws_connect(ws_url, headers=headers)
+        except aiohttp.WSServerHandshakeError as e:
+            if e.status in (401, 403):
+                logger.error(f"[SarvamAISTT] Authentication failed (HTTP {e.status}). Please check your SARVAMAI_API_KEY.")
+            else:
+                logger.error(f"[SarvamAISTT] WebSocket handshake failed (HTTP {e.status}): {e.message}")
+            raise
+        except Exception as e:
+            logger.error(f"[SarvamAISTT] Failed to connect WebSocket: {e}", exc_info=True)
+            raise
         self._ws_task = asyncio.create_task(self._process_messages())
 
 
@@ -155,6 +170,12 @@ class SarvamAISTT(STT):
             logger.error(f"[SarvamAISTT] Error in message processing: {e}")
             self.emit("error", str(e))
 
+        close_code = self._ws.close_code if self._ws else None
+        if close_code and close_code != 1000:
+            raise RuntimeError(
+                f"[SarvamAISTT] WebSocket closed with code {close_code}. "
+                "Please check your SARVAMAI_API_KEY."
+            )
     async def _handle_message(self, data: dict) -> None:
         """Handle different message types from Sarvam API."""
         msg_type = data.get("type")
