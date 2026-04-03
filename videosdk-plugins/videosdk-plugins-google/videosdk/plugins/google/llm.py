@@ -163,7 +163,9 @@ class GoogleLLM(LLM):
             (
                 contents,
                 system_instruction,
-            ) = await self._convert_messages_to_contents_async(messages)
+            ) = await messages.to_google_contents(
+                thought_signatures=self._thought_signatures,
+            )
             config_params: dict = {
                 "temperature": self.temperature,
                 **kwargs
@@ -357,116 +359,6 @@ class GoogleLLM(LLM):
                 follow_redirects=True,
             )
         return self._http_client
-
-    async def _convert_messages_to_contents_async(
-        self, messages: ChatContext
-    ) -> tuple[list[types.Content], str | None]:
-        """Convert ChatContext to Google Content format."""
-
-        async def _format_content_parts_async(
-            content: Union[str, List[ChatContent]]
-        ) -> List[types.Part]:
-            if isinstance(content, str):
-                return [types.Part(text=content)]
-
-            if len(content) == 1 and isinstance(content[0], str):
-                return [types.Part(text=content[0])]
-
-            formatted_parts = []
-            for part in content:
-                if isinstance(part, str):
-                    formatted_parts.append(types.Part(text=part))
-                elif isinstance(part, ImageContent):
-                    data_url = part.to_data_url()
-                    if data_url.startswith("data:"):
-                        header, b64_data = data_url.split(",", 1)
-                        media_type = header.split(";")[0].split(":")[1]
-                        image_bytes = base64.b64decode(b64_data)
-                        formatted_parts.append(
-                            types.Part(
-                                inline_data=types.Blob(
-                                    mime_type=media_type, data=image_bytes
-                                )
-                            )
-                        )
-                    else:
-                        # Reuse the shared client; do NOT create a new one per image
-                        client = self._get_http_client()
-                        try:
-                            response = await client.get(data_url)
-                            response.raise_for_status()
-                            image_bytes = response.content
-                            media_type = response.headers.get("Content-Type", "image/jpeg")
-                            formatted_parts.append(
-                                types.Part(
-                                    inline_data=types.Blob(
-                                        mime_type=media_type, data=image_bytes
-                                    )
-                                )
-                            )
-                        except httpx.HTTPStatusError as e:
-                            logger.error(f"Failed to fetch image from URL {data_url}: {e}")
-                            continue
-
-            return formatted_parts
-
-        contents = []
-        system_instruction = None
-
-        for item in messages.items:
-            if isinstance(item, ChatMessage):
-                if item.role == ChatRole.SYSTEM:
-                    if isinstance(item.content, list):
-                        system_instruction = next(
-                            (str(p) for p in item.content if isinstance(p, str)), ""
-                        )
-                    else:
-                        system_instruction = str(item.content)
-                    continue
-                elif item.role == ChatRole.USER:
-                    parts = await _format_content_parts_async(item.content)
-                    contents.append(types.Content(role="user", parts=parts))
-                elif item.role == ChatRole.ASSISTANT:
-                    parts = await _format_content_parts_async(item.content)
-                    contents.append(types.Content(role="model", parts=parts))
-            elif isinstance(item, FunctionCall):
-                args = (
-                    json.loads(item.arguments)
-                    if isinstance(item.arguments, str)
-                    else item.arguments
-                )
-                function_call = types.FunctionCall(name=item.name, args=args)
-                fc_part = types.Part(function_call=function_call)
-
-                thought_sig_b64 = (item.metadata or {}).get("thought_signature")
-                if thought_sig_b64:
-                    try:
-                        sig_bytes = base64.b64decode(thought_sig_b64)
-                        fc_part = types.Part(
-                            function_call=function_call,
-                            thought_signature=sig_bytes,
-                        )
-                    except Exception:
-                        pass
-                elif item.name in self._thought_signatures:
-                    fc_part = types.Part(
-                        function_call=function_call,
-                        thought_signature=self._thought_signatures[item.name],
-                    )
-                contents.append(
-                    types.Content(role="model", parts=[fc_part])
-                )
-            elif isinstance(item, FunctionCallOutput):
-                function_response = types.FunctionResponse(
-                    name=item.name, response={"output": item.output}
-                )
-                contents.append(
-                    types.Content(
-                        role="user", parts=[types.Part(function_response=function_response)]
-                    )
-                )
-
-        return contents, system_instruction
 
     async def aclose(self) -> None:
         await self.cancel_current_generation()

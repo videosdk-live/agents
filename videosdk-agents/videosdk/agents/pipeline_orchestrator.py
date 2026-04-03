@@ -70,7 +70,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
         false_interrupt_pause_duration: float = 2.0,
         resume_on_false_interrupt: bool = False,
         conversational_graph: Any | None = None,
-        max_context_items: int | None = None,
+        context_window: Any | None = None,
         voice_mail_detector: VoiceMailDetector | None = None,
         hooks: "PipelineHooks | None" = None,
     ) -> None:
@@ -132,7 +132,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 agent=agent,
                 llm=llm,
                 conversational_graph=conversational_graph,
-                max_context_items=max_context_items,
+                context_window=context_window,
             )
             # Setup event listeners
             self.content_generation.on("generation_started", lambda data: logger.info("Content generation started"))
@@ -333,33 +333,33 @@ class PipelineOrchestrator(EventEmitter[Literal[
         preflight_text = data["text"]
 
         if self.agent and self.content_generation:
-            user_text = preflight_text
+            context_prefix = None
             if self.agent.knowledge_base:
                 kb_context = await self.agent.knowledge_base.process_query(preflight_text)
                 if kb_context:
-                    user_text = f"{kb_context}\n\nUser: {preflight_text}"
-            
+                    context_prefix = kb_context
+
             self.agent.chat_context.add_message(
                 role=ChatRole.USER,
-                content=user_text
+                content=preflight_text
             )
-            
+
             if self.agent.session:
                 if self.agent.session.current_utterance and not self.agent.session.current_utterance.done():
                     self.agent.session.current_utterance.interrupt()
-                
+
                 handle = UtteranceHandle(utterance_id=f"utt_{uuid.uuid4().hex[:8]}")
                 self.agent.session.current_utterance = handle
             else:
                 handle = UtteranceHandle(utterance_id="utt_fallback")
                 handle._mark_done()
-            
+
             self._preemptive_authorized.clear()
             self._preemptive_cancelled = False
             if metrics_collector:
                 metrics_collector.on_stt_preflight_end()
             self._preemptive_generation_task = asyncio.create_task(
-                self._generate_and_synthesize(user_text, handle, wait_for_authorization=True)
+                self._generate_and_synthesize(preflight_text, handle, wait_for_authorization=True, context_prefix=context_prefix)
             )
     
     async def _handle_preemptive_final(self, final_text: str) -> None:
@@ -385,9 +385,10 @@ class PipelineOrchestrator(EventEmitter[Literal[
             
             await self._cancel_preemptive_generation()
             
-            if self.agent and self.agent.chat_context.messages:
-                if self.agent.chat_context.messages[-1].role == ChatRole.USER:
-                    self.agent.chat_context.messages.pop()
+            if self.agent:
+                msgs = self.agent.chat_context.messages()
+                if msgs and msgs[-1].role == ChatRole.USER:
+                    self.agent.chat_context._items.remove(msgs[-1])
             
             await self._process_final_transcript(final_text)
         
@@ -435,12 +436,13 @@ class PipelineOrchestrator(EventEmitter[Literal[
         if self.hooks and self.hooks.has_user_turn_start_hooks():
             await self.hooks.trigger_user_turn_start(user_text)
 
-        final_user_text = user_text
+        context_prefix = None
         if self.agent.knowledge_base:
             kb_context = await self.agent.knowledge_base.process_query(user_text)
             if kb_context:
-                final_user_text = f"{kb_context}\n\nUser: {user_text}"
+                context_prefix = kb_context
 
+        final_user_text = user_text
         if self.conversational_graph:
             final_user_text = self.conversational_graph.handle_input(user_text)
 
@@ -452,14 +454,14 @@ class PipelineOrchestrator(EventEmitter[Literal[
             role=ChatRole.USER,
             content=final_user_text
         )
-        
+
         if self.agent.session:
             if self.agent.session.current_utterance and not self.agent.session.current_utterance.done():
                 if self.agent.session.current_utterance.is_interruptible:
                     self.agent.session.current_utterance.interrupt()
                 else:
                     logger.info("Current utterance is not interruptible")
-            
+
             handle = UtteranceHandle(utterance_id=f"utt_{uuid.uuid4().hex[:8]}")
             self.agent.session.current_utterance = handle
         else:
@@ -468,14 +470,17 @@ class PipelineOrchestrator(EventEmitter[Literal[
 
         if self._current_generation_task and not self._current_generation_task.done():
             self._current_generation_task.cancel()
-        self._current_generation_task = asyncio.create_task(self._generate_and_synthesize(final_user_text, handle))
+        self._current_generation_task = asyncio.create_task(
+            self._generate_and_synthesize(final_user_text, handle, context_prefix=context_prefix)
+        )
     
     
     async def _generate_and_synthesize(
-        self, 
-        user_text: str, 
+        self,
+        user_text: str,
         handle: UtteranceHandle,
-        wait_for_authorization: bool = False
+        wait_for_authorization: bool = False,
+        context_prefix: str | None = None
     ) -> None:
         """Generate LLM response and synthesize with TTS"""
         self._generation_id += 1
@@ -500,8 +505,8 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 metrics_collector.on_agent_speech_start()
                 
             self.agent.session._emit_agent_state(AgentState.THINKING)
-            llm_stream = self.content_generation.generate(user_text)
-
+            llm_stream = self.content_generation.generate(user_text, context_prefix=context_prefix)
+            
             q = asyncio.Queue(maxsize=50)
 
             async def collector():
@@ -573,18 +578,18 @@ class PipelineOrchestrator(EventEmitter[Literal[
                     while True:
                         if handle.interrupted or (wait_for_authorization and self._preemptive_cancelled):
                             break
-                        
+
                         try:
                             chunk = await asyncio.wait_for(q.get(), timeout=0.1)
                             if chunk is None:
                                 break
                             yield chunk
-                            
+
                         except asyncio.TimeoutError:
                             if handle.interrupted or (wait_for_authorization and self._preemptive_cancelled):
                                 break
                             continue
-                
+
                 if self.speech_generation:
                     try:
                         text_source = tts_stream_gen()
@@ -690,24 +695,24 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 self.speech_understanding._on_stt_transcript = lambda x: None
         
         try:
-            final_instructions = instructions
+            context_prefix = None
             if self.agent.knowledge_base:
                 kb_context = await self.agent.knowledge_base.process_query(instructions)
                 if kb_context:
-                    final_instructions = f"{kb_context}\n\nUser: {instructions}"
-            
-            content_parts = [final_instructions]
+                    context_prefix = kb_context
+
+            content_parts = [instructions]
             if frames:
                 for frame in frames:
                     image_part = ImageContent(image=frame, inference_detail="auto")
                     content_parts.append(image_part)
-            
+
             self.agent.chat_context.add_message(
                 role=ChatRole.USER,
-                content=content_parts if len(content_parts) > 1 else final_instructions
+                content=content_parts if len(content_parts) > 1 else instructions
             )
-            
-            await self._generate_and_synthesize(final_instructions, handle)
+
+            await self._generate_and_synthesize(instructions, handle, context_prefix=context_prefix)
         
         finally:
             if wait_for_playback and self.speech_understanding:
@@ -879,10 +884,11 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 metrics_collector.set_agent_response(self._partial_response)
 
         if self._partial_response and self.agent:
-            self.agent.chat_context.add_message(
+            msg = self.agent.chat_context.add_message(
                 role=ChatRole.ASSISTANT,
                 content=self._partial_response
             )
+            msg.interrupted = True
 
         if metrics_collector.current_turn:
             logger.info("[orchestrator] Completing interrupted turn")
