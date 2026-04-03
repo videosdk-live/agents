@@ -1,8 +1,8 @@
 import aiohttp
 from videosdk.agents import Agent, AgentSession, Pipeline, function_tool, JobContext, RoomOptions, WorkerJob, ContextWindow
-from videosdk.plugins.google import GoogleLLM
 from videosdk.plugins.deepgram import DeepgramSTT
 from videosdk.plugins.cartesia import CartesiaTTS
+from videosdk.plugins.openai import OpenAILLM
 from videosdk.plugins.silero import SileroVAD
 from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
 import logging
@@ -132,7 +132,7 @@ async def start_session(context: JobContext):
 
     pipeline = Pipeline(
         stt=DeepgramSTT(),
-        llm=GoogleLLM(),
+        llm=OpenAILLM(),
         tts=CartesiaTTS(),
         vad=SileroVAD(),
         turn_detector=TurnDetector(),
