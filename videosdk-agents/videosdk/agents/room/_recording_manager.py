@@ -1,4 +1,6 @@
+import asyncio
 import logging
+import time
 import requests
 from typing import Dict, Any, Optional
 
@@ -35,7 +37,8 @@ class RecordingManager:
             logger.info(f"starting participant recording response completed for id {participant_id} and response {response.text}")
             response.raise_for_status()
         except Exception as e:
-            logger.error(f"Error starting recording for participant {participant_id}: {e}")
+            response_text = getattr(getattr(e, 'response', None), 'text', 'N/A')
+            logger.error(f"Error starting recording for participant {participant_id}: {e} | response={response_text}")
 
     async def stop_participant_recording(self, participant_id: str):
         """
@@ -54,36 +57,57 @@ class RecordingManager:
             logger.info(f"stop participant recording response for id {participant_id} and response {response.text}")
             response.raise_for_status()
         except Exception as e:
-            logger.error(f"Error stopping recording for participant {participant_id}: {e}")
+            response_text = getattr(getattr(e, 'response', None), 'text', 'N/A')
+            logger.error(f"Error stopping recording for participant {participant_id}: {e} | response={response_text}")
 
-    async def start_track_recording(self, participant_id: str, kind: str) -> None:
+    async def start_track_recording(self, participant_id: str, kind: str) -> bool:
         """
         Start recording a specific track kind (audio/video/screen_audio/screen_video).
+        Retries up to 3 times within a 3-second window on failure.
+        Returns True on success, False on failure.
         """
         headers = {
             "Authorization": self.auth_token,
             "Content-Type": "application/json",
         }
-        try:
-            response = requests.post(
-                START_TRACK_RECORDING_URL,
-                json={"roomId": self.room_id, "participantId": participant_id, "kind": kind},
-                headers=headers,
-            )
-            logger.info(
-                "starting track recording kind=%s for participant=%s response=%s",
-                kind,
-                participant_id,
-                response.text,
-            )
-            response.raise_for_status()
-        except Exception as e:
-            logger.error(
-                "Error starting track recording kind=%s for participant=%s: %s",
-                kind,
-                participant_id,
-                e,
-            )
+        max_attempts = 3
+        deadline = time.monotonic() + 3.0
+
+        for attempt in range(max_attempts):
+            try:
+                response = requests.post(
+                    START_TRACK_RECORDING_URL,
+                    json={"roomId": self.room_id, "participantId": participant_id, "kind": kind},
+                    headers=headers,
+                )
+                logger.info(
+                    "starting track recording kind=%s for participant=%s (attempt %d/%d) status=%s response=%s",
+                    kind,
+                    participant_id,
+                    attempt + 1,
+                    max_attempts,
+                    response.status_code,
+                    response.text,
+                )
+                response.raise_for_status()
+                return True
+            except Exception as e:
+                response_text = getattr(getattr(e, 'response', None), 'text', 'N/A')
+                logger.error(
+                    "Error starting track recording kind=%s for participant=%s (attempt %d/%d): %s | response=%s",
+                    kind,
+                    participant_id,
+                    attempt + 1,
+                    max_attempts,
+                    e,
+                    response_text,
+                )
+                if attempt + 1 < max_attempts and time.monotonic() < deadline:
+                    await asyncio.sleep(1.0)
+                else:
+                    break
+
+        return False
 
     async def stop_track_recording(self, participant_id: str, kind: str) -> None:
         """
@@ -107,14 +131,22 @@ class RecordingManager:
             )
             response.raise_for_status()
         except Exception as e:
+            response_text = getattr(getattr(e, 'response', None), 'text', 'N/A')
             logger.error(
-                "Error stopping track recording kind=%s for participant=%s: %s",
+                "Error stopping track recording kind=%s for participant=%s: %s | response=%s",
                 kind,
                 participant_id,
                 e,
+                response_text,
             )
 
-    async def merge_participant_recordings(self, session_id: str, local_participant_id: str, participants_data: Dict[str, Any]):
+    async def merge_participant_recordings(
+        self,
+        session_id: str,
+        local_participant_id: str,
+        participants_data: Dict[str, Any],
+        use_track_type: bool = False,
+    ):
         """
         Merge recordings from all participants.
         """
@@ -122,12 +154,20 @@ class RecordingManager:
             "Authorization": self.auth_token,
             "Content-Type": "application/json"
         }
+
+        def _channel_entry(participant_id: str) -> dict:
+            entry: dict = {"participantId": participant_id}
+            if use_track_type:
+                entry["type"] = "track"
+            return entry
+
         try:
             payload = {
+                "roomId": self.room_id,
                 "sessionId": session_id,
-                "channel1": [{"participantId": local_participant_id}],
+                "channel1": [_channel_entry(local_participant_id)],
                 "channel2": [
-                    {"participantId": p_id}
+                    _channel_entry(p_id)
                     for p_id in participants_data.keys()
                 ],
             }
@@ -165,6 +205,10 @@ class RecordingManager:
             for p_id, kinds in track_kinds_by_participant.items():
                 for kind in kinds:
                     await self.stop_track_recording(p_id, kind)
-            
-        await self.merge_participant_recordings(session_id, local_participant_id, participants_data)
+
+        use_track_type = not stop_participants_recording
+        await self.merge_participant_recordings(
+            session_id, local_participant_id, participants_data,
+            use_track_type=use_track_type,
+        )
         logger.info("stopped and merged recordings")
