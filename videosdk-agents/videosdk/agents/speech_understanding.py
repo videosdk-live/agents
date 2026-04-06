@@ -115,14 +115,22 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
 
             if self.denoise:
                 audio_data = await self.denoise.denoise(audio_data)
-            
+
+            tasks = []
             if self.stt:
-                async with self.stt_lock:
-                    await self.stt.process_audio(audio_data)
-            
+                async def _stt_process():
+                    async with self.stt_lock:
+                        await self.stt.process_audio(audio_data)
+                tasks.append(_stt_process())
             if self.vad:
-                await self.vad.process_audio(audio_data)
-                
+                tasks.append(self.vad.process_audio(audio_data))
+
+            if tasks:
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                for r in results:
+                    if isinstance(r, Exception):
+                        logger.error(f"Audio processing component failed: {r}")
+
         except Exception as e:
             logger.error(f"Audio processing failed: {str(e)}")
             self.emit("error", f"Audio processing failed: {str(e)}")
@@ -380,7 +388,13 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
         self._accumulated_transcript = ""
         self._waiting_for_more_speech = False
         self._preemptive_transcript = None
-        
+
+        if self.vad:
+            try:
+                await self.vad.flush()
+            except Exception as e:
+                logger.error(f"Error flushing VAD: {e}")
+
         self.stt = None
         self.vad = None
         self.turn_detector = None

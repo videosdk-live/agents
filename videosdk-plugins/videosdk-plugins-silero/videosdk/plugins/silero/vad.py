@@ -95,13 +95,24 @@ class SileroVAD(BaseVAD):
         return self._smoothed_prob
 
     def _flush_capture_buffer(self) -> None:
+        self._buffer_full = False  
         if self._capture_ptr <= self._pad_frames:
             return
 
         retained = self._audio_capture[self._capture_ptr - self._pad_frames : self._capture_ptr].copy()
-        self._buffer_full = False
         self._audio_capture[: self._pad_frames] = retained
         self._capture_ptr = self._pad_frames
+        self._silero.reset_state()
+        self._smoothed_prob = 0.0
+
+    async def flush(self) -> None:
+        """Reset all VAD state for clean shutdown or restart."""
+        self._raw_queue = np.array([], dtype=np.int16)
+        self._model_queue = np.array([], dtype=np.float32)
+        self._fract_offset = 0.0
+        if self._silero:
+            self._silero.reset_state()
+        self._smoothed_prob = 0.0
 
     async def process_audio(self, audio_frames: bytes, **kwargs: Any) -> None:
         try:
@@ -139,6 +150,8 @@ class SileroVAD(BaseVAD):
                 samples_needed = (frame_size * ratio) + self._fract_offset
                 consume_count = int(samples_needed)
                 self._fract_offset = samples_needed - consume_count
+                if self._fract_offset > ratio:
+                    self._fract_offset = 0.0
 
                 space_left = len(self._audio_capture) - self._capture_ptr
                 copy_amt = min(consume_count, space_left)
@@ -146,7 +159,7 @@ class SileroVAD(BaseVAD):
                 if copy_amt > 0 and len(self._raw_queue) >= consume_count:
                     self._audio_capture[self._capture_ptr : self._capture_ptr + copy_amt] = self._raw_queue[:copy_amt]
                     self._capture_ptr += copy_amt
-                elif not self._buffer_full:
+                elif copy_amt == 0 and not self._buffer_full:
                     self._buffer_full = True
                     logger.warning("VAD buffer full, dropping new samples")
 
@@ -188,8 +201,6 @@ class SileroVAD(BaseVAD):
 
                 if len(self._raw_queue) >= consume_count:
                     self._raw_queue = self._raw_queue[consume_count:]
-                else:
-                    self._raw_queue = np.array([], dtype=np.int16)
 
                 self._model_queue = self._model_queue[frame_size:]
 
@@ -211,8 +222,17 @@ class SileroVAD(BaseVAD):
                 silence_duration=self._active_silence_time,
             ),
         )
-        if self._vad_callback:
-            asyncio.create_task(self._vad_callback(evt))
+        callback = self._vad_callback  
+        if callback:
+            task = asyncio.create_task(callback(evt))
+            task.add_done_callback(self._on_dispatch_done)
+
+    def _on_dispatch_done(self, task: asyncio.Task) -> None:
+        if not task.cancelled() and task.exception():
+            logger.error(
+                f"VAD callback failed: {task.exception()}",
+                exc_info=task.exception(),
+            )
 
     async def aclose(self) -> None:
         try:

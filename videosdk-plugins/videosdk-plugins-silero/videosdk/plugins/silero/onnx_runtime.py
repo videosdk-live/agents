@@ -20,7 +20,16 @@ class VadModelWrapper:
         
         self._hidden_state = np.zeros((2, 1, 128), dtype=np.float32)
         self._prev_context = np.zeros((1, self._history_len), dtype=np.float32)
-        
+
+    def reset_state(self) -> None:
+        """Reset hidden state and context to initial values.
+
+        Call when audio continuity is broken (e.g., after buffer flush)
+        to prevent the model from processing discontinuous audio.
+        """
+        self._hidden_state = np.zeros((2, 1, 128), dtype=np.float32)
+        self._prev_context = np.zeros((1, self._history_len), dtype=np.float32)
+
     @property
     def frame_size(self) -> int:
         return self._frame_size
