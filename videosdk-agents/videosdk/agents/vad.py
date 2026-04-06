@@ -77,6 +77,10 @@ class VAD(EventEmitter[Literal["error", "info"]]):
         """
         raise NotImplementedError
 
+    async def flush(self) -> None:
+        """Signal that no more audio will arrive. Subclasses may override."""
+        pass
+
     async def aclose(self) -> None:
         """Cleanup resources"""
         logger.info(f"Cleaning up VAD: {self.label}")

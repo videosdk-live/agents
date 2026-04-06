@@ -1,13 +1,26 @@
 import importlib.resources
 import atexit
+import os
+import logging
+import urllib.request
 import numpy as np
-import onnxruntime  
+import onnxruntime
 from contextlib import ExitStack
-_resource_files = ExitStack()
+from pathlib import Path
 
+_resource_files = ExitStack()
 atexit.register(_resource_files.close)
 
+logger = logging.getLogger(__name__)
+
+_MODEL_DOWNLOAD_URL = (
+    "https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx"
+)
+_CACHE_DIR = Path.home() / ".cache" / "videosdk" / "silero"
+
 SAMPLE_RATES = [8000, 16000]
+
+
 class VadModelWrapper:
     def __init__(self, *, session: onnxruntime.InferenceSession, rate: int) -> None:
         if rate not in SAMPLE_RATES:
@@ -20,7 +33,16 @@ class VadModelWrapper:
         
         self._hidden_state = np.zeros((2, 1, 128), dtype=np.float32)
         self._prev_context = np.zeros((1, self._history_len), dtype=np.float32)
-        
+
+    def reset_state(self) -> None:
+        """Reset hidden state and context to initial values.
+
+        Call when audio continuity is broken (e.g., after buffer flush)
+        to prevent the model from processing discontinuous audio.
+        """
+        self._hidden_state = np.zeros((2, 1, 128), dtype=np.float32)
+        self._prev_context = np.zeros((1, self._history_len), dtype=np.float32)
+
     @property
     def frame_size(self) -> int:
         return self._frame_size
@@ -59,21 +81,28 @@ class VadModelWrapper:
     
     @staticmethod
     def create_inference_session(use_cpu_only: bool) -> onnxruntime.InferenceSession:
-        model_path = importlib.resources.files("videosdk.plugins.silero.model") / "silero_vad.onnx"
-        with importlib.resources.as_file(model_path) as temp_path:
-            session_opts = onnxruntime.SessionOptions()
-            session_opts.inter_op_num_threads = 1
-            session_opts.intra_op_num_threads = 1
-            session_opts.execution_mode = onnxruntime.ExecutionMode.ORT_SEQUENTIAL
+        session_opts = onnxruntime.SessionOptions()
+        session_opts.inter_op_num_threads = 1
+        session_opts.intra_op_num_threads = 1
+        session_opts.execution_mode = onnxruntime.ExecutionMode.ORT_SEQUENTIAL
 
-            providers = (
-                ["CPUExecutionProvider"]
-                if use_cpu_only and "CPUExecutionProvider" in onnxruntime.get_available_providers()
-                else None
-            )
+        providers = (
+            ["CPUExecutionProvider"]
+            if use_cpu_only and "CPUExecutionProvider" in onnxruntime.get_available_providers()
+            else None
+        )
 
-            return onnxruntime.InferenceSession(
-                str(temp_path),
-                sess_options=session_opts,
-                providers=providers
-            )
+        try:
+            model_path = importlib.resources.files("videosdk.plugins.silero.model") / "silero_vad.onnx"
+            resolved = _resource_files.enter_context(importlib.resources.as_file(model_path))
+            return onnxruntime.InferenceSession(str(resolved), sess_options=session_opts, providers=providers)
+        except Exception as e:
+            logger.warning(f"Bundled model failed: {e}, downloading...")
+
+        cached = str(_CACHE_DIR / "silero_vad.onnx")
+        if not os.path.exists(cached):
+            os.makedirs(str(_CACHE_DIR), exist_ok=True)
+            urllib.request.urlretrieve(_MODEL_DOWNLOAD_URL, cached)
+            logger.info("Silero VAD model downloaded")
+
+        return onnxruntime.InferenceSession(cached, sess_options=session_opts, providers=providers)
