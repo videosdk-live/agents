@@ -364,7 +364,9 @@ class MetricsCollector:
 
         # Send to playground
         if self.playground and self.playground_manager:
-            self.playground_manager.send_cascading_metrics(metrics=self.current_turn, full_turn_data=True)
+            turn_dict = asdict(self.current_turn)
+            turn_dict.pop('user_speech', None)
+            self.playground_manager.send_cascading_metrics(metrics=turn_dict, full_turn_data=True)
 
         # Serialize and send analytics
         interaction_data = self._serialize_turn(self.current_turn)

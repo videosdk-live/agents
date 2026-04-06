@@ -20,6 +20,7 @@ from .utterance_handle import UtteranceHandle
 from .utils import UserState, AgentState
 from .voice_mail_detector import VoiceMailDetector
 from .metrics import metrics_collector
+from conversational_graph._internal.engine.executor import END_STREAM
 
 if TYPE_CHECKING:
     from .agent import Agent
@@ -206,6 +207,104 @@ class PipelineOrchestrator(EventEmitter[Literal[
         """
         if self.speech_understanding:
             await self.speech_understanding.process_audio(audio_data)
+    
+    async def process_graph_text(self, text: str) -> None:
+        """
+        Process input directly if graph present (bypasses STT).
+
+        Args:
+            text: User text input
+        """
+        if not self.agent:
+            logger.warning("No agent available for text processing")
+            return
+
+        metrics_collector.start_turn()
+
+        self._is_interrupted = False
+        self._generation_id += 1
+        my_generation_id = self._generation_id
+
+        if self.conversational_graph._agent is None and self.agent:
+            self.conversational_graph.set_agent(self.agent)
+
+        graph_prompt = await self.conversational_graph.handle_input(text)
+
+        if graph_prompt is END_STREAM:
+            logger.info("[orchestrator] END_STREAM detected - skipping LLM call")
+            return
+
+        if graph_prompt is not None:
+            text = graph_prompt
+
+        self.agent.chat_context.add_message(
+            role=ChatRole.USER,
+            content=text
+        )
+
+        if not self.speech_understanding:
+            metrics_collector.on_user_speech_start()
+            metrics_collector.on_user_speech_end()
+            
+            if not self.speech_generation:
+                metrics_collector.on_agent_speech_start()
+
+        if self.content_generation:
+            self.agent.session._emit_agent_state(AgentState.THINKING)
+            full_response = ""
+            async for response_chunk in self.content_generation.generate(text):
+                if response_chunk.content:
+                        full_response += response_chunk.content
+                if response_chunk.metadata:
+                    if response_chunk.metadata.get("graph_response"):
+                        graph_response = response_chunk.metadata.get("graph_response")
+                
+                        if self.conversational_graph and graph_response:
+                            new_response = await self.conversational_graph.handle_decision(
+                                self.agent,
+                                graph_response
+                            )
+                            if new_response is END_STREAM:
+                                logger.info("[orchestrator] END_STREAM from handle_decision - skipping response processing")
+                                return
+                            if new_response is not None:
+                                full_response = new_response
+
+            if full_response:
+                self.agent.chat_context.add_message(
+                    role=ChatRole.ASSISTANT,
+                    content=full_response
+                )
+
+                self.emit("content_generated", {"text": full_response})
+
+                if self.hooks and self.hooks.has_llm_hooks():
+                    try:
+                        await self.hooks.trigger_llm({"text": full_response})
+                    except Exception as e:
+                        logger.error(f"Error in legacy LLM hook: {e}", exc_info=True)
+
+                tts_text = full_response
+                if self.hooks and self.hooks.has_llm_stream_hook():
+                    async def _single_chunk():
+                        yield full_response
+                    parts = []
+                    async for chunk in self.hooks.process_llm_stream(_single_chunk()):
+                        parts.append(chunk)
+                    if parts:
+                        tts_text = "".join(parts)
+
+                if self.speech_generation:
+                    await self.speech_generation.synthesize(tts_text)
+                else:
+                    # No TTS - complete the turn after LLM
+                    self.agent.session._emit_agent_state(AgentState.IDLE)
+                    self.agent.session._emit_user_state(UserState.IDLE)
+                    metrics_collector.on_agent_speech_end()
+                    metrics_collector.set_agent_response(full_response)
+                    metrics_collector.complete_turn()
+
+                self.emit("synthesis_complete", {})
     
     async def process_text(self, text: str) -> None:
         """
@@ -443,8 +542,6 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 context_prefix = kb_context
 
         final_user_text = user_text
-        if self.conversational_graph:
-            final_user_text = self.conversational_graph.handle_input(user_text)
 
         if not metrics_collector.current_turn:
             metrics_collector.start_turn()
@@ -470,9 +567,14 @@ class PipelineOrchestrator(EventEmitter[Literal[
 
         if self._current_generation_task and not self._current_generation_task.done():
             self._current_generation_task.cancel()
-        self._current_generation_task = asyncio.create_task(
-            self._generate_and_synthesize(final_user_text, handle, context_prefix=context_prefix)
+        if self.conversational_graph:
+            self._current_generation_task = asyncio.create_task(
+            self.process_graph_text(final_user_text)
         )
+        else:
+            self._current_generation_task = asyncio.create_task(
+                self._generate_and_synthesize(final_user_text, handle, context_prefix=context_prefix)
+            )
     
     
     async def _generate_and_synthesize(
@@ -540,9 +642,6 @@ class PipelineOrchestrator(EventEmitter[Literal[
 
                     if not handle.interrupted:
                         await q.put(None)
-
-                    if self.conversational_graph and metadata.get("graph_response"):
-                        _ = await self.conversational_graph.handle_decision(self.agent, metadata.get("graph_response"))
 
                     full = "".join(response_parts)
                     _safe_set_agent_response(full)

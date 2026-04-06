@@ -418,8 +418,6 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                 self.llm.set_agent(agent)
         
         elif not self.config.is_realtime:
-            if self.conversational_graph:
-                self.conversational_graph.compile()
             self.orchestrator = PipelineOrchestrator(
                 agent=agent,
                 stt=self.stt,
@@ -539,8 +537,6 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         if realtime_config is not None: self.realtime_config = realtime_config   
         if conversational_graph is not None:
             self.conversational_graph = conversational_graph
-            if self.conversational_graph and hasattr(self.conversational_graph, 'compile'):
-                self.conversational_graph.compile()
             
         # Update LLM / Realtime Model
         await swap_llm(self, llm)

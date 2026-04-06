@@ -18,7 +18,7 @@ class PlaygroundManager:
                 metrics (dict): The metrics to send.
                 full_turn_data (bool): Whether to send full turn data.
         """
-        if full_turn_data:
+        if full_turn_data and not isinstance(metrics, dict):
             metrics = asdict(metrics)
         metrics = json.dumps(metrics)
         publish_config = PubSubPublishConfig(

@@ -375,7 +375,13 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                     if _tool_loop_text_yielded:
                         break
                 else:
-                    if llm_chunk_resp and llm_chunk_resp.content:
+                    has_content = llm_chunk_resp and llm_chunk_resp.content
+                    has_graph_response = (
+                        llm_chunk_resp
+                        and llm_chunk_resp.metadata
+                        and llm_chunk_resp.metadata.get("graph_response")
+                    )
+                    if has_content or has_graph_response:
                         self.emit("generation_chunk", {
                             "content": llm_chunk_resp.content,
                             "metadata": llm_chunk_resp.metadata

@@ -77,7 +77,10 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
     @property
     def instructions(self) -> str:
         """Get the instructions for the agent"""
-        return self._instructions
+        base_instructions=""
+        if self.session and self.session.pipeline.conversational_graph:
+            base_instructions = self.session.pipeline.conversational_graph.get_system_instructions()
+        return base_instructions + self._instructions
 
     @instructions.setter
     def instructions(self, value: str) -> None:
