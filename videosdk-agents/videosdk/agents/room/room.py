@@ -576,6 +576,8 @@ class VideoSDKHandler(BaseTransportHandler):
             if participant.meta_data
             else False
         )
+        logger.info(f"$$$$11111 partcipant {len(self.participants_data)}")
+        logger.info(f"$$$$11111 Participant {peer_name} joined with metadata: >>>>>>>>>>>>>>>>>>>>>>{participant.meta_data}")
         print(f"Participant {peer_name} joined with metadata: >>>>>>>>>>>>>>>>>>>>>>{participant.meta_data}")
         
         if self.participants_data[participant.id]["enable_agent_events"] and self.transport_event_sender is None:
@@ -846,6 +848,7 @@ class VideoSDKHandler(BaseTransportHandler):
         self.input_stream_manager.cancel_tasks()
         
         if hasattr(self, "transport_event_sender") and self.transport_event_sender:
+            logger.info("$$$$11111 ################################## $$$$ AT ROOMCleaning up transport_event_sender")
             self.transport_event_sender.cleanup()
         
         if hasattr(self, "audio_track") and self.audio_track:

@@ -290,6 +290,8 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
                 metrics_collector.set_provider_info("tts", p_class, p_model)
 
         # Traces flow manager setup
+        
+        logger.info("$$$$11111 Setting up traces flow manager for agent session")
         traces_flow_manager = metrics_collector.traces_flow_manager
         if traces_flow_manager:
             config_attributes = {

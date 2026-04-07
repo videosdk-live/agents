@@ -845,6 +845,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                 logger.info("Started orchestrator for hybrid_stt mode")
         else:
             if self.orchestrator:
+                logger.info("$$$$11111 Starting orchestrator for traditional mode")
                 await self.orchestrator.start()
     
     async def send_message(self, message: str, handle: UtteranceHandle) -> None:

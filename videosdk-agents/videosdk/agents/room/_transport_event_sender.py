@@ -35,6 +35,7 @@ class TransportEventSender:
             return self._transport_agent_cache
         
         if self.room_handler.meeting and self.room_handler.meeting.local_participant:
+            logger.info("$$$$11111 Attempting to find transport agent in meeting local participant")
             participant = self.room_handler.meeting.local_participant
             if isinstance(participant, TransportAgent):
                 self._transport_agent_cache = participant
