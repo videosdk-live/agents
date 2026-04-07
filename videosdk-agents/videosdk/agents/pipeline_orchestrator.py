@@ -230,7 +230,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
 
         graph_prompt = await self.conversational_graph.handle_input(text)
 
-        if graph_prompt is END_STREAM:
+        if graph_prompt == END_STREAM:
             logger.info("[orchestrator] END_STREAM detected - skipping LLM call")
             return
 
@@ -264,7 +264,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
                                 self.agent,
                                 graph_response
                             )
-                            if new_response is END_STREAM:
+                            if new_response == END_STREAM:
                                 logger.info("[orchestrator] END_STREAM from handle_decision - skipping response processing")
                                 return
                             if new_response is not None:
