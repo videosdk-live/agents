@@ -8,7 +8,6 @@ from enum import Enum, unique
 import logging
 import requests
 import sys
-from .playground_manager import PlaygroundManager
 
 if TYPE_CHECKING:
     from .pipeline import Pipeline
@@ -165,7 +164,6 @@ class RoomOptions:
     avatar: Optional[Any] = None
     join_meeting: Optional[bool] = True
     on_room_error: Optional[Callable[[Any], None]] = None
-    send_analytics_to_pubsub: Optional[bool] = False
     # Session management options
     auto_end_session: bool = True
     session_timeout_seconds: Optional[int] = 5
@@ -411,7 +409,6 @@ class JobContext:
         self._meeting_joined_event: asyncio.Event = asyncio.Event()
         self._wait_for_meeting_join: bool = False
         self.want_console = len(sys.argv) > 1 and sys.argv[1].lower() == "console"
-        self.playground_manager: Optional["PlaygroundManager"] = None
         
         from .metrics import metrics_collector
         self.metrics_collector = metrics_collector
