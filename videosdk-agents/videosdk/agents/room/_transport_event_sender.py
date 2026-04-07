@@ -96,6 +96,7 @@ class TransportEventSender:
             try:
                 payload = format_metrics(data)
                 await agent.async_send_metrics(payload)
+                print(f"HERE LOOK HERE METRICS SENT>>>>>>>>>>>>>>>>> ?????????: {payload}")
             except Exception as e:
                 logger.error(f"Error sending agent metrics via transport: {e}")
 

@@ -576,6 +576,7 @@ class VideoSDKHandler(BaseTransportHandler):
             if participant.meta_data
             else False
         )
+        print(f"Participant {peer_name} joined with metadata: >>>>>>>>>>>>>>>>>>>>>>{participant.meta_data}")
         
         if self.participants_data[participant.id]["enable_agent_events"] and self.transport_event_sender is None:
             logger.info("Initializing transport_event_sender because participant has enableAgentEvents=True")
