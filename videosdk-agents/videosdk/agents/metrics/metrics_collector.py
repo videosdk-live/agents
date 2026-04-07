@@ -376,7 +376,7 @@ class MetricsCollector:
 
         transformed_data = self._remove_negatives(transformed_data)
         
-        print(">>>>>>>>>>>>>>>>>>>> HERE LOOK HERE METRICS TO BE SENT ?????????: ", transformed_data)
+        logger.info(">>>>>>>>>>>>>>>>>>>> HERE LOOK HERE METRICS TO BE SENT ?????????: ", transformed_data)
         global_event_emitter.emit("TURN_METRICS_ADDED", {"metrics": transformed_data})
 
         self.analytics_client.send_interaction_analytics_safe(transformed_data)
