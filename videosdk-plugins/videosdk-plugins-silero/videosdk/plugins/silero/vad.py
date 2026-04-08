@@ -95,15 +95,13 @@ class SileroVAD(BaseVAD):
         return self._smoothed_prob
 
     def _flush_capture_buffer(self) -> None:
-        self._buffer_full = False  
         if self._capture_ptr <= self._pad_frames:
             return
 
         retained = self._audio_capture[self._capture_ptr - self._pad_frames : self._capture_ptr].copy()
+        self._buffer_full = False
         self._audio_capture[: self._pad_frames] = retained
         self._capture_ptr = self._pad_frames
-        self._silero.reset_state()
-        self._smoothed_prob = 0.0
 
     async def flush(self) -> None:
         """Reset all VAD state for clean shutdown or restart."""
@@ -198,9 +196,13 @@ class SileroVAD(BaseVAD):
                         logger.info("[VAD DEBUG]: END_OF_SPEECH")
                         self._active_speech_time = 0.0
                         self._flush_capture_buffer()
+                        self._silero.reset_state()
+                        self._smoothed_prob = 0.0
 
                 if len(self._raw_queue) >= consume_count:
                     self._raw_queue = self._raw_queue[consume_count:]
+                else:
+                    self._raw_queue = np.array([], dtype=np.int16)
 
                 self._model_queue = self._model_queue[frame_size:]
 
