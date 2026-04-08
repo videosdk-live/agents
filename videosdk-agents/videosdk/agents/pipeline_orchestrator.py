@@ -20,7 +20,7 @@ from .utterance_handle import UtteranceHandle
 from .utils import UserState, AgentState
 from .voice_mail_detector import VoiceMailDetector
 from .metrics import metrics_collector
-from conversational_graph._internal.engine.executor import END_STREAM
+from videosdk.conversational_graph._internal.engine.executor import END_STREAM
 
 if TYPE_CHECKING:
     from .agent import Agent
