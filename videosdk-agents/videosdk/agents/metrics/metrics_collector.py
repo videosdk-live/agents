@@ -30,7 +30,6 @@ from ..event_bus import global_event_emitter
 
 if TYPE_CHECKING:
     from .traces_flow import TracesFlowManager
-    from ..playground_manager import PlaygroundManager
 
 logger = logging.getLogger(__name__)
 
@@ -53,8 +52,6 @@ class MetricsCollector:
         self.turns: List[TurnMetrics] = []
         self.analytics_client = AnalyticsClient()
         self.traces_flow_manager: Optional[TracesFlowManager] = None
-        self.playground_manager: Optional[PlaygroundManager] = None
-        self.playground: bool = False
 
         # Pipeline configuration
         self.pipeline_mode: Optional[str] = None
@@ -225,11 +222,6 @@ class MetricsCollector:
         """Set the TracesFlowManager instance."""
         self.traces_flow_manager = manager
 
-    def set_playground_manager(self, manager: Optional[PlaygroundManager]) -> None:
-        """Set the PlaygroundManager instance."""
-        self.playground = True
-        self.playground_manager = manager
-
     def finalize_session(self) -> None:
         """Finalize the session, completing any in-progress turn."""
         if self.current_turn:
@@ -362,10 +354,6 @@ class MetricsCollector:
 
         self.turns.append(self.current_turn)
 
-        # Send to playground
-        if self.playground and self.playground_manager:
-            self.playground_manager.send_cascading_metrics(metrics=self.current_turn, full_turn_data=True)
-
         # Serialize and send analytics
         interaction_data = self._serialize_turn(self.current_turn)
         transformed_data = self._transform_to_camel_case(interaction_data)
@@ -492,11 +480,6 @@ class MetricsCollector:
 
             logger.info(f"user speech duration: {self.current_turn.user_speech_duration}ms")
 
-            if self.playground and self.playground_manager:
-                self.playground_manager.send_cascading_metrics(
-                    metrics={"user_speech_duration": self.current_turn.user_speech_duration}
-                )
-
     def set_vad_config(self, vad_config: Dict[str, Any]) -> None:
         """Set VAD configuration."""
         if not self.current_turn.vad_metrics:
@@ -547,9 +530,6 @@ class MetricsCollector:
             stt.stt_duration = duration
             logger.info(f"stt latency: {stt_latency}ms | stt confidence: {confidence} | stt duration: {duration}ms")
 
-            if self.playground and self.playground_manager:
-                self.playground_manager.send_cascading_metrics(metrics={"stt_latency": stt_latency})
-
         if transcript:
             stt.stt_transcript = transcript
 
@@ -567,11 +547,6 @@ class MetricsCollector:
                 stt.stt_preflight_transcript = transcript
                 logger.info(f"stt preflight latency: {stt.stt_preflight_latency}ms")
 
-                if self.playground and self.playground_manager:
-                    self.playground_manager.send_cascading_metrics(
-                        metrics={"stt_preflight_latency": stt.stt_preflight_latency}
-                    )
-
     def on_stt_interim_end(self) -> None:
         """Called when STT interim event is received."""
         if self.current_turn and self.current_turn.stt_metrics:
@@ -582,11 +557,6 @@ class MetricsCollector:
                     stt.stt_interim_end_time - stt.stt_start_time
                 )
                 logger.info(f"stt interim latency: {stt.stt_interim_latency}ms")
-
-                if self.playground and self.playground_manager:
-                    self.playground_manager.send_cascading_metrics(
-                        metrics={"stt_interim_latency": stt.stt_interim_latency}
-                    )
 
     def set_stt_usage(self, input_tokens: int = 0, output_tokens: int = 0, total_tokens: int = 0) -> None:
         """Set STT token usage."""
@@ -631,9 +601,6 @@ class MetricsCollector:
                 eou.eou_latency = eou_latency
                 logger.info(f"eou latency: {eou_latency}ms")
 
-                if self.playground and self.playground_manager:
-                    self.playground_manager.send_cascading_metrics(metrics={"eou_latency": eou_latency})
-
             self._eou_start_time = None
     
     def on_wait_for_additional_speech(self, duration: float, eou_probability: float):
@@ -668,9 +635,6 @@ class MetricsCollector:
                 llm.llm_ttft = self._round_latency(llm.llm_first_token_time - llm.llm_start_time)
                 logger.info(f"llm ttft: {llm.llm_ttft}ms")
 
-                if self.playground and self.playground_manager:
-                    self.playground_manager.send_cascading_metrics(metrics={"llm_ttft": llm.llm_ttft})
-
     def on_llm_complete(self) -> None:
         """Called when LLM processing completes."""
         if self._llm_start_time:
@@ -682,9 +646,6 @@ class MetricsCollector:
                 llm.llm_end_time = llm_end_time
                 llm.llm_duration = llm_duration
                 logger.info(f"llm duration: {llm_duration}ms")
-
-                if self.playground and self.playground_manager:
-                    self.playground_manager.send_cascading_metrics(metrics={"llm_duration": llm_duration})
 
             self._llm_start_time = None
 
@@ -713,14 +674,6 @@ class MetricsCollector:
             latency_seconds = llm.llm_duration / 1000
             llm.tokens_per_second = round(llm.completion_tokens / latency_seconds, 2)
 
-        if self.playground and self.playground_manager:
-            self.playground_manager.send_cascading_metrics(metrics={
-                "prompt_tokens": llm.prompt_tokens,
-                "completion_tokens": llm.completion_tokens,
-                "total_tokens": llm.total_tokens,
-                "tokens_per_second": llm.tokens_per_second,
-            })
-
     # ──────────────────────────────────────────────
     # TTS metrics
     # ──────────────────────────────────────────────
@@ -746,9 +699,6 @@ class MetricsCollector:
                 tts.ttfb = self._round_latency(now - self._tts_start_time)
                 tts.tts_first_byte_time = now
                 logger.info(f"tts ttfb: {tts.ttfb}ms")
-
-                if self.playground and self.playground_manager:
-                    self.playground_manager.send_cascading_metrics(metrics={"ttfb": tts.ttfb})
 
             self._tts_first_byte_time = now
 
@@ -789,14 +739,6 @@ class MetricsCollector:
                     agent_speech_end_time - self.current_turn.agent_speech_start_time
                 )
 
-                if self.playground and self.playground_manager:
-                    self.playground_manager.send_cascading_metrics(
-                        metrics={"tts_latency": self.current_turn.tts_metrics[-1].tts_latency if self.current_turn.tts_metrics else None}
-                    )
-                    self.playground_manager.send_cascading_metrics(
-                        metrics={"agent_speech_duration": self.current_turn.agent_speech_duration}
-                    )
-
             self._tts_start_time = None
             self._tts_first_byte_time = None
         elif self._tts_start_time:
@@ -811,9 +753,6 @@ class MetricsCollector:
             tts = self.current_turn.tts_metrics[-1]
             tts.tts_characters = (tts.tts_characters or 0) + count
 
-            if self.playground and self.playground_manager:
-                self.playground_manager.send_cascading_metrics(metrics={"tts_characters": tts.tts_characters})
-
     # ──────────────────────────────────────────────
     # Interruption metrics
     # ──────────────────────────────────────────────
@@ -825,11 +764,6 @@ class MetricsCollector:
             if self.current_turn:
                 self.current_turn.is_interrupted = True
                 logger.info(f"User interrupted the agent. Total interruptions: {self._total_interruptions}")
-
-            if self.playground and self.playground_manager and self.current_turn:
-                self.playground_manager.send_cascading_metrics(
-                    metrics={"interrupted": self.current_turn.is_interrupted}
-                )
 
     def on_false_interrupt_start(self, pause_duration: Optional[float] = None) -> None:
         """Called when a false interrupt is detected."""
@@ -898,11 +832,6 @@ class MetricsCollector:
             }
             self.current_turn.function_tool_timestamps.append(tool_timestamp)
 
-            if self.playground and self.playground_manager:
-                self.playground_manager.send_cascading_metrics(
-                    metrics={"function_tool_timestamps": self.current_turn.function_tool_timestamps}
-                )
-
     def add_mcp_tool_call(
         self,
         tool_type: str = "local",
@@ -967,11 +896,6 @@ class MetricsCollector:
                 if self.current_turn.timeline_event_metrics:
                     self.current_turn.timeline_event_metrics[-1].text = transcript
 
-            if self.playground and self.playground_manager:
-                self.playground_manager.send_cascading_metrics(
-                    metrics={"user_speech": self.current_turn.user_speech}
-                )
-
     def set_agent_response(self, response: str) -> None:
         """Set the agent response for the current turn."""
         if not self.current_turn:
@@ -985,11 +909,6 @@ class MetricsCollector:
             self._start_timeline_event("agent_speech", current_time)
 
         self._update_timeline_event_text("agent_speech", response)
-
-        if self.playground and self.playground_manager:
-            self.playground_manager.send_cascading_metrics(
-                metrics={"agent_speech": self.current_turn.agent_speech}
-            )
 
     # ──────────────────────────────────────────────
     # Knowledge Base
@@ -1016,16 +935,6 @@ class MetricsCollector:
                 kb.kb_retrieval_latency = self._round_latency(kb.kb_end_time - kb.kb_start_time)
                 logger.info(f"kb retrieval latency: {kb.kb_retrieval_latency}ms")
 
-            if self.playground and self.playground_manager:
-                self.playground_manager.send_cascading_metrics(
-                    metrics={
-                        "kb_id": kb.kb_id,
-                        "kb_retrieval_latency": kb.kb_retrieval_latency,
-                        "kb_documents": kb.kb_documents,
-                        "kb_scores": kb.kb_scores,
-                    }
-                )
-
     # ──────────────────────────────────────────────
     # A2A
     # ──────────────────────────────────────────────
@@ -1035,11 +944,6 @@ class MetricsCollector:
         if self.current_turn:
             self.current_turn.is_a2a_enabled = True
             self.current_turn.handoff_occurred = True
-
-            if self.playground and self.playground_manager:
-                self.playground_manager.send_cascading_metrics(
-                    metrics={"handoff_occurred": self.current_turn.handoff_occurred}
-                )
 
     # ──────────────────────────────────────────────
     # Error tracking
@@ -1055,11 +959,6 @@ class MetricsCollector:
                 "timestamp": now,
                 "timestamp_perf": now,
             })
-
-            if self.playground and self.playground_manager:
-                self.playground_manager.send_cascading_metrics(
-                    metrics={"errors": self.current_turn.errors}
-                )
 
     def on_fallback_event(self, event_data: Dict[str, Any]) -> None:
         """Record a fallback event for the current turn"""
