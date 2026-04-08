@@ -49,10 +49,6 @@ dependencies = [
     "sounddevice",
 ]
 
-
-[project.scripts]
-videosdk = "videosdk.agents.cli:main"
-
 [project.optional-dependencies]
 anam = ["videosdk-plugins-anam>=1.0.4"]
 anthropic = ["videosdk-plugins-anthropic>=1.0.4"]
