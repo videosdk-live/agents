@@ -362,7 +362,7 @@ logger.info("[GRAPH] Loan Application Topology:\n%s", graph.get_graph_status())
 class LoanAgent(Agent):
 
     def __init__(self) -> None:
-        super().__init__(instructions=graph.get_system_instructions())
+        super().__init__(instructions="You are a loan assistant that helps in loan application process.")
 
     async def on_enter(self) -> None:
         logger.info("[AGENT] Session started")

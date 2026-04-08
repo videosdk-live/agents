@@ -17,7 +17,9 @@ START → welcome → identify_issue ──┬─ billing   → resolve_billing 
 """
 
 import asyncio
+import json
 import logging
+import re
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -90,6 +92,28 @@ class IssueSchema(GraphState):
     issue_description: str = Field(..., description="Brief description of the customer's issue")
 
 
+#  Helpers
+
+_NAME_PATTERNS = [
+    re.compile(r"(?:my name is|i'm|i am|this is|call me|it's)\s+(\w+)", re.IGNORECASE),
+]
+
+
+def extract_name(text: str) -> str | None:
+    """Extract a customer name from explicit name-giving patterns.
+
+    Matches phrases like "my name is X", "I'm X", "call me X".
+    Returns None for bare words — those are handled by LLM extraction via NameSchema.
+    """
+    if not text or not text.strip():
+        return None
+    for pattern in _NAME_PATTERNS:
+        match = pattern.search(text.strip())
+        if match:
+            return match.group(1)
+    return None
+
+
 #  Graph config 
 
 config = GraphConfig(name="customer_support", debug=True, stream=True)
@@ -99,52 +123,63 @@ graph = ConversationalGraph(SupportState, config)
 #  Nodes 
 
 async def welcome(state: SupportState, ctx: Context):
-    """Greet and collect the customer's name."""
+    """Greet, collect customer name, then ask about their issue."""
+    if state.customer_name and (state.issue_description or state.issue_type):
+        return Route("identify_issue")
+
     if state.customer_name:
-        return Route("identify_issue")
+        await ctx.extractor.collect(schema=IssueSchema)
+        return Interrupt(
+            say=f"Nice to meet you, {state.customer_name}! How can I help you today? I can assist with billing, technical issues, or account problems.",
+            id="ask_issue",
+        )
 
-    result = await ctx.extractor.collect(schema=NameSchema)
-    if result.extracted.customer_name:
-        return Route("identify_issue")
+    name = extract_name(ctx.last_user_message)
+    if name:
+        ctx.set_state("customer_name", name)
+        await ctx.extractor.collect(schema=IssueSchema)
+        return Interrupt(
+            say=f"Nice to meet you, {name}! How can I help you today? I can assist with billing, technical issues, or account problems.",
+            id="ask_issue",
+        )
 
+    await ctx.extractor.collect(schema=NameSchema)
     return Interrupt(
-        say="Hello! Welcome to customer support. May I have your name please? and could you share your issue?",
+        say="Hello! Welcome to customer support. Could you please tell me your name?",
         id="ask_name",
     )
 
 
 async def identify_issue(state: SupportState, ctx: Context):
     """Classify the customer's issue into a category."""
+    if not state.issue_description and not state.issue_type:
+        return Interrupt(
+            say=f"Could you describe your issue, {state.customer_name}? "
+                "I can help with billing, technical problems, or account questions.",
+            id="ask_issue",
+        )
+
     if state.issue_type and state.issue_type in VALID_ISSUE_TYPES:
+        if not state.issue_description:
+            msg = (ctx.last_user_message or "").strip()
+            if msg:
+                ctx.set_state("issue_description", msg)
         return Route("route_issue")
 
     intent = await ctx.extractor.match_intent(
         intents={
             "billing": "billing problem, charge, invoice, payment, refund, overcharged",
-            "technical": "technical issue, bug, error, not working, crash, slow, broken",
+            "technical": "technical issue, bug, error, not working, crash, slow, broken, unable to open, device not responding",
             "account": "account problem, login, password, locked out, update profile, settings",
-            "other": "something else, general question, none of the above, other",
-            "unknown": "something else, general question, none of the above, other",
         }
     )
 
-    if intent:
+    if intent and intent != "unknown":
         ctx.set_state("issue_type", intent)
-        result = await ctx.extractor.collect(schema=IssueSchema)
-        if result.extracted.issue_description:
-            pass
-        else:
-            msg = (ctx.last_user_message or "").strip()
-            if msg:
-                ctx.set_state("issue_description", msg)
+    else:
+        ctx.set_state("issue_type", "other")
 
-        return Route("route_issue")
-
-    await ctx.say(
-        f"Thanks {state.customer_name}! How can I help you today? "
-        "I can assist with billing, technical issues, or account problems."
-    )
-    return Interrupt(say="", id="ask_issue")
+    return Route("route_issue")
 
 
 async def route_issue(state: SupportState, ctx: Context):
@@ -162,10 +197,11 @@ async def resolve_billing(state: SupportState, ctx: Context):
         f"'{state.issue_description or 'not specified'}'. "
         "Acknowledge the issue empathetically, explain that you've reviewed their account, "
         "and offer to process a refund or adjustment if applicable. "
-        "Ask if this resolves their concern."
+        "Ask if this resolves their concern.",
+        interruptible=True,
     )
     ctx.set_state("resolved", True)
-    return Route("feedback")
+    return Interrupt(say="", id="await_response")
 
 
 async def resolve_technical(state: SupportState, ctx: Context):
@@ -178,10 +214,11 @@ async def resolve_technical(state: SupportState, ctx: Context):
         f"'{state.issue_description or 'not specified'}'. "
         "Provide helpful troubleshooting steps: try clearing cache, restarting, "
         "or checking their internet connection. Be specific and helpful. "
-        "Ask if the issue is resolved."
+        "Ask if the issue is resolved.",
+        interruptible=True,
     )
     ctx.set_state("resolved", True)
-    return Route("feedback")
+    return Interrupt(say="", id="await_response")
 
 
 async def resolve_account(state: SupportState, ctx: Context):
@@ -194,10 +231,11 @@ async def resolve_account(state: SupportState, ctx: Context):
         f"'{state.issue_description or 'not specified'}'. "
         "Explain the steps to resolve the issue (password reset link, account unlock, "
         "profile update instructions). Be clear and reassuring. "
-        "Ask if they need further help."
+        "Ask if they need further help.",
+        interruptible=True,
     )
     ctx.set_state("resolved", True)
-    return Route("feedback")
+    return Interrupt(say="", id="await_response")
 
 
 async def escalate_to_human(state: SupportState, ctx: Context):
@@ -227,26 +265,28 @@ async def feedback(state: SupportState, ctx: Context):
         }
     )
 
-    if intent:
+    if intent and intent != "unknown":
         ctx.set_state("satisfaction", intent)
         if intent == "unhappy":
             await ctx.say(
                 f"I'm sorry to hear that, {state.customer_name}. "
                 "Let me escalate this to a senior agent who can help further. "
-                "Thank you for your feedback."
+                "Thank you for your feedback.",
+                interruptible=True,
             )
         else:
             await ctx.say(
                 f"Thank you for your feedback, {state.customer_name}! "
-                "Is there anything else I can help with? Have a great day!"
+                "Is there anything else I can help with? Have a great day!",
+                interruptible=True,
             )
         return END
 
-    await ctx.say(
-        "I hope that helped! Could you rate your experience? "
-        "Was the support helpful, okay, or did it not resolve your issue?"
+    return Interrupt(
+        say="I hope that helped! Could you rate your experience? "
+            "Was the support helpful, okay, or did it not resolve your issue?",
+        id="ask_feedback",
     )
-    return Interrupt(say="", id="ask_feedback")
 
 
 #  Graph wiring 
@@ -283,7 +323,6 @@ graph.add_conditional_transition(
         "technical": "resolve_technical",
         "account": "resolve_account",
         "other": "escalate_to_human",
-        "unknown": "escalate_to_human",
     },
     decide=lambda state: state.issue_type if state.issue_type in VALID_ISSUE_TYPES else "other",
 )
@@ -295,25 +334,16 @@ logger.info("[GRAPH] Customer Support Topology:\n%s", graph.get_graph_status())
 class SupportAgent(Agent):
     def __init__(self, ctx: JobContext):
         super().__init__(
-            instructions=graph.get_system_instructions(),
+            instructions="You are a customer support agent which helps user with billing, technical and account queries.",
         )
         self.ctx = ctx
 
     async def on_enter(self) -> None:
-        await self.send_text("Hello! Welcome to customer support. How can I help you today?")
         logger.info("[AGENT] Customer support session started")
 
     async def on_exit(self) -> None:
         logger.info("[AGENT] Session ended")
         logger.info("[AGENT] Final state:\n%s", graph.debug_state())
-
-    async def send_text(self, message: str) -> None:
-        """Publish agent response via PubSub."""
-        try:
-            publish_config = PubSubPublishConfig(topic="AGENT_RESPONSE", message=message)
-            await self.ctx.room.publish_to_pubsub(publish_config)
-        except Exception as e:
-            logger.error("Failed to publish response: %s", e)
 
 
 #  Entrypoint 
@@ -350,6 +380,11 @@ async def entrypoint(ctx: JobContext):
                 await ctx.room.publish_to_pubsub(publish_config)
             except Exception as e:
                 logger.error("Failed to publish LLM response: %s", e)
+
+        if graph.is_ended:
+            logger.info("[AGENT] Graph ended, hanging up after %.0fs", config.hangup_delay)
+            await asyncio.sleep(config.hangup_delay)
+            await agent.hangup()
 
     async def cleanup_session():
         logger.info("Cleaning up session...")
