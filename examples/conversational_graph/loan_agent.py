@@ -7,7 +7,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Framework
-from conversational_graph import (
+from videosdk.conversational_graph import (
     ConversationalGraph,
     GraphState,
     Context,
