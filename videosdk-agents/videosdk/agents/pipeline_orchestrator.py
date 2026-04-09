@@ -69,7 +69,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
         interrupt_min_words: int = 2,
         false_interrupt_pause_duration: float = 2.0,
         resume_on_false_interrupt: bool = False,
-        conversational_graph: Any | None = None,
+        graph_adapter: Any | None = None,
         context_window: Any | None = None,
         voice_mail_detector: VoiceMailDetector | None = None,
         hooks: "PipelineHooks | None" = None,
@@ -78,7 +78,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
         
         self.agent = agent
         self.avatar = avatar
-        self.conversational_graph = conversational_graph
+        self.graph_adapter = graph_adapter
         self.voice_mail_detector = voice_mail_detector
         self.voice_mail_detection_done = False
         self._vmd_buffer = ""
@@ -131,7 +131,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
             self.content_generation = ContentGeneration(
                 agent=agent,
                 llm=llm,
-                conversational_graph=conversational_graph,
+                graph_adapter=graph_adapter,
                 context_window=context_window,
             )
             # Setup event listeners
@@ -221,6 +221,14 @@ class PipelineOrchestrator(EventEmitter[Literal[
         metrics_collector.start_turn()
         metrics_collector.set_user_transcript(text)
 
+        if self.graph_adapter:
+            self.graph_adapter.set_agent(self.agent)
+            graph_prompt, skip_llm = await self.graph_adapter.handle_input(text)
+            if skip_llm:
+                return
+            if graph_prompt is not None:
+                text = graph_prompt
+
         self.agent.chat_context.add_message(
             role=ChatRole.USER,
             content=text
@@ -236,9 +244,22 @@ class PipelineOrchestrator(EventEmitter[Literal[
         if self.content_generation:
             self.agent.session._emit_agent_state(AgentState.THINKING)
             full_response = ""
+            graph_response_text = None
             async for response_chunk in self.content_generation.generate(text):
                 if response_chunk.content:
                     full_response += response_chunk.content
+                if self.graph_adapter and response_chunk.metadata:
+                    if response_chunk.metadata.get("graph_response"):
+                        graph_response_text = response_chunk.metadata.get("graph_response")
+
+            if self.graph_adapter and graph_response_text:
+                new_response, skip = await self.graph_adapter.handle_decision(
+                    self.agent, graph_response_text
+                )
+                if skip:
+                    return
+                if new_response is not None:
+                    full_response = new_response
 
             if full_response:
                 self.agent.chat_context.add_message(
@@ -443,8 +464,6 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 context_prefix = kb_context
 
         final_user_text = user_text
-        if self.conversational_graph:
-            final_user_text = self.conversational_graph.handle_input(user_text)
 
         if not metrics_collector.current_turn:
             metrics_collector.start_turn()
@@ -496,21 +515,36 @@ class PipelineOrchestrator(EventEmitter[Literal[
             if self.speech_generation:
                 self.speech_generation.reset_interrupt()    
             
-            if not self.content_generation:
+            if not self.content_generation and not self.graph_adapter:
                 logger.warning("No content generation available")
                 return
             
             if not self.speech_generation:
                 logger.warning("No speech generation available")
                 metrics_collector.on_agent_speech_start()
-                
+
+            if self.graph_adapter:
+                self.graph_adapter.set_agent(self.agent)
+                graph_prompt, skip_llm = await self.graph_adapter.handle_input(user_text)
+                if skip_llm:
+                    return
+                if graph_prompt is not None:
+                    user_text = graph_prompt
+                    msgs = self.agent.chat_context.messages()
+                    for msg in reversed(msgs):
+                        if msg.role == ChatRole.USER:
+                            msg.content = user_text
+                            break
+
             self.agent.session._emit_agent_state(AgentState.THINKING)
             llm_stream = self.content_generation.generate(user_text, context_prefix=context_prefix)
             
             q = asyncio.Queue(maxsize=50)
+            graph_response_text = None
 
             async def collector():
                 """Collect LLM chunks and feed queue for TTS"""
+                nonlocal graph_response_text
                 response_parts = []
 
                 def _safe_set_agent_response(text: str) -> None:
@@ -536,13 +570,14 @@ class PipelineOrchestrator(EventEmitter[Literal[
                             response_parts.append(content)
                             await q.put(content)
 
+                        if self.graph_adapter and metadata and isinstance(metadata, dict):
+                            if metadata.get("graph_response"):
+                                graph_response_text = metadata.get("graph_response")
+
                         self._partial_response = "".join(response_parts)
 
                     if not handle.interrupted:
                         await q.put(None)
-
-                    if self.conversational_graph and metadata.get("graph_response"):
-                        _ = await self.conversational_graph.handle_decision(self.agent, metadata.get("graph_response"))
 
                     full = "".join(response_parts)
                     _safe_set_agent_response(full)
@@ -615,6 +650,15 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 full_response = collector_task.result()
             else:
                 full_response = self._partial_response
+
+            if self.graph_adapter and graph_response_text and not self._is_interrupted:
+                new_response, skip = await self.graph_adapter.handle_decision(
+                    self.agent, graph_response_text
+                )
+                if skip:
+                    return
+                if new_response is not None:
+                    full_response = new_response
 
             if self._is_interrupted or self._generation_id != my_generation_id:
                 logger.info("[orchestrator] Skipping post-gather updates — turn was interrupted or generation superseded")
@@ -975,7 +1019,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
         
         self.agent = None
         self.avatar = None
-        self.conversational_graph = None
+        self.graph_adapter = None
         self.voice_mail_detector = None
         
         logger.info("Pipeline orchestrator cleaned up")

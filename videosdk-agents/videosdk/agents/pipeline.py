@@ -10,6 +10,7 @@ from .event_emitter import EventEmitter
 from .room.output_stream import CustomAudioStreamTrack
 from .pipeline_orchestrator import PipelineOrchestrator
 from .pipeline_hooks import PipelineHooks
+from .graph_adapter import GraphPipelineAdapter
 from .realtime_llm_adapter import RealtimeLLMAdapter
 from .realtime_base_model import RealtimeBaseModel
 from .speech_generation import SpeechGeneration
@@ -131,7 +132,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         self.turn_detector = turn_detector
         self.avatar = avatar
         self.denoise = denoise
-        self.conversational_graph = conversational_graph
+        self.graph_adapter = GraphPipelineAdapter(conversational_graph) if conversational_graph else None
         self.context_window = context_window
         self.voice_mail_detector = voice_mail_detector
         
@@ -376,7 +377,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                 interrupt_min_words=self.interrupt_config.interrupt_min_words,
                 false_interrupt_pause_duration=self.interrupt_config.false_interrupt_pause_duration,
                 resume_on_false_interrupt=self.interrupt_config.resume_on_false_interrupt,
-                conversational_graph=None, 
+                graph_adapter=None,
                 context_window=self.context_window,
                 voice_mail_detector=self.voice_mail_detector,
                 hooks=self.hooks,
@@ -418,8 +419,6 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                 self.llm.set_agent(agent)
         
         elif not self.config.is_realtime:
-            if self.conversational_graph:
-                self.conversational_graph.compile()
             self.orchestrator = PipelineOrchestrator(
                 agent=agent,
                 stt=self.stt,
@@ -436,7 +435,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                 interrupt_min_words=self.interrupt_config.interrupt_min_words,
                 false_interrupt_pause_duration=self.interrupt_config.false_interrupt_pause_duration,
                 resume_on_false_interrupt=self.interrupt_config.resume_on_false_interrupt,
-                conversational_graph=self.conversational_graph,
+                graph_adapter=self.graph_adapter,
                 context_window=self.context_window,
                 voice_mail_detector=self.voice_mail_detector,
                 hooks=self.hooks,
@@ -538,9 +537,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         if voice_mail_detector is not None: self.voice_mail_detector = voice_mail_detector
         if realtime_config is not None: self.realtime_config = realtime_config   
         if conversational_graph is not None:
-            self.conversational_graph = conversational_graph
-            if self.conversational_graph and hasattr(self.conversational_graph, 'compile'):
-                self.conversational_graph.compile()
+            self.graph_adapter = GraphPipelineAdapter(conversational_graph)
             
         # Update LLM / Realtime Model
         await swap_llm(self, llm)
@@ -679,7 +676,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                 avatar=self.avatar,
                 eou_config=self.eou_config,
                 interrupt_config=self.interrupt_config,
-                conversational_graph=self.conversational_graph,
+                conversational_graph=self.graph_adapter,
                 context_window=self.context_window,
                 voice_mail_detector=self.voice_mail_detector,
                 realtime_config=self.realtime_config
