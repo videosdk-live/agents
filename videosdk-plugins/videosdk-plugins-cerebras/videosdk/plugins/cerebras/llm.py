@@ -86,43 +86,9 @@ class CerebrasLLM(LLM):
         """
         self._cancelled = False
 
-        def _extract_text_content(content: Union[str, List[ChatContent]]) -> str:
-            if isinstance(content, str):
-                return content
-            text_parts = [part for part in content if isinstance(part, str)]
-            return "\n".join(text_parts)
-
         completion_params = {
             "model": self.model,
-            "messages": [
-                {
-                    "role": msg.role.value,
-                    "content": _extract_text_content(msg.content),
-                    **({"name": msg.name} if hasattr(msg, "name") else {}),
-                }
-                if isinstance(msg, ChatMessage)
-                else {
-                    "role": "assistant",
-                    "content": None,
-                    "tool_calls": [
-                        {
-                            "id": f"call_{msg.name}",
-                            "type": "function",
-                            "function": {"name": msg.name, "arguments": msg.arguments},
-                        }
-                    ],
-                }
-                if isinstance(msg, FunctionCall)
-                else {
-                    "role": "tool",
-                    "tool_call_id": f"call_{msg.name}",
-                    "content": msg.output,
-                }
-                if isinstance(msg, FunctionCallOutput)
-                else None
-                for msg in messages.items
-                if msg is not None
-            ],
+            "messages": messages.to_openai_messages(),
             "stream": True,
         }
         if self.temperature is not None:

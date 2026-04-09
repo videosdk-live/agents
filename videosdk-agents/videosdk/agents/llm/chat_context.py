@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import time
 from enum import Enum
-from typing import List, Optional, Union, Literal
+from typing import Any, List, Optional, Union, Literal
 import av
 from pydantic import BaseModel, Field
 
@@ -126,6 +126,7 @@ class ChatMessage(BaseModel):
         type (Literal["message"]): Type identifier, always "message".
         created_at (float): Unix timestamp when the message was created.
         interrupted (bool): Flag indicating if the message was interrupted during generation.
+        extra (dict): Flexible metadata (e.g. {"summary": True} for compression-generated messages).
     """
     role: ChatRole
     content: Union[str, List[ChatContent]]
@@ -133,6 +134,7 @@ class ChatMessage(BaseModel):
     type: Literal["message"] = "message"
     created_at: float = Field(default_factory=time.time)
     interrupted: bool = False
+    extra: dict[str, Any] = Field(default_factory=dict)
 
 
 ChatItem = Union[ChatMessage, FunctionCall, FunctionCallOutput]
@@ -171,6 +173,62 @@ class ChatContext:
             List[ChatItem]: List of all conversation items (messages, function calls, outputs).
         """
         return self._items
+
+    def messages(self) -> List[ChatMessage]:
+        """
+        Return only ChatMessage items, filtering out function calls and outputs.
+
+        Returns:
+            List[ChatMessage]: List of all chat messages in the context.
+        """
+        return [item for item in self._items if isinstance(item, ChatMessage)]
+
+    def turn_count(self) -> int:
+        """
+        Count the number of user turns (user-assistant exchange pairs).
+
+        Returns:
+            int: Number of user messages in the context.
+        """
+        return sum(
+            1 for item in self._items
+            if isinstance(item, ChatMessage) and item.role == ChatRole.USER
+        )
+
+    def estimated_tokens(self) -> int:
+        """
+        Rough token estimate for the current context using a ~4 chars per token heuristic.
+        Good enough for budget decisions — not a replacement for provider-reported usage.
+
+        Returns:
+            int: Estimated token count.
+        """
+        total = 0
+        for item in self._items:
+            total += self._estimate_item_tokens(item)
+        return total
+
+    def _estimate_item_tokens(self, item: ChatItem) -> int:
+        """Estimate tokens for a single chat item."""
+        tokens = 4 
+        if isinstance(item, ChatMessage):
+            parts = item.content if isinstance(item.content, list) else [item.content]
+            for part in parts:
+                if part is None:
+                    continue
+                if isinstance(part, str):
+                    tokens += len(part) // 4
+                elif isinstance(part, ImageContent):
+                    tokens += 300  
+        elif isinstance(item, FunctionCall):
+            tokens += len(item.name) // 4 + 5
+            if item.arguments:
+                tokens += len(item.arguments) // 4
+        elif isinstance(item, FunctionCallOutput):
+            tokens += len(item.name) // 4 + 5
+            if item.output:
+                tokens += len(item.output) // 4
+        return tokens
 
     def add_message(
         self,
@@ -319,32 +377,140 @@ class ChatContext:
 
         return ChatContext(items)
 
-    def truncate(self, max_items: int) -> ChatContext:
+    def truncate(
+        self,
+        max_items: int | None = None,
+        max_tokens: int | None = None,
+    ) -> ChatContext:
         """
-        Truncate the context to the last N items while preserving system message.
+        Truncate the context while preserving system message and summary messages.
+
+        Removes oldest non-system items until both constraints are satisfied.
+        Keeps function call/output pairs together to avoid orphaned tool calls.
 
         Args:
-            max_items (int): Maximum number of items to keep in the context.
+            max_items: Maximum number of items to keep. None means no item limit.
+            max_tokens: Maximum estimated token budget. None means no token limit.
 
         Returns:
             ChatContext: The current context instance after truncation.
         """
+        if max_items is None and max_tokens is None:
+            return self
+
+        logger.debug(f"Truncating context: {len(self._items)} items, {self.estimated_tokens()} tokens")
+
+        # Identify protected items that must never be removed:
+        # - System message (agent instructions)
+        # - Summary message (compressed history)
+        # - Last user message (LLMs require conversation to end with user turn)
         system_msg = next(
             (item for item in self._items
              if isinstance(item, ChatMessage) and item.role == ChatRole.SYSTEM),
             None
         )
+        summary_msg = next(
+            (item for item in self._items
+             if isinstance(item, ChatMessage) and item.extra.get("summary")),
+            None
+        )
+        last_user_msg = next(
+            (item for item in reversed(self._items)
+             if isinstance(item, ChatMessage) and item.role == ChatRole.USER),
+            None
+        )
+        protected = {id(m) for m in (system_msg, summary_msg, last_user_msg) if m is not None}
 
-        new_items = self._items[-max_items:]
+        # Start with all items; remove oldest non-protected until constraints met
+        new_items = list(self._items)
 
-        while new_items and isinstance(new_items[0], (FunctionCall, FunctionCallOutput)):
-            new_items.pop(0)
+        def _needs_trim() -> bool:
+            if max_items is not None and len(new_items) > max_items:
+                return True
+            if max_tokens is not None:
+                token_est = sum(self._estimate_item_tokens(it) for it in new_items)
+                if token_est > max_tokens:
+                    return True
+            return False
 
+        while _needs_trim():
+            removed = False
+            for i, item in enumerate(new_items):
+                # Skip protected items
+                if id(item) in protected:
+                    continue
+                # Don't orphan function call pairs — remove them together
+                if isinstance(item, FunctionCall):
+                    output_idx = next(
+                        (j for j in range(i + 1, len(new_items))
+                         if isinstance(new_items[j], FunctionCallOutput) and new_items[j].call_id == item.call_id),
+                        None
+                    )
+                    if output_idx is not None:
+                        new_items.pop(output_idx)
+                        new_items.pop(i)
+                    else:
+                        new_items.pop(i)
+                    removed = True
+                    break
+                elif isinstance(item, FunctionCallOutput):
+                    new_items.pop(i)
+                    removed = True
+                    break
+                else:
+                    new_items.pop(i)
+                    removed = True
+                    break
+            if not removed:
+                break  # Only protected items remain — stop even if over budget
+
+        # Clean up ALL orphaned function items (call without output, or output without call)
+        call_ids_in_list = {item.call_id for item in new_items if isinstance(item, FunctionCall)}
+        output_ids_in_list = {item.call_id for item in new_items if isinstance(item, FunctionCallOutput)}
+        new_items = [
+            item for item in new_items
+            if not (
+                (isinstance(item, FunctionCall) and item.call_id not in output_ids_in_list)
+                or
+                (isinstance(item, FunctionCallOutput) and item.call_id not in call_ids_in_list)
+            )
+        ]
+
+        # Re-insert protected items if they were accidentally removed by orphan cleanup
         if system_msg and system_msg not in new_items:
             new_items.insert(0, system_msg)
+        if summary_msg and summary_msg not in new_items:
+            insert_pos = 1 if system_msg in new_items else 0
+            new_items.insert(insert_pos, summary_msg)
+        if last_user_msg and last_user_msg not in new_items:
+            new_items.append(last_user_msg)
 
         self._items = new_items
+        logger.debug(f"Truncation complete: {len(self._items)} items, {self.estimated_tokens()} tokens")
         return self
+
+    # ── Provider format conversions ────────────────────────────────────
+    # Actual logic lives in llm/format_converters.py. These methods
+    # delegate to keep the public API on ChatContext unchanged.
+
+    def to_openai_messages(self, *, reasoning_model: bool = False) -> list[dict]:
+        """Convert context to OpenAI chat completion messages format."""
+        from .format_converters import to_openai_messages
+        return to_openai_messages(self, reasoning_model=reasoning_model)
+
+    def to_anthropic_messages(self, *, caching: bool = False) -> tuple[list[dict], Optional[str]]:
+        """Convert context to Anthropic messages format with role alternation enforced."""
+        from .format_converters import to_anthropic_messages
+        return to_anthropic_messages(self, caching=caching)
+
+    async def to_google_contents(self, *, thought_signatures: dict | None = None) -> tuple[list, Optional[str]]:
+        """Convert context to Google Gemini contents format."""
+        from .format_converters import to_google_contents
+        return await to_google_contents(self, thought_signatures=thought_signatures)
+
+        return contents, system_instruction
+
+    # ── Serialization ────────────────────────────────────────────────
 
     def to_dict(self) -> dict:
         """

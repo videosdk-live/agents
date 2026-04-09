@@ -6,6 +6,7 @@ from videosdk import (
     AgentState as TransportAgentState,
 )
 from ..event_bus import global_event_emitter
+from ..utils import format_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +94,8 @@ class TransportEventSender:
         agent = self._get_transport_agent()
         if agent:
             try:
-                await agent.async_send_metrics(data)
+                payload = format_metrics(data)
+                await agent.async_send_metrics(payload)
             except Exception as e:
                 logger.error(f"Error sending agent metrics via transport: {e}")
 

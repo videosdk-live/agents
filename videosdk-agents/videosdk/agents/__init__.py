@@ -60,7 +60,6 @@ from .event_emitter import EventEmitter
 from .job import WorkerJob, JobContext, RoomOptions, RecordingOptions, Options, WebSocketConfig, WebRTCConfig, TracesOptions, MetricsOptions, LoggingOptions
 from .worker import Worker, WorkerOptions, WorkerType
 from .utterance_handle import UtteranceHandle
-from .playground_manager import PlaygroundManager
 
 # New execution module exports
 from .execution import (
@@ -106,6 +105,7 @@ from .dtmf_handler import DTMFHandler
 from .voice_mail_detector import VoiceMailDetector
 from .stt import FallbackSTT
 from .llm import FallbackLLM
+from .llm.context_window import ContextWindow
 from .tts import FallbackTTS
 from .utils import run_stt, run_tts
 
@@ -206,5 +206,5 @@ __all__ = [
     "FallbackTTS",
     "run_stt",
     "run_tts",
-    "PlaygroundManager",
+    "ContextWindow",
 ]

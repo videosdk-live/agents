@@ -233,7 +233,7 @@ class VideoSDKHandler(BaseTransportHandler):
         self._left: bool = False
         self.sdk_metadata = {
             "sdk": "agents",
-            "sdk_version": "1.0.1"
+            "sdk_version": "1.0.5"
         }
         self.videosdk_meeting_meta_data= {
             "agent_id": self.agent_id,
@@ -384,8 +384,9 @@ class VideoSDKHandler(BaseTransportHandler):
         kinds = self._track_recordings_kinds_by_participant.setdefault(participant_id, set())
         if kind in kinds:
             return
-        await self.recording_manager.start_track_recording(participant_id=participant_id, kind=kind)
-        kinds.add(kind)
+        success = await self.recording_manager.start_track_recording(participant_id=participant_id, kind=kind)
+        if success:
+            kinds.add(kind)
 
     async def _start_screen_track_recordings(self, participant_id: str) -> None:
         if not self.record_screen_share:
@@ -694,6 +695,9 @@ class VideoSDKHandler(BaseTransportHandler):
                 )
 
         global_event_emitter.emit("PARTICIPANT_LEFT", {"participant": participant})
+
+
+        self._track_recordings_kinds_by_participant.pop(participant.id, None)
 
         # Update participant count and check if session should end
         self._update_non_agent_participant_count()
