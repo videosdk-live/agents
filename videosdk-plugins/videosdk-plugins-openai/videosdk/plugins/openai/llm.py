@@ -17,30 +17,9 @@ from videosdk.agents import (
     FunctionTool,
     is_function_tool,
     build_openai_schema,
-    ConversationalGraphResponse
 )
 from videosdk.agents.llm.chat_context import ChatContent, ImageContent
 
-
-def prepare_strict_schema(schema_dict):
-    if isinstance(schema_dict, dict):
-        if schema_dict.get("type") == "object":
-            schema_dict["additionalProperties"] = False
-            if "properties" in schema_dict:
-                all_props = list(schema_dict["properties"].keys())
-                schema_dict["required"] = all_props
-        
-        for key, value in schema_dict.items():
-            if isinstance(value, dict):
-                prepare_strict_schema(value)
-            elif isinstance(value, list):
-                for item in value:
-                    if isinstance(item, dict):
-                        prepare_strict_schema(item)
-    return schema_dict
-
-
-conversational_graph_schema = prepare_strict_schema(ConversationalGraphResponse.model_json_schema())
 
 class OpenAILLM(LLM):
     
@@ -334,7 +313,7 @@ class OpenAILLM(LLM):
                 "json_schema": {
                     "name": "conversational_graph_response",
                     "strict": True,
-                    "schema": conversational_graph_schema
+                    "schema": conversational_graph._get_graph_schema()
                 }
             }
 

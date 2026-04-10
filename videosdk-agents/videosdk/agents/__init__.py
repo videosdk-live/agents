@@ -80,7 +80,8 @@ from .execution import (
 )
 from .execution.inference_resource import DedicatedInferenceResource
 
-from .llm.llm import LLM, LLMResponse, ConversationalGraphResponse
+from .llm.llm import LLM, LLMResponse
+from .graph_adapter import ConversationalGraphResponse, GraphPipelineAdapter
 from .llm.chat_context import (
     ChatContext,
     ChatRole,
@@ -144,6 +145,7 @@ __all__ = [
     "FunctionCallOutput",
     "LLMResponse",
     "ConversationalGraphResponse",
+    "GraphPipelineAdapter",
     "STT",
     "STTResponse",
     "SpeechEventType",

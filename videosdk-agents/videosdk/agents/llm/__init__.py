@@ -1,4 +1,4 @@
-from .llm import LLM, LLMResponse, ConversationalGraphResponse, ResponseChunk
+from .llm import LLM, LLMResponse, ResponseChunk
 from .fallback_llm import FallbackLLM
 from .chat_context import (
     ChatContext,
@@ -21,6 +21,5 @@ __all__ = [
     "FunctionCall",
     "FunctionCallOutput",
     "ImageContent",
-    "ConversationalGraphResponse",
     "ResponseChunk",
 ]
