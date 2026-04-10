@@ -31,13 +31,13 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
         self,
         agent: Agent | None = None,
         llm: LLM | None = None,
-        conversational_graph: Any | None = None,
+        graph_adapter: Any | None = None,
         context_window: Any | None = None,
     ) -> None:
         super().__init__()
         self.agent = agent
         self.llm = llm
-        self.conversational_graph = conversational_graph
+        self.graph_adapter = graph_adapter
         self.context_window = context_window
         self.llm_lock = asyncio.Lock()
         self._is_interrupted = False
@@ -115,7 +115,7 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
             async for llm_chunk_resp in self.llm.chat(
                 self.agent.chat_context,
                 tools=self.agent._tools,
-                conversational_graph=self.conversational_graph if self.conversational_graph else None
+                conversational_graph=self.graph_adapter if self.graph_adapter else None
             ):
                 if llm_chunk_resp.metadata and "usage" in llm_chunk_resp.metadata:
                     metrics_collector.set_llm_usage(llm_chunk_resp.metadata["usage"])
@@ -247,7 +247,7 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                                 async for new_resp in self.llm.chat(
                                     chat_context,
                                     tools=self.agent.tools,
-                                    conversational_graph=self.conversational_graph if self.conversational_graph else None
+                                    conversational_graph=self.graph_adapter if self.graph_adapter else None
                                 ):
                                     if self._is_interrupted:
                                         break
@@ -343,7 +343,7 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                                 async for final_resp in self.llm.chat(
                                     chat_context,
                                     tools=None,
-                                    conversational_graph=self.conversational_graph if self.conversational_graph else None
+                                    conversational_graph=self.graph_adapter if self.graph_adapter else None
                                 ):
                                     if self._is_interrupted or not final_resp:
                                         break
@@ -375,7 +375,13 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                     if _tool_loop_text_yielded:
                         break
                 else:
-                    if llm_chunk_resp and llm_chunk_resp.content:
+                    has_content = llm_chunk_resp and llm_chunk_resp.content
+                    has_graph_meta = (
+                        llm_chunk_resp
+                        and isinstance(llm_chunk_resp.metadata, dict)
+                        and "graph_response" in llm_chunk_resp.metadata
+                    )
+                    if has_content or has_graph_meta:
                         self.emit("generation_chunk", {
                             "content": llm_chunk_resp.content,
                             "metadata": llm_chunk_resp.metadata
@@ -411,6 +417,6 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
         
         self.llm = None
         self.agent = None
-        self.conversational_graph = None
+        self.graph_adapter = None
         
         logger.info("Content generation cleaned up")

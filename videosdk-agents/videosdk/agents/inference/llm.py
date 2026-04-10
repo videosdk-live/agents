@@ -38,7 +38,6 @@ from videosdk.agents import (
     build_gemini_schema,
     ChatContent,
     ImageContent,
-    ConversationalGraphResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -223,7 +222,7 @@ class LLM(BaseLLM):
             if conversational_graph:
                 payload["response_format"] = {
                     "type": "json_object",
-                    "schema": ConversationalGraphResponse.model_json_schema(),
+                    "schema": conversational_graph.get_response_schema(),
                 }
 
             # Add tools if provided
