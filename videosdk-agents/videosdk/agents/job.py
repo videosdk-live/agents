@@ -445,7 +445,8 @@ class JobContext:
 
             if avatar:
                 if not self.room_options.room_id:
-                    self.room_options.room_id = self.get_room_id()
+                    env_room_id = (os.getenv("VIDEOSDK_ROOM_ID") or "").strip()
+                    self.room_options.room_id = env_room_id or self.get_room_id()
                 room_id = self.room_options.room_id
 
                 from .avatar import AvatarAudioOut, generate_avatar_credentials
@@ -491,7 +492,8 @@ class JobContext:
                     from .room.room import VideoSDKHandler
                     
                     if not self.room_options.room_id:
-                        self.room_options.room_id = self.get_room_id()
+                        env_room_id = (os.getenv("VIDEOSDK_ROOM_ID") or "").strip()
+                        self.room_options.room_id = env_room_id or self.get_room_id()
                     if self.room_options.send_logs_to_dashboard or (self.room_options.logs and self.room_options.logs.enabled):
                         from .metrics.logger_handler import LogManager, JobLogger
                         self._log_manager = LogManager()
