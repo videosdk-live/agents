@@ -49,6 +49,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         self.agent = agent
         self.pipeline = pipeline
         self.agent.session = self
+        self._accept_user_input: bool = False
         self.wake_up = wake_up
         self.on_wake_up: Optional[Callable[[], None] | Callable[[], Any]] = None
         self._wake_up_task: Optional[asyncio.Task] = None
@@ -329,6 +330,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
                     await audio_stream_enabled.wait()
                     logger.info("SIP user audio stream enabled, proceeding with on_enter")
                     await self.agent.on_enter()
+                    self._accept_user_input = True
                     global_event_emitter.emit("AGENT_STARTED", {"session": self})
                     if self.on_wake_up is not None:
                         self._start_wake_up_timer()
@@ -342,6 +344,8 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             return 
 
         await self.agent.on_enter()
+        self._accept_user_input = True
+
         global_event_emitter.emit("AGENT_STARTED", {"session": self})
         if self.on_wake_up is not None:
             self._start_wake_up_timer()
@@ -368,6 +372,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         continue after the tool returns.
         """
         handle = UtteranceHandle(utterance_id=f"utt_{uuid.uuid4().hex[:8]}", interruptible=interruptible)
+        self._accept_user_input = True
         if not self._is_executing_tool:
             if self.current_utterance and not self.current_utterance.done():
                 self.current_utterance.interrupt()
@@ -479,6 +484,8 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         Returns:
             UtteranceHandle: A handle to track the utterance lifecycle
         """
+        self._accept_user_input = True
+
         if self._reply_in_progress:
             if self.current_utterance:
                 return self.current_utterance
