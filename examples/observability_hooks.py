@@ -135,7 +135,7 @@ async def start_session(context: JobContext):
 def make_context() -> JobContext:
     room_options = RoomOptions(
         room_id="<room_id>",
-        name="Hooks Observability",
+        name="Observability Hooks",
         playground=True,
         recording=True,
     )
