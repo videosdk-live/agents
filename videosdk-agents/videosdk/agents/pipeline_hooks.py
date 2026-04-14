@@ -45,10 +45,9 @@ class PipelineHooks:
         self._user_turn_end_hooks: list[Callable[[], Awaitable[None]]] = []
         self._agent_turn_start_hooks: list[Callable[[], Awaitable[None]]] = []
         self._agent_turn_end_hooks: list[Callable[[], Awaitable[None]]] = []
-    
     def on(
         self,
-        event: Literal["stt", "tts", "llm", "vision_frame", "user_turn_start", "user_turn_end", "agent_turn_start", "agent_turn_end"]
+        event: Literal["stt", "tts", "llm", "vision_frame", "user_turn_start", "user_turn_end", "agent_turn_start", "agent_turn_end", "error", "recording_started", "recording_stopped", "recording_failed"]
     ) -> Callable:
         """
         Decorator to register a hook for a specific event.
@@ -195,7 +194,7 @@ class PipelineHooks:
                 await hook()
             except Exception as e:
                 logger.error(f"Error in agent_turn_end hook: {e}", exc_info=True)
-    
+                
     def has_vision_frame_hooks(self) -> bool:
         """Check if any vision_frame hooks are registered."""
         return len(self._vision_frame_hooks) > 0
@@ -349,3 +348,36 @@ class PipelineHooks:
         self._agent_turn_start_hooks.clear()
         self._agent_turn_end_hooks.clear()
         logger.info("Cleared all pipeline hooks")
+
+class PipelineMetricsHooks:
+    """Manages component-specific metrics hooks."""
+    def __init__(self) -> None:
+        self._hooks: dict[str, list[Callable]] = {
+            "stt": [],
+            "llm": [],
+            "tts": [],
+            "eou": [],
+            "realtime": []
+        }
+
+    def on(self, component: Literal["stt", "llm", "tts", "eou", "realtime"]) -> Callable:
+        """Register a callback for component metrics."""
+        def decorator(func: Callable) -> Callable:
+            if component in self._hooks:
+                self._hooks[component].append(func)
+            else:
+                logger.warning(f"Unknown metrics component: {component}")
+            return func
+        return decorator
+
+    async def trigger(self, component: str, metrics: dict) -> None:
+        """Trigger registered metrics callbacks for a component."""
+        if component in self._hooks:
+            for hook in self._hooks[component]:
+                try:
+                    if inspect.iscoroutinefunction(hook):
+                        await hook(metrics)
+                    else:
+                        hook(metrics)
+                except Exception as e:
+                    logger.error(f"Error in {component} metrics hook: {e}")

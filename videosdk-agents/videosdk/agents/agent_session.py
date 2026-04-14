@@ -542,6 +542,27 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         if hasattr(self.pipeline, 'interrupt'):
             self.pipeline.interrupt()
 
+    def get_context_history(
+        self,
+        *,
+        include_function_calls: bool = False,
+        include_system_messages: bool = False,
+    ) -> list[dict]:
+        """
+        Get the current chat context history (role/content items).
+
+        Users can access the conversation history whenever they want, without needing
+        any transcript hooks.
+        """
+        if not self.agent or not self.agent.chat_context:
+            return []
+
+        context_copy = self.agent.chat_context.copy(
+            exclude_function_calls=not include_function_calls,
+            exclude_system_messages=not include_system_messages,
+        )
+        return context_copy.to_dict()["items"]
+
     async def close(self) -> None:
         """
         Close the agent session.
@@ -561,7 +582,6 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             traces_flow_manager.end_agent_session_closed()
 
         self._cancel_wake_up_timer()
-        
 
         logger.info("Cleaning up agent session")
         try:
