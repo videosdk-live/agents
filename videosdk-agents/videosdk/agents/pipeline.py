@@ -9,7 +9,7 @@ from .utterance_handle import UtteranceHandle
 from .event_emitter import EventEmitter
 from .room.output_stream import CustomAudioStreamTrack
 from .pipeline_orchestrator import PipelineOrchestrator
-from .pipeline_hooks import PipelineHooks
+from .pipeline_hooks import PipelineHooks, PipelineMetricsHooks
 from .graph_adapter import GraphPipelineAdapter
 from .realtime_llm_adapter import RealtimeLLMAdapter
 from .realtime_base_model import RealtimeBaseModel
@@ -82,7 +82,7 @@ class RealtimeConfig:
     response_modalities: List[str] | None = None
 
 
-class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "content_generated", "synthesis_complete"]]):
+class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "content_generated", "synthesis_complete", "recording_started", "recording_stopped", "recording_failed"]]):
     """
     Unified Pipeline class supporting multiple component configurations.
     
@@ -138,6 +138,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         
         # Pipeline hooks for middleware/interception
         self.hooks = PipelineHooks()
+        self.metrics = PipelineMetricsHooks()
         
         # Realtime configuration
         self.agent : Agent | None = None
@@ -188,7 +189,36 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         self._setup_error_handlers()
         
         self._auto_register()
+        self._setup_global_listeners()
     
+    def _setup_global_listeners(self) -> None:
+        from .event_bus import global_event_emitter
+        
+        def handle_metric(data):
+            if hasattr(self, 'loop') and self.loop and self.loop.is_running():
+                import asyncio
+                asyncio.create_task(self.metrics.trigger(data.get("component"), data.get("metrics")))
+            else:
+                import asyncio
+                try:
+                    loop = asyncio.get_event_loop()
+                    loop.create_task(self.metrics.trigger(data.get("component"), data.get("metrics")))
+                except RuntimeError:
+                    pass
+        
+        global_event_emitter.on("COMPONENT_METRIC", handle_metric)
+        global_event_emitter.on("PIPELINE_ERROR", lambda data: self.emit("error", data))
+        
+        def handle_recording(data):
+            status = data.get("status")
+            if status == "started":
+                self.emit("recording_started", data)
+            elif status == "stopped":
+                self.emit("recording_stopped", data)
+            elif status == "failed":
+                self.emit("recording_failed", data)
+        global_event_emitter.on("RECORDING_STATUS", handle_recording)
+
     def _auto_register(self) -> None:
         """Automatically register this pipeline with the current job context"""
         try:

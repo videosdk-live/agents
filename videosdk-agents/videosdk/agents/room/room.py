@@ -299,6 +299,8 @@ class VideoSDKHandler(BaseTransportHandler):
         Args:
             data: Error data from VideoSDK.
         """
+        global_event_emitter.emit("PIPELINE_ERROR", {"source": "room", "error": data})
+        
         if self.on_room_error:
             self.on_room_error(data)
             asyncio.create_task(self._end_session("error_in_meeting"))
