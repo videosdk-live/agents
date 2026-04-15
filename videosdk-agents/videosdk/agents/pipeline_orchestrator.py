@@ -100,6 +100,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
         self._false_interrupt_timer: asyncio.TimerHandle | None = None
         self._is_user_speaking = False
         self._interruption_check_task: asyncio.Task | None = None
+        self._speech_start_energy: float = 0.0
         
         # Component modules
         self.speech_understanding: SpeechUnderstanding | None = None
@@ -430,9 +431,17 @@ class PipelineOrchestrator(EventEmitter[Literal[
             await self.handle_stt_event(text)
     
     async def _on_speech_started(self, data: dict) -> None:
-        """Handle speech started event"""
-        logger.info("[orchestrator] _on_speech_started fired")
+        """Handle speech started event with VAD metadata."""
+        vad_confidence = data.get("confidence", 0.0) if isinstance(data, dict) else 0.0
+        vad_energy = data.get("energy", 0.0) if isinstance(data, dict) else 0.0
+        vad_speech_dur = data.get("speech_duration", 0.0) if isinstance(data, dict) else 0.0
+        logger.info(
+            f"[orchestrator] _on_speech_started fired "
+            f"| confidence={vad_confidence:.3f} energy={vad_energy:.4f} "
+            f"speech_dur={vad_speech_dur:.3f}s"
+        )
         self._is_user_speaking = True
+        self._speech_start_energy = vad_energy
 
         agent_state = self.agent.session.agent_state if self.agent and self.agent.session else None
         if agent_state == AgentState.SPEAKING:
@@ -441,10 +450,15 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 self._interruption_check_task = asyncio.create_task(
                     self._monitor_interruption_duration()
                 )
-    
+
     async def _on_speech_stopped(self, data: dict) -> None:
-        """Handle speech stopped event"""
-        logger.info("[orchestrator] _on_speech_stopped fired")
+        """Handle speech stopped event with VAD metadata."""
+        speech_dur = data.get("speech_duration", 0.0) if isinstance(data, dict) else 0.0
+        has_audio = data.get("has_audio", False) if isinstance(data, dict) else False
+        logger.info(
+            f"[orchestrator] _on_speech_stopped fired "
+            f"| speech_dur={speech_dur:.3f}s has_audio={has_audio}"
+        )
         self._is_user_speaking = False
 
         if self._interruption_check_task is not None and not self._interruption_check_task.done():
@@ -776,18 +790,52 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 handle._mark_done()
     
     async def _monitor_interruption_duration(self) -> None:
-        """Monitor user speech duration during agent response"""
+        """Monitor user speech duration during agent response.
+
+        Polls the real-time VAD probability from SpeechUnderstanding
+        every 50 ms instead of a single blind sleep.  This lets the
+        pipeline react the instant sustained speech crosses the
+        configured duration threshold, and avoids false-triggering
+        if the user stops speaking or the probability drops midway.
+        """
         if self.interrupt_mode not in ("VAD_ONLY", "HYBRID"):
             return
-        
+
         try:
-            await asyncio.sleep(self.interrupt_min_duration)
-            
+            elapsed = 0.0
+            poll_interval = 0.05
+
+            while elapsed < self.interrupt_min_duration:
+                await asyncio.sleep(poll_interval)
+                elapsed += poll_interval
+
+                if not self._is_user_speaking:
+                    logger.debug(
+                        f"User stopped speaking at {elapsed:.2f}s "
+                        f"(< {self.interrupt_min_duration}s), aborting interruption check"
+                    )
+                    return
+
+                if self.speech_understanding:
+                    prob = self.speech_understanding.current_vad_probability
+                    if prob < 0.15:
+                        logger.debug(
+                            f"VAD probability dropped to {prob:.3f} during "
+                            f"interruption monitoring, resetting elapsed timer"
+                        )
+                        elapsed = 0.0
+
             if self.agent and self.agent.session and self.agent.session.current_utterance:
                 if self.agent.session.current_utterance.is_interruptible:
-                    logger.info(f"User speech duration exceeded {self.interrupt_min_duration}s threshold, triggering interruption")
+                    prob = 0.0
+                    if self.speech_understanding:
+                        prob = self.speech_understanding.current_vad_probability
+                    logger.info(
+                        f"User speech exceeded {self.interrupt_min_duration}s "
+                        f"threshold (vad_prob={prob:.3f}), triggering interruption"
+                    )
                     await self._trigger_interruption()
-        
+
         except asyncio.CancelledError:
             logger.debug("Interruption monitoring cancelled")
     
@@ -887,17 +935,36 @@ class PipelineOrchestrator(EventEmitter[Literal[
             self._false_interrupt_timer = None
     
     async def _on_false_interrupt_timeout(self):
-        """Handle false interrupt timeout"""
+        """Handle false interrupt timeout.
+
+        Uses real-time VAD probability (via FRAME_PROCESSED) to
+        distinguish genuine speech from transient noise.
+        """
         logger.info(f"False interrupt timeout reached after {self.false_interrupt_pause_duration}s")
         self._false_interrupt_timer = None
-        
+
+        vad_prob = 0.0
+        vad_energy = 0.0
+        if self.speech_understanding:
+            vad_prob = self.speech_understanding.current_vad_probability
+            vad_energy = self.speech_understanding.current_vad_energy
+
         if self._is_user_speaking:
-            logger.info("User still speaking - confirming real interruption")
-            self._is_in_false_interrupt_pause = False
-            self._false_interrupt_paused_speech = False
-            await self._interrupt_pipeline()
-            return
-        
+            if vad_prob >= 0.3:
+                logger.info(
+                    f"User still speaking (vad_prob={vad_prob:.3f}, "
+                    f"energy={vad_energy:.4f}) - confirming real interruption"
+                )
+                self._is_in_false_interrupt_pause = False
+                self._false_interrupt_paused_speech = False
+                await self._interrupt_pipeline()
+                return
+            else:
+                logger.info(
+                    f"User flagged as speaking but vad_prob={vad_prob:.3f} "
+                    f"is low - treating as false interruption"
+                )
+
         if self._is_in_false_interrupt_pause and self.speech_generation and self.speech_generation.can_pause():
             logger.info("Resuming agent speech - false interruption detected")
             self._is_interrupted = False
