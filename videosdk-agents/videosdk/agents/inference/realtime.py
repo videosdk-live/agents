@@ -717,6 +717,27 @@ class Realtime(RealtimeBaseModel[RealtimeEventTypes]):
 
                 accumulated_output_text = ""
 
+        elif event_type == "usage_metadata":
+            usage = {
+                k: event_data.get(k)
+                for k in (
+                    "input_tokens",
+                    "output_tokens",
+                    "total_tokens",
+                    "input_text_tokens",
+                    "output_text_tokens",
+                    "input_audio_tokens",
+                    "output_audio_tokens",
+                    "input_image_tokens",
+                    "output_image_tokens",
+                    "input_cached_tokens",
+                    "thoughts_tokens",
+                )
+                if event_data.get(k) is not None
+            }
+            if usage:
+                metrics_collector.set_realtime_usage(usage)
+
         elif event_type == "response_interrupted":
             if self.audio_track and "AUDIO" in self.config.response_modalities:
                 self.audio_track.interrupt()

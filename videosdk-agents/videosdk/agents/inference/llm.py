@@ -203,6 +203,7 @@ class LLM(BaseLLM):
                 "model": self.model_id,
                 "messages": formatted_messages,
                 "stream": True,
+                "stream_options": {"include_usage": True},
                 "temperature": self.temperature,
             }
 
@@ -358,6 +359,34 @@ class LLM(BaseLLM):
         Yields:
             LLMResponse objects
         """
+        # Usage metadata arrives in a dedicated final chunk (choices may be empty).
+        usage = chunk.get("usage")
+        if usage:
+            usage_metadata: Dict[str, Any] = {
+                "prompt_tokens": usage.get("prompt_tokens", 0) or 0,
+                "completion_tokens": usage.get("completion_tokens", 0) or 0,
+                "total_tokens": usage.get("total_tokens", 0) or 0,
+                "prompt_cached_tokens": 0,
+                "reasoning_tokens": 0,
+                "request_id": chunk.get("id"),
+                "model": chunk.get("model", self.model_id),
+            }
+            prompt_details = usage.get("prompt_tokens_details") or {}
+            if isinstance(prompt_details, dict):
+                usage_metadata["prompt_cached_tokens"] = (
+                    prompt_details.get("cached_tokens", 0) or 0
+                )
+            completion_details = usage.get("completion_tokens_details") or {}
+            if isinstance(completion_details, dict):
+                usage_metadata["reasoning_tokens"] = (
+                    completion_details.get("reasoning_tokens", 0) or 0
+                )
+            yield LLMResponse(
+                content="",
+                role=ChatRole.ASSISTANT,
+                metadata={"usage": usage_metadata},
+            )
+
         choices = chunk.get("choices", [])
         if not choices:
             return

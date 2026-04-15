@@ -125,6 +125,14 @@ class STT(BaseSTT):
         self._stt_start_time: Optional[float] = None
         self._connecting: bool = False
 
+        # Audio duration tracking (seconds) accumulated since the last FINAL transcript.
+        # Used to populate SpeechData.duration so accounting can bill per-utterance audio.
+        self._pending_audio_bytes: int = 0
+        self._input_sample_rate: int = int(
+            (config or {}).get("input_sample_rate", 48000)
+        )
+        self._bytes_per_sample: int = 2  # 16-bit PCM mono
+
     # ==================== Factory Methods ====================
 
     @staticmethod
@@ -213,7 +221,7 @@ class STT(BaseSTT):
             **(config or {}),
         }
         return STT(
-            provider="sarvam",
+            provider="sarvamai",
             model_id=model_id,
             language=language,
             config=config,
@@ -393,6 +401,9 @@ class STT(BaseSTT):
         if self._stt_start_time is None:
             self._stt_start_time = time.perf_counter()
 
+        # Track audio bytes for per-utterance duration accounting.
+        self._pending_audio_bytes += len(audio_bytes)
+
         # Encode audio as base64 for JSON transmission
         audio_message = {
             "type": "audio",
@@ -480,6 +491,12 @@ class STT(BaseSTT):
                 logger.info(f"[STT] {text} | Final: {is_final}")
             self._last_transcript = text.strip()
 
+            duration_ms = 0.0
+            if is_final and self._pending_audio_bytes > 0:
+                sample_count = self._pending_audio_bytes / self._bytes_per_sample
+                duration_ms = (sample_count / self._input_sample_rate) * 1000.0
+                self._pending_audio_bytes = 0
+
             response = STTResponse(
                 event_type=(
                     SpeechEventType.FINAL if is_final else SpeechEventType.INTERIM
@@ -488,6 +505,7 @@ class STT(BaseSTT):
                     text=text.strip(),
                     language=language,
                     confidence=confidence,
+                    duration=duration_ms,
                 ),
                 metadata={
                     "provider": self.provider,

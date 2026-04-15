@@ -1,14 +1,27 @@
 import logging
-from videosdk.agents import Agent, AgentSession, Pipeline, JobContext, RoomOptions, WorkerJob
-from videosdk.agents.inference import STT, TTS, LLM
+from videosdk.agents import (
+    Agent,
+    AgentSession,
+    Pipeline,
+    JobContext,
+    RoomOptions,
+    WorkerJob,
+)
+from videosdk.agents.inference import STT, TTS, LLM, Turn
 from videosdk.plugins.silero import SileroVAD
 from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
 from dotenv import load_dotenv
+
 load_dotenv(override=True)
 
 pre_download_model()
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler()],
+)
+
 
 class VideoSDKCascadeInferenceAgent(Agent):
     """VideoSDK Inference Agent for voice interaction."""
@@ -39,25 +52,25 @@ class VideoSDKCascadeInferenceAgent(Agent):
             "Session ended. Thank you for using VideoSDK Inference Agent."
         )
 
+
 async def entrypoint(ctx: JobContext):
     """Main entrypoint for the agent."""
 
     agent = VideoSDKCascadeInferenceAgent()
 
     pipeline = Pipeline(
-        stt=STT.sarvam(
-            language="en-IN"
-        ),
+        stt=STT.sarvam(language="en-IN", base_url="wss://dev-inference.videosdk.live"),
         llm=LLM.google(
-            model_id="gemini-2.0-flash"
+            model_id="gemini-2.0-flash", base_url="wss://dev-inference.videosdk.live"
         ),
         tts=TTS.sarvam(
             model_id="bulbul:v2",
             speaker="anushka",
-            language="en-IN"
+            language="en-IN",
+            base_url="wss://dev-inference.videosdk.live",
         ),
         vad=SileroVAD(),
-        turn_detector=TurnDetector(),
+        turn_detector=Turn.namo(language="en", base_url="http://localhost:55787"),
     )
 
     session = AgentSession(
@@ -65,19 +78,22 @@ async def entrypoint(ctx: JobContext):
         pipeline=pipeline,
     )
 
-    await session.start(wait_for_participant=True,run_until_shutdown=True)
+    await session.start(wait_for_participant=True, run_until_shutdown=True)
+
 
 def make_context() -> JobContext:
     """Create job context for playground mode."""
 
     room_options = RoomOptions(
-        room_id="<room_id>",
+        # room_id="<room_id>",
         name="VideoSDK's Cascade Inference Agent",
         playground=True,
+        signallin_base_url="dev-api.videosdk.live",
     )
 
     return JobContext(room_options=room_options)
 
+
 if __name__ == "__main__":
-    job = WorkerJob(entrypoint=entrypoint,jobctx=make_context())
+    job = WorkerJob(entrypoint=entrypoint, jobctx=make_context())
     job.start()
