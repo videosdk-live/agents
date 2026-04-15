@@ -59,18 +59,15 @@ async def entrypoint(ctx: JobContext):
     agent = VideoSDKCascadeInferenceAgent()
 
     pipeline = Pipeline(
-        stt=STT.sarvam(language="en-IN", base_url="wss://dev-inference.videosdk.live"),
-        llm=LLM.google(
-            model_id="gemini-2.0-flash", base_url="wss://dev-inference.videosdk.live"
-        ),
-        tts=TTS.sarvam(
-            model_id="bulbul:v2",
-            speaker="anushka",
+        stt=STT.sarvam(
             language="en-IN",
-            base_url="wss://dev-inference.videosdk.live",
         ),
+        llm=LLM.google(
+            model_id="gemini-2.0-flash",
+        ),
+        tts=TTS.sarvam(model_id="bulbul:v2", speaker="anushka", language="en-IN"),
         vad=SileroVAD(),
-        turn_detector=Turn.namo(language="en", base_url="http://localhost:55787"),
+        turn_detector=Turn.namo(language="en"),
     )
 
     session = AgentSession(
