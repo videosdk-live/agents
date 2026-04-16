@@ -11,7 +11,7 @@ from .llm.chat_context import ChatRole
 from .denoise import Denoise
 from .metrics import metrics_collector
 from .utils import UserState, AgentState
-
+from datetime import datetime
 
 if TYPE_CHECKING:
     from .agent import Agent
@@ -203,6 +203,7 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
         if not self.vad:
             if not self._is_user_speaking and stt_response.event_type in (SpeechEventType.INTERIM, SpeechEventType.FINAL):
                 self._is_user_speaking = True
+                logger.info(f"if not vad then Speech started at the speech_understanding.py and time :: {datetime.now()}")
                 metrics_collector.on_user_speech_start()
                 self.emit("speech_started")
 
@@ -218,6 +219,8 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
         elif stt_response.event_type == SpeechEventType.FINAL:
             duration = stt_response.data.duration
             confidence = stt_response.data.confidence
+            logger.info(f"if not vad then Speech final at the speech_understanding.py and time :: {datetime.now()}")
+
             metrics_collector.on_stt_complete(text, duration, confidence)
             if self._enable_preemptive_generation:
                 self.emit("transcript_final", {

@@ -20,6 +20,7 @@ from .utterance_handle import UtteranceHandle
 from .utils import UserState, AgentState
 from .voice_mail_detector import VoiceMailDetector
 from .metrics import metrics_collector
+from datetime import datetime
 
 if TYPE_CHECKING:
     from .agent import Agent
@@ -431,7 +432,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
     
     async def _on_speech_started(self, data: dict) -> None:
         """Handle speech started event"""
-        logger.info("[orchestrator] _on_speech_started fired")
+        logger.info(f"[pipeline_orchestrator] _on_speech_started fired and time :: {datetime.now()}")
         self._is_user_speaking = True
 
         agent_state = self.agent.session.agent_state if self.agent and self.agent.session else None
@@ -444,7 +445,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
     
     async def _on_speech_stopped(self, data: dict) -> None:
         """Handle speech stopped event"""
-        logger.info("[orchestrator] _on_speech_stopped fired")
+        logger.info(f"[pipeline_orchestrator] _on_speech_stopped fired and time :: {datetime.now()}")
         self._is_user_speaking = False
 
         if self._interruption_check_task is not None and not self._interruption_check_task.done():
@@ -698,7 +699,10 @@ class PipelineOrchestrator(EventEmitter[Literal[
 
             if self.agent and self.agent.session and self.agent.session.is_background_audio_enabled:
                 await self.agent.session.stop_thinking_audio()
-    
+
+            if self._generation_id == my_generation_id:
+                self._partial_response = ""
+
     async def say(self, message: str, handle: UtteranceHandle) -> None:
         """
         Direct TTS synthesis (for initial messages).

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 from dataclasses import dataclass
+import datetime
 from enum import Enum
 import json
 import os
@@ -10,6 +11,7 @@ import time
 import logging
 from typing import Any, Optional, Dict
 from pydantic import BaseModel, ConfigDict
+from datetime import datetime
 
 import aiohttp
 import re
@@ -477,8 +479,10 @@ class STT(BaseSTT):
             #     logger.debug(f"[InferenceSTT] Invalid transcript skipped: '{text}'")
             #     return
             if text.strip():
-                logger.info(f"[STT] {text} | Final: {is_final}")
-            self._last_transcript = text.strip()
+                logger.info(
+                    f"[STT] {text} at the inference stt.py and time | Final: {is_final} timestamp :: {datetime.now()}"
+                )           
+                self._last_transcript = text.strip()
 
             response = STTResponse(
                 event_type=(
