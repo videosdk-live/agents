@@ -2,21 +2,23 @@
 VideoSDK Inference Gateway Turn Detection Plugin.
 
 HTTP-based End-of-Utterance (EOU) detector that delegates inference to the
-VideoSDK Inference Gateway's ``/v1/turn`` endpoint, which runs the
-``videosdk-live/Namo-Turn-Detector-v1`` model family.
+VideoSDK Inference Gateway's ``/v1/turn`` endpoint.
 
-Unlike the local :class:`NamoTurnDetectorV1` plugin, this implementation
-downloads no model weights and loads nothing into the worker process — making
-it ideal for low-memory agent workers and keeping all model upgrades server-side.
+Three server-side backends are available via factory methods:
+
+  * ``Turn.namo()``      — Namo Turn Detector v1 (multilingual, 23 languages).
+  * ``Turn.turnsense()`` — TurnSense / SmolLM2-135M (English).
+  * ``Turn.videosdk()``  — VideoSDK BERT-based detector (English).
+
+All three return a real float probability. No model is loaded locally — the
+server handles downloads, caching, and inference.
 
 Example:
     from videosdk.inference import Turn
 
-    # Multilingual (default)
-    turn = Turn.namo()
-
-    # Language-specific (dispatches a DistilBert model on the server)
-    turn = Turn.namo(language="en")
+    turn = Turn.namo(language="en")      # Namo, English-specific model
+    turn = Turn.turnsense()              # TurnSense
+    turn = Turn.videosdk()               # VideoSDK BERT
 
     pipeline = CascadingPipeline(stt=stt, llm=llm, tts=tts, turn_detector=turn)
 """
@@ -114,6 +116,56 @@ class Turn(EOU):
             provider="videosdk",
             model_id="namo-turn-detector-v1",
             language=language,
+            threshold=threshold,
+            base_url=base_url,
+            timeout=timeout,
+        )
+
+    @staticmethod
+    def turnsense(
+        *,
+        threshold: float = 0.7,
+        base_url: Optional[str] = None,
+        timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    ) -> "Turn":
+        """
+        Create a Turn detector backed by the server-hosted TurnSense model
+        (latishab/turnsense, SmolLM2-135M, English).
+
+        Args:
+            threshold: EOU probability threshold (default: ``0.7``).
+            base_url: Override for the inference gateway URL.
+            timeout: Per-request timeout in seconds.
+        """
+        return Turn(
+            provider="turnsense",
+            model_id="turnsense",
+            language=None,
+            threshold=threshold,
+            base_url=base_url,
+            timeout=timeout,
+        )
+
+    @staticmethod
+    def videosdk(
+        *,
+        threshold: float = 0.7,
+        base_url: Optional[str] = None,
+        timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    ) -> "Turn":
+        """
+        Create a Turn detector backed by the server-hosted VideoSDK BERT model
+        (cdn.videosdk.live, English, binary classifier with softmax probability).
+
+        Args:
+            threshold: EOU probability threshold (default: ``0.7``).
+            base_url: Override for the inference gateway URL.
+            timeout: Per-request timeout in seconds.
+        """
+        return Turn(
+            provider="videosdk",
+            model_id="videosdk-turn-detector-v1",
+            language=None,
             threshold=threshold,
             base_url=base_url,
             timeout=timeout,
