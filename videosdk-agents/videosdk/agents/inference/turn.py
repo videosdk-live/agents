@@ -139,7 +139,7 @@ class Turn(EOU):
         """
         return Turn(
             provider="turnsense",
-            model_id="turnsense",
+            model_id="latishab/turnsense",
             language=None,
             threshold=threshold,
             base_url=base_url,
