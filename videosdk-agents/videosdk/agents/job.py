@@ -309,8 +309,8 @@ class Options:
         if self.permissions is None:
             self.permissions = WorkerPermissions()
 
-        if not self.auth_token:
-            self.auth_token = os.getenv("VIDEOSDK_AUTH_TOKEN")
+        from .utils import resolve_videosdk_auth_token
+        self.auth_token = resolve_videosdk_auth_token(self.auth_token)
 
 
 class WorkerJob:
@@ -400,9 +400,8 @@ class JobContext:
         self.metadata = metadata or {}
         self._loop = loop or asyncio.get_event_loop()
         self._pipeline: Optional["Pipeline"] = None
-        self.videosdk_auth = self.room_options.auth_token or os.getenv(
-            "VIDEOSDK_AUTH_TOKEN"
-        )
+        from .utils import resolve_videosdk_auth_token
+        self.videosdk_auth = resolve_videosdk_auth_token(self.room_options.auth_token)
         self.room: Optional["BaseTransportHandler"] = None
         self._shutdown_callbacks: list[Callable[[], Coroutine[None, None, None]]] = []
         self._is_shutting_down: bool = False
@@ -610,7 +609,10 @@ class JobContext:
                 print("\033[1;75m" + "Interact with agent here at:" + "\033[0m")
                 print("\033[1;4;94m" + playground_url + "\033[0m")
             else:
-                raise ValueError("VIDEOSDK_AUTH_TOKEN environment variable not found")
+                raise ValueError(
+                    "No VideoSDK auth available. Provide auth_token in RoomOptions, "
+                    "set VIDEOSDK_AUTH_TOKEN, or set VIDEOSDK_API_KEY + VIDEOSDK_SECRET_KEY."
+                )
 
     async def shutdown(self) -> None:
         """Called by Worker during graceful shutdown"""
@@ -850,8 +852,8 @@ class JobContext:
             return room_id
         else:
             raise ValueError(
-                "VIDEOSDK_AUTH_TOKEN not found. "
-                "Set it as an environment variable or provide it in room options via auth_token."
+                "No VideoSDK auth available. Provide auth_token in RoomOptions, "
+                "set VIDEOSDK_AUTH_TOKEN, or set VIDEOSDK_API_KEY + VIDEOSDK_SECRET_KEY."
             )
 
 
