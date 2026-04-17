@@ -122,7 +122,7 @@ class LLM(BaseLLM):
     @staticmethod
     def google(
         *,
-        model_id: str = "gemini-3.1-flash",
+        model_id: str = "gemini-2.5-flash",
         config: Optional[Dict] = None,
         temperature: float = 0.7,
         tool_choice: ToolChoice = "auto",
@@ -137,10 +137,10 @@ class LLM(BaseLLM):
         Create an LLM instance configured for Google Gemini.
 
         Args:
-            model_id: Gemini model identifier (default: "gemini-3.1-flash")
-                Options: "gemini-3.1-pro", "gemini-3.1-flash", "gemini-3.1-flash-lite",
-                         "gemini-3-pro", "gemini-3-flash",
-                         "gemini-2.5-pro", "gemini-2.5-flash", etc.
+            model_id: Gemini model identifier (default: "gemini-2.5-flash")
+                Stable: "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"
+                Preview: "gemini-3.1-pro-preview", "gemini-3-flash-preview",
+                         "gemini-3.1-flash-lite-preview"
             config: Optional extra config dict (merged on top of defaults)
             temperature: Controls randomness in responses (0.0 to 1.0)
             tool_choice: Tool calling mode ("auto", "required", "none")
