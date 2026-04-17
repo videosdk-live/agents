@@ -122,7 +122,7 @@ class LLM(BaseLLM):
     @staticmethod
     def google(
         *,
-        model_id: str = "gemini-2.0-flash",
+        model_id: str = "gemini-3.1-flash",
         config: Optional[Dict] = None,
         temperature: float = 0.7,
         tool_choice: ToolChoice = "auto",
@@ -137,9 +137,10 @@ class LLM(BaseLLM):
         Create an LLM instance configured for Google Gemini.
 
         Args:
-            model_id: Gemini model identifier (default: "gemini-2.0-flash")
-                Options: "gemini-2.0-flash", "gemini-2.0-flash-lite",
-                         "gemini-2.5-flash-lite", "gemini-2.5-pro", etc.
+            model_id: Gemini model identifier (default: "gemini-3.1-flash")
+                Options: "gemini-3.1-pro", "gemini-3.1-flash", "gemini-3.1-flash-lite",
+                         "gemini-3-pro", "gemini-3-flash",
+                         "gemini-2.5-pro", "gemini-2.5-flash", etc.
             config: Optional extra config dict (merged on top of defaults)
             temperature: Controls randomness in responses (0.0 to 1.0)
             tool_choice: Tool calling mode ("auto", "required", "none")
@@ -167,6 +168,95 @@ class LLM(BaseLLM):
             top_k=top_k,
             presence_penalty=presence_penalty,
             frequency_penalty=frequency_penalty,
+            base_url=base_url,
+            config=resolved_config,
+        )
+
+    @staticmethod
+    def openai(
+        *,
+        model_id: str = "gpt-4o-mini",
+        config: Optional[Dict] = None,
+        temperature: float = 0.7,
+        tool_choice: ToolChoice = "auto",
+        max_output_tokens: Optional[int] = None,
+        top_p: Optional[float] = None,
+        presence_penalty: Optional[float] = None,
+        frequency_penalty: Optional[float] = None,
+        base_url: Optional[str] = None,
+    ) -> "LLM":
+        """
+        Create an LLM instance configured for OpenAI.
+
+        Args:
+            model_id: OpenAI model identifier (default: "gpt-4o-mini")
+                Options: "gpt-4o", "gpt-4o-mini", "o1", "o3-mini", etc.
+            config: Optional extra config dict
+            temperature: Controls randomness in responses (0.0 to 1.0)
+            tool_choice: Tool calling mode ("auto", "required", "none")
+            max_output_tokens: Maximum tokens in model responses
+            top_p: Nucleus sampling parameter (0.0 to 1.0)
+            presence_penalty: Penalizes token presence (-2.0 to 2.0)
+            frequency_penalty: Penalizes token frequency (-2.0 to 2.0)
+            base_url: Custom inference gateway URL
+
+        Returns:
+            Configured LLM instance for OpenAI
+        """
+        resolved_config: Dict[str, Any] = {"model_id": model_id}
+        if config:
+            resolved_config.update(config)
+
+        return LLM(
+            provider="openai",
+            model_id=model_id,
+            temperature=temperature,
+            tool_choice=tool_choice,
+            max_output_tokens=max_output_tokens,
+            top_p=top_p,
+            presence_penalty=presence_penalty,
+            frequency_penalty=frequency_penalty,
+            base_url=base_url,
+            config=resolved_config,
+        )
+
+    @staticmethod
+    def sarvam(
+        *,
+        model_id: str = "sarvam-m",
+        config: Optional[Dict] = None,
+        temperature: float = 0.7,
+        tool_choice: ToolChoice = "auto",
+        max_output_tokens: Optional[int] = None,
+        top_p: Optional[float] = None,
+        base_url: Optional[str] = None,
+    ) -> "LLM":
+        """
+        Create an LLM instance configured for Sarvam AI.
+
+        Args:
+            model_id: Sarvam model identifier (default: "sarvam-m")
+            config: Optional extra config dict
+            temperature: Controls randomness in responses (0.0 to 1.0)
+            tool_choice: Tool calling mode ("auto", "required", "none")
+            max_output_tokens: Maximum tokens in model responses
+            top_p: Nucleus sampling parameter (0.0 to 1.0)
+            base_url: Custom inference gateway URL
+
+        Returns:
+            Configured LLM instance for Sarvam
+        """
+        resolved_config: Dict[str, Any] = {"model_id": model_id}
+        if config:
+            resolved_config.update(config)
+
+        return LLM(
+            provider="sarvam",
+            model_id=model_id,
+            temperature=temperature,
+            tool_choice=tool_choice,
+            max_output_tokens=max_output_tokens,
+            top_p=top_p,
             base_url=base_url,
             config=resolved_config,
         )

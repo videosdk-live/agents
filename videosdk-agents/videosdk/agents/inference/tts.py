@@ -107,11 +107,15 @@ class TTS(BaseTTS):
         config=None,
     ) -> "TTS":
         """
-        Create a TTS instance configured for Google Cloud Text-to-Speech.
+        Create a TTS instance configured for Google Text-to-Speech.
+
+        Uses Google Cloud Text-to-Speech (Chirp3-HD). For Gemini TTS models,
+        use ``TTS.gemini()`` instead.
 
         Args:
-            model_id: Google TTS model (default: "Chirp3-HD")
+            model_id: Cloud TTS model (default: "Chirp3-HD")
             voice_id: Voice name (default: "Achernar")
+                Options: Achernar, Aoede, Charon, Fenrir, Kore, Leda, Orus, Puck, Zephyr
             language: Language code (default: "en-US")
             speed: Speech speed (default: 1.0)
             pitch: Voice pitch (default: 0.0)
@@ -120,12 +124,10 @@ class TTS(BaseTTS):
             base_url: Custom inference gateway URL
 
         Returns:
-            Configured TTS instance for Google
+            Configured TTS instance for Google Cloud TTS
         """
-        # Build voice_name like: en-US-Chirp3-HD-Achernar
         voice_name = f"{language}-{model_id}-{voice_id}"
-
-        config = {
+        resolved_config = {
             "voice_name": voice_name,
             "language_code": language,
             "speed": speed,
@@ -139,7 +141,7 @@ class TTS(BaseTTS):
             model_id=model_id,
             voice_id=voice_id,
             language=language,
-            config=config,
+            config=resolved_config,
             enable_streaming=enable_streaming,
             sample_rate=sample_rate,
             base_url=base_url,

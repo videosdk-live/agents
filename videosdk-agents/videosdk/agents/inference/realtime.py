@@ -160,7 +160,7 @@ class Realtime(RealtimeBaseModel[RealtimeEventTypes]):
     @staticmethod
     def gemini(
         *,
-        model: str = "gemini-2.5-flash-native-audio-preview-12-2025",
+        model: str = "gemini-3.1-flash-live-preview",
         voice: Voice = "Puck",
         language_code: str = "en-US",
         temperature: float | None = None,
@@ -177,7 +177,7 @@ class Realtime(RealtimeBaseModel[RealtimeEventTypes]):
         Create a Realtime instance configured for Google Gemini.
 
         Args:
-            model: Gemini model identifier (default: "gemini-2.0-flash-exp")
+            model: Gemini model identifier (default: "gemini-3.1-flash-live-preview")
             voice: Voice ID for audio output. Options: 'Puck', 'Charon', 'Kore', 'Fenrir', 'Aoede'
             language_code: Language code for speech synthesis (default: "en-US")
             temperature: Controls randomness in responses (0.0 to 1.0)
