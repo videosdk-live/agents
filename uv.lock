@@ -3600,6 +3600,7 @@ dependencies = [
     { name = "protobuf" },
     { name = "pydantic" },
     { name = "pyee" },
+    { name = "pyjwt" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
     { name = "requests" },
@@ -3739,6 +3740,7 @@ requires-dist = [
     { name = "protobuf", specifier = ">=5.29,<6.0" },
     { name = "pydantic", specifier = ">=2.0,<3" },
     { name = "pyee", specifier = ">=13.0.0" },
+    { name = "pyjwt" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
     { name = "requests" },
@@ -3749,7 +3751,7 @@ requires-dist = [
     { name = "urllib3" },
     { name = "uvicorn" },
     { name = "videosdk", specifier = ">=0.2.9" },
-    { name = "videosdk-conversational-graph", marker = "extra == 'videosdk-conversational-graph'", specifier = ">=0.0.1" },
+    { name = "videosdk-conversational-graph", marker = "extra == 'videosdk-conversational-graph'", specifier = ">=1.0.0" },
     { name = "videosdk-plugins-anam", marker = "extra == 'anam'", editable = "videosdk-plugins/videosdk-plugins-anam" },
     { name = "videosdk-plugins-anthropic", marker = "extra == 'anthropic'", editable = "videosdk-plugins/videosdk-plugins-anthropic" },
     { name = "videosdk-plugins-assemblyai", marker = "extra == 'assemblyai'", editable = "videosdk-plugins/videosdk-plugins-assemblyai" },
@@ -3790,19 +3792,19 @@ provides-extras = ["anam", "anthropic", "assemblyai", "aws", "azure", "cambai", 
 
 [[package]]
 name = "videosdk-conversational-graph"
-version = "0.0.6"
+version = "1.0.1"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3d/46/39bcebf770870c0748e841169c9da611f79b9a7fe7a649781992605cc7e9/videosdk_conversational_graph-0.0.6-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:47419085f1efb3c43b89aefac40d121ce70e3b733a5b648b47ee21536d020503", size = 306362, upload-time = "2026-02-23T06:04:16.893Z" },
-    { url = "https://files.pythonhosted.org/packages/87/e9/91d42be6aa32ad72b0472c6311bc45b2467f715ee0c84210e03fbf65fb2b/videosdk_conversational_graph-0.0.6-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:d2efe4a4d112851514f53d7095f013f4659970f40d55b3a0e8eabb6eff6779f4", size = 1954276, upload-time = "2026-02-23T06:04:20.424Z" },
-    { url = "https://files.pythonhosted.org/packages/80/ac/378b8d04f834869b0d59891dc1066221c34584871284b1bbef819561aee1/videosdk_conversational_graph-0.0.6-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:324e34f8fc7d5444be329993bba11c80813ea42c58e98f4e3b81fc06c502f0fd", size = 2006220, upload-time = "2026-02-23T06:04:31.242Z" },
-    { url = "https://files.pythonhosted.org/packages/f9/47/5168bbb91c46d02c51f9acd5395b505219d0f998d9a958d960fbb78b9c6b/videosdk_conversational_graph-0.0.6-cp312-cp312-win32.whl", hash = "sha256:4cfb84470e2e410e0adc7e0d006719b38fc1c44d6e163dc4419fda415c39f3e9", size = 236337, upload-time = "2026-02-23T06:04:38.316Z" },
-    { url = "https://files.pythonhosted.org/packages/3f/e8/beafb733f6387c9bc48a3de7e83044c7f7d69a5e83364e508dadc04ca5ca/videosdk_conversational_graph-0.0.6-cp312-cp312-win_amd64.whl", hash = "sha256:56c66adc3da7a315920c9f9033f9c47fa9819d2c8c06e8caf578be023015fb59", size = 269702, upload-time = "2026-02-23T06:04:34.563Z" },
-    { url = "https://files.pythonhosted.org/packages/3c/a5/db136fd0f737e850ed2d675a7419652cc168ac71ee23c09285bd243e9f3b/videosdk_conversational_graph-0.0.6-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:50a602f95c748ffdc44cc2696eb76913668a3e3da06a8da910f6aefdaf0ff931", size = 304595, upload-time = "2026-02-23T06:04:41.106Z" },
-    { url = "https://files.pythonhosted.org/packages/f7/2a/7cc6cc26e396fbe389af94cb3fc7da4419602006e7c13f0184414ba18303/videosdk_conversational_graph-0.0.6-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:05f9c19411084f803d3ea9907d8b69ab028ec83aab9c179cb5361f9db6bcd89f", size = 1925520, upload-time = "2026-02-23T06:04:58.271Z" },
-    { url = "https://files.pythonhosted.org/packages/f2/a3/569890db361fb1fbbc4736c712c29a0b5962c99799d05513d37f1a3f8849/videosdk_conversational_graph-0.0.6-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:68afc5c50a111759807436ae6da452a388379fe5feda539185908a6edd0f0817", size = 1970034, upload-time = "2026-02-23T06:05:20.44Z" },
-    { url = "https://files.pythonhosted.org/packages/4a/c0/54d0180e258fc6b0991a88f80e23dbabb186beb9605abe2c2a914906646e/videosdk_conversational_graph-0.0.6-cp313-cp313-win32.whl", hash = "sha256:d504a3574e60dfd2fef690801049d385a6ceda7afa457bfee2bf60cd5f2164b2", size = 234901, upload-time = "2026-02-23T06:05:24.917Z" },
-    { url = "https://files.pythonhosted.org/packages/33/81/bc7bb79ab7de5337e0acc68de2ca649721791e949d77eddf2e154bc3cdff/videosdk_conversational_graph-0.0.6-cp313-cp313-win_amd64.whl", hash = "sha256:af600e995ecaa2527f9e73d9a256505667ed8b1d2607a6602af305f7dea6ed52", size = 268620, upload-time = "2026-02-23T06:05:23.055Z" },
+    { url = "https://files.pythonhosted.org/packages/fa/e7/5c68293fd8f35c46494a2f046c9518fe53f2b872a26f07ab4f880219d1a2/videosdk_conversational_graph-1.0.1-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:d38f8a865f8cc9f4509989049344db4beea68a492003d031067eecdea0b7d611", size = 885001, upload-time = "2026-04-10T06:37:37.306Z" },
+    { url = "https://files.pythonhosted.org/packages/97/68/b6ef80fca9525687006f079859a5db546eee2bb4c69d4e4227af2ef62b5a/videosdk_conversational_graph-1.0.1-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:61572941971dec822f38f39f614ab3ac908edf3f82cf9d67d1c6901877191601", size = 5851083, upload-time = "2026-04-10T06:37:40.319Z" },
+    { url = "https://files.pythonhosted.org/packages/b9/c7/fca9a698b2a40f238c45348c13363ffb5e33792ec7b796499c728c79e5b3/videosdk_conversational_graph-1.0.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:0bd4cad1125dc440c2c9650e99dcd5d4e615ccde5df32bb8c0c9d90b257ccf07", size = 5989941, upload-time = "2026-04-10T06:37:43.492Z" },
+    { url = "https://files.pythonhosted.org/packages/f6/12/135a4aa70c645f8d3085643062f554c90071d079417127442ac52b9e56dc/videosdk_conversational_graph-1.0.1-cp312-cp312-win32.whl", hash = "sha256:76fa792e58d3d3fa110ef21ec304870db358931269504f9eb99073adda7be299", size = 669538, upload-time = "2026-04-10T06:37:46.566Z" },
+    { url = "https://files.pythonhosted.org/packages/8b/27/af9aeb8cb2f1db1ee91d821082deb466e67de5ed9b9c5edef2101f61aa33/videosdk_conversational_graph-1.0.1-cp312-cp312-win_amd64.whl", hash = "sha256:e351cffc4d14f18e9d234795fca8f6faf2d21aec267e7185f3381c06cfa629d8", size = 770240, upload-time = "2026-04-10T06:37:45.054Z" },
+    { url = "https://files.pythonhosted.org/packages/e8/d2/ce6b4b9a6cac1dc6e9aa428188acb8500fc894ab26184c16ea679744c34d/videosdk_conversational_graph-1.0.1-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:cd194be95e6d96b86ed3370e7737093ea794fafbf422ae6dfab8c2e3a4b08e35", size = 873964, upload-time = "2026-04-10T06:37:48.176Z" },
+    { url = "https://files.pythonhosted.org/packages/6f/c6/110d6f24db0ea423d4bb806ae32d3187fe5f8e6333ba453ea587b1790a93/videosdk_conversational_graph-1.0.1-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:5045c894c91f992866310bfab5d02f45c80754515561c243d75cd2afbfb50b69", size = 5753973, upload-time = "2026-04-10T06:37:50.412Z" },
+    { url = "https://files.pythonhosted.org/packages/99/ed/4762da28e7479aebf1746cdd8d99947967b836ec919ab01b05a73950223a/videosdk_conversational_graph-1.0.1-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:2820c8a4377e84e929f973375ad1a0658a44ca0f7fa64dc2a3ba592f47ecd2b6", size = 5891287, upload-time = "2026-04-10T06:38:00.109Z" },
+    { url = "https://files.pythonhosted.org/packages/ad/ac/ebbed3f66c087adf927fb0df7ca661d1a38848c2d146f737360f6d340b8c/videosdk_conversational_graph-1.0.1-cp313-cp313-win32.whl", hash = "sha256:1c5ada9a90599487e83a90914a4ddaeef5c24f6fb11442204c69616e105b7cf3", size = 663990, upload-time = "2026-04-10T06:38:04.332Z" },
+    { url = "https://files.pythonhosted.org/packages/69/50/6758f147fbff28c2786b9346a8549a6db67055c617de1c8036f5df97f9be/videosdk_conversational_graph-1.0.1-cp313-cp313-win_amd64.whl", hash = "sha256:5b757951590f707e793b9c11819ce804873a14324c8bca48c3d929b6b6c8027c", size = 764747, upload-time = "2026-04-10T06:38:02.652Z" },
 ]
 
 [[package]]
@@ -3879,7 +3881,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "azure-ai-voicelive", specifier = ">=1.0.0b1" },
+    { name = "azure-ai-voicelive", specifier = ">=1.0.1" },
     { name = "azure-cognitiveservices-speech", specifier = ">=1.46.0" },
     { name = "azure-core", specifier = "==1.35.0" },
     { name = "azure-identity", specifier = "==1.22.0" },
@@ -3925,7 +3927,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "cerebras-cloud-sdk", specifier = ">=1.0.0" },
+    { name = "cerebras-cloud-sdk", specifier = ">=1.0.1" },
     { name = "videosdk-agents", editable = "videosdk-agents" },
 ]
 
