@@ -179,8 +179,8 @@ class WorkerOptions:
 
     def __post_init__(self):
         """Post-initialization setup."""
-        if not self.auth_token:
-            self.auth_token = os.getenv("VIDEOSDK_AUTH_TOKEN")
+        from .utils import resolve_videosdk_auth_token
+        self.auth_token = resolve_videosdk_auth_token(self.auth_token)
 
         # Log the selected executor type
         logger.info(f"Worker configured with {self.executor_type.value} executor")
@@ -243,7 +243,8 @@ class Worker:
         # Validate configuration
         if not self.options.auth_token:
             raise ValueError(
-                "auth_token is required, or add VIDEOSDK_AUTH_TOKEN in your environment"
+                "No VideoSDK auth available. Provide auth_token in RoomOptions, "
+                "set VIDEOSDK_AUTH_TOKEN, or set VIDEOSDK_API_KEY + VIDEOSDK_SECRET_KEY."
             )
 
     @staticmethod
