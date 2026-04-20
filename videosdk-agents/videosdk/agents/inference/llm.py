@@ -2,13 +2,16 @@
 VideoSDK Inference Gateway LLM Plugin.
 
 HTTP-based LLM client that connects to VideoSDK's Inference Gateway.
-Supports Google Gemini through a unified interface for cascading pipelines.
+Supports Google Gemini and Sarvam AI through a unified interface for cascading pipelines.
 
 Example:
     from videosdk.inference import LLM
 
-    # Using factory method (recommended) — same model_id convention as STT/TTS
+    # Google Gemini (unchanged)
     llm = LLM.google(model_id="gemini-2.0-flash")
+
+    # Sarvam AI
+    llm = LLM.sarvam(model_id="sarvam-30b")
 
     # Use with CascadingPipeline
     pipeline = CascadingPipeline(stt=stt, llm=llm, tts=tts)
@@ -20,7 +23,7 @@ import json
 import os
 import logging
 import traceback
-from typing import Any, AsyncIterator, Dict, List, Optional, Union
+from typing import Any, AsyncIterator, Dict, List, Literal, Optional, Union
 
 import aiohttp
 
@@ -51,14 +54,12 @@ class LLM(BaseLLM):
     VideoSDK Inference Gateway LLM Plugin.
 
     A lightweight LLM client that connects to VideoSDK's Inference Gateway via HTTP.
-    Supports Google Gemini models through a unified interface.
+    Supports Google Gemini and Sarvam AI models through a unified interface.
 
     Example:
-        # model_id is consistent with the STT/TTS plugin convention
         llm = LLM.google(model_id="gemini-2.0-flash")
-        llm = LLM.google(model_id="gemini-2.5-pro")
+        llm = LLM.sarvam(model_id="sarvam-30b")
 
-        # Use with CascadingPipeline
         pipeline = CascadingPipeline(stt=stt, llm=llm, tts=tts)
     """
 
@@ -76,21 +77,28 @@ class LLM(BaseLLM):
         frequency_penalty: Optional[float] = None,
         base_url: Optional[str] = None,
         config: Dict[str, Any] | None = None,
+        # Sarvam-specific
+        wiki_grounding: bool = False,
+        reasoning_effort: Optional[Literal["low", "medium", "high"]] = None,
+        stop: Optional[Union[str, List[str]]] = None,
     ) -> None:
         """
         Initialize the VideoSDK Inference LLM plugin.
 
         Args:
-            provider: LLM provider name (e.g., "google")
-            model_id: Model identifier (e.g., "gemini-2.0-flash") — consistent with STT/TTS
+            provider: LLM provider name (e.g., "google", "sarvam")
+            model_id: Model identifier — consistent with STT/TTS convention
             temperature: Controls randomness in responses (0.0 to 1.0)
             tool_choice: Tool calling mode ("auto", "required", "none")
             max_output_tokens: Maximum tokens in model responses
             top_p: Nucleus sampling parameter (0.0 to 1.0)
-            top_k: Limits tokens considered for each generation step
+            top_k: Limits tokens considered per step — Google only
             presence_penalty: Penalizes token presence (-2.0 to 2.0)
             frequency_penalty: Penalizes token frequency (-2.0 to 2.0)
             base_url: Custom inference gateway URL
+            wiki_grounding: Enable Wikipedia search grounding — Sarvam only
+            reasoning_effort: Reasoning depth "low"|"medium"|"high" — Sarvam only
+            stop: Up to 4 stop sequences — Sarvam only
         """
         super().__init__()
 
@@ -111,11 +119,16 @@ class LLM(BaseLLM):
         self.presence_penalty = presence_penalty
         self.frequency_penalty = frequency_penalty
         self.base_url = base_url or DEFAULT_LLM_HTTP_URL
+        self.config = config or {}
+
+        # Sarvam-specific params
+        self.wiki_grounding = wiki_grounding
+        self.reasoning_effort = reasoning_effort
+        self.stop = stop
 
         # HTTP session state
         self._session: Optional[aiohttp.ClientSession] = None
         self._cancelled: bool = False
-        self.config = config or {}
 
     # ==================== Factory Methods ====================
 
@@ -288,7 +301,7 @@ class LLM(BaseLLM):
             # Convert messages to OpenAI-compatible format
             formatted_messages = await self._convert_messages_to_dict(messages)
 
-            # Build request payload
+            # Build base request payload
             payload: Dict[str, Any] = {
                 "model": self.model_id,
                 "messages": formatted_messages,
@@ -297,17 +310,28 @@ class LLM(BaseLLM):
                 "temperature": self.temperature,
             }
 
-            # Add optional parameters
+            # Common optional parameters
             if self.max_output_tokens:
                 payload["max_tokens"] = self.max_output_tokens
             if self.top_p is not None:
                 payload["top_p"] = self.top_p
-            if self.top_k is not None:
-                payload["top_k"] = self.top_k
             if self.presence_penalty is not None:
                 payload["presence_penalty"] = self.presence_penalty
             if self.frequency_penalty is not None:
                 payload["frequency_penalty"] = self.frequency_penalty
+
+            # Google-only parameters
+            if self.provider == "google":
+                if self.top_k is not None:
+                    payload["top_k"] = self.top_k
+
+            # Sarvam-only parameters
+            if self.provider == "sarvam":
+                payload["wiki_grounding"] = self.wiki_grounding
+                if self.reasoning_effort is not None:
+                    payload["reasoning_effort"] = self.reasoning_effort
+                if self.stop is not None:
+                    payload["stop"] = self.stop
 
             # Add conversational graph response format
             if conversational_graph:
