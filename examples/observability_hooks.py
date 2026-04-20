@@ -1,5 +1,5 @@
 
-from videosdk.agents import Agent, AgentSession, Pipeline,JobContext, RoomOptions, WorkerJob
+from videosdk.agents import Agent,AgentSession, Pipeline, JobContext, RoomOptions, WorkerJob, ObservabilityOptions, RecordingOptions, LoggingOptions
 from videosdk.plugins.google import GoogleLLM
 from videosdk.plugins.deepgram import DeepgramSTT
 from videosdk.plugins.cartesia import CartesiaTTS
@@ -129,7 +129,14 @@ async def start_session(context: JobContext):
         pipeline=pipeline,
     )
 
-    await session.start(wait_for_participant=True, run_until_shutdown=True)
+    await session.start(
+        wait_for_participant=True,
+        run_until_shutdown=True,
+        observability=ObservabilityOptions(
+            recording=RecordingOptions(),                    
+            logs=LoggingOptions(level=["INFO", "DEBUG"]),  
+        ),
+    )
 
 
 def make_context() -> JobContext:
@@ -137,7 +144,6 @@ def make_context() -> JobContext:
         room_id="<room_id>",
         name="Observability Hooks",
         playground=True,
-        recording=True,
     )
 
     return JobContext(room_options=room_options)
