@@ -5,7 +5,7 @@ import hashlib
 import os
 import time
 import logging
-from typing import TYPE_CHECKING, Dict, List, Optional, Any, Union
+from typing import TYPE_CHECKING, Dict, List, Literal, Optional, Any, Union
 from dataclasses import asdict
 
 from .metrics_schema import (
@@ -935,6 +935,32 @@ class MetricsCollector:
     # Transcript / response
     # ──────────────────────────────────────────────
 
+    def emit_user_transcript_transport(self, text: str, type: Literal["interim", "final"]) -> None:
+        """Broadcast user transcript for transport signaling (interim or final).
+
+        Does not update ``current_turn.user_speech`` — use only for streaming STT
+        to clients. Committed final text for metrics uses :meth:`set_user_transcript`.
+        """
+        if not text or not str(text).strip():
+            return
+        global_event_emitter.emit(
+            "USER_TRANSCRIPT_ADDED",
+            {"text": str(text).strip(), "type": type},
+        )
+
+    def emit_agent_transcript_transport(self, text: str, type: Literal["interim", "final"]) -> None:
+        """Broadcast agent transcript for transport signaling (interim or final).
+
+        Does not mutate ``current_turn.agent_speech`` — use only for streaming TTS
+        text to clients. Committed final text for metrics uses :meth:`set_agent_response`.
+        """
+        if not text or not str(text).strip():
+            return
+        global_event_emitter.emit(
+            "AGENT_TRANSCRIPT_ADDED",
+            {"text": str(text).strip(), "type": type},
+        )
+
     def set_user_transcript(self, transcript: str) -> None:
         """Set the user transcript for the current turn."""
         if self.current_turn:
@@ -957,7 +983,10 @@ class MetricsCollector:
 
             self.current_turn.user_speech = transcript
             logger.info(f"user input speech: {transcript}")
-            global_event_emitter.emit("USER_TRANSCRIPT_ADDED", {"text": transcript})
+            global_event_emitter.emit(
+                "USER_TRANSCRIPT_ADDED",
+                {"text": transcript, "type": "final"},
+            )
 
             # Update timeline
             user_events = [
@@ -971,13 +1000,22 @@ class MetricsCollector:
                 if self.current_turn.timeline_event_metrics:
                     self.current_turn.timeline_event_metrics[-1].text = transcript
 
-    def set_agent_response(self, response: str) -> None:
-        """Set the agent response for the current turn."""
+    def set_agent_response(self, response: str, emit_transport: bool = True) -> None:
+        """Set the agent response for the current turn.
+
+        Args:
+            response: The agent's full response text.
+            emit_transport: When True (default), emit ``AGENT_TRANSCRIPT_ADDED`` with
+                ``type="final"`` for transport signaling. Set to False when the caller
+                will emit the final transport event later (e.g. after TTS has consumed
+                all chunks) to avoid racing with interim emits from the TTS wrapper.
+        """
         if not self.current_turn:
             self.start_turn()
         self.current_turn.agent_speech = response
         logger.info(f"agent output speech: {response}")
-        global_event_emitter.emit("AGENT_TRANSCRIPT_ADDED", {"text": response})
+        if emit_transport:
+            global_event_emitter.emit("AGENT_TRANSCRIPT_ADDED", {"text": response, "type": "final"})
 
         if not any(ev.event_type == "agent_speech" for ev in self.current_turn.timeline_event_metrics):
             current_time = time.perf_counter()
