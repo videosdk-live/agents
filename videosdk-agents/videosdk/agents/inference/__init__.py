@@ -25,6 +25,7 @@ from .tts import TTS
 from .realtime import Realtime
 from .llm import LLM
 from .denoise import Denoise
+from .turn import Turn
 
 
-__all__ = ["STT", "TTS", "Realtime", "LLM", "Denoise"]
+__all__ = ["STT", "TTS", "Realtime", "LLM", "Denoise", "Turn"]

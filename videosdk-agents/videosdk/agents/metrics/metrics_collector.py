@@ -5,7 +5,7 @@ import hashlib
 import os
 import time
 import logging
-from typing import TYPE_CHECKING, Dict, List, Optional, Any, Union
+from typing import TYPE_CHECKING, Dict, List, Literal, Optional, Any, Union
 from dataclasses import asdict
 
 from .metrics_schema import (
@@ -27,6 +27,7 @@ from .metrics_schema import (
 )
 from .analytics import AnalyticsClient
 from ..event_bus import global_event_emitter
+from ..utils import reset_metrics_formatter_state
 
 if TYPE_CHECKING:
     from .traces_flow import TracesFlowManager
@@ -122,6 +123,47 @@ class MetricsCollector:
             )
 
         logger.info(f"[metrics] Pipeline configured: mode={self.pipeline_mode}, realtime={self.realtime_mode}")
+
+    def _reset_pipeline_state(self) -> None:
+        """Reset state that's specific to a single pipeline instance.
+
+        Preserves session-level info that outlives a pipeline swap
+        (session_id, analytics_client, traces_flow_manager, transport_mode).
+        """
+        if self.current_turn:
+            self.complete_turn()
+
+        if self._agent_speech_end_timer:
+            self._agent_speech_end_timer.cancel()
+            self._agent_speech_end_timer = None
+
+        self.session.provider_per_component = {}
+
+        self._stt_start_time = None
+        self._llm_start_time = None
+        self._tts_start_time = None
+        self._tts_first_byte_time = None
+        self._eou_start_time = None
+
+        self._is_agent_speaking = False
+        self._is_user_speaking = False
+        self._user_input_start_time = None
+        self._user_speech_end_time = None
+        self._agent_speech_start_time = None
+        self._pending_user_start_time = None
+
+        self._pending_interrupt_timeline = None
+        self._pending_interrupt_stt = None
+        self._pending_interrupt_eou = None
+        self._pending_interrupt_vad = None
+
+        self.preemtive_generation_enabled = False
+
+        self.turns = []
+        self._total_turns = 0
+        self._total_interruptions = 0
+
+        reset_metrics_formatter_state()
 
     def set_session_id(self, session_id: str) -> None:
         """Set the session ID for metrics tracking."""
@@ -223,10 +265,17 @@ class MetricsCollector:
         self.traces_flow_manager = manager
 
     def finalize_session(self) -> None:
-        """Finalize the session, completing any in-progress turn."""
+        """Finalize the session, completing any in-progress turn.
+
+        Also resets pipeline-specific state so that if a new agent/pipeline
+        is wired up on the same collector (e.g. mid-room agent swap),
+        stale providers and transient timings don't leak into the new
+        agent's metrics.
+        """
         if self.current_turn:
             self.complete_turn()
         self.session.session_end_time = time.time()
+        self._reset_pipeline_state()
 
     # ──────────────────────────────────────────────
     # Turn lifecycle
@@ -886,6 +935,32 @@ class MetricsCollector:
     # Transcript / response
     # ──────────────────────────────────────────────
 
+    def emit_user_transcript_transport(self, text: str, type: Literal["interim", "final"]) -> None:
+        """Broadcast user transcript for transport signaling (interim or final).
+
+        Does not update ``current_turn.user_speech`` — use only for streaming STT
+        to clients. Committed final text for metrics uses :meth:`set_user_transcript`.
+        """
+        if not text or not str(text).strip():
+            return
+        global_event_emitter.emit(
+            "USER_TRANSCRIPT_ADDED",
+            {"text": str(text).strip(), "type": type},
+        )
+
+    def emit_agent_transcript_transport(self, text: str, type: Literal["interim", "final"]) -> None:
+        """Broadcast agent transcript for transport signaling (interim or final).
+
+        Does not mutate ``current_turn.agent_speech`` — use only for streaming TTS
+        text to clients. Committed final text for metrics uses :meth:`set_agent_response`.
+        """
+        if not text or not str(text).strip():
+            return
+        global_event_emitter.emit(
+            "AGENT_TRANSCRIPT_ADDED",
+            {"text": str(text).strip(), "type": type},
+        )
+
     def set_user_transcript(self, transcript: str) -> None:
         """Set the user transcript for the current turn."""
         if self.current_turn:
@@ -908,7 +983,10 @@ class MetricsCollector:
 
             self.current_turn.user_speech = transcript
             logger.info(f"user input speech: {transcript}")
-            global_event_emitter.emit("USER_TRANSCRIPT_ADDED", {"text": transcript})
+            global_event_emitter.emit(
+                "USER_TRANSCRIPT_ADDED",
+                {"text": transcript, "type": "final"},
+            )
 
             # Update timeline
             user_events = [
@@ -922,13 +1000,22 @@ class MetricsCollector:
                 if self.current_turn.timeline_event_metrics:
                     self.current_turn.timeline_event_metrics[-1].text = transcript
 
-    def set_agent_response(self, response: str) -> None:
-        """Set the agent response for the current turn."""
+    def set_agent_response(self, response: str, emit_transport: bool = True) -> None:
+        """Set the agent response for the current turn.
+
+        Args:
+            response: The agent's full response text.
+            emit_transport: When True (default), emit ``AGENT_TRANSCRIPT_ADDED`` with
+                ``type="final"`` for transport signaling. Set to False when the caller
+                will emit the final transport event later (e.g. after TTS has consumed
+                all chunks) to avoid racing with interim emits from the TTS wrapper.
+        """
         if not self.current_turn:
             self.start_turn()
         self.current_turn.agent_speech = response
         logger.info(f"agent output speech: {response}")
-        global_event_emitter.emit("AGENT_TRANSCRIPT_ADDED", {"text": response})
+        if emit_transport:
+            global_event_emitter.emit("AGENT_TRANSCRIPT_ADDED", {"text": response, "type": "final"})
 
         if not any(ev.event_type == "agent_speech" for ev in self.current_turn.timeline_event_metrics):
             current_time = time.perf_counter()

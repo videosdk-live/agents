@@ -44,6 +44,22 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
         self.tts_lock = asyncio.Lock()
         self._is_interrupted = False
         self.full_transcript = ""
+
+        if self.tts and getattr(self.tts, "supports_word_timestamps", False):
+            try:
+                self.tts.on("word_spoken", self._on_tts_word_spoken)
+            except Exception as e:
+                logger.debug(f"Failed to subscribe to TTS word_spoken: {e}")
+
+    def _on_tts_word_spoken(self, data: Any) -> None:
+        """Handler for TTS ``word_spoken`` events — emits an interim transcript."""
+        if not isinstance(data, dict):
+            return
+        cumulative = data.get("cumulative_text", "")
+        if cumulative and metrics_collector:
+            metrics_collector.emit_agent_transcript_transport(
+                cumulative, type="interim"
+            )
     
     async def start(self) -> None:
         """Start the speech generation component"""
@@ -80,7 +96,6 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
                     nonlocal tts_start_recorded
                     logger.debug(f"[TTS DEBUG] Got text chunk: {len(text_chunk) if text_chunk else 0} chars")
                     if text_chunk and metrics_collector:
-                        # Count characters in this chunk
                         if not tts_start_recorded:
                             metrics_collector.on_tts_start()
                             tts_start_recorded = True

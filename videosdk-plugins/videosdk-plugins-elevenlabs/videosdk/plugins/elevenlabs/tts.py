@@ -43,9 +43,10 @@ class ElevenLabsTTS(TTS):
         enable_streaming: bool = True,
         inactivity_timeout: int = WS_INACTIVITY_TIMEOUT,
         language: str = "en",
-        enable_ssml_parsing:bool=False,
-        apply_text_normalization:Literal["auto","on","off"]="auto",
-        auto_mode:bool=False
+        enable_ssml_parsing: bool = False,
+        apply_text_normalization: Literal["auto", "on", "off"] = "auto",
+        auto_mode: bool = False,
+        word_timestamps: bool = False,
     ) -> None:
         """Initialize the ElevenLabs TTS plugin.
 
@@ -68,7 +69,9 @@ class ElevenLabsTTS(TTS):
             auto_mode (bool): Reduces latency by disabling chunk schedule and buffers. Recommended for full sentences/phrases.
         """
         super().__init__(
-            sample_rate=ELEVENLABS_SAMPLE_RATE, num_channels=ELEVENLABS_CHANNELS
+            sample_rate=ELEVENLABS_SAMPLE_RATE,
+            num_channels=ELEVENLABS_CHANNELS,
+            word_timestamps=word_timestamps,
         )
 
         self.model = model
@@ -109,9 +112,25 @@ class ElevenLabsTTS(TTS):
         self._active_contexts: set[str] = set()
         self._context_futures: dict[str, asyncio.Future[None]] = {}
 
+        self._audio_start_time: Optional[float] = None
+        self._spoken_words: list[str] = []
+        self._word_schedule_tasks: list[asyncio.Task] = []
+        self._last_scheduled_start_sec: float = -1.0
+        self._pending_word_chars: list[str] = []
+        self._pending_word_start_sec: Optional[float] = None
+
     def reset_first_audio_tracking(self) -> None:
         """Reset the first audio tracking state for next TTS task"""
         self._first_chunk_sent = False
+        self._audio_start_time = None
+        self._spoken_words = []
+        for task in self._word_schedule_tasks:
+            if not task.done():
+                task.cancel()
+        self._word_schedule_tasks = []
+        self._last_scheduled_start_sec = -1.0
+        self._pending_word_chars = []
+        self._pending_word_start_sec = None
 
     async def synthesize(
         self,
@@ -254,16 +273,91 @@ class ElevenLabsTTS(TTS):
         if not audio_bytes or self._should_stop:
             return
 
-        if not self._first_chunk_sent and hasattr(self, '_first_audio_callback') and self._first_audio_callback:
+        if not self._first_chunk_sent:
             self._first_chunk_sent = True
-            asyncio.create_task(self._first_audio_callback())
+            self._audio_start_time = asyncio.get_event_loop().time()
+            if hasattr(self, '_first_audio_callback') and self._first_audio_callback:
+                asyncio.create_task(self._first_audio_callback())
 
         if self.audio_track and self.loop:
             await self.audio_track.add_new_bytes(audio_bytes)
 
+    async def _schedule_word_emit(self, word: str, start_sec: float) -> None:
+        """Emit a ``word_spoken`` event at the moment its audio begins to play."""
+        while self._audio_start_time is None and not self._should_stop:
+            await asyncio.sleep(0.01)
+        if self._should_stop or self._audio_start_time is None:
+            return
+
+        target_time = self._audio_start_time + float(start_sec)
+        now = asyncio.get_event_loop().time()
+        delay = target_time - now
+        if delay > 0:
+            try:
+                await asyncio.sleep(delay)
+            except asyncio.CancelledError:
+                return
+        if self._should_stop:
+            return
+
+        self._spoken_words.append(word)
+        cumulative = " ".join(self._spoken_words)
+        try:
+            self.emit("word_spoken", {"word": word, "cumulative_text": cumulative})
+        except Exception:
+            pass
+
+    def _schedule_words_from_alignment(self, alignment: dict) -> None:
+        """Parse an ElevenLabs alignment payload and schedule per-word emits.
+
+        ElevenLabs returns character-level alignment (``chars`` /
+        ``charStartTimesMs``). We aggregate consecutive non-whitespace chars
+        into whole words, then schedule each word at its first-char start time
+        so the UI renders word-by-word synced with audio playback.
+        """
+        if not alignment:
+            return
+        chars = alignment.get("chars") or alignment.get("characters") or []
+        if "charStartTimesMs" in alignment:
+            starts_sec = [float(t) / 1000.0 for t in alignment["charStartTimesMs"]]
+        elif "character_start_times_seconds" in alignment:
+            starts_sec = [float(t) for t in alignment["character_start_times_seconds"]]
+        else:
+            return
+
+        for ch, start_sec in zip(chars, starts_sec):
+            if ch.isspace():
+                self._flush_pending_word()
+            else:
+                if not self._pending_word_chars:
+                    self._pending_word_start_sec = start_sec
+                self._pending_word_chars.append(ch)
+
+    def _flush_pending_word(self) -> None:
+        """Schedule emission of any word currently being accumulated."""
+        if not self._pending_word_chars or self._pending_word_start_sec is None:
+            self._pending_word_chars = []
+            self._pending_word_start_sec = None
+            return
+        word = "".join(self._pending_word_chars)
+        start_sec = self._pending_word_start_sec
+        self._pending_word_chars = []
+        self._pending_word_start_sec = None
+        if start_sec <= self._last_scheduled_start_sec:
+            return
+        self._last_scheduled_start_sec = start_sec
+        self._word_schedule_tasks.append(
+            asyncio.create_task(self._schedule_word_emit(word, start_sec))
+        )
+
     async def interrupt(self) -> None:
         """Simple but effective interruption"""
         self._should_stop = True
+
+        for task in self._word_schedule_tasks:
+            if not task.done():
+                task.cancel()
+        self._word_schedule_tasks = []
 
         if self.audio_track:
             self.audio_track.interrupt()
@@ -395,13 +489,21 @@ class ElevenLabsTTS(TTS):
                     if data.get("audio"):
                         audio_chunk = base64.b64decode(data["audio"]) if isinstance(data["audio"], str) else None
                         if audio_chunk:
-                            if not self._first_chunk_sent and hasattr(self, '_first_audio_callback') and self._first_audio_callback:
+                            if not self._first_chunk_sent:
                                 self._first_chunk_sent = True
-                                asyncio.create_task(self._first_audio_callback())
+                                self._audio_start_time = asyncio.get_event_loop().time()
+                                if hasattr(self, '_first_audio_callback') and self._first_audio_callback:
+                                    asyncio.create_task(self._first_audio_callback())
                             if self.audio_track:
                                 await self.audio_track.add_new_bytes(audio_chunk)
+                    if self.supports_word_timestamps:
+                        alignment = data.get("alignment") or data.get("normalizedAlignment")
+                        if alignment:
+                            self._schedule_words_from_alignment(alignment)
 
                     if data.get("is_final") or data.get("isFinal"):
+                        if self.supports_word_timestamps:
+                            self._flush_pending_word()
                         ctx_id = data.get("contextId")
                         if ctx_id:
                             fut = self._context_futures.pop(ctx_id, None)
