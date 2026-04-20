@@ -186,54 +186,6 @@ class LLM(BaseLLM):
         )
 
     @staticmethod
-    def openai(
-        *,
-        model_id: str = "gpt-4o-mini",
-        config: Optional[Dict] = None,
-        temperature: float = 0.7,
-        tool_choice: ToolChoice = "auto",
-        max_output_tokens: Optional[int] = None,
-        top_p: Optional[float] = None,
-        presence_penalty: Optional[float] = None,
-        frequency_penalty: Optional[float] = None,
-        base_url: Optional[str] = None,
-    ) -> "LLM":
-        """
-        Create an LLM instance configured for OpenAI.
-
-        Args:
-            model_id: OpenAI model identifier (default: "gpt-4o-mini")
-                Options: "gpt-4o", "gpt-4o-mini", "o1", "o3-mini", etc.
-            config: Optional extra config dict
-            temperature: Controls randomness in responses (0.0 to 1.0)
-            tool_choice: Tool calling mode ("auto", "required", "none")
-            max_output_tokens: Maximum tokens in model responses
-            top_p: Nucleus sampling parameter (0.0 to 1.0)
-            presence_penalty: Penalizes token presence (-2.0 to 2.0)
-            frequency_penalty: Penalizes token frequency (-2.0 to 2.0)
-            base_url: Custom inference gateway URL
-
-        Returns:
-            Configured LLM instance for OpenAI
-        """
-        resolved_config: Dict[str, Any] = {"model_id": model_id}
-        if config:
-            resolved_config.update(config)
-
-        return LLM(
-            provider="openai",
-            model_id=model_id,
-            temperature=temperature,
-            tool_choice=tool_choice,
-            max_output_tokens=max_output_tokens,
-            top_p=top_p,
-            presence_penalty=presence_penalty,
-            frequency_penalty=frequency_penalty,
-            base_url=base_url,
-            config=resolved_config,
-        )
-
-    @staticmethod
     def sarvam(
         *,
         model_id: str = "sarvam-m",
