@@ -9,7 +9,7 @@ from .pipeline import Pipeline
 from .utils import get_tool_info, UserState, AgentState
 from .utterance_handle import UtteranceHandle 
 import time
-from .job import get_current_job_context
+from .job import get_current_job_context, ObservabilityOptions
 from .event_emitter import EventEmitter
 from .event_bus import global_event_emitter
 from .background_audio import BackgroundAudioHandler,BackgroundAudioHandlerConfig
@@ -189,6 +189,8 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         self,
         wait_for_participant: bool = False,
         run_until_shutdown: bool = False,
+        *,
+        observability: Optional[ObservabilityOptions] = None,
         **kwargs: Any
     ) -> None:
         """
@@ -199,25 +201,60 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         3. Start the pipeline processing
         4. Start wake-up timer if configured (but only if callback is set)
         5. Optionally handle full lifecycle management (connect, wait, shutdown)
-        
+
         Args:
             wait_for_participant: If True, wait for a participant to join before starting
             run_until_shutdown: If True, manage the full lifecycle including connection,
                                waiting for shutdown signals, and cleanup. This is a convenience
                                that internally calls ctx.run_until_shutdown() with this session.
+            observability: Grouped recording/traces/metrics/logs config. When passed, it
+                           is applied to ``ctx.room_options.observability`` before the
+                           room connects, taking precedence over any value set on
+                           ``RoomOptions``. Requires ``run_until_shutdown=True``; a
+                           warning is logged otherwise.
             **kwargs: Additional arguments to pass to the pipeline start method
-            
+
         Examples:
             Simple start (manual lifecycle management):
             ```python
             await session.start()
             ```
-            
+
             Full lifecycle management (recommended):
             ```python
             await session.start(wait_for_participant=True, run_until_shutdown=True)
             ```
+
+            Inline observability:
+            ```python
+            await session.start(
+                wait_for_participant=True,
+                run_until_shutdown=True,
+                observability=ObservabilityOptions(
+                    recording=RecordingOptions(video=True),
+                ),
+            )
+            ```
         """
+        if observability is not None:
+            ctx = None
+            try:
+                ctx = get_current_job_context()
+            except Exception as e:
+                logger.warning(f"Could not resolve JobContext for observability overrides: {e}")
+            if ctx is not None and ctx.room_options is not None:
+                if not run_until_shutdown:
+                    logger.warning(
+                        "observability= passed to session.start() but run_until_shutdown=False; "
+                        "overrides only apply if ctx.connect() has not yet run."
+                    )
+                ctx.room_options.observability = observability
+            else:
+                logger.warning(
+                    "observability= passed to session.start() but no active JobContext "
+                    "(or no RoomOptions) was found; ignoring."
+                )
+
         if run_until_shutdown:
             try:
                 ctx = get_current_job_context()
