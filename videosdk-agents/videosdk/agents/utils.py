@@ -13,6 +13,8 @@ from pydantic.fields import FieldInfo
 from abc import abstractmethod
 import json
 import asyncio
+import time
+import os
 
 @dataclass
 class FunctionToolInfo:
@@ -820,8 +822,99 @@ def format_metrics(raw: dict) -> dict:
 
         format_metrics._is_first = False
 
-    return clean(payload)
+    return clean(payload)    
 
+_generated_token_cache: Optional[str] = None
+
+_AUTH_MISSING_MESSAGE = (
+    "No VideoSDK auth available. Provide auth_token in RoomOptions, "
+    "set VIDEOSDK_AUTH_TOKEN, or set VIDEOSDK_API_KEY + VIDEOSDK_SECRET_KEY."
+)
+
+
+def resolve_videosdk_auth_token(explicit: Optional[str] = None) -> Optional[str]:
+    """
+    Resolve the VideoSDK auth token with priority:
+      1. explicit (from RoomOptions / WorkerOptions)
+      2. VIDEOSDK_AUTH_TOKEN env var
+      3. JWT generated from VIDEOSDK_API_KEY + VIDEOSDK_SECRET_KEY
+
+    When path 3 is taken, the generated token is written back to
+    os.environ["VIDEOSDK_AUTH_TOKEN"] so sub-modules that read the env var
+    directly (inference/, metrics/analytics.py, knowledge_base/base.py) pick
+    it up without needing a refactor.
+
+    Returns None if nothing is available.
+    """
+    global _generated_token_cache
+
+    if explicit:
+        return explicit
+
+    env_token = os.getenv("VIDEOSDK_AUTH_TOKEN")
+    if env_token:
+        return env_token
+
+    if _generated_token_cache:
+        return _generated_token_cache
+
+    api_key = os.getenv("VIDEOSDK_API_KEY")
+    secret = os.getenv("VIDEOSDK_SECRET_KEY")
+    if not api_key and not secret:
+        return None
+
+    token = generate_videosdk_token(api_key or "", secret or "")
+    _generated_token_cache = token
+    os.environ["VIDEOSDK_AUTH_TOKEN"] = token
+    return token
+
+
+def generate_videosdk_token(
+    api_key: str,
+    secret: str,
+    *,
+    ttl_seconds: int = 3600,
+) -> str:
+    """
+    Generate a pre-signed VideoSDK JWT token.
+
+    Args:
+        api_key (str): Your VideoSDK API key.
+        secret (str): Your VideoSDK secret key.
+        ttl_seconds (int): Token validity in seconds (default: 3600).
+
+    Returns:
+        str: Signed JWT token.
+    """
+    try:
+        import jwt
+    except ImportError as exc:
+        raise ImportError(
+            "PyJWT is required. Install it using: pip install PyJWT"
+        ) from exc
+
+    now = int(time.time())
+     
+     
+    api_key = os.getenv("VIDEOSDK_API_KEY")
+    secret = os.getenv("VIDEOSDK_SECRET_KEY")
+    if not api_key or not secret:
+        raise ValueError("VIDEOSDK_API_KEY and VIDEOSDK_SECRET_KEY are not set")
+
+    payload = {
+        "apikey": api_key,
+        "permissions": ["allow_join"],
+        "version": 2,
+        "iat": now,
+        "exp": now + ttl_seconds,
+    }
+
+    token = jwt.encode(payload, secret, algorithm="HS256")
+
+    if isinstance(token, bytes):
+        token = token.decode("utf-8")
+
+    return token
 
 def reset_metrics_formatter_state() -> None:
     """Reset the one-shot flag in ``format_metrics`` so providers and
@@ -831,4 +924,4 @@ def reset_metrics_formatter_state() -> None:
     provider info and instructions need to be re-published instead of being
     suppressed by the flag that latched during the first turn.
     """
-    format_metrics._is_first = True    
+    format_metrics._is_first = True   

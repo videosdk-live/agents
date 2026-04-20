@@ -479,6 +479,12 @@ class MetricsCollector:
                 (turn.agent_speech_end_time - turn.agent_speech_start_time) * 1000, 4
             )
 
+        if turn.realtime_metrics:
+            global_event_emitter.emit("COMPONENT_METRIC", {
+                "component": "realtime",
+                "metrics": asdict(turn.realtime_metrics[-1])
+            })
+
     # ──────────────────────────────────────────────
     # VAD metrics
     # ──────────────────────────────────────────────
@@ -581,6 +587,11 @@ class MetricsCollector:
 
         if transcript:
             stt.stt_transcript = transcript
+            
+        global_event_emitter.emit("COMPONENT_METRIC", {
+            "component": "stt",
+            "metrics": asdict(stt)
+        })
 
         self._stt_start_time = None
 
@@ -649,6 +660,11 @@ class MetricsCollector:
                 eou.eou_end_time = eou_end_time
                 eou.eou_latency = eou_latency
                 logger.info(f"eou latency: {eou_latency}ms")
+                
+                global_event_emitter.emit("COMPONENT_METRIC", {
+                    "component": "eou",
+                    "metrics": asdict(eou)
+                })
 
             self._eou_start_time = None
     
@@ -695,6 +711,11 @@ class MetricsCollector:
                 llm.llm_end_time = llm_end_time
                 llm.llm_duration = llm_duration
                 logger.info(f"llm duration: {llm_duration}ms")
+                
+                global_event_emitter.emit("COMPONENT_METRIC", {
+                    "component": "llm",
+                    "metrics": asdict(llm)
+                })
 
             self._llm_start_time = None
 
@@ -787,6 +808,11 @@ class MetricsCollector:
                 self.current_turn.agent_speech_duration = self._round_latency(
                     agent_speech_end_time - self.current_turn.agent_speech_start_time
                 )
+                
+                global_event_emitter.emit("COMPONENT_METRIC", {
+                    "component": "tts",
+                    "metrics": asdict(tts)
+                })
 
             self._tts_start_time = None
             self._tts_first_byte_time = None

@@ -309,19 +309,23 @@ class PipelineOrchestrator(EventEmitter[Literal[
         is_preemptive = data.get("is_preemptive", False)
 
         agent_state = self.agent.session.agent_state if self.agent and self.agent.session else None
-        is_agent_active = agent_state in (AgentState.SPEAKING, AgentState.THINKING)
+        cu = self.agent.session.current_utterance if self.agent and self.agent.session else None
+        is_playing_audio = bool(self.speech_generation and self.speech_generation.is_speaking)
+        playback_counts_for_turn = is_playing_audio and not (cu is not None and cu.done())
+        is_agent_active = (agent_state in (AgentState.SPEAKING, AgentState.THINKING)) or playback_counts_for_turn
 
         if is_agent_active:
             word_count = len(text.strip().split()) if text.strip() else 0
             logger.info(f"[orchestrator] Final transcript while agent is {agent_state.value} | word_count={word_count}, min_words={self.interrupt_min_words}")
 
-            if word_count < self.interrupt_min_words:
-                logger.info(f"[orchestrator] Transcript '{text}' below min_words threshold ({word_count} < {self.interrupt_min_words}), dropping")
+            if cu and not cu.is_interruptible and (not cu.done() or is_playing_audio):
+                logger.info(
+                    f"[orchestrator] Transcript '{text}' received during non-interruptible playback, dropping"
+                )
                 return
 
-            # Word count threshold met — check if utterance is interruptible
-            if self.agent.session.current_utterance and not self.agent.session.current_utterance.is_interruptible:
-                logger.info(f"[orchestrator] Transcript '{text}' meets min_words but utterance is not interruptible, dropping")
+            if word_count < self.interrupt_min_words:
+                logger.info(f"[orchestrator] Transcript '{text}' below min_words threshold ({word_count} < {self.interrupt_min_words}), dropping")
                 return
 
             # Interrupt the current pipeline and start a new turn
@@ -691,7 +695,10 @@ class PipelineOrchestrator(EventEmitter[Literal[
 
             if self.agent and self.agent.session and self.agent.session.is_background_audio_enabled:
                 await self.agent.session.stop_thinking_audio()
-    
+
+            if self._generation_id == my_generation_id:
+                self._partial_response = ""
+
     async def say(self, message: str, handle: UtteranceHandle) -> None:
         """
         Direct TTS synthesis (for initial messages).

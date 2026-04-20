@@ -159,6 +159,9 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
     
     async def _on_vad_event(self, vad_response: VADResponse) -> None:
         """Handle VAD events"""
+        if self.agent and getattr(self.agent, "session", None) is not None:
+            if not getattr(self.agent.session, "_accept_user_input", True):
+                return
         logger.info(f"[speech_understanding] _on_vad_event: {vad_response.event_type.value} | confidence={vad_response.data.confidence:.4f} | _is_user_speaking={self._is_user_speaking}")
         if vad_response.event_type == VADEventType.START_OF_SPEECH:
             self._is_user_speaking = True
@@ -188,6 +191,9 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
     
     async def _on_stt_transcript(self, stt_response: STTResponse) -> None:
         """Handle STT transcript events"""
+        if self.agent and getattr(self.agent, "session", None) is not None:
+            if not getattr(self.agent.session, "_accept_user_input", True):
+                return
         if self._waiting_for_more_speech:
             await self._handle_continued_speech()
 

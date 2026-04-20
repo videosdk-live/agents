@@ -102,9 +102,13 @@ class VideoSDKHandler(BaseTransportHandler):
             ValueError: If VIDEOSDK_AUTH_TOKEN is not set in environment or parameters.
         """
         self.meeting_id = meeting_id
-        self.auth_token = auth_token or os.getenv("VIDEOSDK_AUTH_TOKEN")
+        from ..utils import resolve_videosdk_auth_token
+        self.auth_token = resolve_videosdk_auth_token(auth_token)
         if not self.auth_token:
-            raise ValueError("VIDEOSDK_AUTH_TOKEN is not set")
+            raise ValueError(
+                "No VideoSDK auth available. Provide auth_token in RoomOptions, "
+                "set VIDEOSDK_AUTH_TOKEN, or set VIDEOSDK_API_KEY + VIDEOSDK_SECRET_KEY."
+            )
             
         self.name = name
         self.agent_id = agent_id
@@ -233,7 +237,7 @@ class VideoSDKHandler(BaseTransportHandler):
         self._left: bool = False
         self.sdk_metadata = {
             "sdk": "agents",
-            "sdk_version": "1.0.6"
+            "sdk_version": "1.0.8"
         }
         self.videosdk_meeting_meta_data= {
             "agent_id": self.agent_id,
@@ -299,6 +303,8 @@ class VideoSDKHandler(BaseTransportHandler):
         Args:
             data: Error data from VideoSDK.
         """
+        global_event_emitter.emit("PIPELINE_ERROR", {"source": "room", "error": data})
+        
         if self.on_room_error:
             self.on_room_error(data)
             asyncio.create_task(self._end_session("error_in_meeting"))
