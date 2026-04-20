@@ -309,14 +309,16 @@ class PipelineOrchestrator(EventEmitter[Literal[
         is_preemptive = data.get("is_preemptive", False)
 
         agent_state = self.agent.session.agent_state if self.agent and self.agent.session else None
+        cu = self.agent.session.current_utterance if self.agent and self.agent.session else None
         is_playing_audio = bool(self.speech_generation and self.speech_generation.is_speaking)
-        is_agent_active = (agent_state in (AgentState.SPEAKING, AgentState.THINKING)) or is_playing_audio
+        playback_counts_for_turn = is_playing_audio and not (cu is not None and cu.done())
+        is_agent_active = (agent_state in (AgentState.SPEAKING, AgentState.THINKING)) or playback_counts_for_turn
 
         if is_agent_active:
             word_count = len(text.strip().split()) if text.strip() else 0
             logger.info(f"[orchestrator] Final transcript while agent is {agent_state.value} | word_count={word_count}, min_words={self.interrupt_min_words}")
 
-            if is_playing_audio and self.agent and self.agent.session and self.agent.session.current_utterance and not self.agent.session.current_utterance.is_interruptible:
+            if cu and not cu.is_interruptible and (not cu.done() or is_playing_audio):
                 logger.info(
                     f"[orchestrator] Transcript '{text}' received during non-interruptible playback, dropping"
                 )
@@ -324,11 +326,6 @@ class PipelineOrchestrator(EventEmitter[Literal[
 
             if word_count < self.interrupt_min_words:
                 logger.info(f"[orchestrator] Transcript '{text}' below min_words threshold ({word_count} < {self.interrupt_min_words}), dropping")
-                return
-
-            # Word count threshold met — check if utterance is interruptible
-            if self.agent.session.current_utterance and not self.agent.session.current_utterance.is_interruptible:
-                logger.info(f"[orchestrator] Transcript '{text}' meets min_words but utterance is not interruptible, dropping")
                 return
 
             # Interrupt the current pipeline and start a new turn
