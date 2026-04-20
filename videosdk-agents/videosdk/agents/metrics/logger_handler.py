@@ -235,7 +235,7 @@ class LogConsumerHandler(logging.Handler):
             peer_id = getattr(record, "peerId", "")
             session_id = getattr(record, "sessionId", "")
             sdk_name = getattr(record, "sdk_name", "") or "AGENTS"
-            sdk_version = getattr(record, "sdk_version", "") or "1.0.8"
+            sdk_version = getattr(record, "sdk_version", "") or "1.0.9"
             service_name = getattr(record, "service_name", "videosdk-otel-telemetry-agents")
             log_attributes = getattr(record, "log_attributes", {})
 
