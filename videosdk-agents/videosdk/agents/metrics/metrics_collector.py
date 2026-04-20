@@ -27,6 +27,7 @@ from .metrics_schema import (
 )
 from .analytics import AnalyticsClient
 from ..event_bus import global_event_emitter
+from ..utils import reset_metrics_formatter_state
 
 if TYPE_CHECKING:
     from .traces_flow import TracesFlowManager
@@ -122,6 +123,47 @@ class MetricsCollector:
             )
 
         logger.info(f"[metrics] Pipeline configured: mode={self.pipeline_mode}, realtime={self.realtime_mode}")
+
+    def _reset_pipeline_state(self) -> None:
+        """Reset state that's specific to a single pipeline instance.
+
+        Preserves session-level info that outlives a pipeline swap
+        (session_id, analytics_client, traces_flow_manager, transport_mode).
+        """
+        if self.current_turn:
+            self.complete_turn()
+
+        if self._agent_speech_end_timer:
+            self._agent_speech_end_timer.cancel()
+            self._agent_speech_end_timer = None
+
+        self.session.provider_per_component = {}
+
+        self._stt_start_time = None
+        self._llm_start_time = None
+        self._tts_start_time = None
+        self._tts_first_byte_time = None
+        self._eou_start_time = None
+
+        self._is_agent_speaking = False
+        self._is_user_speaking = False
+        self._user_input_start_time = None
+        self._user_speech_end_time = None
+        self._agent_speech_start_time = None
+        self._pending_user_start_time = None
+
+        self._pending_interrupt_timeline = None
+        self._pending_interrupt_stt = None
+        self._pending_interrupt_eou = None
+        self._pending_interrupt_vad = None
+
+        self.preemtive_generation_enabled = False
+
+        self.turns = []
+        self._total_turns = 0
+        self._total_interruptions = 0
+
+        reset_metrics_formatter_state()
 
     def set_session_id(self, session_id: str) -> None:
         """Set the session ID for metrics tracking."""
@@ -223,10 +265,17 @@ class MetricsCollector:
         self.traces_flow_manager = manager
 
     def finalize_session(self) -> None:
-        """Finalize the session, completing any in-progress turn."""
+        """Finalize the session, completing any in-progress turn.
+
+        Also resets pipeline-specific state so that if a new agent/pipeline
+        is wired up on the same collector (e.g. mid-room agent swap),
+        stale providers and transient timings don't leak into the new
+        agent's metrics.
+        """
         if self.current_turn:
             self.complete_turn()
         self.session.session_end_time = time.time()
+        self._reset_pipeline_state()
 
     # ──────────────────────────────────────────────
     # Turn lifecycle

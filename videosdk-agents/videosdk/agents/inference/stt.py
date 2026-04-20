@@ -125,6 +125,14 @@ class STT(BaseSTT):
         self._stt_start_time: Optional[float] = None
         self._connecting: bool = False
 
+        # Audio duration tracking (seconds) accumulated since the last FINAL transcript.
+        # Used to populate SpeechData.duration so accounting can bill per-utterance audio.
+        self._pending_audio_bytes: int = 0
+        self._input_sample_rate: int = int(
+            (config or {}).get("input_sample_rate", 48000)
+        )
+        self._bytes_per_sample: int = 2  # 16-bit PCM mono
+
     # ==================== Factory Methods ====================
 
     @staticmethod
@@ -146,7 +154,7 @@ class STT(BaseSTT):
         Create an STT instance configured for Google Cloud Speech-to-Text.
 
         Args:
-            model_id: Google STT model (default: "chirp_3"). Options: "chirp_3", "latest_long", "latest_short"
+            model_id: Google STT model (default: "chirp_3"). Options: "chirp_3", "chirp_2", "latest_long", "latest_short"
             language: Primary language code (default: "en-US")
             languages: List of languages for auto-detection (default: [language])
             interim_results: Return interim transcription results (default: True)
@@ -213,7 +221,7 @@ class STT(BaseSTT):
             **(config or {}),
         }
         return STT(
-            provider="sarvam",
+            provider="sarvamai",
             model_id=model_id,
             language=language,
             config=config,
@@ -284,6 +292,63 @@ class STT(BaseSTT):
             language=language,
             enable_streaming=enable_streaming,
             config=config,
+            base_url=base_url,
+        )
+
+    @staticmethod
+    def assemblyai(
+        *,
+        model_id: str = "universal-streaming-english",
+        input_sample_rate: int = 48000,
+        region: str = "US",
+        format_turns: bool = True,
+        keyterms_prompt: list[str] | None = None,
+        end_of_turn_confidence_threshold: float = 0.5,
+        min_end_of_turn_silence_when_confident: int = 800,
+        max_turn_silence: int = 2000,
+        language_detection: bool = True,
+        enable_streaming: bool = True,
+        base_url: str | None = None,
+        config: Optional[Dict] = None,
+    ) -> "STT":
+        """
+        Create an STT instance configured for AssemblyAI Universal Streaming.
+
+        Args:
+            model_id: AssemblyAI speech model (default: "universal-streaming-english")
+                Options: "universal-streaming-english", "universal-streaming-multilingual"
+            input_sample_rate: Input audio sample rate (default: 48000)
+            region: Service region (default: "US"). Options: "US", "EU"
+            format_turns: Whether to format turns (default: True)
+            keyterms_prompt: List of words/phrases to boost recognition (optional)
+            end_of_turn_confidence_threshold: Confidence threshold for end-of-turn (default: 0.5)
+            min_end_of_turn_silence_when_confident: Min silence in ms when confident (default: 800)
+            max_turn_silence: Max silence in ms before end-of-turn (default: 2000)
+            language_detection: Enable automatic language detection (default: True)
+            enable_streaming: Enable streaming mode (default: True)
+            base_url: Custom inference gateway URL
+
+        Returns:
+            Configured STT instance for AssemblyAI
+        """
+        resolved_config = {
+            "speech_model": model_id,
+            "input_sample_rate": input_sample_rate,
+            "region": region,
+            "format_turns": format_turns,
+            "keyterms_prompt": keyterms_prompt,
+            "end_of_turn_confidence_threshold": end_of_turn_confidence_threshold,
+            "min_end_of_turn_silence_when_confident": min_end_of_turn_silence_when_confident,
+            "max_turn_silence": max_turn_silence,
+            "language_detection": language_detection,
+            **(config or {}),
+        }
+        return STT(
+            provider="assemblyai",
+            model_id=model_id,
+            language="en",
+            enable_streaming=enable_streaming,
+            config=resolved_config,
             base_url=base_url,
         )
 
@@ -393,6 +458,9 @@ class STT(BaseSTT):
         if self._stt_start_time is None:
             self._stt_start_time = time.perf_counter()
 
+        # Track audio bytes for per-utterance duration accounting.
+        self._pending_audio_bytes += len(audio_bytes)
+
         # Encode audio as base64 for JSON transmission
         audio_message = {
             "type": "audio",
@@ -480,6 +548,12 @@ class STT(BaseSTT):
                 logger.info(f"[STT] {text} | Final: {is_final}")
             self._last_transcript = text.strip()
 
+            duration_ms = 0.0
+            if is_final and self._pending_audio_bytes > 0:
+                sample_count = self._pending_audio_bytes / self._bytes_per_sample
+                duration_ms = (sample_count / self._input_sample_rate) * 1000.0
+                self._pending_audio_bytes = 0
+
             response = STTResponse(
                 event_type=(
                     SpeechEventType.FINAL if is_final else SpeechEventType.INTERIM
@@ -488,6 +562,7 @@ class STT(BaseSTT):
                     text=text.strip(),
                     language=language,
                     confidence=confidence,
+                    duration=duration_ms,
                 ),
                 metadata={
                     "provider": self.provider,
