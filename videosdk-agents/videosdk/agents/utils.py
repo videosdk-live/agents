@@ -820,4 +820,15 @@ def format_metrics(raw: dict) -> dict:
 
         format_metrics._is_first = False
 
-    return clean(payload)    
+    return clean(payload)
+
+
+def reset_metrics_formatter_state() -> None:
+    """Reset the one-shot flag in ``format_metrics`` so providers and
+    systemInstructions are re-included in the next transport payload.
+
+    Used when the pipeline changes mid-room (agent swap) — the new agent's
+    provider info and instructions need to be re-published instead of being
+    suppressed by the flag that latched during the first turn.
+    """
+    format_metrics._is_first = True    

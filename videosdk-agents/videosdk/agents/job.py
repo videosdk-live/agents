@@ -421,6 +421,17 @@ class JobContext:
         self._pipeline = pipeline
         if self.room:
             self.room.pipeline = pipeline
+            if hasattr(self.room, 'input_stream_manager'):
+                self.room.input_stream_manager.pipeline = pipeline
+
+            # Reset audio track state for the new pipeline — a previous cascade
+            # pipeline may have enabled manual_audio_control, which causes
+            # interrupt() to set _accepting_audio=False, blocking all output.
+            audio_track = getattr(self.room, 'audio_track', None)
+            if audio_track:
+                audio_track._manual_audio_control = False
+                audio_track._accepting_audio = True
+
             if hasattr(pipeline, "_set_loop_and_audio_track"):
                 pipeline._set_loop_and_audio_track(self._loop, self.room.audio_track)
 
