@@ -53,7 +53,10 @@ class TransportEventSender:
             if hasattr(self.room_handler, "participants_data") and self.room_handler.participants_data:
                 peer_id = next(iter(self.room_handler.participants_data.keys()))
             timestamp = int(datetime.datetime.now().timestamp() * 1000)
-            asyncio.create_task(self.send_agent_transcript(text, peer_id,timestamp))
+            type = data.get("type", "final")
+            asyncio.create_task(
+                self.send_transcript_signal(text, peer_id, timestamp, type=type)
+            )
 
     def _on_agent_transcript_added(self, data: dict):
         text = data.get("text")
@@ -62,7 +65,10 @@ class TransportEventSender:
             if self.room_handler.meeting and self.room_handler.meeting.local_participant:
                 peer_id = self.room_handler.meeting.local_participant.id
             timestamp = int(datetime.datetime.now().timestamp() * 1000)
-            asyncio.create_task(self.send_agent_transcript(text, peer_id,timestamp))
+            type = data.get("type", "final")
+            asyncio.create_task(
+                self.send_transcript_signal(text, peer_id, timestamp, type=type)
+            )
 
     def _on_turn_metrics_added(self, data: dict):
         metrics = data.get("metrics")
@@ -80,14 +86,33 @@ class TransportEventSender:
                 except Exception as e:
                     logger.error(f"Error sending agent state via transport: {e}")
 
-    async def send_agent_transcript(self, text: str, peer_id: str, timestamp: int) -> None:
-        """Send agent transcript via the transport signaling channel."""
+    async def send_transcript_signal(
+        self,
+        text: str,
+        peer_id: str,
+        timestamp: int,
+        *,
+        type: str,
+    ) -> None:
+        """Send transcript over signaling (``agentTranscript``), including ``type``."""
         agent = self._get_transport_agent()
         if agent:
             try:
-                await agent.async_send_transcript(text, peer_id, timestamp)
+                logger.info(
+                    "Transport transcript: text=%r peer_id=%s timestamp=%s type=%s",
+                    text,
+                    peer_id,
+                    timestamp,
+                    type,
+                )
+                await agent.async_send_transcript(
+                    text,
+                    peer_id,
+                    str(timestamp),
+                    type=type,
+                )
             except Exception as e:
-                logger.error(f"Error sending agent transcript via transport: {e}")
+                logger.error(f"Error sending transcript via transport: {e}")
 
     async def send_agent_metrics(self, data: dict) -> None:
         """Send agent metrics via the transport signaling channel."""
