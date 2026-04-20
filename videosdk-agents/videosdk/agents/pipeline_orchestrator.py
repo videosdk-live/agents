@@ -695,7 +695,10 @@ class PipelineOrchestrator(EventEmitter[Literal[
 
             if self.agent and self.agent.session and self.agent.session.is_background_audio_enabled:
                 await self.agent.session.stop_thinking_audio()
-    
+
+            if self._generation_id == my_generation_id:
+                self._partial_response = ""
+
     async def say(self, message: str, handle: UtteranceHandle) -> None:
         """
         Direct TTS synthesis (for initial messages).

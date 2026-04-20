@@ -1,4 +1,5 @@
 import asyncio
+import os
 import traceback
 import logging
 from typing import Optional
@@ -100,18 +101,24 @@ class AnamVideoTrack(CustomVideoTrack):
 class AnamAvatar:
     def __init__(
         self,
-        api_key: str,
+        api_key: Optional[str] = None,
         avatar_id: Optional[str] = None,
         persona_config: Optional[PersonaConfig] = None,
     ):
         """Initialize the Anam Avatar plugin.
 
         Args:
-            api_key (str): The Anam API key.
+            api_key (str, optional): The Anam API key. Falls back to the
+                ANAM_API_KEY environment variable if not provided.
             avatar_id (str, optional): The ID of the avatar to use.
             persona_config (PersonaConfig, optional): Full persona configuration (must include avatar_id).
         """
-        self.api_key = api_key
+        resolved_api_key = api_key or os.getenv("ANAM_API_KEY")
+        if not resolved_api_key:
+            raise ValueError(
+                "Anam API key is required. Pass api_key=... or set ANAM_API_KEY in your environment."
+            )
+        self.api_key = resolved_api_key
 
         if persona_config is not None:
             self.persona_config = persona_config

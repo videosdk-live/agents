@@ -205,6 +205,8 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
                 if self.agent and self.agent.session:
                     self.agent.session._emit_agent_state(AgentState.IDLE)
                     self.agent.session._emit_user_state(UserState.IDLE)
+                    self.agent.session._reply_in_progress = False
+                    self.agent.session._reset_wake_up_timer()
 
                 if self.hooks and self.hooks.has_agent_turn_end_hooks():
                     await self.hooks.trigger_agent_turn_end()
@@ -265,11 +267,13 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
             finally:
                 if self.agent and self.agent.session and self.agent.session.is_background_audio_enabled:
                     await self.agent.session.stop_thinking_audio()
-                
-                if self.agent and self.agent.session:
+
+                if self.agent and self.agent.session and self._is_interrupted:
                     self.agent.session._reply_in_progress = False
                     self.agent.session._reset_wake_up_timer()
-    
+                elif self.agent and self.agent.session:
+                    self.agent.session._reply_in_progress = False
+
     async def interrupt(self) -> None:
         """Interrupt the current synthesis"""
         self._is_interrupted = True

@@ -61,10 +61,6 @@ def to_openai_messages(ctx: ChatContext, *, reasoning_model: bool = False) -> li
             if reasoning_model and role == "system":
                 role = "developer"
             content = _format_content_openai(msg.content)
-            if msg.interrupted and isinstance(content, str):
-                content += " [interrupted]"
-            elif msg.interrupted and isinstance(content, list):
-                content.append({"type": "text", "text": " [interrupted]"})
             openai_messages.append({
                 "role": role,
                 "content": content,
@@ -159,11 +155,6 @@ def to_anthropic_messages(ctx: ChatContext, *, caching: bool = False) -> tuple[l
                 continue
             else:
                 content = _format_content_anthropic(item.content)
-                if item.interrupted:
-                    if isinstance(content, str):
-                        content += " [interrupted]"
-                    elif isinstance(content, list):
-                        content.append({"type": "text", "text": " [interrupted]"})
                 anthropic_messages.append({"role": item.role.value, "content": content})
         elif isinstance(item, FunctionCall):
             tool_use_block = {
@@ -272,10 +263,7 @@ async def to_google_contents(
                 if part is None:
                     continue
                 if isinstance(part, str):
-                    text = part
-                    if item.interrupted:
-                        text += " [interrupted]"
-                    parts.append(types.Part(text=text))
+                    parts.append(types.Part(text=part))
                 elif isinstance(part, ImageContent):
                     data_url = part.to_data_url()
                     if data_url.startswith("data:"):
