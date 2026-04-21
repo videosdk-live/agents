@@ -50,6 +50,7 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
                 self.tts.on("word_spoken", self._on_tts_word_spoken)
             except Exception as e:
                 logger.debug(f"Failed to subscribe to TTS word_spoken: {e}")
+            self.on("last_audio_byte", self._on_final_agent_transcript)
 
     def _on_tts_word_spoken(self, data: Any) -> None:
         """Handler for TTS ``word_spoken`` events — emits an interim transcript."""
@@ -59,6 +60,14 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
         if cumulative and metrics_collector:
             metrics_collector.emit_agent_transcript_transport(
                 cumulative, type="interim"
+            )
+
+    def _on_final_agent_transcript(self, data: Any) -> None:
+        """Emit the final agent transcript after playback completes.
+        """
+        if self.full_transcript and metrics_collector:
+            metrics_collector.emit_agent_transcript_transport(
+                self.full_transcript, type="final"
             )
     
     async def start(self) -> None:
@@ -146,7 +155,8 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
                             await self.audio_track.add_new_bytes(audio_chunk)
 
                     if self.full_transcript and metrics_collector.current_turn:
-                        metrics_collector.set_agent_response(self.full_transcript)
+                        emit = not getattr(self.tts, "supports_word_timestamps", False)
+                        metrics_collector.set_agent_response(self.full_transcript, emit_transport=emit)
                     metrics_collector.on_agent_speech_end()
                     metrics_collector.complete_turn()
 
@@ -212,8 +222,6 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
 
             async def on_last_audio_byte():
                 """Called when synthesis is complete"""
-                if self.full_transcript and metrics_collector.current_turn:
-                    pass
                 metrics_collector.on_agent_speech_end()
                 metrics_collector.complete_turn()
 
