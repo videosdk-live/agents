@@ -552,16 +552,13 @@ class PipelineOrchestrator(EventEmitter[Literal[
 
                 def _safe_set_agent_response(text: str) -> None:
                     """Only set agent response if this collector still owns the current generation.
-
-                    Emits with ``emit_transport=False`` because the TTS wrapper is still
-                    consuming queued chunks and emitting interim transport events; the
-                    final transport emit is issued by speech_generation after synthesize
-                    completes, to preserve ordering on the UI.
                     """
                     if self.hooks and self.hooks.has_tts_stream_hook():
                         return
                     if text and self._generation_id == my_generation_id and metrics_collector.current_turn:
-                        metrics_collector.set_agent_response(text, emit_transport=False)
+                        tts = self.speech_generation.tts if self.speech_generation else None
+                        emit = not bool(getattr(tts, "supports_word_timestamps", False))
+                        metrics_collector.set_agent_response(text, emit_transport=emit)
 
                 try:
                     async for chunk in llm_stream:
@@ -715,7 +712,9 @@ class PipelineOrchestrator(EventEmitter[Literal[
         if self.speech_generation:
             try:
                 if not (self.hooks and self.hooks.has_tts_stream_hook()):
-                    metrics_collector.set_agent_response(message, emit_transport=False)
+                    tts = self.speech_generation.tts
+                    emit = not bool(getattr(tts, "supports_word_timestamps", False))
+                    metrics_collector.set_agent_response(message, emit_transport=emit)
                 await self.speech_generation.synthesize(message)
             finally:
                 handle._mark_done()
@@ -939,10 +938,6 @@ class PipelineOrchestrator(EventEmitter[Literal[
             if not metrics_collector.current_turn.agent_speech:
                 metrics_collector.set_agent_response(self._partial_response)
             else:
-                # Collector already stored agent_speech with emit_transport=False; the
-                # speech_generation final emit was skipped because synthesize raised
-                # CancelledError. Emit the final transport now so the UI finalizes the
-                # last interim bubble instead of leaving it open.
                 metrics_collector.emit_agent_transcript_transport(
                     metrics_collector.current_turn.agent_speech, type="final"
                 )

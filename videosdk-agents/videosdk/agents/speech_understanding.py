@@ -238,7 +238,8 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
             if metrics_collector._stt_start_time is None:
                 metrics_collector.on_stt_start()
             metrics_collector.on_stt_interim_end()
-            metrics_collector.emit_user_transcript_transport(text, type="interim")
+            if getattr(self.stt, "forward_interim_transcripts", False):
+                metrics_collector.emit_user_transcript_transport(text, type="interim")
             self.emit("transcript_interim", {
                 "text": text,
                 "metadata": stt_response.metadata
