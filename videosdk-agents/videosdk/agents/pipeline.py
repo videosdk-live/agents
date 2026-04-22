@@ -25,6 +25,12 @@ from .job import get_current_job_context
 from .utils import RealtimeMode,PipelineConfig, build_pipeline_config
 from .metrics import metrics_collector
 from .utils import UserState, AgentState
+from .tokenize import (
+    BasicSentenceTokenizer,
+    BasicTextFilter,
+    SentenceTokenizer,
+    TextFilter,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +128,11 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         context_window: Any | None = None,
         voice_mail_detector: VoiceMailDetector | None = None,
         realtime_config: RealtimeConfig | None = None,
+        text_chunking: bool = True,
+        text_filtering: bool = True,
+        tokenizer: SentenceTokenizer | None = None,
+        text_filter: TextFilter | None = None,
+        chunking_language: str = "auto",
     ) -> None:
         super().__init__()
 
@@ -135,6 +146,22 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         self.graph_adapter = GraphPipelineAdapter(conversational_graph) if conversational_graph else None
         self.context_window = context_window
         self.voice_mail_detector = voice_mail_detector
+
+        # Text chunking / filtering stage between LLM and TTS in cascade mode.
+        self.chunking_language = chunking_language
+        if not text_chunking:
+            self.tokenizer: SentenceTokenizer | None = None
+        elif tokenizer is not None:
+            self.tokenizer = tokenizer
+        else:
+            self.tokenizer = BasicSentenceTokenizer(language=chunking_language)
+
+        if not text_filtering:
+            self.text_filter: TextFilter | None = None
+        elif text_filter is not None:
+            self.text_filter = text_filter
+        else:
+            self.text_filter = BasicTextFilter(language=chunking_language)
         
         # Pipeline hooks for middleware/interception
         self.hooks = PipelineHooks()
@@ -394,8 +421,8 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
             self.orchestrator = PipelineOrchestrator(
                 agent=agent,
                 stt=self.stt,
-                llm=None, 
-                tts=None,  
+                llm=None,
+                tts=None,
                 vad=self.vad,
                 turn_detector=self.turn_detector,
                 denoise=self.denoise,
@@ -411,9 +438,11 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                 context_window=self.context_window,
                 voice_mail_detector=self.voice_mail_detector,
                 hooks=self.hooks,
+                tokenizer=self.tokenizer,
+                text_filter=self.text_filter,
+                chunking_language=self.chunking_language,
             )
             
-
             self.orchestrator.on("transcript_ready", self._wrap_async(self._on_transcript_ready_hybrid_stt))
             logger.info("Registered hybrid_stt event listener on orchestrator")
             
@@ -469,6 +498,9 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                 context_window=self.context_window,
                 voice_mail_detector=self.voice_mail_detector,
                 hooks=self.hooks,
+                tokenizer=self.tokenizer,
+                text_filter=self.text_filter,
+                chunking_language=self.chunking_language,
             )
             
             self.orchestrator.on("transcript_ready", lambda data: self.emit("transcript_ready", data))

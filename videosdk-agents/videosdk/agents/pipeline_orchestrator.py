@@ -24,8 +24,57 @@ from .metrics import metrics_collector
 if TYPE_CHECKING:
     from .agent import Agent
     from .pipeline_hooks import PipelineHooks
+    from .tokenize import SentenceTokenizer, TextFilter
 
 logger = logging.getLogger(__name__)
+
+
+async def _pipe_through_sentence_stream(
+    upstream: AsyncIterator[str],
+    tokenizer: "SentenceTokenizer",
+    *,
+    language: str | None = None,
+) -> AsyncIterator[str]:
+    """Push an async text iterator through a ``SentenceTokenizer.stream()``.
+
+    Spawns a background task that reads from ``upstream`` and pushes into the
+    sentence stream; the returned iterator yields sentence-sized segments as
+    the stream emits them. On upstream exhaustion, ``end_input()`` is called so
+    the stream flushes its buffer.
+
+    Cancellation propagates: cancelling the consumer cancels the producer task
+    and closes the sentence stream cleanly, so barge-in cuts TTS within one
+    iteration of the inner loop.
+    """
+    sentence_stream = tokenizer.stream(language=language)
+
+    async def _producer() -> None:
+        try:
+            async for chunk in upstream:
+                if chunk:
+                    await sentence_stream.push_text(chunk)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # pragma: no cover - defensive
+            logger.error("Upstream raised inside sentence pipe", exc_info=True)
+        finally:
+            try:
+                await sentence_stream.end_input()
+            except Exception:  # pragma: no cover - defensive
+                logger.debug("end_input raised during pipe shutdown", exc_info=True)
+
+    producer_task = asyncio.create_task(_producer())
+    try:
+        async for segment in sentence_stream:
+            logger.debug("[chunking] tokenizer → TTS: %r", segment)
+            yield segment
+    finally:
+        if not producer_task.done():
+            producer_task.cancel()
+            try:
+                await producer_task
+            except (asyncio.CancelledError, Exception):
+                pass
 
 
 class PipelineOrchestrator(EventEmitter[Literal[
@@ -73,9 +122,12 @@ class PipelineOrchestrator(EventEmitter[Literal[
         context_window: Any | None = None,
         voice_mail_detector: VoiceMailDetector | None = None,
         hooks: "PipelineHooks | None" = None,
+        tokenizer: "SentenceTokenizer | None" = None,
+        text_filter: "TextFilter | None" = None,
+        chunking_language: str = "auto",
     ) -> None:
         super().__init__()
-        
+
         self.agent = agent
         self.avatar = avatar
         self.graph_adapter = graph_adapter
@@ -84,6 +136,11 @@ class PipelineOrchestrator(EventEmitter[Literal[
         self._vmd_buffer = ""
         self._vmd_check_task: asyncio.Task | None = None
         self.hooks = hooks
+
+        # Text chunking / filtering (cascade-mode only).
+        self._tokenizer = tokenizer
+        self._text_filter = text_filter
+        self._chunking_language = chunking_language
         
         # Interruption configuration
         self.interrupt_mode = interrupt_mode
@@ -575,6 +632,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
                         if content:
                             response_parts.append(content)
                             await q.put(content)
+                            logger.debug("[chunking] LLM delta → queue: %r", content)
 
                         if self.graph_adapter and metadata and isinstance(metadata, dict):
                             if metadata.get("graph_response"):
@@ -634,6 +692,14 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 if self.speech_generation:
                     try:
                         text_source = tts_stream_gen()
+                        if self._text_filter is not None:
+                            text_source = self._text_filter.filter(text_source)
+                        if self._tokenizer is not None:
+                            text_source = _pipe_through_sentence_stream(
+                                text_source,
+                                self._tokenizer,
+                                language=self._chunking_language,
+                            )
                         if self.hooks:
                             text_source = self.hooks.process_llm_stream(text_source)
                         await self.speech_generation.synthesize(text_source)
