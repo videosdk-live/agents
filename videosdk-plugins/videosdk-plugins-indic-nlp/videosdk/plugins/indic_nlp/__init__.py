@@ -13,6 +13,7 @@ from .tokenizer import (
     IndicSentenceTokenizer,
     IndicScriptTransliterator,
     SUPPORTED_LANGUAGES,
+    pre_warm_tokenizer,
 )
 from .version import __version__
 
@@ -20,5 +21,6 @@ __all__ = [
     "IndicSentenceTokenizer",
     "IndicScriptTransliterator",
     "SUPPORTED_LANGUAGES",
+    "pre_warm_tokenizer",
     "__version__",
 ]

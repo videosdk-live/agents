@@ -87,6 +87,17 @@ def _load_sentence_split() -> "_SentenceSplit":
         ) from exc
 
 
+def pre_warm_tokenizer() -> None:
+    """Eagerly import ``indic-nlp-library`` so the first ``.tokenize()`` call is cheap.
+
+    The underlying ``indicnlp.tokenize.sentence_tokenize`` module performs its
+    expensive initialisation on first import (~6s on a cold Python process).
+    Calling this at worker start — alongside ``TurnDetector.pre_download_model()``
+    — moves that cost out of the first conversational turn.
+    """
+    _load_sentence_split()
+
+
 class IndicSentenceTokenizer(SentenceTokenizer):
     """Sentence tokenizer for Indic scripts using indic-nlp-library.
 

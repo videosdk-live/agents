@@ -69,6 +69,7 @@ class InterruptConfig:
     mode: Literal["VAD_ONLY", "STT_ONLY", "HYBRID"] = "HYBRID"
     interrupt_min_duration: float = 0.5
     interrupt_min_words: int = 2
+    interrupt_min_confidence: float = 0.0
     false_interrupt_pause_duration: float = 2.0
     resume_on_false_interrupt: bool = False
 
@@ -77,6 +78,8 @@ class InterruptConfig:
             raise ValueError("interrupt_min_duration must be greater than 0")
         if self.interrupt_min_words <= 0:
             raise ValueError("interrupt_min_words must be greater than 0")
+        if not (0.0 <= self.interrupt_min_confidence <= 1.0):
+            raise ValueError("interrupt_min_confidence must be between 0.0 and 1.0")
         if self.false_interrupt_pause_duration <= 0:
             raise ValueError("false_interrupt_pause_duration must be greater than 0")
 
@@ -432,6 +435,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                 interrupt_mode=self.interrupt_config.mode,
                 interrupt_min_duration=self.interrupt_config.interrupt_min_duration,
                 interrupt_min_words=self.interrupt_config.interrupt_min_words,
+                interrupt_min_confidence=self.interrupt_config.interrupt_min_confidence,
                 false_interrupt_pause_duration=self.interrupt_config.false_interrupt_pause_duration,
                 resume_on_false_interrupt=self.interrupt_config.resume_on_false_interrupt,
                 graph_adapter=None,
@@ -492,6 +496,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                 interrupt_mode=self.interrupt_config.mode,
                 interrupt_min_duration=self.interrupt_config.interrupt_min_duration,
                 interrupt_min_words=self.interrupt_config.interrupt_min_words,
+                interrupt_min_confidence=self.interrupt_config.interrupt_min_confidence,
                 false_interrupt_pause_duration=self.interrupt_config.false_interrupt_pause_duration,
                 resume_on_false_interrupt=self.interrupt_config.resume_on_false_interrupt,
                 graph_adapter=self.graph_adapter,
