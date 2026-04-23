@@ -3750,7 +3750,7 @@ requires-dist = [
     { name = "sounddevice" },
     { name = "urllib3" },
     { name = "uvicorn" },
-    { name = "videosdk", specifier = ">=0.2.9" },
+    { name = "videosdk", specifier = ">=0.3.2" },
     { name = "videosdk-conversational-graph", marker = "extra == 'videosdk-conversational-graph'", specifier = ">=1.0.0" },
     { name = "videosdk-plugins-anam", marker = "extra == 'anam'", editable = "videosdk-plugins/videosdk-plugins-anam" },
     { name = "videosdk-plugins-anthropic", marker = "extra == 'anthropic'", editable = "videosdk-plugins/videosdk-plugins-anthropic" },
