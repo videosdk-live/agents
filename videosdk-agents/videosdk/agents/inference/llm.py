@@ -86,7 +86,7 @@ class LLM(BaseLLM):
         Initialize the VideoSDK Inference LLM plugin.
 
         Args:
-            provider: LLM provider name (e.g., "google", "sarvam")
+            provider: LLM provider name (e.g., "google", "sarvamai")
             model_id: Model identifier — consistent with STT/TTS convention
             temperature: Controls randomness in responses (0.0 to 1.0)
             tool_choice: Tool calling mode ("auto", "required", "none")
@@ -216,7 +216,7 @@ class LLM(BaseLLM):
             resolved_config.update(config)
 
         return LLM(
-            provider="sarvam",
+            provider="sarvamai",
             model_id=model_id,
             temperature=temperature,
             tool_choice=tool_choice,
@@ -278,7 +278,7 @@ class LLM(BaseLLM):
                     payload["top_k"] = self.top_k
 
             # Sarvam-only parameters
-            if self.provider == "sarvam":
+            if self.provider == "sarvamai":
                 payload["wiki_grounding"] = self.wiki_grounding
                 if self.reasoning_effort is not None:
                     payload["reasoning_effort"] = self.reasoning_effort
