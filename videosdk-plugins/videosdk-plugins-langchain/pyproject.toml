@@ -20,7 +20,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "videosdk-agents>=1.0.8",
+    "videosdk-agents>=1.0.9",
     "langchain>=0.3",
     "langchain-core>=0.3",
     "langgraph>=0.2",

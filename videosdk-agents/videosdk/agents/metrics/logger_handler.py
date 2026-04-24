@@ -4,7 +4,7 @@ import queue
 import threading
 import datetime
 from logging.handlers import QueueHandler, QueueListener
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Union
 
 class _JobContextFilter(logging.Filter):
     """
@@ -15,14 +15,19 @@ class _JobContextFilter(logging.Filter):
     are forwarded to the queue only when the user has opted in.
     """
 
-    def __init__(self, context: Dict[str, Any]):
+    def __init__(self, context: Dict[str, Any], allowed_levels: Optional[set] = None):
         super().__init__()
         self.context = context
+        self.allowed_levels = allowed_levels  # None → threshold mode; set → allowlist
 
     def filter(self, record: logging.LogRecord) -> bool:
         for key, value in self.context.items():
             setattr(record, key, value)
-        return self.context.get("send_logs_to_dashboard", False)
+        if not self.context.get("send_logs_to_dashboard", False):
+            return False
+        if self.allowed_levels is not None and record.levelname not in self.allowed_levels:
+            return False
+        return True
 
 
 class JobLogger:
@@ -44,11 +49,11 @@ class JobLogger:
         peer_id: str,
         auth_token: str,
         session_id: Optional[str] = None,
-        dashboard_log_level: str = "INFO",
+        dashboard_log_level: Union[str, List[str]] = "INFO",
         sdk_metadata: Optional[Dict[str, Any]] = None,
         send_logs_to_dashboard: bool = False,
     ):
-        self._queue = queue 
+        self._queue = queue
         self._context: Dict[str, Any] = {
             "roomId": room_id,
             "peerId": peer_id,
@@ -66,14 +71,24 @@ class JobLogger:
 
         self._parent_logger = logging.getLogger("videosdk.agents")
 
-        target_level = getattr(logging, dashboard_log_level.upper(), logging.INFO)
+        allowed_levels: Optional[set] = None
+        if isinstance(dashboard_log_level, list):
+            allowed_levels = {lvl.upper() for lvl in dashboard_log_level}
+            level_values = [
+                getattr(logging, lvl.upper(), logging.INFO)
+                for lvl in dashboard_log_level
+            ]
+            target_level = min(level_values) if level_values else logging.INFO
+        else:
+            target_level = getattr(logging, str(dashboard_log_level).upper(), logging.INFO)
+
         if self._parent_logger.getEffectiveLevel() > target_level:
             self._parent_logger.setLevel(target_level)
 
         self._queue_handler = QueueHandler(queue)
         self._queue_handler.setLevel(target_level)
 
-        self._context_filter = _JobContextFilter(self._context)
+        self._context_filter = _JobContextFilter(self._context, allowed_levels=allowed_levels)
         self._queue_handler.addFilter(self._context_filter)
 
         self._parent_logger.addHandler(self._queue_handler)
@@ -220,7 +235,7 @@ class LogConsumerHandler(logging.Handler):
             peer_id = getattr(record, "peerId", "")
             session_id = getattr(record, "sessionId", "")
             sdk_name = getattr(record, "sdk_name", "") or "AGENTS"
-            sdk_version = getattr(record, "sdk_version", "") or "1.0.8"
+            sdk_version = getattr(record, "sdk_version", "") or "1.0.9"
             service_name = getattr(record, "service_name", "videosdk-otel-telemetry-agents")
             log_attributes = getattr(record, "log_attributes", {})
 

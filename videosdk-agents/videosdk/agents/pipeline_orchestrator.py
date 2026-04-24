@@ -331,7 +331,6 @@ class PipelineOrchestrator(EventEmitter[Literal[
             # Interrupt the current pipeline and start a new turn
             logger.info(f"[orchestrator] Word count {word_count} >= min_words {self.interrupt_min_words}, interrupting pipeline")
             await self._interrupt_pipeline()
-
             metrics_collector.start_turn()
             metrics_collector.set_user_transcript(text)
 
@@ -552,11 +551,14 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 response_parts = []
 
                 def _safe_set_agent_response(text: str) -> None:
-                    """Only set agent response if this collector still owns the current generation."""
+                    """Only set agent response if this collector still owns the current generation.
+                    """
                     if self.hooks and self.hooks.has_tts_stream_hook():
                         return
                     if text and self._generation_id == my_generation_id and metrics_collector.current_turn:
-                        metrics_collector.set_agent_response(text)
+                        tts = self.speech_generation.tts if self.speech_generation else None
+                        emit = not bool(getattr(tts, "supports_word_timestamps", False))
+                        metrics_collector.set_agent_response(text, emit_transport=emit)
 
                 try:
                     async for chunk in llm_stream:
@@ -710,7 +712,9 @@ class PipelineOrchestrator(EventEmitter[Literal[
         if self.speech_generation:
             try:
                 if not (self.hooks and self.hooks.has_tts_stream_hook()):
-                    metrics_collector.set_agent_response(message)
+                    tts = self.speech_generation.tts
+                    emit = not bool(getattr(tts, "supports_word_timestamps", False))
+                    metrics_collector.set_agent_response(message, emit_transport=emit)
                 await self.speech_generation.synthesize(message)
             finally:
                 handle._mark_done()
@@ -933,6 +937,10 @@ class PipelineOrchestrator(EventEmitter[Literal[
         if self._partial_response and metrics_collector.current_turn:
             if not metrics_collector.current_turn.agent_speech:
                 metrics_collector.set_agent_response(self._partial_response)
+            else:
+                metrics_collector.emit_agent_transcript_transport(
+                    metrics_collector.current_turn.agent_speech, type="final"
+                )
 
         if self._partial_response and self.agent:
             msg = self.agent.chat_context.add_message(

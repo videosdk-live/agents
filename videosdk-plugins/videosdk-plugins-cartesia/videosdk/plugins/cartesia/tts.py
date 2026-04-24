@@ -33,8 +33,9 @@ class CartesiaTTS(TTS):
         language: str = "en",
         base_url: str = "https://api.cartesia.ai",
         generation_config: GenerationConfig = GenerationConfig(),
-        pronunciation_dict_id:str|None = None,
-        max_buffer_delay_ms:int|None = None
+        pronunciation_dict_id: str | None = None,
+        max_buffer_delay_ms: int | None = None,
+        word_timestamps: bool = False,
     ) -> None:
         """Initialize the Cartesia TTS plugin
         Args:
@@ -48,7 +49,11 @@ class CartesiaTTS(TTS):
             pronunciation_dict_id (str): The pronunciation dictionary id to use for custom pronunciations.
             max_buffer_delay_ms(int): for max_buffer_delay_ms before streaming.
         """
-        super().__init__(sample_rate=CARTESIA_SAMPLE_RATE, num_channels=CARTESIA_CHANNELS)
+        super().__init__(
+            sample_rate=CARTESIA_SAMPLE_RATE,
+            num_channels=CARTESIA_CHANNELS,
+            word_timestamps=word_timestamps,
+        )
 
         self.model = model
         self.language = language
@@ -72,9 +77,22 @@ class CartesiaTTS(TTS):
         self._receive_task: asyncio.Task | None = None
         self._context_futures: dict[str, asyncio.Future[None]] = {}
 
+        # Word-timestamp-driven transcript sync
+        self._audio_start_time: Optional[float] = None
+        self._spoken_words: List[str] = []
+        self._word_schedule_tasks: List[asyncio.Task] = []
+        self._last_scheduled_start_sec: float = -1.0
+
     def reset_first_audio_tracking(self) -> None:
         """Reset the first audio tracking state for the next TTS task"""
         self._first_chunk_sent = False
+        self._audio_start_time = None
+        self._spoken_words = []
+        for task in self._word_schedule_tasks:
+            if not task.done():
+                task.cancel()
+        self._word_schedule_tasks = []
+        self._last_scheduled_start_sec = -1.0
 
     async def synthesize(
         self, text: AsyncIterator[str] | str, voice_id: Optional[Union[str, List[float]]] = None, **kwargs: Any,
@@ -131,7 +149,8 @@ class CartesiaTTS(TTS):
                 "model_id": self.model, "language": self.language,
                 "voice": voice_payload,
                 "output_format": {"container": "raw", "encoding": "pcm_s16le", "sample_rate": self.sample_rate},
-                "add_timestamps": True, "context_id": context_id,
+                "add_timestamps": self.supports_word_timestamps,
+                "context_id": context_id,
                 "generation_config": asdict(self._generation_config),
                 "pronunciation_dictionary_id":self.pronunciation_dictionary_id,
                 "max_buffer_delay_ms":self.max_buffer_delay_ms
@@ -174,6 +193,19 @@ class CartesiaTTS(TTS):
 
                 if data.get("type") == "error":
                     future.set_exception(RuntimeError(f"Cartesia API error: {json.dumps(data)}"))
+                elif data.get("type") == "timestamps" and "word_timestamps" in data:
+                    wt = data["word_timestamps"] or {}
+                    words = wt.get("words", []) or []
+                    starts = wt.get("start", []) or []
+                    for word, start_sec in zip(words, starts):
+                        start_sec_f = float(start_sec)
+                        if start_sec_f <= self._last_scheduled_start_sec:
+                            continue
+                        self._last_scheduled_start_sec = start_sec_f
+                        task = asyncio.create_task(
+                            self._schedule_word_emit(word, start_sec_f)
+                        )
+                        self._word_schedule_tasks.append(task)
                 elif "data" in data and data["data"]:
                     await self._stream_audio(base64.b64decode(data["data"]))
                 elif data.get("done"):
@@ -210,16 +242,47 @@ class CartesiaTTS(TTS):
         """Streams a chunk of audio to the audio track."""
         if self._interrupted or not audio_chunk: return
 
-        if not self._first_chunk_sent and self._first_audio_callback:
+        if not self._first_chunk_sent:
             self._first_chunk_sent = True
-            await self._first_audio_callback()
+            self._audio_start_time = asyncio.get_event_loop().time()
+            if self._first_audio_callback:
+                await self._first_audio_callback()
 
         if self.audio_track:
             await self.audio_track.add_new_bytes(audio_chunk)
 
+    async def _schedule_word_emit(self, word: str, start_sec: float) -> None:
+        """Emit a ``word_spoken`` event at the moment its audio begins to play."""
+        while self._audio_start_time is None and not self._interrupted:
+            await asyncio.sleep(0.01)
+        if self._interrupted or self._audio_start_time is None:
+            return
+
+        target_time = self._audio_start_time + float(start_sec)
+        now = asyncio.get_event_loop().time()
+        delay = target_time - now
+        if delay > 0:
+            try:
+                await asyncio.sleep(delay)
+            except asyncio.CancelledError:
+                return
+        if self._interrupted:
+            return
+
+        self._spoken_words.append(word)
+        cumulative = " ".join(self._spoken_words)
+        try:
+            self.emit("word_spoken", {"word": word, "cumulative_text": cumulative})
+        except Exception:
+            pass
+
     async def interrupt(self) -> None:
         """Interrupts any ongoing TTS, stopping audio playback and network activity."""
         self._interrupted = True
+        for task in self._word_schedule_tasks:
+            if not task.done():
+                task.cancel()
+        self._word_schedule_tasks = []
         if self.audio_track: self.audio_track.interrupt()
         if self._ws_connection and not self._ws_connection.closed:
             await self._ws_connection.close()

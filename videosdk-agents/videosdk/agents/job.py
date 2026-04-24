@@ -1,5 +1,5 @@
 import logging
-from typing import Callable, Coroutine, Optional, Any, TYPE_CHECKING, Dict
+from typing import Callable, Coroutine, Optional, Any, TYPE_CHECKING, Dict, Union
 import os
 import asyncio
 from contextvars import ContextVar
@@ -72,14 +72,70 @@ class MetricsOptions:
     export_url: Optional[str] = None
     export_headers: Optional[Dict[str, str]] = None
 
+_VALID_LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR"})
+
 @dataclass
 class LoggingOptions:
-    """Configuration for log collection, level filtering, and export settings."""
+    """Configuration for log collection, level filtering, and export settings.
+
+    ``level`` accepts either:
+      * a string (threshold, e.g. ``"INFO"``) — captures that level and above
+      * a list of strings (explicit allowlist, e.g. ``["DEBUG", "ERROR"]``) —
+        captures only the listed levels
+    """
 
     enabled: bool = False
-    level: str = "INFO"
+    level: Union[str, list[str]] = "INFO"
     export_url: Optional[str] = None
     export_headers: Optional[Dict[str, str]] = None
+    send_to_dashboard: bool = False
+
+    def __post_init__(self):
+        if isinstance(self.level, str):
+            upper = self.level.upper()
+            if upper not in _VALID_LOG_LEVELS:
+                raise ValueError(
+                    f"Invalid log level {self.level!r}. Must be one of {sorted(_VALID_LOG_LEVELS)}."
+                )
+            self.level = upper
+        elif isinstance(self.level, list):
+            normalized: list[str] = []
+            for lvl in self.level:
+                if not isinstance(lvl, str):
+                    raise ValueError(
+                        f"level list entries must be strings, got {type(lvl).__name__}"
+                    )
+                upper = lvl.upper()
+                if upper not in _VALID_LOG_LEVELS:
+                    raise ValueError(
+                        f"Invalid log level {lvl!r}. Must be one of {sorted(_VALID_LOG_LEVELS)}."
+                    )
+                normalized.append(upper)
+            self.level = normalized
+        else:
+            raise ValueError(
+                f"level must be str or list[str], got {type(self.level).__name__}"
+            )
+
+
+@dataclass
+class ObservabilityOptions:
+    """Grouped config for recording, traces, metrics, and logs.
+
+    Semantics when used via this wrapper:
+      * Field absent (``None``) — framework default
+        (recording/logs OFF, traces/metrics ON via VideoSDK backend).
+      * Field present — feature ON with the supplied config, unless a
+        sub-option explicitly sets ``enabled=False``.
+
+    Usable both on :class:`RoomOptions` and inline on
+    ``AgentSession.start(observability=...)``.
+    """
+
+    recording: Optional["RecordingOptions"] = None
+    traces: Optional[TracesOptions] = None
+    metrics: Optional[MetricsOptions] = None
+    logs: Optional[LoggingOptions] = None
 
 
 @dataclass
@@ -105,13 +161,16 @@ def _coerce_recording_options_dict(ro: dict) -> RecordingOptions:
 
 
 def validate_room_options_recording(room_options: "RoomOptions") -> None:
-    """Raise ValueError if recording-related options are inconsistent."""
-    if not room_options.recording:
-        return
-    ro = room_options.recording_options
-    if isinstance(ro, dict):
-        room_options.recording_options = _coerce_recording_options_dict(ro)
-        ro = room_options.recording_options
+    """Raise ValueError if recording-related options are inconsistent.
+
+    Evaluates the resolved observability config so both the flat-field and
+    the new :class:`ObservabilityOptions` paths are checked.
+    """
+    if isinstance(room_options.recording_options, dict):
+        room_options.recording_options = _coerce_recording_options_dict(
+            room_options.recording_options
+        )
+    ro = room_options._resolved_observability().recording
     if ro is None:
         return
     if ro.screen_share and not room_options.vision:
@@ -125,7 +184,7 @@ def resolve_video_sdk_recording(
     room_options: "RoomOptions",
 ) -> tuple[Optional[bool], bool]:
     """
-    Map RoomOptions recording fields to VideoSDKHandler inputs.
+    Map the resolved observability recording config to VideoSDKHandler inputs.
 
     Returns:
         (record_audio, record_screen_share)
@@ -133,13 +192,9 @@ def resolve_video_sdk_recording(
           True → track recording, kind=audio only.
         - record_screen_share: whether to start screen_* track recording APIs.
     """
-    if not room_options.recording:
-        return None, False
-
-    ro = room_options.recording_options
+    ro = room_options._resolved_observability().recording
     if ro is None:
-        return True, False
-
+        return None, False
     if ro.video:
         return None, False
     if ro.screen_share:
@@ -180,6 +235,10 @@ class RoomOptions:
     metrics: Optional[MetricsOptions] = None
     logs: Optional[LoggingOptions] = None
 
+    # Grouped observability (recording + traces + metrics + logs).
+    # When set, takes precedence over the individual fields above at resolution time.
+    observability: Optional[ObservabilityOptions] = None
+
     # New Configuration Fields
     _transport_mode: TransportMode = field(default=TransportMode.VIDEOSDK, init=False, repr=False)
 
@@ -211,15 +270,19 @@ class RoomOptions:
         traces: Optional[TracesOptions] = None,
         metrics: Optional[MetricsOptions] = None,
         logs: Optional[LoggingOptions] = None,
+        observability: Optional[ObservabilityOptions] = None,
         **kwargs,
     ):
         # Initialize internal field
         self._transport_mode = TransportMode.VIDEOSDK
-        
+
         # Handle telemetry options
         self.traces = traces or TracesOptions()
         self.metrics = metrics or MetricsOptions()
         self.logs = logs or LoggingOptions()
+
+        # Grouped observability wrapper (optional; resolved lazily)
+        self.observability = observability
 
         # Handle connection mode
         if transport_mode:
@@ -238,6 +301,64 @@ class RoomOptions:
         for key, value in kwargs.items():
             if hasattr(self, key):
                 setattr(self, key, value)
+
+    def _resolved_observability(self) -> "ObservabilityOptions":
+        """Merge observability sources into one effective config.
+
+        Priority: ``self.observability`` > flat fields (``self.recording``,
+        ``self.traces``, …) > framework defaults
+        (recording/logs OFF, traces/metrics ON).
+        """
+        obs = self.observability
+
+        if obs is not None and obs.recording is not None:
+            recording = obs.recording
+        elif self.recording:
+            ro = self.recording_options
+            if isinstance(ro, dict):
+                ro = _coerce_recording_options_dict(ro)
+            recording = ro if isinstance(ro, RecordingOptions) else RecordingOptions()
+        else:
+            recording = None
+
+        if obs is not None and obs.traces is not None:
+            traces = obs.traces
+        else:
+            traces = self.traces or TracesOptions()
+
+        if obs is not None and obs.metrics is not None:
+            metrics = obs.metrics
+        else:
+            metrics = self.metrics or MetricsOptions()
+
+        if obs is not None and obs.logs is not None:
+            src = obs.logs
+            logs: Optional[LoggingOptions] = LoggingOptions(
+                enabled=True,
+                level=src.level,
+                export_url=src.export_url,
+                export_headers=src.export_headers,
+                send_to_dashboard=src.send_to_dashboard,
+            )
+        elif (self.logs and self.logs.enabled) or self.send_logs_to_dashboard:
+            base = self.logs or LoggingOptions()
+            level_source = base.level if (self.logs and self.logs.enabled) else self.dashboard_log_level
+            logs = LoggingOptions(
+                enabled=True,
+                level=level_source,
+                export_url=base.export_url,
+                export_headers=base.export_headers,
+                send_to_dashboard=base.send_to_dashboard or self.send_logs_to_dashboard,
+            )
+        else:
+            logs = None
+
+        return ObservabilityOptions(
+            recording=recording,
+            traces=traces,
+            metrics=metrics,
+            logs=logs,
+        )
 
 
 @dataclass
@@ -496,15 +617,16 @@ class JobContext:
                 cleanup_callback = await setup_console_voice_for_ctx(self)
                 self.add_shutdown_callback(cleanup_callback)
             else:
+                resolved_obs = self.room_options._resolved_observability()
                 self.metrics_collector.transport_mode = self.room_options.transport_mode
-                self.metrics_collector.analytics_client.configure(self.room_options.metrics)
+                self.metrics_collector.analytics_client.configure(resolved_obs.metrics)
                 if self.room_options.transport_mode == TransportMode.VIDEOSDK:
                     from .room.room import VideoSDKHandler
-                    
+
                     if not self.room_options.room_id:
                         env_room_id = (os.getenv("VIDEOSDK_ROOM_ID") or "").strip()
                         self.room_options.room_id = env_room_id or self.get_room_id()
-                    if self.room_options.send_logs_to_dashboard or (self.room_options.logs and self.room_options.logs.enabled):
+                    if resolved_obs.logs is not None:
                         from .metrics.logger_handler import LogManager, JobLogger
                         self._log_manager = LogManager()
                         self._log_manager.start(auth_token=self.videosdk_auth or "")
@@ -513,7 +635,7 @@ class JobContext:
                             room_id=self.room_options.room_id or "",
                             peer_id=self.room_options.agent_participant_id or "agent",
                             auth_token=self.videosdk_auth or "",
-                            dashboard_log_level=self.room_options.dashboard_log_level if not (self.room_options.logs and self.room_options.logs.level) else self.room_options.logs.level,
+                            dashboard_log_level=resolved_obs.logs.level,
                             send_logs_to_dashboard=True,
                         )
 
@@ -532,7 +654,7 @@ class JobContext:
                             pipeline=self._pipeline,
                             loop=self._loop,
                             vision=self.room_options.vision,
-                            recording=self.room_options.recording,
+                            recording=resolved_obs.recording is not None,
                             record_audio=record_audio_resolved,
                             record_screen_share=record_screen_share,
                             custom_camera_video_track=custom_camera_video_track,
@@ -545,9 +667,9 @@ class JobContext:
                             no_participant_timeout_seconds=self.room_options.no_participant_timeout_seconds,
                             signaling_base_url=self.room_options.signaling_base_url,
                             job_logger=self._job_logger,
-                            traces_options=self.room_options.traces,
-                            metrics_options=self.room_options.metrics,
-                            logs_options=self.room_options.logs,
+                            traces_options=resolved_obs.traces,
+                            metrics_options=resolved_obs.metrics,
+                            logs_options=resolved_obs.logs,
                             avatar_participant_id=avatar.participant_id if avatar and hasattr(avatar, 'participant_id') else None,
                         )
                     if self._pipeline and hasattr(

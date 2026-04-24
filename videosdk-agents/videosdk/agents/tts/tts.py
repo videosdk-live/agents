@@ -7,13 +7,14 @@ import logging
 import asyncio
 logger = logging.getLogger(__name__)
 
-class TTS(EventEmitter[Literal["error"]]):
+class TTS(EventEmitter[Literal["error", "word_spoken"]]):
     """Base class for Text-to-Speech implementations"""
     
     def __init__(
         self,
         sample_rate: int = 16000,
-        num_channels: int = 1
+        num_channels: int = 1,
+        word_timestamps: bool = False,
     ) -> None:
         super().__init__()
         self._label = f"{type(self).__module__}.{type(self).__name__}"
@@ -21,6 +22,7 @@ class TTS(EventEmitter[Literal["error"]]):
         self._num_channels = num_channels
         self._first_audio_callback: Optional[Callable[[], Awaitable[None]]] = None
         self.audio_track = None 
+        self.supports_word_timestamps = word_timestamps
 
     @property
     def label(self) -> str:
