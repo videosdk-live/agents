@@ -619,7 +619,10 @@ class JobContext:
             else:
                 resolved_obs = self.room_options._resolved_observability()
                 self.metrics_collector.transport_mode = self.room_options.transport_mode
-                self.metrics_collector.analytics_client.configure(resolved_obs.metrics)
+                self.metrics_collector.analytics_client.configure(
+                    resolved_obs.metrics,
+                    signaling_base_url=self.room_options.signaling_base_url,
+                )
                 if self.room_options.transport_mode == TransportMode.VIDEOSDK:
                     from .room.room import VideoSDKHandler
 

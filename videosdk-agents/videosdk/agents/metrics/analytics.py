@@ -28,10 +28,15 @@ class AnalyticsClient:
         self.turn_count = 0
         self.metrics_options = None
 
-    def configure(self, metrics_options: Any) -> None:
-        """Configure analytics client with metrics options"""
+    def configure(self, metrics_options: Any, signaling_base_url: Optional[str] = None) -> None:
+        """Configure analytics client with metrics options and signaling base URL"""
         self.metrics_options = metrics_options
         self.turn_count = 0
+        if signaling_base_url:
+            host = signaling_base_url.rstrip("/")
+            if not host.startswith(("http://", "https://")):
+                host = f"https://{host}"
+            self.base_url = host
 
     def set_session_id(self, session_id: str) -> None:
         """Set the session ID for analytics tracking"""
