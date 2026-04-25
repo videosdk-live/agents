@@ -475,18 +475,19 @@ class TracesFlowManager:
                     parent_span=turn_span,
                     start_time=eou.eou_start_time if eou else None,
                 )
-                if eou.waited_for_additional_speech:
-                    delay = round(eou.wait_for_additional_speech_duration, 4)
+                if eou.waited_for_additional_speech and eou.eou_wait_ms is not None and eou.eou_end_time is not None:
+                    delay_ms = round(eou.eou_wait_ms, 4)
+                    delay_sec = delay_ms / 1000.0
                     with trace.use_span(eou_span):
-                        wait_for_additional_speech_span =create_span (
-                            "Wait for Additional Speech",
+                        eou_wait_span = create_span(
+                            "EOU Wait",
                             {
-                                "wait_for_additional_speech_duration":delay,
-                                "eou_probability": round(eou.eou_probability, 4),
+                                "eou_wait_ms": delay_ms,
+                                "eou_probability": round(eou.eou_probability or 0, 4),
                             },
                             start_time=eou.eou_end_time,
                         )
-                        self.end_span(wait_for_additional_speech_span, status_code=StatusCode.OK, end_time=eou.eou_end_time + delay)
+                        self.end_span(eou_wait_span, status_code=StatusCode.OK, end_time=eou.eou_end_time + delay_sec)
                 
                 if eou_span:
                     for error in eou_errors:
