@@ -704,20 +704,34 @@ class PipelineOrchestrator(EventEmitter[Literal[
     async def say(self, message: str, handle: UtteranceHandle) -> None:
         """
         Direct TTS synthesis (for initial messages).
-        
+
         Args:
             message: Message to synthesize
             handle: Utterance handle to track
         """
-        if self.speech_generation:
-            try:
-                if not (self.hooks and self.hooks.has_tts_stream_hook()):
-                    tts = self.speech_generation.tts
-                    emit = not bool(getattr(tts, "supports_word_timestamps", False))
-                    metrics_collector.set_agent_response(message, emit_transport=emit)
-                await self.speech_generation.synthesize(message)
-            finally:
-                handle._mark_done()
+        if not self.speech_generation:
+            handle._mark_done()
+            return
+
+        playback_done = asyncio.Event()
+
+        def _on_playback_done(_data: Any = None) -> None:
+            playback_done.set()
+
+        self.speech_generation.on("last_audio_byte", _on_playback_done)
+        self.speech_generation.on("synthesis_interrupted", _on_playback_done)
+
+        try:
+            if not (self.hooks and self.hooks.has_tts_stream_hook()):
+                tts = self.speech_generation.tts
+                emit = not bool(getattr(tts, "supports_word_timestamps", False))
+                metrics_collector.set_agent_response(message, emit_transport=emit)
+            await self.speech_generation.synthesize(message)
+            await playback_done.wait()
+        finally:
+            self.speech_generation.off("last_audio_byte", _on_playback_done)
+            self.speech_generation.off("synthesis_interrupted", _on_playback_done)
+            handle._mark_done()
     
     async def reply_with_context(
         self,

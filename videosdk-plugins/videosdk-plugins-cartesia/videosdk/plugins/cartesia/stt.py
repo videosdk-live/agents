@@ -89,6 +89,16 @@ class CartesiaSTT(BaseSTT):
                     self._ws_task.cancel()
                     self._ws_task = None
 
+    async def flush(self) -> None:
+        """Send `finalize` to Cartesia to force a final transcription now.
+        """
+        if not self._ws or self._ws.closed:
+            return
+        try:
+            await self._ws.send_str("finalize")
+        except Exception as e:
+            logger.error(f"Error flushing Cartesia STT: {str(e)}")
+
     async def _listen_for_responses(self) -> None:
         """Background task to listen for WebSocket responses"""
         if not self._ws:
