@@ -89,7 +89,7 @@ class EouMetrics(BaseComponentMetrics):
     max_speech_wait_timeout: Optional[float] = None
     eou_avg_delay: Optional[float] = None
     waited_for_additional_speech: bool = False
-    wait_for_additional_speech_duration: Optional[float] = None
+    eou_wait_ms: Optional[float] = None
 
 
 @dataclass
@@ -286,6 +286,8 @@ class TurnMetrics:
             eou = self.eou_metrics[-1]
             if eou.eou_latency is not None:
                 e2e_components.append(eou.eou_latency)
+            if eou.eou_wait_ms is not None:
+                e2e_components.append(eou.eou_wait_ms)
 
         if self.llm_metrics:
             llm = self.llm_metrics[-1]
