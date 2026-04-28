@@ -733,3 +733,71 @@ Stay connected with VideoSDK:
 </a>
 
 **<center>Made with ❤️ by The VideoSDK Team</center>**
+
+## ❓ FAQ
+
+### What is VideoSDK AI Agents?
+VideoSDK AI Agents is an open-source Python framework for building production-ready, real-time voice and multimodal AI agents. It enables agents to join VideoSDK rooms as real-time participants, handling audio streaming, turn detection, interruptions, and media routing automatically.
+
+### How does the framework work?
+The framework uses a unified `Pipeline` class that manages the full agent lifecycle — from joining a room and processing live audio, to running STT → LLM → TTS pipelines or connecting to unified realtime models. It supports three modes:
+- **Cascade Mode**: STT → LLM → TTS pipeline for full control
+- **Realtime Mode**: Unified realtime models (OpenAI Realtime, Gemini Live) for lowest latency
+- **Hybrid Mode**: Mix cascade and realtime components
+
+### What LLM providers are supported?
+The framework supports multiple LLM providers including OpenAI, Google Gemini, Anthropic, AWS NovaSonic, and any LangChain `BaseChatModel`. You can also integrate LangGraph `StateGraph` as the agent's LLM.
+
+### How do I install the framework?
+```bash
+pip install videosdk-agents
+```
+Ensure you have Python 3.9+ and a valid VideoSDK API key.
+
+### How do I create a basic voice agent?
+```python
+from videosdk.agents import Pipeline, Agent
+
+pipeline = Pipeline(
+    stt="openai",
+    llm="openai",
+    tts="openai"
+)
+
+agent = Agent(pipeline)
+agent.run()
+```
+
+### How do I handle interruptions?
+The framework automatically handles interruptions through VAD (Voice Activity Detection) and turn detection. You can customize interruption behavior using pipeline hooks:
+```python
+@pipeline.on("interrupt")
+def handle_interrupt(data):
+    # Custom interruption handling
+    pass
+```
+
+### How do I add tools to my agent?
+Use the `@pipeline.tool()` decorator to add function tools:
+```python
+@pipeline.tool()
+def get_weather(location: str) -> str:
+    """Get current weather for a location."""
+    return f"Weather in {location}: Sunny, 25C"
+```
+
+### How do I deploy my agent?
+Deploy your agent worker to any cloud provider (AWS, GCP, Azure) or run locally. The agent connects to VideoSDK rooms via WebSocket, so ensure your deployment has stable network connectivity.
+
+### How do I debug my agent?
+Enable debug logging:
+```python
+import logging
+logging.basicConfig(level=logging.DEBUG)
+```
+The framework provides structured logging per component (STT, LLM, TTS, VAD) for easy debugging.
+
+### Where can I get help?
+- [Official Documentation](https://docs.videosdk.live/ai_agents/introduction)
+- [Discord Community](https://discord.com/invite/f2WsNDN9S5)
+- [GitHub Issues](https://github.com/videosdk-live/agents/issues)
