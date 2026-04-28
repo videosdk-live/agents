@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Callable, Awaitable, Literal, TYPE_CHECKING
 import asyncio
 import logging
+import time
 from .event_emitter import EventEmitter
 from .stt.stt import STT, STTResponse, SpeechEventType
 from .vad import VAD, VADResponse, VADEventType
@@ -63,6 +64,7 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
         self._accumulated_transcript = ""
         self._waiting_for_more_speech = False
         self._wait_timer: asyncio.TimerHandle | None = None
+        self._wait_started_at: float | None = None
         self._transcript_processing_lock = asyncio.Lock()
         self._is_user_speaking = False
         self._stt_started = False
@@ -296,24 +298,38 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
         if self._waiting_for_more_speech:
             if self._wait_timer:
                 self._wait_timer.cancel()
-        
+            self._record_wait_elapsed()
+
         self._waiting_for_more_speech = True
-        
+        self._wait_started_at = time.perf_counter()
+
         loop = asyncio.get_event_loop()
         self._wait_timer = loop.call_later(
             delay,
             lambda: asyncio.create_task(self._on_speech_timeout())
         )
+
+    def _record_wait_elapsed(self) -> None:
+        """Report the actual elapsed wait time to metrics, then clear the start marker."""
+        if self._wait_started_at is None:
+            return
+        elapsed = time.perf_counter() - self._wait_started_at
+        self._wait_started_at = None
+        try:
+            metrics_collector.on_wait_for_additional_speech_complete(elapsed)
+        except Exception as e:
+            logger.error(f"Failed to record actual wait duration: {e}")
     
     async def _on_speech_timeout(self) -> None:
         """Handle timeout when no additional speech is detected"""
         async with self._transcript_processing_lock:
             if not self._waiting_for_more_speech:
                 return
-            
+
             self._waiting_for_more_speech = False
             self._wait_timer = None
-            
+            self._record_wait_elapsed()
+
             await self._finalize_transcript()
     
     async def _finalize_transcript(self) -> None:
@@ -341,7 +357,8 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
         if self._wait_timer:
             self._wait_timer.cancel()
             self._wait_timer = None
-        
+
+        self._record_wait_elapsed()
         self._waiting_for_more_speech = False
     
     async def _handle_turn_resumed(self, resumed_text: str) -> None:
@@ -392,9 +409,10 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
         if self._wait_timer:
             self._wait_timer.cancel()
             self._wait_timer = None
-        
+
         self._accumulated_transcript = ""
         self._waiting_for_more_speech = False
+        self._wait_started_at = None
         self._preemptive_transcript = None
 
         if self.vad:
