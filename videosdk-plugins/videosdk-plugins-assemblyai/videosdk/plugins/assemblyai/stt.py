@@ -148,6 +148,20 @@ class AssemblyAISTT(BaseSTT):
                     self._ws_task.cancel()
                     self._ws_task = None
 
+    async def flush(self) -> None:
+        """Force AssemblyAI to finalize the current turn immediately.
+        """
+        if not self._ws or self._ws.closed:
+            return
+        try:
+            if len(self._stream_buffer) >= self._min_chunk_size:
+                await self._ws.send_bytes(bytes(self._stream_buffer))
+                self._stream_buffer.clear()
+
+            await self._ws.send_str(json.dumps({"type": "ForceEndpoint"}))
+        except Exception as e:
+            logger.error(f"Error flushing AssemblyAI STT: {e}")
+
     async def _listen_for_responses(self) -> None:
         """Background task to listen for WebSocket responses"""
         if not self._ws:
