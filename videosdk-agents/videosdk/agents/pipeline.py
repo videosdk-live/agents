@@ -16,6 +16,7 @@ from .realtime_base_model import RealtimeBaseModel
 from .speech_generation import SpeechGeneration
 from .stt.stt import STT
 from .llm.llm import LLM
+from .llm.chat_context import ChatRole, ChatMessage
 from .tts.tts import TTS
 from .vad import VAD
 from .eou import EOU
@@ -1104,9 +1105,41 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
     def _on_realtime_transcription(self, data: dict) -> None:
         """Handle realtime model transcription"""
         self.emit("realtime_model_transcription", data)
-        
+
+        if self.agent and data.get("is_final"):
+            text = data.get("text")
+            role = data.get("role")
+            if text:
+                target_role = None
+                if role == "user":
+                    target_role = ChatRole.USER
+                elif role in ("agent", "assistant", "model"):
+                    target_role = ChatRole.ASSISTANT
+
+                if target_role is not None and not self._matches_last_chat_message(target_role, text):
+                    self.agent.chat_context.add_message(
+                        role=target_role, content=text,
+                    )
+
         if self.voice_mail_detector:
             pass
+
+    def _matches_last_chat_message(self, role: ChatRole, text: str) -> bool:
+        """Return True if the last chat_context item already has the same role+text.
+        """
+        items = self.agent.chat_context.items
+        if not items:
+            return False
+        last = items[-1]
+        if not isinstance(last, ChatMessage) or last.role != role:
+            return False
+        if isinstance(last.content, str):
+            last_text = last.content
+        elif isinstance(last.content, list) and last.content and isinstance(last.content[0], str):
+            last_text = last.content[0]
+        else:
+            return False
+        return last_text.strip() == text.strip()
     
     def set_voice_mail_detector(self, detector: VoiceMailDetector | None) -> None:
         """Set or replace the voicemail detector on the pipeline and its orchestrator."""
