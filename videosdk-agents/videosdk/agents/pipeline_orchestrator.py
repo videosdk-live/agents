@@ -511,6 +511,9 @@ class PipelineOrchestrator(EventEmitter[Literal[
         full_response = ""
         self._partial_response = ""
         
+        if self.speech_generation:
+            self.speech_generation.spoken_transcript = ""
+        
         try:
             if self.agent and self.agent.session and self.agent.session.is_background_audio_enabled:
                 await self.agent.session.start_thinking_audio()
@@ -947,19 +950,25 @@ class PipelineOrchestrator(EventEmitter[Literal[
 
         if self._current_generation_task and not self._current_generation_task.done():
             self._current_generation_task.cancel()
+            
+        truncated_response = ""
+        if self.speech_generation and self.speech_generation.spoken_transcript:
+            truncated_response = self.speech_generation.spoken_transcript
+        elif self._partial_response:
+            truncated_response = self._partial_response
 
-        if self._partial_response and metrics_collector.current_turn:
+        if truncated_response and metrics_collector.current_turn:
             if not metrics_collector.current_turn.agent_speech:
-                metrics_collector.set_agent_response(self._partial_response)
+                metrics_collector.set_agent_response(truncated_response)
             else:
                 metrics_collector.emit_agent_transcript_transport(
                     metrics_collector.current_turn.agent_speech, type="final"
                 )
 
-        if self._partial_response and self.agent:
+        if truncated_response and self.agent:
             msg = self.agent.chat_context.add_message(
                 role=ChatRole.ASSISTANT,
-                content=self._partial_response
+                content=truncated_response
             )
             msg.interrupted = True
 

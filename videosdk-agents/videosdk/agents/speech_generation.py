@@ -45,6 +45,9 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
         self._is_interrupted = False
         self.full_transcript = ""
 
+        self.spoken_transcript: str = ""
+        self._tier2_spoken_transcript: str = ""
+
         if self.tts and getattr(self.tts, "supports_word_timestamps", False):
             try:
                 self.tts.on("word_spoken", self._on_tts_word_spoken)
@@ -57,10 +60,12 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
         if not isinstance(data, dict):
             return
         cumulative = data.get("cumulative_text", "")
-        if cumulative and metrics_collector:
-            metrics_collector.emit_agent_transcript_transport(
-                cumulative, type="interim"
-            )
+        if cumulative:
+            self._tier2_spoken_transcript = cumulative
+            if metrics_collector:
+                metrics_collector.emit_agent_transcript_transport(
+                    cumulative, type="interim"
+                )
 
     def _on_final_agent_transcript(self, data: Any) -> None:
         """Emit the final agent transcript after playback completes.
@@ -98,6 +103,8 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
                 response_iterator = response_gen
 
             self.full_transcript = ""
+            self.spoken_transcript = ""
+            self._tier2_spoken_transcript = ""
             tts_start_recorded = False
             async def character_counting_wrapper(text_iterator: AsyncIterator[str]):
                 
@@ -125,10 +132,13 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
                     if self.agent and self.agent.session and hasattr(self.agent.session, "pipeline"):
                         if hasattr(self.agent.session.pipeline, "audio_track"):
                             self.audio_track = self.agent.session.pipeline.audio_track
-                
+
+                if self.audio_track and hasattr(self.audio_track, "mark_synthesis_start"):
+                    self.audio_track.mark_synthesis_start()
+
                 if self.audio_track and hasattr(self.audio_track, "enable_audio_input"):
                     self.audio_track.enable_audio_input(manual_control=True)
-                
+
                 self.emit("synthesis_started", {})
 
                 if self.hooks and self.hooks.has_agent_turn_start_hooks():
@@ -200,10 +210,13 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
                         self.audio_track = self.agent.session.pipeline.audio_track
                     else:
                         logger.warning("Audio track not found in pipeline - last audio callback will be skipped")
-            
+
+            if self.audio_track and hasattr(self.audio_track, "mark_synthesis_start"):
+                self.audio_track.mark_synthesis_start()
+
             if self.audio_track and hasattr(self.audio_track, "enable_audio_input"):
                 self.audio_track.enable_audio_input(manual_control=True)
-            
+
             first_byte_event = asyncio.Event()
 
             async def on_first_audio_byte():
@@ -297,15 +310,38 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
                 elif self.agent and self.agent.session:
                     self.agent.session._reply_in_progress = False
 
+    def compute_spoken_transcript(self) -> str:
+        """Best-effort estimate of the portion of full_transcript that was
+        actually played out to the listener at the moment of call.
+        """
+        if not self.full_transcript:
+            return ""
+        if self._tier2_spoken_transcript:
+            return self._tier2_spoken_transcript.strip()
+        if not self.audio_track or not hasattr(self.audio_track, "snapshot_playback"):
+            return ""
+        played, pushed = self.audio_track.snapshot_playback()
+        if pushed <= 0:
+            return ""
+        fraction = max(0.0, min(1.0, played / pushed))
+        char_cutoff = int(len(self.full_transcript) * fraction)
+        if char_cutoff <= 0:
+            return ""
+        truncated = self.full_transcript[:char_cutoff]
+
+        last_break = max(truncated.rfind(" "), truncated.rfind("\n"))
+        if last_break <= 0:
+            return ""
+        return truncated[:last_break].strip()
+
     async def interrupt(self) -> None:
         """Interrupt the current synthesis"""
         self._is_interrupted = True
+        self.spoken_transcript = self.compute_spoken_transcript()
 
         if self.tts:
             await self.tts.interrupt()
 
-        # Reset audio track to clear buffers and synthesis state,
-        # preventing stuck on_last_audio_byte callbacks
         if self.audio_track and hasattr(self.audio_track, 'interrupt'):
             self.audio_track.interrupt()
 
