@@ -466,8 +466,9 @@ class VideoSDKHandler(BaseTransportHandler):
                 self.on_session_end(reason)
             except Exception as e:
                 logger.error(f"Error in session end callback: {e}")
+        else:
+            await self.leave()
 
-        await self.leave()
         self._session_ended = True
 
         if not self._first_participant_event.is_set():
