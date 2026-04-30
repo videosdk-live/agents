@@ -867,7 +867,8 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                     self.llm.on_user_speech_ended(lambda data: asyncio.create_task(self._on_user_speech_ended_realtime(data)))
                     self.llm.on_agent_speech_started(lambda data: asyncio.create_task(self._on_agent_speech_started_realtime(data)))
                     # self.llm.on_agent_speech_ended(lambda data: self._on_agent_speech_ended_realtime(data))
-                    self.llm.on_transcription(self._on_realtime_transcription)            
+                    self.llm.on_transcription(self._on_realtime_transcription)
+                    self.llm.on("llm_text_output", lambda data: asyncio.create_task(self._on_realtime_llm_text_output(data)))
             if self.config.realtime_mode == RealtimeMode.HYBRID_STT and self.orchestrator:
                 await self.orchestrator.start()
                 logger.info("Started orchestrator for hybrid_stt mode")
@@ -1081,6 +1082,12 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
             self.agent.session._emit_user_state(UserState.LISTENING)
             if self.agent.session.is_background_audio_enabled:
                 await self.agent.session.stop_thinking_audio()
+
+        if self.hooks and self.hooks.has_agent_turn_start_hooks():
+            try:
+                await self.hooks.trigger_agent_turn_start()
+            except Exception as e:
+                logger.error(f"Error in realtime agent_turn_start hook: {e}", exc_info=True)
     
     def _on_agent_speech_ended_realtime(self, data: dict) -> None:
         """Handle agent speech ended in realtime mode"""
@@ -1102,6 +1109,27 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         if self.agent and hasattr(self.agent, 'on_agent_speech_ended'):
             self.agent.on_agent_speech_ended(data)
 
+        if self.hooks and self.hooks.has_agent_turn_end_hooks():
+            asyncio.create_task(self.hooks.trigger_agent_turn_end())
+        if self.hooks and self.hooks.has_user_turn_end_hooks():
+            asyncio.create_task(self.hooks.trigger_user_turn_end())
+
+    async def _on_realtime_llm_text_output(self, data: dict) -> None:
+        """Fire @pipeline.on('llm') observation hooks in realtime mode.
+
+        The hook return value cannot
+        affect TTS here — audio is already streaming from the realtime model.
+        """
+        if not (self.hooks and self.hooks.has_llm_hooks()):
+            return
+        text = data.get("text", "")
+        if not text:
+            return
+        try:
+            await self.hooks.trigger_llm({"text": text})
+        except Exception as e:
+            logger.error(f"Error in realtime LLM hook: {e}", exc_info=True)
+
     def _on_realtime_transcription(self, data: dict) -> None:
         """Handle realtime model transcription"""
         self.emit("realtime_model_transcription", data)
@@ -1120,6 +1148,9 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                     self.agent.chat_context.add_message(
                         role=target_role, content=text,
                     )
+
+                if role == "user" and self.hooks and self.hooks.has_user_turn_start_hooks():
+                    asyncio.create_task(self.hooks.trigger_user_turn_start(text))
 
         if self.voice_mail_detector:
             pass
