@@ -19,7 +19,7 @@ pip install videosdk-plugins-litellm
 
 ```python
 from videosdk import Pipeline
-from videosdk.plugins.litellm import LiteLLMLLM
+from videosdk.plugins.litellm import LiteLLM
 from videosdk.plugins.deepgram import DeepgramSTT
 from videosdk.plugins.elevenlabs import ElevenLabsTTS
 from videosdk.plugins.silero import SileroVAD
@@ -27,7 +27,7 @@ from videosdk.plugins.turn_detector import TurnDetector
 
 pipeline = Pipeline(
     stt=DeepgramSTT(),
-    llm=LiteLLMLLM(model="anthropic/claude-sonnet-4-6"),
+    llm=LiteLLM(model="anthropic/claude-sonnet-4-6"),
     tts=ElevenLabsTTS(),
     vad=SileroVAD(),
     turn_detector=TurnDetector(),
@@ -42,7 +42,7 @@ backing already documents.
 ## Configuration
 
 ```python
-LiteLLMLLM(
+LiteLLM(
     model="anthropic/claude-sonnet-4-6",   # required
     api_key=None,                           # optional, proxy mode override
     api_base=None,                          # optional, e.g. "http://localhost:4000"
@@ -80,7 +80,7 @@ For the full list see the
 Run a LiteLLM proxy with model deployments and route through it:
 
 ```python
-LiteLLMLLM(
+LiteLLM(
     model="anthropic/claude-sonnet-4-6",
     api_base="http://localhost:4000",
     api_key="sk-fastagent-proxy-1234",

@@ -1,5 +1,5 @@
-from .llm import LiteLLMLLM
+from .llm import LiteLLM
 
 __all__ = [
-    "LiteLLMLLM",
+    "LiteLLM",
 ]

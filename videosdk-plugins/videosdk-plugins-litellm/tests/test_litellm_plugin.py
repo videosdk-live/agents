@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from videosdk.plugins.litellm import LiteLLMLLM
+from videosdk.plugins.litellm import LiteLLM
 from videosdk.plugins.litellm.llm import (
     _LiteLLMChat,
     _LiteLLMClientShim,
@@ -122,7 +122,7 @@ def test_litellm_llm_uses_shim_client(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("LITELLM_API_KEY", raising=False)
     monkeypatch.delenv("LITELLM_API_BASE", raising=False)
 
-    lm = LiteLLMLLM(model="anthropic/claude-sonnet-4-6")
+    lm = LiteLLM(model="anthropic/claude-sonnet-4-6")
     # `_client` is set by OpenAILLM.__init__; we passed our shim to it
     assert isinstance(lm._client, _LiteLLMClientShim)
     assert lm.model == "anthropic/claude-sonnet-4-6"
@@ -133,7 +133,7 @@ def test_litellm_llm_picks_up_proxy_env_vars(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setenv("LITELLM_API_KEY", "env-proxy-key")
     monkeypatch.setenv("LITELLM_API_BASE", "http://litellm-proxy:4000")
 
-    lm = LiteLLMLLM(model="openai/gpt-4o")
+    lm = LiteLLM(model="openai/gpt-4o")
     assert isinstance(lm._client, _LiteLLMClientShim)
     assert lm._client.api_key == "env-proxy-key"
     assert lm._client.api_base == "http://litellm-proxy:4000"
@@ -143,7 +143,7 @@ def test_litellm_llm_explicit_args_win_over_env(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setenv("LITELLM_API_KEY", "env-key")
     monkeypatch.setenv("LITELLM_API_BASE", "http://env-base")
 
-    lm = LiteLLMLLM(
+    lm = LiteLLM(
         model="openai/gpt-4o",
         api_key="explicit-key",
         api_base="http://explicit-base",
@@ -157,4 +157,4 @@ def test_litellm_llm_no_openai_api_key_required(monkeypatch: pytest.MonkeyPatch)
     LiteLLM subclass passes a shim, so OPENAI_API_KEY is not needed."""
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     # If this raised, OpenAILLM's API-key check would have triggered.
-    LiteLLMLLM(model="anthropic/claude-sonnet-4-6")
+    LiteLLM(model="anthropic/claude-sonnet-4-6")
