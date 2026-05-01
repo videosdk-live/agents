@@ -76,7 +76,7 @@ class _LiteLLMClientShim:
         return None
 
 
-class LiteLLMLLM(OpenAILLM):
+class LiteLLM(OpenAILLM):
     """LLM plugin routing through the LiteLLM SDK.
 
     Reuses every streaming, tool-call, structured-output, and usage-tracking
@@ -95,11 +95,11 @@ class LiteLLMLLM(OpenAILLM):
     Example::
 
         from videosdk import Pipeline
-        from videosdk.plugins.litellm import LiteLLMLLM
+        from videosdk.plugins.litellm import LiteLLM
 
         pipeline = Pipeline(
             stt=DeepgramSTT(),
-            llm=LiteLLMLLM(model="anthropic/claude-sonnet-4-6"),
+            llm=LiteLLM(model="anthropic/claude-sonnet-4-6"),
             tts=ElevenLabsTTS(),
             ...
         )
