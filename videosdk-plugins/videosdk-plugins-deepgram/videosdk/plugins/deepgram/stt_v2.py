@@ -30,6 +30,7 @@ class DeepgramSTTV2(BaseSTT):
         eot_threshold:float=0.8,
         eot_timeout_ms:int=7000,
         keyterm: list[str] | None = None,
+        language_hint: list[str] | None = None,
         tag:Union[str,List[str]]|None = None,
         base_url: str = "wss://api.deepgram.com/v2/listen",
         enable_preemptive_generation: bool = False,
@@ -47,6 +48,7 @@ class DeepgramSTTV2(BaseSTT):
             keyterm (list[str] | None): Optional list of keyterms/phrases to improve recognition (Keyterm Prompting).
                 Each entry is a keyterm or multi-word phrase (e.g. "tretinoin", "customer service").
                 Formatting is preserved (e.g. "Deepgram", "iPhone"). Max 500 tokens total across all keyterms. Defaults to None.
+            language_hint (list[str] | None): Optional list of language hints to bias the model for multilingual workloads. Defaults to None.
             tag: List of tags to add to the requests for usage reporting. Defaults to None.
             base_url (str): The base URL to use for the STT plugin. Defaults to "wss://api.deepgram.com/v2/listen".
             enable_preemptive_generation (bool): Enable preemptive generation based on EagerEndOfTurn events. Defaults to False.
@@ -65,6 +67,7 @@ class DeepgramSTTV2(BaseSTT):
         self.eot_threshold=eot_threshold
         self.eot_timeout_ms = eot_timeout_ms
         self.keyterm = keyterm
+        self.language_hint = language_hint
         self.tag=tag
         self.base_url = base_url
         self.enable_preemptive_generation = enable_preemptive_generation
@@ -160,6 +163,10 @@ class DeepgramSTTV2(BaseSTT):
             for t in self.keyterm:
                 if t.strip():
                     params_list.append(("keyterm", t.strip()))
+        if self.language_hint:
+            for t in self.language_hint:
+                if t.strip():
+                    params_list.append(("language_hint", t.strip()))
         headers = {"Authorization": f"Token {self.api_key}"}
         ws_url = f"{self.base_url}?{urlencode(params_list)}"
 
@@ -274,6 +281,13 @@ class DeepgramSTTV2(BaseSTT):
             logger.error(f"Error resampling audio: {e}")
             return b''
 
+    async def flush(self) -> None:
+        """
+        Deepgram Flux (v2 API) handles turn detection internally and automatically emits EndOfTurn
+        events. There is no explicit Finalize command without terminating the connection via CloseStream.
+        This method is a no-op to satisfy the BaseSTT interface requirements.
+        """
+        pass
 
     async def aclose(self) -> None:
         """Cleanup resources"""
@@ -287,7 +301,7 @@ class DeepgramSTTV2(BaseSTT):
         
         if self._ws:
             try:
-                await self._ws.send_str(json.dumps({"type": "Terminate"}))
+                await self._ws.send_str(json.dumps({"type": "CloseStream"}))
                 await asyncio.sleep(0.5)  
             except Exception as e:
                 logger.error(f"Error sending termination: {e}")
