@@ -6,6 +6,10 @@ from videosdk.plugins.deepgram import DeepgramSTT
 from videosdk.plugins.cartesia import CartesiaTTS
 from videosdk.plugins.silero import SileroVAD
 from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
+
+# You can also use TurnV2 for improved turn detection performance
+# from videosdk.agents.inference import TurnV2
+
 import logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 # Pre-downloading the Turn Detector model
@@ -85,6 +89,9 @@ async def start_session(context: JobContext):
         tts=CartesiaTTS(),
         vad=SileroVAD(),
         turn_detector=TurnDetector()
+
+        # turn_detector=TurnV2.roberta()
+        # turn_detector=TurnV2.gemma() 
     )
 
     session = AgentSession(

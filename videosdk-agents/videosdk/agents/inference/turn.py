@@ -30,6 +30,9 @@ import os
 from typing import Any, Dict, List, Optional
 
 import requests
+import threading
+import grpc
+from ._grpc import turn_detection_pb2, turn_detection_pb2_grpc
 
 from videosdk.agents import EOU, ChatContext, ChatMessage, ChatRole
 
@@ -37,7 +40,6 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_TURN_HTTP_URL = "https://inference-gateway.videosdk.live"
 DEFAULT_TIMEOUT_SECONDS = 10.0
-
 
 class Turn(EOU):
     """
@@ -298,3 +300,175 @@ class Turn(EOU):
     def label(self) -> str:
         lang = self.language or "multilingual"
         return f"videosdk.inference.Turn.{self.provider}.{self.model_id}.{lang}"
+
+DEFAULT_GRPC_HOST = "inference-gateway.videosdk.live:50053"
+DEFAULT_GRPC_TIMEOUT_SECONDS = 2.0
+
+_GRPC_CHANNEL_OPTIONS = [
+    ("grpc.keepalive_time_ms", 10_000),
+    ("grpc.keepalive_timeout_ms", 5_000),
+    ("grpc.keepalive_permit_without_calls", 1),
+    ("grpc.http2.max_pings_without_data", 0),
+    ("grpc.http2.min_time_between_pings_ms", 10_000),
+    ("grpc.http2.min_ping_interval_without_data_ms", 5_000),
+    ("grpc.use_local_subchannel_pool", 1),
+]
+
+_RETRYABLE_CODES = frozenset({
+    grpc.StatusCode.UNAVAILABLE,
+    grpc.StatusCode.UNKNOWN,
+    grpc.StatusCode.INTERNAL,
+})
+
+_GRPC_COMPLETE_STATES = {"Complete", "Backchannel", "Wait"}
+
+class TurnV2(EOU):
+    """End-of-Utterance detector backed by the Rust gRPC inference worker.
+
+    Args:
+        model_id: ``"roberta"`` (default, faster) or ``"gemma"``.
+        host: ``host:port`` of the gRPC server. Falls back to the
+            ``VIDEOSDK_TURN_GRPC_HOST`` env var, then to ``localhost:50051``.
+        threshold: EOU probability threshold (default ``0.7``).
+        timeout: Per-request timeout in seconds (default ``2.0``).
+        token: Bearer token for the ``authorization`` metadata header.
+            Falls back to the ``VIDEOSDK_AUTH_TOKEN`` env var. If unset,
+            requests are sent without auth metadata (compatible with
+            ungated dev servers).
+    """
+
+    def __init__(
+        self,
+        *,
+        model_id: str = "roberta",
+        host: Optional[str] = None,
+        threshold: float = 0.7,
+        timeout: float = DEFAULT_GRPC_TIMEOUT_SECONDS,
+        token: Optional[str] = None,
+    ) -> None:
+        super().__init__(threshold=threshold)
+        self.model_id = model_id
+        self.host = host or os.getenv("VIDEOSDK_TURN_GRPC_HOST") or DEFAULT_GRPC_HOST
+        self.timeout = timeout
+
+        self._token = token or os.getenv("VIDEOSDK_AUTH_TOKEN")
+        self._metadata = (
+            (("authorization", f"Bearer {self._token}"),) if self._token else None
+        )
+
+        self._channel: Optional[grpc.Channel] = None
+        self._stub: Optional[turn_detection_pb2_grpc.TurnDetectionStub] = None
+        self._stub_lock = threading.Lock()
+
+        threading.Thread(
+            target=self._warmup, name="TurnV2-warmup", daemon=True
+        ).start()
+
+    @staticmethod
+    def roberta(
+        *,
+        host: Optional[str] = None,
+        threshold: float = 0.7,
+        timeout: float = DEFAULT_GRPC_TIMEOUT_SECONDS,
+        token: Optional[str] = None,
+    ) -> "TurnV2":
+        """ONNX-based RoBERTa turn detector."""
+        return TurnV2(
+            model_id="roberta", host=host, threshold=threshold,
+            timeout=timeout, token=token,
+        )
+
+    @staticmethod
+    def gemma(
+        *,
+        host: Optional[str] = None,
+        threshold: float = 0.7,
+        timeout: float = DEFAULT_GRPC_TIMEOUT_SECONDS,
+        token: Optional[str] = None,
+    ) -> "TurnV2":
+        """Higher-accuracy Gemma turn detector."""
+        return TurnV2(
+            model_id="gemma", host=host, threshold=threshold,
+            timeout=timeout, token=token,
+        )
+
+    def get_eou_probability(self, chat_context: ChatContext) -> float:
+        text = ""
+        for item in reversed(chat_context.items):
+            if isinstance(item, ChatMessage) and item.role == ChatRole.USER:
+                t = Turn._content_to_text(item.content)
+                if t:
+                    text = t
+                    break
+        if not text:
+            return 0.0
+
+        request = turn_detection_pb2.TurnRequest(text=text, model_id=self.model_id)
+
+        for attempt in (1, 2):
+            try:
+                stub = self._get_stub()
+                response = stub.Predict(
+                    request, timeout=self.timeout, metadata=self._metadata
+                )
+                return self._state_to_probability(response.state)
+            except grpc.RpcError as e:
+                code = e.code()
+                if attempt == 1 and code in _RETRYABLE_CODES:
+                    logger.warning(
+                        f"[TurnV2] transient gRPC error [{code}], reconnecting"
+                    )
+                    self._reset_channel()
+                    continue
+                logger.error(f"[TurnV2] gRPC error [{code}]: {e.details()}")
+                self.emit("error", f"turn detection gRPC error: {e.details()}")
+                return 0.0
+        return 0.0
+
+    @staticmethod
+    def _state_to_probability(state: str) -> float:
+        if state in _GRPC_COMPLETE_STATES:
+            return 1.0
+        if state == "Incomplete":
+            return 0.0
+        logger.warning(f"[TurnV2] Unknown state {state!r} — treating as incomplete")
+        return 0.0
+
+    def _get_stub(self) -> turn_detection_pb2_grpc.TurnDetectionStub:
+        if self._stub is None:
+            with self._stub_lock:
+                if self._stub is None:
+                    channel = grpc.insecure_channel(
+                        self.host, options=_GRPC_CHANNEL_OPTIONS
+                    )
+                    self._stub = turn_detection_pb2_grpc.TurnDetectionStub(channel)
+                    self._channel = channel
+        return self._stub
+
+    def _reset_channel(self) -> None:
+        with self._stub_lock:
+            if self._channel is not None:
+                try:
+                    self._channel.close()
+                except Exception as e:
+                    logger.debug(f"[TurnV2] error closing channel: {e}")
+            self._channel = None
+            self._stub = None
+
+    def _warmup(self) -> None:
+        try:
+            stub = self._get_stub()
+            stub.Health(turn_detection_pb2.HealthRequest(), timeout=self.timeout)
+            logger.info(
+                f"[TurnV2] warmup OK (host={self.host}, model={self.model_id})"
+            )
+        except Exception:
+            pass
+
+    async def aclose(self) -> None:
+        self._reset_channel()
+        await super().aclose()
+
+    @property
+    def label(self) -> str:
+        return f"videosdk.inference.TurnV2.{self.model_id}"

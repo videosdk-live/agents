@@ -8,6 +8,10 @@ from videosdk.agents import (
     WorkerJob,
 )
 from videosdk.agents.inference import STT, TTS, LLM, Turn
+
+# You can also use TurnV2 for improved turn detection performance
+# from videosdk.agents.inference import TurnV2
+
 from videosdk.plugins.silero import SileroVAD
 from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
 from dotenv import load_dotenv
@@ -63,11 +67,14 @@ async def entrypoint(ctx: JobContext):
             language="en-IN",
         ),
         llm=LLM.google(
-            model_id="gemini-2.0-flash",
+            model_id="gemini-2.5-flash",
         ),
         tts=TTS.sarvam(model_id="bulbul:v2", speaker="anushka", language="en-IN"),
         vad=SileroVAD(),
         turn_detector=Turn.namo(language="en"),
+
+        # turn_detector=TurnV2.roberta()
+        # turn_detector=TurnV2.gemma() 
     )
 
     session = AgentSession(
