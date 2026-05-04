@@ -904,6 +904,11 @@ class OpenAILLM(LLM):
 
             try:
                 ws = await self._ensure_ws()
+                logger.info(
+                    "[openai-wss] sending request | chained=%s items=%d",
+                    bool(payload.get("previous_response_id")),
+                    len(input_items),
+                )
                 await ws.send_str(json.dumps(payload))
             except Exception as e:
                 if fallback_done:
@@ -975,6 +980,7 @@ class OpenAILLM(LLM):
 
                         elif etype == "response.created":
                             response_id_this_turn = (event.get("response") or {}).get("id")
+                            logger.info("[openai-wss] response.created received id=%s", response_id_this_turn)
 
                         elif etype == "response.output_text.delta":
                             delta = event.get("delta", "")
@@ -1018,11 +1024,36 @@ class OpenAILLM(LLM):
                             if item.get("type") == "function_call":
                                 iid = item.get("id", "")
                                 existing = function_calls.get(iid, {})
-                                function_calls[iid] = {
+                                fc_entry = {
                                     "call_id": item.get("call_id") or existing.get("call_id", ""),
                                     "name": item.get("name") or existing.get("name", ""),
                                     "arguments": item.get("arguments") or existing.get("arguments", ""),
+                                    "dispatched": existing.get("dispatched", False),
                                 }
+                                function_calls[iid] = fc_entry
+                                if not fc_entry["dispatched"]:
+                                    args_str = fc_entry.get("arguments") or ""
+                                    try:
+                                        args = json.loads(args_str) if args_str else {}
+                                    except json.JSONDecodeError:
+                                        self.emit(
+                                            "error",
+                                            f"Failed to parse tool call arguments: {args_str}",
+                                        )
+                                        args = {}
+                                    fc_entry["dispatched"] = True
+                                    yield LLMResponse(
+                                        content="",
+                                        role=ChatRole.ASSISTANT,
+                                        metadata={
+                                            "function_call": {
+                                                "name": fc_entry.get("name", ""),
+                                                "arguments": args,
+                                                "id": fc_entry.get("call_id", ""),
+                                            },
+                                            "usage": usage_metadata,
+                                        },
+                                    )
 
                         elif etype == "response.completed":
                             completed = True
@@ -1054,6 +1085,8 @@ class OpenAILLM(LLM):
                             )
 
                             for fc in function_calls.values():
+                                if fc.get("dispatched"):
+                                    continue
                                 args_str = fc.get("arguments") or ""
                                 try:
                                     args = json.loads(args_str) if args_str else {}
@@ -1063,6 +1096,7 @@ class OpenAILLM(LLM):
                                         f"Failed to parse tool call arguments: {args_str}",
                                     )
                                     args = {}
+                                fc["dispatched"] = True
                                 yield LLMResponse(
                                     content="",
                                     role=ChatRole.ASSISTANT,
@@ -1124,6 +1158,11 @@ class OpenAILLM(LLM):
 
     async def cancel_current_generation(self) -> None:
         self._cancelled = True
+        # Close the WS so leftover server events from the cancelled response
+        # don't contaminate the next request. _close_ws also clears
+        # _previous_response_id and _last_seen_items_count for us.
+        await self._close_ws()
+        self._last_seen_items_count = 0
 
     async def aclose(self) -> None:
         """Cleanup resources. Closes the underlying HTTP client (if owned) and any

@@ -341,17 +341,21 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
             if self.mode == 'DEFAULT':
                 if self.turn_detector and self.agent:
                     metrics_collector.on_eou_start()
-                    eou_probability = self.turn_detector.get_eou_probability(self.agent.chat_context)
+                    eou_probability = await asyncio.to_thread(
+                        self.turn_detector.get_eou_probability, self.agent.chat_context
+                    )
                     metrics_collector.on_eou_complete()
                     logger.info(f"EOU probability: {eou_probability}")
                     if eou_probability < self.eou_certainty_threshold:
                         delay = self.max_speech_wait_timeout
                     metrics_collector.on_wait_for_additional_speech(delay, eou_probability)
-                        
+
             elif self.mode == 'ADAPTIVE':
                 if self.turn_detector and self.agent:
                     metrics_collector.on_eou_start()
-                    eou_probability = self.turn_detector.get_eou_probability(self.agent.chat_context)
+                    eou_probability = await asyncio.to_thread(
+                        self.turn_detector.get_eou_probability, self.agent.chat_context
+                    )
                     metrics_collector.on_eou_complete()
                     logger.info(f"EOU probability: {eou_probability}")
                     delay_range = self.max_speech_wait_timeout - self.min_speech_wait_timeout

@@ -38,8 +38,8 @@ class BufferedSentenceStream(SentenceStream):
         tokenize_fn: Callable[[str], list[str]],
         strong_terminators: str,
         min_sentence_len: int = 20,
-        idle_flush_ms: int = 400,
-        idle_min_chars: int = 40,
+        idle_flush_ms: int = 150,
+        idle_min_chars: int = 12,
     ) -> None:
         """Initialise the stream.
 

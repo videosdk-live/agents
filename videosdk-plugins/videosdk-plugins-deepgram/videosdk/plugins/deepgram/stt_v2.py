@@ -95,7 +95,7 @@ class DeepgramSTTV2(BaseSTT):
             self._ws_task = asyncio.create_task(self._listen_for_responses())
             
         try:
-            resampled_audio = self._resample_audio(audio_frames)
+            resampled_audio = await asyncio.to_thread(self._resample_audio, audio_frames)
             if not resampled_audio:
                 return
                 

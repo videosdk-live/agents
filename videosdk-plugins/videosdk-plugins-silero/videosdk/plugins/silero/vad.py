@@ -451,7 +451,7 @@ class SileroVAD(BaseVAD):
                 normalized = incoming.astype(np.float32) / 32768.0
                 target_len = int(len(normalized) * self._mod_rate / self._in_rate)
                 if target_len > 0:
-                    resampled = signal.resample(normalized, target_len)
+                    resampled = await asyncio.to_thread(signal.resample, normalized, target_len)
                     self._model_queue = np.concatenate(
                         [self._model_queue, resampled.astype(np.float32)]
                     )
