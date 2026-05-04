@@ -393,9 +393,20 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 logger.info(f"[orchestrator] Transcript '{text}' meets min_words but utterance is not interruptible, dropping")
                 return
 
-            # Interrupt the current pipeline and start a new turn
-            logger.info(f"[orchestrator] Word count {word_count} >= min_words {self.interrupt_min_words}, interrupting pipeline")
-            await self._interrupt_pipeline()
+            has_active_preemptive = (
+                is_preemptive
+                and self._preemptive_generation_task is not None
+                and not self._preemptive_generation_task.done()
+            )
+
+            if has_active_preemptive:
+                logger.info(
+                    f"[orchestrator] Word count {word_count} >= min_words "
+                    f"{self.interrupt_min_words}, deferring to preemptive handler"
+                )
+            else:
+                logger.info(f"[orchestrator] Word count {word_count} >= min_words {self.interrupt_min_words}, interrupting pipeline")
+                await self._interrupt_pipeline()
 
             metrics_collector.start_turn()
             metrics_collector.set_user_transcript(text)
