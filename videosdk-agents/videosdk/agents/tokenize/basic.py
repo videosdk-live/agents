@@ -1,32 +1,3 @@
-"""Multilingual, Unicode-aware default sentence tokenizer.
-
-Zero external dependencies — only ``re`` and the stdlib.
-
-Algorithm:
-
-1. **Structural protection.** URLs, emails, version strings, file paths,
-   decimals, acronyms, and dotted identifiers are matched by regex and each
-   match is replaced with a single Private Use Area placeholder. Terminator
-   characters inside these tokens therefore never trigger a sentence cut.
-2. **Abbreviation protection.** For each known abbreviation in the resolved
-   language set, ``Abbrev.`` is rewritten to ``Abbrev<placeholder>``, again
-   hiding the dot from the terminator scan.
-3. **Lookahead-before-commit scan.** Walk the protected text; at each strong
-   terminator, look ahead to the next non-whitespace character. If one exists,
-   cut after the terminator (inclusive); otherwise leave the remainder as the
-   trailing segment so the caller can continue buffering.
-4. **Restore.** Replace every placeholder with its original text before
-   returning.
-
-This gives correct behaviour across Latin, Indic, CJK, Arabic/Urdu, Armenian,
-Ethiopic, Tibetan, Myanmar, Khmer, Greek, Cyrillic, Hebrew, Georgian, Thai,
-Lao, and any other script whose strong terminators are listed in
-``patterns.STRONG_TERMINATORS``.
-
-Future plugin tokenizers (e.g. Blingfire, spaCy, ICU) plug into the same
-``SentenceTokenizer`` interface without touching this file.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -53,10 +24,6 @@ from .patterns import (
 
 logger = logging.getLogger(__name__)
 
-
-# Order matters: protect the most specific patterns first so a broad pattern
-# cannot eat a substring of a more specific one (e.g. the decimal regex must
-# not fire inside an already-protected URL).
 _STRUCTURAL_PATTERNS: tuple[re.Pattern[str], ...] = (
     URL_REGEX,
     EMAIL_REGEX,
@@ -67,12 +34,9 @@ _STRUCTURAL_PATTERNS: tuple[re.Pattern[str], ...] = (
     DECIMAL_REGEX,
 )
 
-
 def _placeholder_char(idx: int) -> str:
     """Return a single Private Use Area char for placeholder index ``idx``."""
     return chr(PLACEHOLDER_BASE + idx)
-
-
 class BasicSentenceTokenizer(SentenceTokenizer):
     """Default multilingual, Unicode-aware sentence tokenizer.
 
@@ -108,10 +72,6 @@ class BasicSentenceTokenizer(SentenceTokenizer):
         self._weak = weak_terminators
         self._override_abbreviations = abbreviations
 
-    # ------------------------------------------------------------------ #
-    # SentenceTokenizer interface
-    # ------------------------------------------------------------------ #
-
     def tokenize(self, text: str, *, language: str | None = None) -> list[str]:
         """Split ``text`` into sentence-sized strings.
 
@@ -137,7 +97,6 @@ class BasicSentenceTokenizer(SentenceTokenizer):
         strong = self._strong
         weak = self._weak
         if lang == "el":
-            # Greek uses ``;`` as question mark and ``·`` as semicolon.
             if ";" not in strong:
                 strong = strong + ";"
             weak = weak.replace(";", "")
@@ -199,7 +158,6 @@ class BasicSentenceTokenizer(SentenceTokenizer):
 
     def stream(self, *, language: str | None = None) -> SentenceStream:
         """Open a push-based stream adapter bound to this tokenizer."""
-        # Local import to avoid a cycle between base/basic/stream at module load.
         from .stream import BufferedSentenceStream
 
         return BufferedSentenceStream(
@@ -207,10 +165,6 @@ class BasicSentenceTokenizer(SentenceTokenizer):
             strong_terminators=self._resolve_strong_for_stream(language),
             min_sentence_len=self._min_sentence_len,
         )
-
-    # ------------------------------------------------------------------ #
-    # Protection / restoration helpers
-    # ------------------------------------------------------------------ #
 
     def _protect(
         self,
@@ -235,8 +189,6 @@ class BasicSentenceTokenizer(SentenceTokenizer):
             text = regex.sub(_substitute, text)
 
         if abbreviations:
-            # Build an alternation matching `<abbrev>.` exactly.
-            # Sort longest-first so "Ph.D" wins over "Ph".
             escaped = sorted(
                 (re.escape(a) for a in abbreviations),
                 key=len,
@@ -258,10 +210,6 @@ class BasicSentenceTokenizer(SentenceTokenizer):
         for key, value in restore_map.items():
             text = text.replace(key, value)
         return text.strip()
-
-    # ------------------------------------------------------------------ #
-    # Core split scan
-    # ------------------------------------------------------------------ #
 
     def _split(
         self,
@@ -292,22 +240,14 @@ class BasicSentenceTokenizer(SentenceTokenizer):
                 i += 1
                 continue
 
-            # Some terminators cluster (e.g. "?!" or "..."). Consume the whole
-            # run so we emit one logical boundary, not one per character.
             j = i + 1
             cur_set = strong_set if ch in strong_set else weak_set
             while j < n and text[j] in cur_set:
                 j += 1
 
-            # If the cluster is immediately followed by a closing quote,
-            # extend the cut to include the quote so `"Hello."` becomes one
-            # segment rather than `"Hello.` + `"`.
             if j < n and text[j] in closing_quote_set:
                 j += 1
 
-            # Lookahead: scan past horizontal whitespace to find the next
-            # non-whitespace character. A newline breaks the lookahead wait —
-            # it's a hard paragraph boundary.
             look = j
             saw_newline = ch == "\n"
             while look < n and text[look] in " \t":
@@ -320,17 +260,12 @@ class BasicSentenceTokenizer(SentenceTokenizer):
 
             if ch in strong_set:
                 if look < n or saw_newline:
-                    # Confirmed strong boundary.
                     segments.append(text[start:j])
                     start = j
                     i = look
                     continue
-                # End of text at a strong terminator with no lookahead —
-                # don't commit; let the caller decide (stream adapter will
-                # wait for more text or flush on end_input).
                 break
 
-            # Weak terminator: cut only when the running buffer is long enough.
             cluster_end = j
             if cluster_end - start >= self._min_sentence_len and look < n:
                 segments.append(text[start:cluster_end])
@@ -344,10 +279,6 @@ class BasicSentenceTokenizer(SentenceTokenizer):
             segments.append(text[start:n])
 
         return segments
-
-    # ------------------------------------------------------------------ #
-    # Stream-side strong-terminator resolution
-    # ------------------------------------------------------------------ #
 
     def _resolve_strong_for_stream(self, language: str | None) -> str:
         """Return the strong-terminator set the stream adapter should use for fast-path checks."""

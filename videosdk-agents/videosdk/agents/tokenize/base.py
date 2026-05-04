@@ -1,19 +1,3 @@
-"""Abstract interfaces for text tokenization and filtering.
-
-Cascade pipelines use these two stages between the LLM and the TTS:
-
-    LLM deltas -> TextFilter -> SentenceTokenizer -> user hook -> TTS
-
-Both stages consume and produce ``AsyncIterator[str]`` so they compose cleanly
-with the existing ``tts_stream_gen`` in the orchestrator and with the optional
-``@pipeline.on("llm")`` user hook.
-
-Implementations live in ``basic.py`` (regex-based, zero-dep) and ``filters.py``
-(Markdown / symbol normalisation). External plugins (e.g. a future
-``videosdk-plugins-blingfire``) can provide alternative ``SentenceTokenizer``
-implementations without touching core code.
-"""
-
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -48,7 +32,6 @@ class SentenceStream(ABC):
     @abstractmethod
     def __aiter__(self) -> AsyncIterator[str]:
         ...
-
 
 class SentenceTokenizer(ABC):
     """Abstract tokenizer that splits text into sentence-sized segments."""

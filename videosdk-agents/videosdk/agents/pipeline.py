@@ -897,19 +897,29 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         if self.config.is_realtime:
             if self._realtime_model:
                 await self._realtime_model.connect()
-                
+
                 if isinstance(self.llm, RealtimeLLMAdapter):
                     self.llm.on_user_speech_started(lambda data: self._on_user_speech_started_realtime(data))
                     self.llm.on_user_speech_ended(lambda data: asyncio.create_task(self._on_user_speech_ended_realtime(data)))
                     self.llm.on_agent_speech_started(lambda data: asyncio.create_task(self._on_agent_speech_started_realtime(data)))
                     # self.llm.on_agent_speech_ended(lambda data: self._on_agent_speech_ended_realtime(data))
-                    self.llm.on_transcription(self._on_realtime_transcription)            
+                    self.llm.on_transcription(self._on_realtime_transcription)
             if self.config.realtime_mode == RealtimeMode.HYBRID_STT and self.orchestrator:
                 await self.orchestrator.start()
                 logger.info("Started orchestrator for hybrid_stt mode")
         else:
             if self.orchestrator:
                 await self.orchestrator.start()
+
+        # Pre-establish provider connections (e.g. Cartesia WebSocket) so the
+        # first turn doesn't pay TLS+WS handshake. No-op for plugins that don't
+        # override prewarm(). Failures are logged and swallowed — first turn
+        # will simply pay the handshake cost as before.
+        if self.tts:
+            try:
+                await self.tts.prewarm()
+            except Exception as e:
+                logger.debug(f"TTS prewarm failed (non-fatal): {e}")
     
     async def send_message(self, message: str, handle: UtteranceHandle) -> None:
         """

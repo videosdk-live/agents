@@ -17,6 +17,7 @@ import re
 from collections.abc import AsyncIterator
 
 from .base import TextFilter
+from .verbalize import expand_cardinals, expand_currency
 from .patterns import (
     EMAIL_REGEX,
     MD_BLOCKQUOTE_REGEX,
@@ -52,18 +53,7 @@ from .patterns import (
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Buffering strategy
-# ---------------------------------------------------------------------------
-# A chunk that contains a potentially-open pattern (an opening "**" with no
-# matching "**" yet, a single backtick, a "[" with no matching "]", a "```"
-# with no matching close) must be held back until the pattern either closes
-# or the buffer grows past ``_MAX_BUFFER`` chars. The latter is a safety
-# valve so a broken response can't stall synthesis forever.
 _MAX_BUFFER: int = 2000
-
-# Shift-in offset for filter-local placeholders so they don't collide with
-# the tokenizer's placeholders (which start at PLACEHOLDER_BASE = U+E000).
 _FILTER_PLACEHOLDER_BASE: int = PLACEHOLDER_BASE + 0x1000
 
 
@@ -88,6 +78,9 @@ class BasicTextFilter(TextFilter):
         respect_quotes: bool = True,
         respect_parens: bool = True,
         ssml_flavor: str = "none",
+        verbalize_currency: bool = True,
+        verbalize_numbers: bool = False,
+        currency_hint: str | None = None,
     ) -> None:
         """Initialise the filter.
 
@@ -115,12 +108,43 @@ class BasicTextFilter(TextFilter):
             respect_quotes: (Reserved — currently a no-op; preserved state
                 is tracked per turn so future logic can use it.)
             respect_parens: (Reserved — same as above.)
-            ssml_flavor: TTS-specific SSML injection. ``"none"`` (default)
-                emits plain text. ``"cartesia"`` wraps phone numbers and
-                long digit runs in ``<spell>...</spell>`` tags so Cartesia
-                Sonic-3 reads them digit-by-digit (e.g. account IDs, OTPs).
-                Other TTS providers would read the tags literally — keep
-                ``"none"`` unless the target TTS is Cartesia Sonic-3.
+            ssml_flavor: How to render phone numbers and long digit runs
+                (OTPs, IDs) so the TTS reads them digit-by-digit rather
+                than as a parsed numeral. Pick the value that matches the
+                downstream TTS — the wrong choice is audibly broken.
+
+                * ``"none"`` (default) — emit plain text, no transform.
+                  Safe for any TTS; digit-by-digit is not guaranteed.
+                * ``"cartesia"`` — wrap in ``<spell>…</spell>``. Native
+                  handler in Cartesia Sonic-3. Sarvam, ElevenLabs, Google,
+                  Azure, Polly will read the tags LITERALLY ("less than
+                  spell greater than…") → broken pronunciation.
+                * ``"digits"`` — replace ``+91 98765 43210`` → ``9 1 9 8
+                  7 6 5 4 3 2 1 0`` (space-separated). Universal: works
+                  with Sarvam AI ``bulbul``, ElevenLabs, Google TTS,
+                  Azure, Polly, and Cartesia. Non-digit symbols in the
+                  phone pattern (``+``, ``(``, ``-``) are stripped so the
+                  TTS doesn't read "plus" or "paren".
+
+                Quick reference:
+                    Cartesia             → ``"cartesia"``
+                    Sarvam AI / ElevenLabs / Google / Azure / Polly
+                                         → ``"digits"``
+                    Unknown / plain text → ``"none"``
+            verbalize_currency: Convert ``$500,000`` → ``"five hundred
+                thousand dollars"`` (English) or ``₹10,00,000`` → ``"दस
+                लाख रुपये"`` (Hindi) before TTS. Fixes cases where
+                server-side TN reads currency amounts literally
+                ("comma zero zero zero"). Default ``True``.
+            verbalize_numbers: Also verbalize standalone cardinals (≥100 or
+                comma-grouped) so ``"a credit score of 800"`` becomes
+                ``"a credit score of eight hundred"``. 4-digit years and
+                numbers inside ``<spell>`` are skipped. Default ``False``
+                — opt-in to avoid surprising existing callers.
+            currency_hint: ISO 4217 lowercase (``"usd"``, ``"inr"``,
+                ``"eur"``, ``"gbp"``…) to disambiguate bare ``$``. If
+                ``None``, the symbol determines the word (``$`` → dollars,
+                ``₹`` → rupees/रुपये).
         """
         self._language = language
         self._strip_markdown = strip_markdown
@@ -133,15 +157,14 @@ class BasicTextFilter(TextFilter):
         self._respect_quotes = respect_quotes
         self._respect_parens = respect_parens
         self._ssml_flavor = (ssml_flavor or "none").lower()
+        self._verbalize_currency = verbalize_currency
+        self._verbalize_numbers = verbalize_numbers
+        self._currency_hint = currency_hint.lower() if currency_hint else None
 
         self._buffer: str = ""
         self._in_code_fence: bool = False
         self._placeholder_counter: int = 0
         self._placeholder_map: dict[str, str] = {}
-
-    # ------------------------------------------------------------------ #
-    # TextFilter interface
-    # ------------------------------------------------------------------ #
 
     async def filter(self, chunks: AsyncIterator[str]) -> AsyncIterator[str]:
         """Transform an incoming chunk stream."""
@@ -152,31 +175,23 @@ class BasicTextFilter(TextFilter):
                     continue
                 logger.debug("[chunking] filter ← raw: %r", chunk)
                 self._buffer += chunk
-
-                # Resolve any fence state before emitting. Loop because a
-                # fence may open, close, and then a second fence may begin
-                # in the same chunk.
                 emitted_before_fence: list[str] = []
                 while True:
                     if self._in_code_fence:
                         close_idx = self._buffer.find("```")
                         if close_idx == -1:
-                            # Whole buffer is inside the fence — discard it.
                             self._buffer = ""
                             break
-                        # Exit fence; consume through the closing marker.
                         self._buffer = self._buffer[close_idx + 3 :]
                         self._in_code_fence = False
-                        continue  # look for another fence
+                        continue 
 
                     open_idx = self._buffer.find("```")
                     if open_idx == -1:
-                        break  # no fence in buffer, normal emit logic
+                        break 
                     close_idx = self._buffer.find("```", open_idx + 3)
                     if close_idx != -1:
-                        break  # complete fence — MD_FENCED_CODE_REGEX removes it
-                    # Unclosed open fence: emit the clean prefix, discard the
-                    # opening marker, enter fence mode.
+                        break 
                     prefix = self._buffer[:open_idx]
                     self._buffer = ""
                     self._in_code_fence = True
@@ -193,7 +208,6 @@ class BasicTextFilter(TextFilter):
                 if self._in_code_fence or not self._buffer:
                     continue
 
-                # Normal emission logic.
                 safe_cut = self._find_emit_boundary(self._buffer)
                 if safe_cut <= 0:
                     if len(self._buffer) > _MAX_BUFFER:
@@ -208,9 +222,8 @@ class BasicTextFilter(TextFilter):
                 if processed:
                     logger.debug("[chunking] filter → tokenizer: %r", processed)
                     yield processed
-            # Drain on end of stream.
+
             if self._in_code_fence:
-                # Unclosed fence at end of stream — discard remainder.
                 self._buffer = ""
                 self._in_code_fence = False
             if self._buffer:
@@ -231,10 +244,6 @@ class BasicTextFilter(TextFilter):
         self._in_code_fence = False
         self._placeholder_counter = 0
         self._placeholder_map = {}
-
-    # ------------------------------------------------------------------ #
-    # Buffer management
-    # ------------------------------------------------------------------ #
 
     def _find_emit_boundary(self, text: str) -> int:
         """Return the length of the prefix that can be safely emitted.
@@ -279,10 +288,6 @@ class BasicTextFilter(TextFilter):
             return False
         return True
 
-    # ------------------------------------------------------------------ #
-    # Core processing pipeline — deterministic stage order
-    # ------------------------------------------------------------------ #
-
     def _process(self, text: str) -> str:
         if not text:
             return ""
@@ -302,14 +307,22 @@ class BasicTextFilter(TextFilter):
         if self._normalise_punctuation:
             text = self._normalise_punct(text)
 
-        # Spell-wrap MUST run before range expansion: once phones are wrapped
-        # in ``<spell>…</spell>``, the range regex can safely use a wider
-        # digit allowance without mistaking a phone for a range.
         if self._ssml_flavor == "cartesia":
             text = self._inject_cartesia_ssml(text)
+        elif self._ssml_flavor == "digits":
+            text = self._inject_digits_spaced(text)
 
         if self._expand_ranges:
             text = self._expand_numeric_ranges(text)
+
+        if self._verbalize_currency:
+            text = expand_currency(
+                text,
+                language=self._language or "en",
+                hint=self._currency_hint,
+            )
+        if self._verbalize_numbers:
+            text = expand_cardinals(text, language=self._language or "en")
 
         if self._expand_symbols and self._language_is_english():
             text = self._expand(text)
@@ -322,10 +335,6 @@ class BasicTextFilter(TextFilter):
     def _language_is_english(self) -> bool:
         lang = (self._language or "").lower()
         return lang in ("en", "auto", "")
-
-    # ------------------------------------------------------------------ #
-    # Structural protection
-    # ------------------------------------------------------------------ #
 
     def _protect(self, text: str) -> str:
         def _substitute(match: re.Match[str]) -> str:
@@ -346,9 +355,6 @@ class BasicTextFilter(TextFilter):
                 text = text.replace(key, value)
         return text
 
-    # ------------------------------------------------------------------ #
-    # LLM metadata stripping — safety net for state-leak bugs
-    # ------------------------------------------------------------------ #
 
     @staticmethod
     def _strip_metadata(text: str) -> str:
@@ -363,10 +369,6 @@ class BasicTextFilter(TextFilter):
         text = METADATA_PARENS_REGEX.sub("", text)
         text = METADATA_PREFIX_REGEX.sub("", text)
         return text
-
-    # ------------------------------------------------------------------ #
-    # Script-mixed parenthetical collapse
-    # ------------------------------------------------------------------ #
 
     @staticmethod
     def _collapse_script_parens_fn(text: str) -> str:
@@ -394,17 +396,13 @@ class BasicTextFilter(TextFilter):
 
             n_words = len(content.split())
 
-            # Try to peel off n_words Latin words from the text that sits
-            # between the previous processed position and this paren opening.
             before = text[pos:paren_start]
             idx = len(before)
             removed = 0
             while removed < n_words:
-                # Skip trailing whitespace
                 while idx > 0 and before[idx - 1].isspace():
                     idx -= 1
                 end = idx
-                # Walk back one Latin word (ASCII alphanumerics only)
                 while (
                     idx > 0
                     and before[idx - 1].isascii()
@@ -412,12 +410,10 @@ class BasicTextFilter(TextFilter):
                 ):
                     idx -= 1
                 if end == idx:
-                    break  # no Latin word to peel
+                    break 
                 removed += 1
 
             if removed == n_words:
-                # Full collapse: emit text before the peeled words, then the
-                # gloss content. Add a single separating space when needed.
                 kept = before[:idx]
                 if kept and not kept[-1:].isspace():
                     result.append(kept + " ")
@@ -425,7 +421,6 @@ class BasicTextFilter(TextFilter):
                     result.append(kept)
                 result.append(content)
             else:
-                # Not enough Latin words to match; leave the parens as-is.
                 result.append(before)
                 result.append(text[paren_start:paren_end])
             pos = paren_end
@@ -433,42 +428,23 @@ class BasicTextFilter(TextFilter):
         result.append(text[pos:])
         return "".join(result)
 
-    # ------------------------------------------------------------------ #
-    # Markdown stripping
-    # ------------------------------------------------------------------ #
-
     @staticmethod
     def _strip_md(text: str) -> str:
-        # Fenced code blocks — drop entirely.
         text = MD_FENCED_CODE_REGEX.sub("", text)
-        # Inline code — drop content (it rarely reads well).
         text = MD_INLINE_CODE_REGEX.sub("", text)
-        # Images — drop entirely (alt text is usually redundant).
         text = MD_IMAGE_REGEX.sub("", text)
-        # Links — keep anchor text, drop URL.
         text = MD_LINK_REGEX.sub(r"\1", text)
-        # Headings — drop the leading "#" markers, keep the text.
         text = MD_HEADING_REGEX.sub("", text)
-        # List markers — drop the bullet / number, keep the item text.
         text = MD_LIST_MARKER_REGEX.sub("", text)
-        # Blockquote markers — drop.
         text = MD_BLOCKQUOTE_REGEX.sub("", text)
-        # Horizontal rules — drop.
         text = MD_HR_REGEX.sub("", text)
-        # Table separators — drop.
         text = MD_TABLE_SEP_REGEX.sub("", text)
-        # Table pipes — replace with a single space so cells read as a list.
         text = MD_TABLE_PIPE_REGEX.sub(" ", text)
-        # Bold / italic — keep inner text.
         text = MD_BOLD_STAR_REGEX.sub(r"\1", text)
         text = MD_BOLD_UNDER_REGEX.sub(r"\1", text)
         text = MD_ITALIC_STAR_REGEX.sub(r"\1", text)
         text = MD_ITALIC_UNDER_REGEX.sub(r"\1", text)
         return text
-
-    # ------------------------------------------------------------------ #
-    # Punctuation normalisation
-    # ------------------------------------------------------------------ #
 
     @staticmethod
     def _normalise_punct(text: str) -> str:
@@ -476,19 +452,37 @@ class BasicTextFilter(TextFilter):
         text = PUNCT_SPACED_DASH_REGEX.sub(" — ", text)
         return text
 
-    # ------------------------------------------------------------------ #
-    # Symbol expansion
-    # ------------------------------------------------------------------ #
-
     @staticmethod
     def _expand(text: str) -> str:
         for regex, replacement in SYMBOL_EXPANSIONS_EN:
             text = regex.sub(replacement, text)
         return text
 
-    # ------------------------------------------------------------------ #
-    # Cartesia SSML injection
-    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _inject_digits_spaced(text: str) -> str:
+        """Replace phones and 6+ digit runs with space-separated digits.
+
+        Example: ``+91 98765 43210`` → ``9 1 9 8 7 6 5 4 3 2 1 0``.
+
+        This is the universal fallback when the TTS doesn't support
+        Cartesia's ``<spell>`` tag (Sarvam AI, ElevenLabs, Google TTS,
+        Azure, AWS Polly, etc.). Every modern TTS reads space-separated
+        digits character-by-character naturally — in the active language
+        (Hindi TTS says "नौ आठ सात…", English TTS says "nine eight seven…").
+        The ``+``, ``(``, ``)``, ``-``, and interior spaces of phone
+        patterns are stripped so the TTS doesn't read "plus paren…" etc.
+        """
+        def _phone_to_digits(m: re.Match[str]) -> str:
+            digits = re.sub(r"\D", "", m.group(0))
+            return " ".join(digits)
+
+        text = SPELL_PHONE_REGEX.sub(_phone_to_digits, text)
+        text = SPELL_LONG_DIGITS_REGEX.sub(
+            lambda m: " ".join(m.group(0)),
+            text,
+        )
+        return text
+
 
     @staticmethod
     def _inject_cartesia_ssml(text: str) -> str:
@@ -506,10 +500,6 @@ class BasicTextFilter(TextFilter):
             lambda m: f"<spell>{m.group(0)}</spell>", text
         )
         return text
-
-    # ------------------------------------------------------------------ #
-    # Numeric-range expansion
-    # ------------------------------------------------------------------ #
 
     def _expand_numeric_ranges(self, text: str) -> str:
         """Rewrite ``N-M`` as ``N <sep> M`` using the locale's separator word.

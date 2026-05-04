@@ -1,16 +1,3 @@
-"""Push-based stream adapter for sentence tokenizers.
-
-Converts a push-style API (``push_text``, ``flush``, ``end_input``) into a
-pull-style ``AsyncIterator[str]`` that emits sentences as soon as they are
-confirmed complete. Idle-flush fires a word-boundary cut when no terminator
-arrives within ``idle_flush_ms`` so the TTS never stalls on a runaway
-terminator-less response.
-
-Invariant, covered by tests: every emitted segment starts and ends on a
-whitespace, punctuation, or CJK-character boundary. Mid-word splits are
-impossible by construction.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -23,7 +10,6 @@ from .patterns import NO_SPACE_SCRIPTS_REGEX
 
 logger = logging.getLogger(__name__)
 
-# Sentinel pushed onto the outgoing queue to signal end-of-stream to the iterator.
 _EOS: object = object()
 
 
@@ -81,10 +67,6 @@ class BufferedSentenceStream(SentenceStream):
         self._last_push_monotonic: float = time.monotonic()
         self._idle_task: asyncio.Task[None] | None = None
 
-    # ------------------------------------------------------------------ #
-    # Public API
-    # ------------------------------------------------------------------ #
-
     async def push_text(self, text: str) -> None:
         """Feed more text into the stream."""
         if self._closed:
@@ -120,11 +102,7 @@ class BufferedSentenceStream(SentenceStream):
         item = await self._queue.get()
         if item is _EOS:
             raise StopAsyncIteration
-        return item  # type: ignore[return-value]
-
-    # ------------------------------------------------------------------ #
-    # Internals
-    # ------------------------------------------------------------------ #
+        return item 
 
     async def _try_emit_locked(self) -> None:
         """Emit every confirmed-complete sentence from the current buffer.
@@ -135,7 +113,7 @@ class BufferedSentenceStream(SentenceStream):
             return
         try:
             segments = self._tokenize_fn(self._buffer)
-        except Exception:  # pragma: no cover - defensive
+        except Exception: 
             logger.error("Tokenizer raised; flushing buffer as-is", exc_info=True)
             remainder = self._buffer.strip()
             self._buffer = ""
@@ -158,12 +136,9 @@ class BufferedSentenceStream(SentenceStream):
         """Force-emit any buffered text. Called with ``_buffer_lock`` held."""
         if not self._buffer:
             return
-        # Run the tokenizer one more time; it may split the remainder into
-        # multiple sentences at strong terminators that were previously held
-        # back by the "no lookahead" rule.
         try:
             segments = self._tokenize_fn(self._buffer)
-        except Exception:  # pragma: no cover - defensive
+        except Exception: 
             logger.error("Tokenizer raised during flush", exc_info=True)
             segments = [self._buffer]
 
