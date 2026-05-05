@@ -431,7 +431,14 @@ class PipelineOrchestrator(EventEmitter[Literal[
         self._is_user_speaking = True
 
         agent_state = self.agent.session.agent_state if self.agent and self.agent.session else None
-        if agent_state == AgentState.SPEAKING:
+        cu = self.agent.session.current_utterance if self.agent and self.agent.session else None
+        is_synthesizing = bool(self.speech_generation and self.speech_generation.tts_lock.locked())
+        is_agent_active = (
+            agent_state in (AgentState.SPEAKING, AgentState.THINKING)
+            or (cu is not None and not cu.done())
+            or is_synthesizing
+        )
+        if is_agent_active:
             if self._interruption_check_task is None or self._interruption_check_task.done():
                 logger.info("User started speaking during agent response, initiating interruption monitoring")
                 self._interruption_check_task = asyncio.create_task(
