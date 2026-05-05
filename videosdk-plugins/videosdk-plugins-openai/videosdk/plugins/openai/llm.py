@@ -187,6 +187,7 @@ class OpenAILLM(LLM):
         self._ws_session: Optional[aiohttp.ClientSession] = None
         self._ws: Optional[aiohttp.ClientWebSocketResponse] = None
         self._ws_lock = asyncio.Lock()
+        self._drain_until_response_created: bool = False
         self._previous_response_id: Optional[str] = None
         self._last_seen_items_count: int = 0
         self._prewarm_task: Optional[asyncio.Task] = None
@@ -732,26 +733,46 @@ class OpenAILLM(LLM):
     # ------------------------------------------------------------------
 
     async def _ensure_ws(self) -> aiohttp.ClientWebSocketResponse:
-        """Ensure a live WebSocket connection to the Responses endpoint."""
+        """Ensure a live WebSocket connection to the Responses endpoint.
+
+        The slow ``ws_connect`` (TLS + WS handshake) runs OUTSIDE ``_ws_lock``
+        so a concurrent ``_close_ws()`` (driven by ``cancel_current_generation``)
+        can acquire the lock and proceed even while a handshake is in flight.
+        Without this, a barge-in landing during the first chat call's handshake
+        would block the cancel for the full ws_connect duration.
+        """
+        ws = self._ws
+        if ws is not None and not ws.closed:
+            return ws
+
         async with self._ws_lock:
             if self._ws is not None and not self._ws.closed:
                 return self._ws
-
             if self._ws_session is None or self._ws_session.closed:
                 self._ws_session = aiohttp.ClientSession()
+            connecting_session = self._ws_session
 
-            headers = {"Authorization": f"Bearer {self.api_key}"}
-            if self.extra_headers:
-                headers.update(self.extra_headers)
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        if self.extra_headers:
+            headers.update(self.extra_headers)
 
-            self._ws = await self._ws_session.ws_connect(
-                self._wss_url,
-                headers=headers,
-                autoping=True,
-                heartbeat=30,
-                autoclose=False,
-                timeout=30,
-            )
+        new_ws = await connecting_session.ws_connect(
+            self._wss_url,
+            headers=headers,
+            autoping=True,
+            heartbeat=30,
+            autoclose=False,
+            timeout=30,
+        )
+
+        async with self._ws_lock:
+            if self._ws is not None and not self._ws.closed:
+                try:
+                    await new_ws.close()
+                except Exception:
+                    pass
+                return self._ws
+            self._ws = new_ws
             # Fresh connection — chain state is invalid.
             self._previous_response_id = None
             self._last_seen_items_count = 0
@@ -956,6 +977,13 @@ class OpenAILLM(LLM):
 
                         etype = event.get("type")
 
+                        if self._drain_until_response_created and etype != "error":
+                            if etype == "response.created":
+                                self._drain_until_response_created = False
+                            else:
+                                logger.debug("[openai-wss] draining stale event: %s", etype)
+                                continue
+
                         if etype == "error":
                             err = event.get("error") or {}
                             code = err.get("code")
@@ -971,9 +999,18 @@ class OpenAILLM(LLM):
                                 else:
                                     self._previous_response_id = None
                                     self._last_seen_items_count = 0
+                                    self._drain_until_response_created = True
                                 payload["input"] = _chat_items_to_responses_input(all_items)
                                 payload.pop("previous_response_id", None)
                                 break
+                            if recoverable and fallback_done:
+                                logger.warning(
+                                    "[openai-wss] recoverable error after retry (%s) — closing WS for clean slate",
+                                    code,
+                                )
+                                await self._close_ws()
+                                self._drain_until_response_created = False
+                                return
                             raise RuntimeError(
                                 f"OpenAI WSS error: {err.get('message') or event}"
                             )
@@ -1157,12 +1194,28 @@ class OpenAILLM(LLM):
             return
 
     async def cancel_current_generation(self) -> None:
+        """Cancel the in-flight response.
+
+        Sends a ``response.cancel`` event over the existing WebSocket instead
+        of closing it, so the next ``chat()`` call reuses the same connection
+        and avoids paying another TLS+WS handshake.
+
+        Falls back to closing the WS if the cancel event can't be delivered
+        (e.g. the connection is already broken).
+        """
         self._cancelled = True
-        # Close the WS so leftover server events from the cancelled response
-        # don't contaminate the next request. _close_ws also clears
-        # _previous_response_id and _last_seen_items_count for us.
-        await self._close_ws()
+        self._previous_response_id = None
         self._last_seen_items_count = 0
+
+        self._drain_until_response_created = True
+
+        ws = self._ws
+        if ws is None or ws.closed:
+            return
+        try:
+            await ws.send_str(json.dumps({"type": "response.cancel"}))
+        except Exception:
+            await self._close_ws()
 
     async def aclose(self) -> None:
         """Cleanup resources. Closes the underlying HTTP client (if owned) and any
