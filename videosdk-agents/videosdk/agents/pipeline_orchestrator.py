@@ -810,13 +810,6 @@ class PipelineOrchestrator(EventEmitter[Literal[
             message: Message to synthesize
             handle: Utterance handle to track
         """
-        if self.speech_generation:
-            try:
-                if not (self.hooks and self.hooks.has_tts_stream_hook()):
-                    metrics_collector.set_agent_response(message)
-                await self.speech_generation.synthesize(message)
-            finally:
-                handle._mark_done()
         if not self.speech_generation:
             handle._mark_done()
             return
