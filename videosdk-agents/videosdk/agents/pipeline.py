@@ -57,10 +57,10 @@ class EOUConfig:
         min_val, max_val = self.min_max_speech_wait_timeout
         if not (isinstance(min_val, (int, float)) and isinstance(max_val, (int, float))):
             raise ValueError("min_max_speech_wait_timeout values must be numbers")
-        if min_val <= 0 or max_val <= 0:
-            raise ValueError("min_max_speech_wait_timeout values must be greater than 0")
-        if min_val >= max_val:
-            raise ValueError("min_speech_wait_timeout must be less than max_speech_wait_timeout")
+        if min_val < 0 or max_val < 0:
+            raise ValueError("min_max_speech_wait_timeout values must be non-negative")
+        if min_val > max_val:
+            raise ValueError("min_speech_wait_timeout must be less than or equal to max_speech_wait_timeout")
 
 
 @dataclass
