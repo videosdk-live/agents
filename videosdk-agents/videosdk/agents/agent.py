@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Literal, Optional
+import asyncio
 import inspect
 from .event_emitter import EventEmitter
 from .llm.chat_context import ChatContext
@@ -110,7 +111,7 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
     
     async def hangup(self) -> None:
         """Hang up the agent"""
-        await self.session.hangup("manual_hangup")
+        asyncio.create_task(self.session.hangup("manual_hangup"))
     
     def set_thinking_audio(self, file: str = None, volume: float = 0.3):
         """Set the thinking background for the agent"""

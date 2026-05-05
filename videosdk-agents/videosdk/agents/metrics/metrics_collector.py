@@ -669,15 +669,26 @@ class MetricsCollector:
             self._eou_start_time = None
     
     def on_wait_for_additional_speech(self, duration: float, eou_probability: float):
-        if self.current_turn:
-            if not self.current_turn.eou_metrics:
-                self.current_turn.eou_metrics.append(EouMetrics())
-            eou = self.current_turn.eou_metrics[-1]
-            eou.wait_for_additional_speech_duration = duration
-            eou.eou_probability = eou_probability
-            eou.waited_for_additional_speech = True
-            logger.info(f"wait for additional speech duration: {duration}ms")
-            logger.info(f"wait for additional speech eou probability: {eou_probability}")
+        if not self.current_turn or not self.current_turn.eou_metrics:
+            return
+        eou = self.current_turn.eou_metrics[-1]
+        eou.eou_wait_ms = self._round_latency(duration)
+        eou.eou_probability = eou_probability
+        eou.waited_for_additional_speech = True
+        logger.info(f"eou wait scheduled: {eou.eou_wait_ms}ms")
+        logger.info(f"eou wait eou probability: {eou_probability}")
+
+    def on_wait_for_additional_speech_complete(self, actual_duration: float) -> None:
+        """Overwrite the scheduled wait duration with the actual elapsed wait.
+
+        Called when the wait timer fires naturally or is cancelled by continued speech.
+        The actual elapsed value is what gets summed into E2E latency.
+        """
+        if not self.current_turn or not self.current_turn.eou_metrics:
+            return
+        eou = self.current_turn.eou_metrics[-1]
+        eou.eou_wait_ms = self._round_latency(actual_duration)
+        logger.info(f"eou wait actual: {eou.eou_wait_ms}ms")
 
     # ──────────────────────────────────────────────
     # LLM metrics
@@ -1275,6 +1286,8 @@ class MetricsCollector:
             data["eou_latency"] = eou.eou_latency
             data["eou_start_time"] = eou.eou_start_time
             data["eou_end_time"] = eou.eou_end_time
+            data["eou_wait_ms"] = eou.eou_wait_ms
+            data["eou_probability"] = eou.eou_probability
 
         # Flatten the last LLM metrics entry
         if turn.llm_metrics:
@@ -1405,6 +1418,8 @@ class MetricsCollector:
             "eou_latency": "eouLatency",
             "eou_start_time": "eouStartTime",
             "eou_end_time": "eouEndTime",
+            "eou_wait_ms": "eouWaitMs",
+            "eou_probability": "eouProbability",
 
             # Realtime (full s2s) metrics
             "realtime_ttfb": "realtimeTtfb",

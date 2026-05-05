@@ -237,7 +237,7 @@ class VideoSDKHandler(BaseTransportHandler):
         self._left: bool = False
         self.sdk_metadata = {
             "sdk": "agents",
-            "sdk_version": "1.0.9"
+            "sdk_version": "1.0.12"
         }
         self.videosdk_meeting_meta_data= {
             "agent_id": self.agent_id,
@@ -466,8 +466,9 @@ class VideoSDKHandler(BaseTransportHandler):
                 self.on_session_end(reason)
             except Exception as e:
                 logger.error(f"Error in session end callback: {e}")
+        else:
+            await self.leave()
 
-        await self.leave()
         self._session_ended = True
 
         if not self._first_participant_event.is_set():
@@ -483,7 +484,31 @@ class VideoSDKHandler(BaseTransportHandler):
         Args:
             reason: Reason string to propagate to session end callbacks.
         """
+        await self._end_sip_call_if_active()
         await self._end_session(reason)
+
+    def _has_sip_participant(self) -> bool:
+        """Internal: True if any tracked participant is a SIP user."""
+        return any(
+            data.get("sipUser") for data in self.participants_data.values()
+        )
+
+    async def _end_sip_call_if_active(self) -> None:
+        """
+        Internal: end the SIP call via VideoSDK API when a SIP participant is
+        present. Best-effort — failures are logged but do not block hangup.
+        """
+        if not self._has_sip_participant():
+            return
+        if not self._session_id:
+            logger.warning(
+                "Cannot end SIP call: session_id not yet collected"
+            )
+            return
+        try:
+            await self.sip_manager.end_sip_call(session_id=self._session_id)
+        except Exception as e:
+            logger.error(f"Error ending SIP call via API: {e}")
 
     async def call_transfer(self,transfer_to: str) -> None:
         """

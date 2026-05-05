@@ -619,7 +619,10 @@ class JobContext:
             else:
                 resolved_obs = self.room_options._resolved_observability()
                 self.metrics_collector.transport_mode = self.room_options.transport_mode
-                self.metrics_collector.analytics_client.configure(resolved_obs.metrics)
+                self.metrics_collector.analytics_client.configure(
+                    resolved_obs.metrics,
+                    signaling_base_url=self.room_options.signaling_base_url,
+                )
                 if self.room_options.transport_mode == TransportMode.VIDEOSDK:
                     from .room.room import VideoSDKHandler
 
@@ -756,7 +759,10 @@ class JobContext:
         logger.info("JobContext shutting down")
         for callback in self._shutdown_callbacks:
             try:
-                await callback()
+                await asyncio.wait_for(callback(), timeout=15.0)
+            except asyncio.TimeoutError:
+                cb_name = getattr(callback, "__name__", repr(callback))
+                logger.warning(f"Shutdown callback {cb_name} timed out")
             except Exception as e:
                 logger.error(f"Error in shutdown callback: {e}")
 
@@ -876,7 +882,9 @@ class JobContext:
             async def cleanup_session():
                 logger.info("Cleaning up session...")
                 try:
-                    await session.close()
+                    await asyncio.wait_for(session.close(), timeout=15.0)
+                except asyncio.TimeoutError:
+                    logger.warning("session.close() timed out during shutdown")
                 except Exception as e:
                     logger.error(f"Error closing session in cleanup: {e}")
                 shutdown_event.set()

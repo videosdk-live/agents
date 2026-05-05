@@ -1,6 +1,6 @@
 # VideoSDK xAI (Grok) Plugin
 
-Agent Framework plugin providing real-time voice (S2S) services by xAI (Grok).
+Agent Framework plugin for real-time voice (S2S), LLM, STT, and TTS  services by xAI (Grok).
 
 ## Installation
 

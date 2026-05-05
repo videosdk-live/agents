@@ -126,6 +126,17 @@ class ElevenLabsSTT(BaseSTT):
                 await self._ws.close()
                 self._ws = None
 
+    async def flush(self) -> None:
+        """Force ElevenLabs to commit the current audio buffer immediately."""
+        if not self._ws or self._ws.closed:
+            return
+        try:
+            buf = bytes(self._stream_buffer)
+            self._stream_buffer.clear()
+            await self._send_audio(buf, commit=True)
+        except Exception as e:
+            logger.exception("Error flushing ElevenLabs STT: %s", e)
+
     async def _connect_ws(self) -> None:
         if not self._session:
             self._session = aiohttp.ClientSession()
@@ -156,7 +167,7 @@ class ElevenLabsSTT(BaseSTT):
             logger.exception("Error connecting to ElevenLabs WebSocket: %s", e)
             raise
 
-    async def _send_audio(self, audio_bytes: bytes) -> None:
+    async def _send_audio(self, audio_bytes: bytes, commit: bool = False) -> None:
         if not self._ws:
             return
 
@@ -164,6 +175,7 @@ class ElevenLabsSTT(BaseSTT):
             "message_type": "input_audio_chunk",
             "audio_base_64": base64.b64encode(audio_bytes).decode(),
             "sample_rate": self.sample_rate,
+            "commit": commit,
         }
 
         try:
@@ -380,7 +392,7 @@ class ElevenLabsSTT(BaseSTT):
             (avg_confidence, duration)
         """
 
-        words = payload.get("words", [])
+        words = payload.get("words") or []
 
         total_confidence = 0.0
         word_count = 0
