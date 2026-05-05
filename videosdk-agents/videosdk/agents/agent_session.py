@@ -126,9 +126,11 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
 
     def _start_wake_up_timer(self) -> None:
         if self.wake_up is not None and self.on_wake_up is not None:
+            if self._wake_up_task and not self._wake_up_task.done():
+                self._wake_up_task.cancel()
             self._wake_up_timer_active = True
             self._wake_up_task = asyncio.create_task(self._wake_up_timer_loop())
-    
+
     def _reset_wake_up_timer(self) -> None:
         if self.wake_up is not None and self.on_wake_up is not None:
             if self._reply_in_progress:
@@ -137,8 +139,9 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
                 self._wake_up_task.cancel()
             self._wake_up_timer_active = True
             self._wake_up_task = asyncio.create_task(self._wake_up_timer_loop())
-    
+
     def _pause_wake_up_timer(self) -> None:
+        self._wake_up_timer_active = False
         if self._wake_up_task and not self._wake_up_task.done():
             self._wake_up_task.cancel()
     
@@ -150,7 +153,12 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
     async def _wake_up_timer_loop(self) -> None:
         try:
             await asyncio.sleep(self.wake_up)
-            if self._wake_up_timer_active and self.on_wake_up and not self._reply_in_progress:
+            if (
+                self._wake_up_timer_active
+                and self.on_wake_up
+                and not self._reply_in_progress
+                and self._user_state != UserState.SPEAKING
+            ):
                 if asyncio.iscoroutinefunction(self.on_wake_up):
                     asyncio.create_task(self.on_wake_up())
                 else:
