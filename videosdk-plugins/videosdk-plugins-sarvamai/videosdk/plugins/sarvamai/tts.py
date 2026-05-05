@@ -4,7 +4,6 @@ import asyncio
 import base64
 import json
 import os
-import re
 from typing import Any, AsyncIterator, Optional,Literal
 
 import aiohttp
@@ -272,34 +271,17 @@ class SarvamAITTS(TTS):
                     if text.strip():
                         await self._http_synthesis(text)
                 else:
-                    chunk_buffer = []
-                    HTTP_CHUNK_BUFFER_SIZE = 4
-                    LLM_PAUSE_TIMEOUT = 1.0 
-
-                    text_iterator = text.__aiter__()
-                    while not self._interrupted:
-                        try:
-                            chunk = await asyncio.wait_for(text_iterator.__anext__(), timeout=LLM_PAUSE_TIMEOUT)
-                            
-                            if chunk and chunk.strip():
-                                chunk_buffer.append(chunk)
-                            
-                            if len(chunk_buffer) >= HTTP_CHUNK_BUFFER_SIZE:
-                                combined_text = "".join(chunk_buffer)
-                                await self._http_synthesis(combined_text)
-                                chunk_buffer.clear()
-
-                        except asyncio.TimeoutError:
-                            if chunk_buffer:
-                                combined_text = "".join(chunk_buffer)
-                                await self._http_synthesis(combined_text)
-                                chunk_buffer.clear()
-                        
-                        except StopAsyncIteration:
-                            if chunk_buffer:
-                                combined_text = "".join(chunk_buffer)
-                                await self._http_synthesis(combined_text)
+                    parts: list[str] = []
+                    async for chunk in text:
+                        if self._interrupted:
                             break
+                        if chunk and chunk.strip():
+                            parts.append(chunk)
+
+                    if parts and not self._interrupted:
+                        combined_text = "".join(parts)
+                        if combined_text.strip():
+                            await self._http_synthesis(combined_text)
 
         except Exception as e:
             self.emit("error", f"TTS synthesis failed: {str(e)}")
@@ -369,38 +351,28 @@ class SarvamAITTS(TTS):
             await self._ws_connection.send_str(json.dumps(config_payload))
 
     async def _send_text_chunks(self, text_iterator: AsyncIterator[str]):
-        """Sends text to the WebSocket, chunking it by word count or time."""
+        """Forward text chunks to the WebSocket verbatim.
+
+        The server already buffers using ``min_buffer_size`` / ``max_chunk_length``
+        (configured in ``_send_initial_config``) and ``bulbul:v3`` always runs
+        text normalisation server-side. Re-tokenising client-side via a word
+        regex would strip currency symbols (``₹``, ``$``) and split
+        comma-grouped digits (``50,000`` → ``['50', '000']``), so we send each
+        chunk's text exactly as received and let the server do its job. A
+        single trailing ``flush`` drains any remainder below ``min_buffer_size``.
+        """
         if not self._ws_connection:
             raise ConnectionError("WebSocket is not connected.")
         try:
-            buffer = []
-            MIN_WORDS, MAX_DELAY = 2, 1.0
-            last_send_time = asyncio.get_event_loop().time()
-
             async for text_chunk in text_iterator:
                 if self._interrupted:
                     break
 
-                words = re.findall(r"\b[\w'-]+\b", text_chunk)
-                if not words:
+                if not text_chunk or not text_chunk.strip():
                     continue
 
-                buffer.extend(words)
-                now = asyncio.get_event_loop().time()
-
-                if len(buffer) >= MIN_WORDS or (now - last_send_time > MAX_DELAY):
-                    combined_text = " ".join(buffer).strip()
-                    if combined_text:
-                        payload = {"type": "text", "data": {"text": combined_text}}
-                        await self._ws_connection.send_str(json.dumps(payload))
-                    buffer.clear()
-                    last_send_time = now
-
-            if buffer and not self._interrupted:
-                combined_text = " ".join(buffer).strip()
-                if combined_text:
-                    payload = {"type": "text", "data": {"text": combined_text}}
-                    await self._ws_connection.send_str(json.dumps(payload))
+                payload = {"type": "text", "data": {"text": text_chunk}}
+                await self._ws_connection.send_str(json.dumps(payload))
 
             if not self._interrupted:
                 await self._ws_connection.send_str(json.dumps({"type": "flush"}))

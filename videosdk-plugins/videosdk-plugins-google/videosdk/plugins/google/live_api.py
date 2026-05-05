@@ -42,7 +42,12 @@ from google.genai.types import (
     AudioTranscriptionConfig,
     ThinkingConfig,
     RealtimeInputConfig,
-    ContextWindowCompressionConfig
+    ContextWindowCompressionConfig,
+    SessionResumptionConfig,
+    SlidingWindow,
+    AutomaticActivityDetection,
+    StartSensitivity,
+    EndSensitivity,
 )
 
 load_dotenv()
@@ -82,9 +87,20 @@ class GeminiLiveConfig:
         response_modalities: List of enabled response types. Options: ["TEXT", "AUDIO"]. Defaults to ["AUDIO"]
         input_audio_transcription: Configuration for audio transcription features. Defaults to None
         output_audio_transcription: Configuration for audio transcription features. Defaults to None
-        thinking_config: Configuration for model's "thinking" behavior. Defaults to None
-        realtime_input_config: Configuration for realtime input handling. Defaults to None
-        context_window_compression: Configuration for context window compression. Defaults to None
+        thinking_config: Configuration for model's "thinking" behavior.
+            Defaults to ThinkingConfig(thinking_budget=0) (disables thinking for low-latency voice).
+            Only applied to native-audio models (gemini-3.x, gemini-2.5-flash-native-audio).
+            Pass None to let the model decide its own thinking budget.
+        realtime_input_config: Configuration for realtime input handling.
+            Defaults to aggressive low-latency VAD: end-of-speech sensitivity HIGH,
+            silence_duration_ms=400, prefix_padding_ms=20.
+            Pass None or override to use Gemini server defaults (~1.5–2s end-of-speech wait).
+        context_window_compression: Configuration for context window compression.
+            Defaults to sliding-window compression (extends sessions past the 15-min cap).
+            Pass None to disable.
+        session_resumption: Configuration for session resumption across the ~10-min
+            connection lifetime. Defaults to enabled with handle=None (transparently resumes
+            on server-initiated disconnect). Pass None to disable.
     """
 
     voice: Voice | None = "Puck"
@@ -105,9 +121,25 @@ class GeminiLiveConfig:
     output_audio_transcription: AudioTranscriptionConfig | None = field(
         default_factory=dict
     )
-    thinking_config: Optional[ThinkingConfig] | None = field(default_factory=dict)
-    realtime_input_config:Optional[RealtimeInputConfig]| None = field(default_factory=dict)
-    context_window_compression:Optional[ContextWindowCompressionConfig] | None = field(default_factory=dict)
+    thinking_config: Optional[ThinkingConfig] | None = field(
+        default_factory=lambda: ThinkingConfig(thinking_budget=0)
+    )
+    realtime_input_config: Optional[RealtimeInputConfig] | None = field(
+        default_factory=lambda: RealtimeInputConfig(
+            automatic_activity_detection=AutomaticActivityDetection(
+                start_of_speech_sensitivity=StartSensitivity.START_SENSITIVITY_HIGH,
+                end_of_speech_sensitivity=EndSensitivity.END_SENSITIVITY_HIGH,
+                prefix_padding_ms=20,
+                silence_duration_ms=400,
+            )
+        )
+    )
+    context_window_compression: Optional[ContextWindowCompressionConfig] | None = field(
+        default_factory=lambda: ContextWindowCompressionConfig(sliding_window=SlidingWindow())
+    )
+    session_resumption: Optional[SessionResumptionConfig] | None = field(
+        default_factory=lambda: SessionResumptionConfig(handle=None)
+    )
     # TODO
     # proactivity: ProactivityConfig | None = field(default_factory=dict)
     # enable_affective_dialog: bool | None = field(default=None)
@@ -188,6 +220,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         self.input_sample_rate = 48000
         self._user_speaking = False
         self._agent_speaking = False
+        self._session_handle: str | None = None
 
     def set_agent(self, agent: Agent) -> None:
         self._instructions = agent.instructions
@@ -309,9 +342,17 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
             tools=self.formatted_tools or None,
             input_audio_transcription=self.config.input_audio_transcription if has_audio_output else None,
             output_audio_transcription=self.config.output_audio_transcription if has_audio_output else None,
-            realtime_input_config=self.config.realtime_input_config if self.config.realtime_input_config else None, 
-            context_window_compression=self.config.context_window_compression if self.config.context_window_compression else None
+            realtime_input_config=self.config.realtime_input_config if self.config.realtime_input_config else None,
+            context_window_compression=self.config.context_window_compression if self.config.context_window_compression else None,
+            session_resumption=(
+                SessionResumptionConfig(handle=self._session_handle)
+                if self.config.session_resumption is not None
+                else None
+            ),
         )
+
+        if self._session_handle:
+            logger.info(f"Resuming Gemini Live session with handle {self._session_handle[:16]}...")
 
         if self.is_native_audio_model():
             config = config.model_dump()
@@ -440,6 +481,18 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                         if response.tool_call:
                             accumulated_input_text = await self._handle_tool_calls(
                                 response, active_response_id, accumulated_input_text
+                            )
+
+                        if getattr(response, "session_resumption_update", None):
+                            update = response.session_resumption_update
+                            if update.resumable and update.new_handle:
+                                self._session_handle = update.new_handle
+
+                        if getattr(response, "go_away", None):
+                            time_left = getattr(response.go_away, "time_left", None)
+                            logger.info(
+                                f"Gemini sent GoAway. Connection will end in {time_left}. "
+                                f"Will resume via stored handle."
                             )
 
                         if server_content := response.server_content:
@@ -613,9 +666,15 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                     )
 
                     if is_server_disconnect:
-                        logger.info(f"Session ended by server ({err_msg}). Stopping local connection.")
-                        # CRITICAL: We set _closing to True to stop the outer loop
-                        # from attempting to reconnect.
+                        if self._session_handle:
+                            logger.info(
+                                f"Connection closed by server ({err_msg}). "
+                                f"Resuming session via stored handle."
+                            )
+                            self._session_should_close.set()
+                            break
+
+                        logger.info(f"Session ended by server ({err_msg}) with no resumption handle. Stopping.")
                         self._closing = True
                         self._session_should_close.set()
                         break
@@ -685,9 +744,13 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                     )
                 except Exception as e:
                     if "closed" in str(e).lower() or "1011" in str(e):
-                        logger.info("Keep-alive detected closed session. Stopping.")
-                        self._closing = True
-                        self._session_should_close.set()
+                        if self._session_handle:
+                            logger.info("Keep-alive detected closed connection. Will resume session.")
+                            self._session_should_close.set()
+                        else:
+                            logger.info("Keep-alive detected closed session. Stopping.")
+                            self._closing = True
+                            self._session_should_close.set()
                         break
                     self.emit("error", f"Keep-alive error: {e}")
         except asyncio.CancelledError:
@@ -747,9 +810,13 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
             )
         except Exception as e:
             if "1011" in str(e) or "closed" in str(e).lower():
-                logger.info("Cannot send audio (session closed).")
-                self._closing = True
-                self._session_should_close.set()
+                if self._session_handle:
+                    logger.info("Audio send failed: connection closed. Will resume session.")
+                    self._session_should_close.set()
+                else:
+                    logger.info("Cannot send audio (session closed).")
+                    self._closing = True
+                    self._session_should_close.set()
             else:
                 logger.error(f"Error sending audio: {e}")
 

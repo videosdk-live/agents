@@ -23,7 +23,7 @@ classifiers = [
 dependencies = [
     "videosdk-agents>=1.0.9",
     "google-genai >= 1.14.0",
-    "google-cloud-texttospeech >= 2.24, < 3",
+    "google-cloud-texttospeech >= 2.29, < 3",
     "google-cloud-speech >= 2, < 3",
     "scipy",
     "protobuf>=5.29,<6.0",

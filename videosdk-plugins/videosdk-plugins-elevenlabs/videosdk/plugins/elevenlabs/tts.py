@@ -214,7 +214,14 @@ class ElevenLabsTTS(TTS):
             raise
 
     async def _stream_synthesis(self, text: Union[AsyncIterator[str], str], voice_id: str) -> None:
-        """WebSocket-based streaming synthesis using multi-context connection"""
+        """WebSocket-based streaming synthesis using multi-context connection.
+
+        Forwards text verbatim into a single context. The server buffers and
+        normalises (currency, decimals, mixed-script numbers); client-side
+        re-segmentation here would split tokens like ``₹50,000`` and break
+        prosody, so we deliberately don't do it. One trailing ``flush_context``
+        + ``close_context`` finalises the turn.
+        """
         try:
             await self._ensure_connection(voice_id)
 
@@ -222,26 +229,27 @@ class ElevenLabsTTS(TTS):
             done_future: asyncio.Future[None] = asyncio.get_event_loop().create_future()
             self.register_context(context_id, done_future)
 
-            async def _single_chunk_gen(s: str) -> AsyncIterator[str]:
-                yield s
-
             async def _send_chunks() -> None:
                 try:
-                    first_message_sent = False
                     if isinstance(text, str):
-                        async for segment in segment_text(_single_chunk_gen(text)):
-                            if self._should_stop:
-                                break
-                            await self.send_text(context_id, f"{segment} ",
-                                                 voice_settings=None if first_message_sent else self._voice_settings_dict(),
-                                                 flush=True)
-                            first_message_sent = True
+                        if text:
+                            await self.send_text(
+                                context_id,
+                                f"{text} ",
+                                voice_settings=self._voice_settings_dict(),
+                            )
                     else:
+                        first_message_sent = False
                         async for chunk in text:
                             if self._should_stop:
                                 break
-                            await self.send_text(context_id, f"{chunk} ",
-                                                 voice_settings=None if first_message_sent else self._voice_settings_dict())
+                            if not chunk:
+                                continue
+                            await self.send_text(
+                                context_id,
+                                f"{chunk} ",
+                                voice_settings=None if first_message_sent else self._voice_settings_dict(),
+                            )
                             first_message_sent = True
 
                     if not self._should_stop:
