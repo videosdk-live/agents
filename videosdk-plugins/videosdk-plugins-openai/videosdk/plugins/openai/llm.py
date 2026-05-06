@@ -27,6 +27,9 @@ logger = logging.getLogger(__name__)
 
 OPENAI_RESPONSES_WSS_URL = "wss://api.openai.com/v1/responses"
 
+# Sentinel pushed onto the reader→consumer queue to signal end-of-stream.
+_READER_DONE = object()
+
 
 def _format_responses_content(
     content: Union[str, List[ChatContent], None], role: str
@@ -191,6 +194,12 @@ class OpenAILLM(LLM):
         self._previous_response_id: Optional[str] = None
         self._last_seen_items_count: int = 0
         self._prewarm_task: Optional[asyncio.Task] = None
+
+        # Background reader: keeps draining the WS to response.completed even
+        # while the chat() consumer is paused (e.g. agent is running a tool).
+        # This is what lets chat #2 reliably chain via previous_response_id.
+        self._reader_task: Optional[asyncio.Task] = None
+        self._pending_tool_call_ids: set[str] = set()
 
         self._owns_client = client is None
         if client is not None:
@@ -789,6 +798,39 @@ class OpenAILLM(LLM):
             self._previous_response_id = None
             self._last_seen_items_count = 0
 
+    async def _await_pending_reader(self, *, timeout: float = 2.0) -> None:
+        """Wait for a previous turn's background reader to finish.
+
+        Called at the top of every _chat_websocket invocation so the WS buffer
+        is fully drained and chain state (_previous_response_id /
+        _last_seen_items_count) is up to date before we send the next request.
+        In the function-tool flow this await typically returns immediately —
+        the reader has been draining in parallel with tool execution.
+        """
+        task = self._reader_task
+        if task is None:
+            return
+        if task.done():
+            self._reader_task = None
+            return
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "[openai-wss] previous reader did not drain within %.1fs — cancelling and resetting WS",
+                timeout,
+            )
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+            await self._close_ws()
+        except Exception:
+            pass
+        finally:
+            self._reader_task = None
+
     def _build_responses_payload(
         self,
         *,
@@ -881,27 +923,32 @@ class OpenAILLM(LLM):
             )
         ]
 
-    async def _chat_websocket(
+    async def _run_ws_response(
         self,
-        messages: ChatContext,
-        tools: list[FunctionTool] | None = None,
-        conversational_graph: Any | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterator[LLMResponse]:
-        """Stream chat responses over the WSS Responses API."""
+        queue: "asyncio.Queue",
+        *,
+        all_items: list,
+        tools: list[FunctionTool] | None,
+        conversational_graph: Any | None,
+        extra_kwargs: dict,
+        initial_chained: bool,
+    ) -> None:
+        """Background reader. Drives one WSS Responses turn to completion and
+        pushes ready-to-yield LLMResponse objects into ``queue``.
 
-        all_items = list(messages.items)
+        This runs as its own ``asyncio.Task`` so the WS keeps draining even when
+        the consumer of ``_chat_websocket`` pauses (typical: the agent yields a
+        ``function_call`` and goes off to execute the tool). Reaching
+        ``response.completed`` here is what guarantees ``_previous_response_id``
+        and ``_last_seen_items_count`` are up to date before the next
+        ``chat()`` call decides whether to chain.
 
-        # Decide initial payload: incremental (chained) or full.
-        can_chain = (
-            self._previous_response_id is not None
-            and self._ws is not None
-            and not self._ws.closed
-            and self._last_seen_items_count > 0
-            and len(all_items) >= self._last_seen_items_count
-        )
-
-        if can_chain:
+        Queue protocol:
+          - ``LLMResponse`` instance: yield to consumer
+          - ``_READER_DONE``: end of stream
+          - ``Exception``: fatal error; consumer re-raises
+        """
+        if initial_chained:
             send_objs = self._slice_incremental_items(all_items)
             input_items = _chat_items_to_responses_input(send_objs)
             previous_response_id = self._previous_response_id
@@ -914,162 +961,229 @@ class OpenAILLM(LLM):
             previous_response_id=previous_response_id,
             tools=tools,
             conversational_graph=conversational_graph,
-            extra=kwargs,
+            extra=extra_kwargs,
         )
 
         fallback_done = False
 
-        while True:
-            if self._cancelled:
-                return
+        try:
+            while True:
+                if self._cancelled:
+                    queue.put_nowait(_READER_DONE)
+                    return
 
-            try:
-                ws = await self._ensure_ws()
-                logger.info(
-                    "[openai-wss] sending request | chained=%s items=%d",
-                    bool(payload.get("previous_response_id")),
-                    len(input_items),
-                )
-                await ws.send_str(json.dumps(payload))
-            except Exception as e:
-                if fallback_done:
-                    if not self._cancelled:
-                        self.emit("error", e)
-                    raise
-                fallback_done = True
-                await self._close_ws()
-                payload["input"] = _chat_items_to_responses_input(all_items)
-                payload.pop("previous_response_id", None)
-                continue
+                try:
+                    ws = await self._ensure_ws()
+                    logger.info(
+                        "[openai-wss] sending request | chained=%s items=%d",
+                        bool(payload.get("previous_response_id")),
+                        len(payload.get("input") or []),
+                    )
+                    await ws.send_str(json.dumps(payload))
+                except Exception as e:
+                    if fallback_done:
+                        if not self._cancelled:
+                            self.emit("error", e)
+                        queue.put_nowait(e)
+                        return
+                    fallback_done = True
+                    await self._close_ws()
+                    payload["input"] = _chat_items_to_responses_input(all_items)
+                    payload.pop("previous_response_id", None)
+                    continue
 
-            usage_metadata: dict = {
-                "prompt_tokens": 0,
-                "completion_tokens": 0,
-                "total_tokens": 0,
-                "prompt_cached_tokens": 0,
-                "reasoning_tokens": 0,
-                "request_id": None,
-                "model": self.model,
-            }
-            current_content = ""
-            streaming_state = {
-                "in_response": False,
-                "response_start_index": -1,
-                "yielded_content_length": 0,
-            }
-            # item_id -> {"call_id", "name", "arguments"}
-            function_calls: dict[str, dict] = {}
-            response_id_this_turn: Optional[str] = None
-            need_retry = False
-            completed = False
+                usage_metadata: dict = {
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
+                    "prompt_cached_tokens": 0,
+                    "reasoning_tokens": 0,
+                    "request_id": None,
+                    "model": self.model,
+                }
+                current_content = ""
+                streaming_state = {
+                    "in_response": False,
+                    "response_start_index": -1,
+                    "yielded_content_length": 0,
+                }
+                # item_id -> {"call_id", "name", "arguments", "dispatched"}
+                function_calls: dict[str, dict] = {}
+                response_id_this_turn: Optional[str] = None
+                need_retry = False
+                completed = False
 
-            try:
-                async for ws_msg in ws:
-                    if self._cancelled:
-                        break
+                try:
+                    async for ws_msg in ws:
+                        if self._cancelled:
+                            break
 
-                    if ws_msg.type == aiohttp.WSMsgType.TEXT:
-                        try:
-                            event = json.loads(ws_msg.data)
-                        except json.JSONDecodeError:
-                            logger.debug("Skipping non-JSON WSS frame: %r", ws_msg.data)
-                            continue
-
-                        etype = event.get("type")
-
-                        if self._drain_until_response_created and etype != "error":
-                            if etype == "response.created":
-                                self._drain_until_response_created = False
-                            else:
-                                logger.debug("[openai-wss] draining stale event: %s", etype)
+                        if ws_msg.type == aiohttp.WSMsgType.TEXT:
+                            try:
+                                event = json.loads(ws_msg.data)
+                            except json.JSONDecodeError:
+                                logger.debug("Skipping non-JSON WSS frame: %r", ws_msg.data)
                                 continue
 
-                        if etype == "error":
-                            err = event.get("error") or {}
-                            code = err.get("code")
-                            recoverable = code in (
-                                "previous_response_not_found",
-                                "websocket_connection_limit_reached",
-                            )
-                            if recoverable and not fallback_done:
-                                fallback_done = True
-                                need_retry = True
-                                if code == "websocket_connection_limit_reached":
-                                    await self._close_ws()
+                            etype = event.get("type")
+
+                            if self._drain_until_response_created and etype != "error":
+                                if etype == "response.created":
+                                    self._drain_until_response_created = False
                                 else:
-                                    self._previous_response_id = None
-                                    self._last_seen_items_count = 0
-                                    self._drain_until_response_created = True
-                                payload["input"] = _chat_items_to_responses_input(all_items)
-                                payload.pop("previous_response_id", None)
-                                break
-                            if recoverable and fallback_done:
-                                logger.warning(
-                                    "[openai-wss] recoverable error after retry (%s) — closing WS for clean slate",
-                                    code,
+                                    logger.debug("[openai-wss] draining stale event: %s", etype)
+                                    continue
+
+                            if etype == "error":
+                                err = event.get("error") or {}
+                                code = err.get("code")
+                                recoverable = code in (
+                                    "previous_response_not_found",
+                                    "websocket_connection_limit_reached",
                                 )
-                                await self._close_ws()
-                                self._drain_until_response_created = False
-                                return
-                            raise RuntimeError(
-                                f"OpenAI WSS error: {err.get('message') or event}"
-                            )
-
-                        elif etype == "response.created":
-                            response_id_this_turn = (event.get("response") or {}).get("id")
-                            logger.info("[openai-wss] response.created received id=%s", response_id_this_turn)
-
-                        elif etype == "response.output_text.delta":
-                            delta = event.get("delta", "")
-                            if not delta:
-                                continue
-                            current_content += delta
-                            if conversational_graph:
-                                for content_chunk in conversational_graph.stream_conversational_graph_response(
-                                    current_content, streaming_state
-                                ):
-                                    yield LLMResponse(
-                                        content=content_chunk,
-                                        role=ChatRole.ASSISTANT,
-                                        metadata={"usage": usage_metadata},
+                                if recoverable and not fallback_done:
+                                    fallback_done = True
+                                    need_retry = True
+                                    if code == "websocket_connection_limit_reached":
+                                        await self._close_ws()
+                                    else:
+                                        self._previous_response_id = None
+                                        self._last_seen_items_count = 0
+                                        self._drain_until_response_created = True
+                                    payload["input"] = _chat_items_to_responses_input(all_items)
+                                    payload.pop("previous_response_id", None)
+                                    break
+                                if recoverable and fallback_done:
+                                    logger.warning(
+                                        "[openai-wss] recoverable error after retry (%s) — closing WS for clean slate",
+                                        code,
                                     )
-                            else:
-                                yield LLMResponse(
-                                    content=delta,
-                                    role=ChatRole.ASSISTANT,
-                                    metadata={"usage": usage_metadata},
+                                    await self._close_ws()
+                                    self._drain_until_response_created = False
+                                    queue.put_nowait(_READER_DONE)
+                                    return
+                                exc = RuntimeError(
+                                    f"OpenAI WSS error: {err.get('message') or event}"
+                                )
+                                if not self._cancelled:
+                                    self.emit("error", exc)
+                                queue.put_nowait(exc)
+                                return
+
+                            elif etype == "response.created":
+                                response_id_this_turn = (event.get("response") or {}).get("id")
+                                logger.info(
+                                    "[openai-wss] response.created received id=%s",
+                                    response_id_this_turn,
                                 )
 
-                        elif etype == "response.output_item.added":
-                            item = event.get("item") or {}
-                            if item.get("type") == "function_call":
-                                iid = item.get("id", "")
-                                function_calls[iid] = {
-                                    "call_id": item.get("call_id", "") or "",
-                                    "name": item.get("name", "") or "",
-                                    "arguments": item.get("arguments", "") or "",
-                                }
+                            elif etype == "response.output_text.delta":
+                                delta = event.get("delta", "")
+                                if not delta:
+                                    continue
+                                current_content += delta
+                                if conversational_graph:
+                                    for content_chunk in conversational_graph.stream_conversational_graph_response(
+                                        current_content, streaming_state
+                                    ):
+                                        queue.put_nowait(LLMResponse(
+                                            content=content_chunk,
+                                            role=ChatRole.ASSISTANT,
+                                            metadata={"usage": dict(usage_metadata)},
+                                        ))
+                                else:
+                                    queue.put_nowait(LLMResponse(
+                                        content=delta,
+                                        role=ChatRole.ASSISTANT,
+                                        metadata={"usage": dict(usage_metadata)},
+                                    ))
 
-                        elif etype == "response.function_call_arguments.delta":
-                            iid = event.get("item_id")
-                            delta = event.get("delta", "")
-                            if iid and iid in function_calls and delta:
-                                function_calls[iid]["arguments"] += delta
+                            elif etype == "response.output_item.added":
+                                item = event.get("item") or {}
+                                if item.get("type") == "function_call":
+                                    iid = item.get("id", "")
+                                    function_calls[iid] = {
+                                        "call_id": item.get("call_id", "") or "",
+                                        "name": item.get("name", "") or "",
+                                        "arguments": item.get("arguments", "") or "",
+                                        "dispatched": False,
+                                    }
 
-                        elif etype == "response.output_item.done":
-                            item = event.get("item") or {}
-                            if item.get("type") == "function_call":
-                                iid = item.get("id", "")
-                                existing = function_calls.get(iid, {})
-                                fc_entry = {
-                                    "call_id": item.get("call_id") or existing.get("call_id", ""),
-                                    "name": item.get("name") or existing.get("name", ""),
-                                    "arguments": item.get("arguments") or existing.get("arguments", ""),
-                                    "dispatched": existing.get("dispatched", False),
-                                }
-                                function_calls[iid] = fc_entry
-                                if not fc_entry["dispatched"]:
-                                    args_str = fc_entry.get("arguments") or ""
+                            elif etype == "response.function_call_arguments.delta":
+                                iid = event.get("item_id")
+                                delta = event.get("delta", "")
+                                if iid and iid in function_calls and delta:
+                                    function_calls[iid]["arguments"] += delta
+
+                            elif etype == "response.output_item.done":
+                                item = event.get("item") or {}
+                                if item.get("type") == "function_call":
+                                    iid = item.get("id", "")
+                                    existing = function_calls.get(iid, {})
+                                    fc_entry = {
+                                        "call_id": item.get("call_id") or existing.get("call_id", ""),
+                                        "name": item.get("name") or existing.get("name", ""),
+                                        "arguments": item.get("arguments") or existing.get("arguments", ""),
+                                        "dispatched": existing.get("dispatched", False),
+                                    }
+                                    function_calls[iid] = fc_entry
+                                    if not fc_entry["dispatched"]:
+                                        args_str = fc_entry.get("arguments") or ""
+                                        try:
+                                            args = json.loads(args_str) if args_str else {}
+                                        except json.JSONDecodeError:
+                                            self.emit(
+                                                "error",
+                                                f"Failed to parse tool call arguments: {args_str}",
+                                            )
+                                            args = {}
+                                        fc_entry["dispatched"] = True
+                                        queue.put_nowait(LLMResponse(
+                                            content="",
+                                            role=ChatRole.ASSISTANT,
+                                            metadata={
+                                                "function_call": {
+                                                    "name": fc_entry.get("name", ""),
+                                                    "arguments": args,
+                                                    "id": fc_entry.get("call_id", ""),
+                                                },
+                                                "usage": dict(usage_metadata),
+                                            },
+                                        ))
+
+                            elif etype == "response.completed":
+                                completed = True
+                                resp = event.get("response") or {}
+                                response_id_this_turn = resp.get("id") or response_id_this_turn
+                                usage = resp.get("usage") or {}
+                                usage_metadata["prompt_tokens"] = (
+                                    usage.get("input_tokens") or usage.get("prompt_tokens") or 0
+                                )
+                                usage_metadata["completion_tokens"] = (
+                                    usage.get("output_tokens") or usage.get("completion_tokens") or 0
+                                )
+                                usage_metadata["total_tokens"] = usage.get("total_tokens") or 0
+                                usage_metadata["request_id"] = response_id_this_turn
+                                usage_metadata["model"] = resp.get("model") or self.model
+                                in_details = usage.get("input_tokens_details") or {}
+                                usage_metadata["prompt_cached_tokens"] = (
+                                    in_details.get("cached_tokens") or 0
+                                )
+                                out_details = usage.get("output_tokens_details") or {}
+                                usage_metadata["reasoning_tokens"] = (
+                                    out_details.get("reasoning_tokens") or 0
+                                )
+
+                                queue.put_nowait(LLMResponse(
+                                    content="",
+                                    role=ChatRole.ASSISTANT,
+                                    metadata={"usage": dict(usage_metadata)},
+                                ))
+
+                                for fc in function_calls.values():
+                                    if fc.get("dispatched"):
+                                        continue
+                                    args_str = fc.get("arguments") or ""
                                     try:
                                         args = json.loads(args_str) if args_str else {}
                                     except json.JSONDecodeError:
@@ -1078,120 +1192,150 @@ class OpenAILLM(LLM):
                                             f"Failed to parse tool call arguments: {args_str}",
                                         )
                                         args = {}
-                                    fc_entry["dispatched"] = True
-                                    yield LLMResponse(
+                                    fc["dispatched"] = True
+                                    queue.put_nowait(LLMResponse(
                                         content="",
                                         role=ChatRole.ASSISTANT,
                                         metadata={
                                             "function_call": {
-                                                "name": fc_entry.get("name", ""),
+                                                "name": fc.get("name", ""),
                                                 "arguments": args,
-                                                "id": fc_entry.get("call_id", ""),
+                                                "id": fc.get("call_id", ""),
                                             },
-                                            "usage": usage_metadata,
+                                            "usage": dict(usage_metadata),
                                         },
-                                    )
+                                    ))
 
-                        elif etype == "response.completed":
-                            completed = True
-                            resp = event.get("response") or {}
-                            response_id_this_turn = resp.get("id") or response_id_this_turn
-                            usage = resp.get("usage") or {}
-                            usage_metadata["prompt_tokens"] = (
-                                usage.get("input_tokens") or usage.get("prompt_tokens") or 0
-                            )
-                            usage_metadata["completion_tokens"] = (
-                                usage.get("output_tokens") or usage.get("completion_tokens") or 0
-                            )
-                            usage_metadata["total_tokens"] = usage.get("total_tokens") or 0
-                            usage_metadata["request_id"] = response_id_this_turn
-                            usage_metadata["model"] = resp.get("model") or self.model
-                            in_details = usage.get("input_tokens_details") or {}
-                            usage_metadata["prompt_cached_tokens"] = (
-                                in_details.get("cached_tokens") or 0
-                            )
-                            out_details = usage.get("output_tokens_details") or {}
-                            usage_metadata["reasoning_tokens"] = (
-                                out_details.get("reasoning_tokens") or 0
-                            )
+                                if current_content and conversational_graph:
+                                    try:
+                                        parsed_json = json.loads(current_content.strip())
+                                        queue.put_nowait(LLMResponse(
+                                            content="",
+                                            role=ChatRole.ASSISTANT,
+                                            metadata={
+                                                "usage": dict(usage_metadata),
+                                                "graph_response": parsed_json,
+                                            },
+                                        ))
+                                    except json.JSONDecodeError:
+                                        queue.put_nowait(LLMResponse(
+                                            content=current_content,
+                                            role=ChatRole.ASSISTANT,
+                                            metadata={"usage": dict(usage_metadata)},
+                                        ))
 
-                            yield LLMResponse(
-                                content="",
-                                role=ChatRole.ASSISTANT,
-                                metadata={"usage": usage_metadata},
-                            )
+                                # Update chain tracking on success — must happen
+                                # BEFORE pushing _READER_DONE so the next chat()
+                                # call sees the new state.
+                                if response_id_this_turn:
+                                    self._previous_response_id = response_id_this_turn
+                                    self._last_seen_items_count = len(all_items)
+                                # Replace pending-call set with this response's
+                                # function_calls; lets the next chat() verify
+                                # outputs are present before chaining.
+                                self._pending_tool_call_ids = {
+                                    fc.get("call_id")
+                                    for fc in function_calls.values()
+                                    if fc.get("call_id")
+                                }
+                                break
 
-                            for fc in function_calls.values():
-                                if fc.get("dispatched"):
-                                    continue
-                                args_str = fc.get("arguments") or ""
-                                try:
-                                    args = json.loads(args_str) if args_str else {}
-                                except json.JSONDecodeError:
-                                    self.emit(
-                                        "error",
-                                        f"Failed to parse tool call arguments: {args_str}",
-                                    )
-                                    args = {}
-                                fc["dispatched"] = True
-                                yield LLMResponse(
-                                    content="",
-                                    role=ChatRole.ASSISTANT,
-                                    metadata={
-                                        "function_call": {
-                                            "name": fc.get("name", ""),
-                                            "arguments": args,
-                                            "id": fc.get("call_id", ""),
-                                        },
-                                        "usage": usage_metadata,
-                                    },
-                                )
-
-                            if current_content and conversational_graph:
-                                try:
-                                    parsed_json = json.loads(current_content.strip())
-                                    yield LLMResponse(
-                                        content="",
-                                        role=ChatRole.ASSISTANT,
-                                        metadata={
-                                            "usage": usage_metadata,
-                                            "graph_response": parsed_json,
-                                        },
-                                    )
-                                except json.JSONDecodeError:
-                                    yield LLMResponse(
-                                        content=current_content,
-                                        role=ChatRole.ASSISTANT,
-                                        metadata={"usage": usage_metadata},
-                                    )
-
-                            # Update chain tracking only on success.
-                            if response_id_this_turn:
-                                self._previous_response_id = response_id_this_turn
-                                self._last_seen_items_count = len(all_items)
+                        elif ws_msg.type in (
+                            aiohttp.WSMsgType.CLOSED,
+                            aiohttp.WSMsgType.CLOSE,
+                            aiohttp.WSMsgType.CLOSING,
+                            aiohttp.WSMsgType.ERROR,
+                        ):
+                            await self._close_ws()
+                            if not completed and not fallback_done:
+                                fallback_done = True
+                                need_retry = True
+                                payload["input"] = _chat_items_to_responses_input(all_items)
+                                payload.pop("previous_response_id", None)
                             break
+                except asyncio.CancelledError:
+                    queue.put_nowait(_READER_DONE)
+                    raise
+                except Exception as e:
+                    if not self._cancelled:
+                        self.emit("error", e)
+                    queue.put_nowait(e)
+                    return
 
-                    elif ws_msg.type in (
-                        aiohttp.WSMsgType.CLOSED,
-                        aiohttp.WSMsgType.CLOSE,
-                        aiohttp.WSMsgType.CLOSING,
-                        aiohttp.WSMsgType.ERROR,
-                    ):
-                        await self._close_ws()
-                        if not completed and not fallback_done:
-                            fallback_done = True
-                            need_retry = True
-                            payload["input"] = _chat_items_to_responses_input(all_items)
-                            payload.pop("previous_response_id", None)
-                        break
-            except Exception as e:
-                if not self._cancelled:
-                    self.emit("error", e)
-                raise
+                if need_retry and not self._cancelled:
+                    continue
+                queue.put_nowait(_READER_DONE)
+                return
+        except asyncio.CancelledError:
+            raise
 
-            if need_retry and not self._cancelled:
-                continue
+    async def _chat_websocket(
+        self,
+        messages: ChatContext,
+        tools: list[FunctionTool] | None = None,
+        conversational_graph: Any | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[LLMResponse]:
+        """Stream chat responses over the WSS Responses API.
+
+        Spawns a background reader task that drains the WS to
+        ``response.completed`` regardless of when the consumer iterates. This
+        lets the agent dispatch a tool the moment a ``function_call`` is
+        yielded, while the reader continues in parallel and updates the chain
+        state — so the follow-up ``chat()`` call after tool execution can
+        reliably set ``previous_response_id`` and send only the incremental
+        ``function_call_output``.
+        """
+        # Wait for any prior turn's reader to finish so the WS buffer is empty
+        # and chain state is current before we send the next request.
+        await self._await_pending_reader()
+
+        if self._cancelled:
             return
+
+        all_items = list(messages.items)
+
+        # Only chain when every prior tool call has its output in the new
+        # context — otherwise the server would error and force the fallback
+        # path. Vacuous when no tool calls are pending.
+        pending_outputs_present = True
+        if self._pending_tool_call_ids:
+            present_ids = {
+                getattr(it, "call_id", None)
+                for it in all_items
+                if isinstance(it, FunctionCallOutput)
+            }
+            pending_outputs_present = self._pending_tool_call_ids.issubset(present_ids)
+
+        can_chain = (
+            self._previous_response_id is not None
+            and self._ws is not None
+            and not self._ws.closed
+            and self._last_seen_items_count > 0
+            and len(all_items) >= self._last_seen_items_count
+            and pending_outputs_present
+        )
+
+        queue: asyncio.Queue = asyncio.Queue()
+        self._reader_task = asyncio.create_task(
+            self._run_ws_response(
+                queue,
+                all_items=all_items,
+                tools=tools,
+                conversational_graph=conversational_graph,
+                extra_kwargs=kwargs,
+                initial_chained=can_chain,
+            )
+        )
+
+        while True:
+            item = await queue.get()
+            if item is _READER_DONE:
+                return
+            if isinstance(item, BaseException):
+                # Reader already emitted the "error" event before pushing.
+                raise item
+            yield item
 
     async def cancel_current_generation(self) -> None:
         """Cancel the in-flight response.
@@ -1201,11 +1345,15 @@ class OpenAILLM(LLM):
         and avoids paying another TLS+WS handshake.
 
         Falls back to closing the WS if the cancel event can't be delivered
-        (e.g. the connection is already broken).
+        (e.g. the connection is already broken). The background reader task,
+        if any, observes ``_cancelled`` on its next loop iteration and exits
+        on its own — we don't ``task.cancel()`` it so it can drain the
+        ``response.cancelled`` ack cleanly.
         """
         self._cancelled = True
         self._previous_response_id = None
         self._last_seen_items_count = 0
+        self._pending_tool_call_ids = set()
 
         self._drain_until_response_created = True
 
@@ -1221,6 +1369,18 @@ class OpenAILLM(LLM):
         """Cleanup resources. Closes the underlying HTTP client (if owned) and any
         WSS connection / session that was opened for streaming mode."""
         await self.cancel_current_generation()
+        # Wait briefly for the background reader to exit; cancel if it lingers.
+        reader = self._reader_task
+        if reader is not None and not reader.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(reader), timeout=2.0)
+            except (asyncio.TimeoutError, Exception):
+                reader.cancel()
+                try:
+                    await reader
+                except (asyncio.CancelledError, Exception):
+                    pass
+        self._reader_task = None
         if self._prewarm_task is not None and not self._prewarm_task.done():
             self._prewarm_task.cancel()
             try:
