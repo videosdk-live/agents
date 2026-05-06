@@ -46,10 +46,13 @@ from .patterns import (
     RANGE_SEPARATOR_BY_LANG,
     SPELL_LONG_DIGITS_REGEX,
     SPELL_PHONE_REGEX,
+    STRONG_TERMINATORS,
     SYMBOL_EXPANSIONS_EN,
     URL_REGEX,
     VERSION_REGEX,
 )
+
+_STRONG_TERMINATOR_SET: frozenset[str] = frozenset(STRONG_TERMINATORS)
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +84,7 @@ class BasicTextFilter(TextFilter):
         verbalize_currency: bool = True,
         verbalize_numbers: bool = False,
         currency_hint: str | None = None,
+        eager_emit_min_chars: int = 25,
     ) -> None:
         """Initialise the filter.
 
@@ -160,6 +164,12 @@ class BasicTextFilter(TextFilter):
         self._verbalize_currency = verbalize_currency
         self._verbalize_numbers = verbalize_numbers
         self._currency_hint = currency_hint.lower() if currency_hint else None
+        # Threshold for the "trust trailing terminator" fast path: only emit
+        # the whole buffer eagerly when it's at least this long, so short
+        # tokens like "Mr." or "OK." that happen to land at a chunk boundary
+        # during LLM streaming aren't mistaken for complete sentences. Set to
+        # 0 to disable the fast path entirely.
+        self._eager_emit_min_chars = max(0, int(eager_emit_min_chars))
 
         self._buffer: str = ""
         self._in_code_fence: bool = False
@@ -206,6 +216,35 @@ class BasicTextFilter(TextFilter):
                     yield piece
 
                 if self._in_code_fence or not self._buffer:
+                    continue
+
+                # Fast path: buffer ends with a strong terminator (.!? etc.),
+                # is at least ``_eager_emit_min_chars`` long, AND inline
+                # markers balance — emit the whole buffer instead of waiting
+                # for trailing whitespace (the default
+                # `_find_emit_boundary` requires a whitespace boundary).
+                # Required so a single-chunk push of a complete sentence —
+                # typically tool-filler text from content_generation —
+                # doesn't get its trailing word + period held in the filter
+                # buffer until the next chunk arrives. Without this,
+                # downstream streaming TTS (Cartesia, ElevenLabs WS)
+                # receives a fragment without a terminator and stalls
+                # waiting for more text, adding ~1 s of latency on tool
+                # turns. The min-chars guard prevents short LLM tokens like
+                # "Mr." or "OK." from being mistaken for complete sentences.
+                stripped_buf = self._buffer.rstrip()
+                if (
+                    self._eager_emit_min_chars > 0
+                    and stripped_buf
+                    and stripped_buf[-1] in _STRONG_TERMINATOR_SET
+                    and len(stripped_buf) >= self._eager_emit_min_chars
+                    and self._has_balanced_markers(self._buffer)
+                ):
+                    processed = self._process(self._buffer)
+                    self._buffer = ""
+                    if processed:
+                        logger.debug("[chunking] filter fast-path → tokenizer: %r", processed)
+                        yield processed
                     continue
 
                 safe_cut = self._find_emit_boundary(self._buffer)

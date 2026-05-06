@@ -115,6 +115,37 @@ class FunctionCallOutput(BaseModel):
     is_error: bool = False
 
 
+class ToolReply(BaseModel):
+    """
+    Return this from an ``@function_tool`` when the tool already knows what
+    to say to the user. The framework will:
+
+    - speak ``say`` via ``session.say(interruptible=False)`` after the tool returns
+    - record ``data`` (json-serialised) as the FunctionCallOutput in chat history
+    - skip the post-tool LLM call (chat #2) unless ``skip_followup`` is False
+
+    Combine with ``@function_tool(filler="...")`` to also speak something
+    immediately when the tool starts, so the user hears speech during the
+    tool's network/IO wait.
+
+    Attributes:
+        say (str | None): Spoken response delivered after the tool returns.
+            None means no result speech (silent tool).
+        data (Any): Payload recorded as the function_call_output in chat
+            history. Will be ``json.dumps``'d. None records the literal "ok".
+        skip_followup (bool): When True (default), the framework does not
+            trigger a follow-up LLM call after the tool. Set False if you
+            want the LLM to also generate a reply on top of ``say``
+            (rarely needed; usually causes double-speech).
+    """
+    say: Optional[str] = None
+    data: Any = None
+    skip_followup: bool = True
+
+    class Config:
+        arbitrary_types_allowed = True
+
+
 class ChatMessage(BaseModel):
     """
     Represents a single message in the chat context.

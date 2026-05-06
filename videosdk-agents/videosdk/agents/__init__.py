@@ -89,8 +89,8 @@ from .llm.chat_context import (
     ChatContent,
     FunctionCall,
     FunctionCallOutput,
-    ImageContent
-
+    ImageContent,
+    ToolReply,
 )
 from .stt.stt import STT, STTResponse, SpeechEventType, SpeechData
 from .tts.tts import TTS, FlushSentinel

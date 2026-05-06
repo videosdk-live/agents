@@ -113,7 +113,7 @@ class BufferedSentenceStream(SentenceStream):
             return
         try:
             segments = self._tokenize_fn(self._buffer)
-        except Exception: 
+        except Exception:
             logger.error("Tokenizer raised; flushing buffer as-is", exc_info=True)
             remainder = self._buffer.strip()
             self._buffer = ""
@@ -121,7 +121,31 @@ class BufferedSentenceStream(SentenceStream):
                 await self._queue.put(remainder)
             return
 
-        if len(segments) <= 1:
+        if not segments:
+            return
+
+        # Fast path: tokenizer returned a single segment ending with a strong
+        # terminator (after abbreviation protection) and the segment is at
+        # least ``min_sentence_len`` chars. Treat as a complete sentence and
+        # emit immediately rather than waiting for the next push to confirm
+        # via lookahead. Required when upstream pushes a full sentence as a
+        # single chunk (e.g. tool-filler text from content_generation) — the
+        # sentence would otherwise sit in the buffer until the idle-flush
+        # watchdog (≈150 ms) cuts it on a word boundary, and the resulting
+        # fragment lacks a terminator so streaming TTS providers (Cartesia,
+        # ElevenLabs WS) wait for more text before generating audio. The
+        # ``min_sentence_len`` guard prevents short tokens like "Mr." or
+        # "OK." from triggering false-positive emits during LLM streaming.
+        if len(segments) == 1:
+            stripped = segments[0].rstrip()
+            if (
+                stripped
+                and stripped[-1] in self._strong_set
+                and len(stripped) >= self._min_sentence_len
+            ):
+                logger.debug("[chunking] tokenizer fast-path emit: %r", stripped)
+                await self._queue.put(stripped)
+                self._buffer = ""
             return
 
         for segment in segments[:-1]:

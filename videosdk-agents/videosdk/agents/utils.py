@@ -18,10 +18,18 @@ import os
 
 @dataclass
 class FunctionToolInfo:
-    """Holds metadata about a function tool, including its name, description, and parameter schema."""
+    """Holds metadata about a function tool, including its name, description, and parameter schema.
+
+    ``filler`` is an optional short utterance the framework will speak via
+    ``session.say(interruptible=False)`` the moment the LLM dispatches this
+    tool, in parallel with the tool's I/O. Hides tool latency from the user
+    without requiring agents to hand-roll ``asyncio.create_task`` +
+    ``session.interrupt`` patterns.
+    """
     name: str
     description: str | None = None
     parameters_schema: Optional[dict] = None
+    filler: str | None = None
 
 @enum.unique
 class UserState(enum.Enum):
@@ -207,33 +215,48 @@ def get_tool_info(tool: FunctionTool) -> FunctionToolInfo:
         tool = tool.__func__
     return getattr(tool, "_tool_info")
 
-def function_tool(func: Optional[Callable] = None, *, name: Optional[str] = None):
-    """Decorator to mark a function as a tool. Can be used with or without parentheses."""
-    
+def function_tool(
+    func: Optional[Callable] = None,
+    *,
+    name: Optional[str] = None,
+    filler: Optional[str] = None,
+):
+    """Decorator to mark a function as a tool. Can be used with or without parentheses.
+
+    Args:
+        name: Override the tool's exposed name. Defaults to the function name.
+        filler: Optional short utterance the framework speaks the moment the
+            LLM dispatches this tool, in parallel with the tool's I/O.
+            Example: ``@function_tool(filler="One moment while I look that up.")``.
+            Pair with returning :class:`videosdk.agents.ToolReply` to also
+            speak the result and skip the post-tool LLM call.
+    """
+
     def create_wrapper(fn: Callable) -> FunctionTool:
         tool_info = FunctionToolInfo(
             name=name or fn.__name__,
-            description=fn.__doc__
+            description=fn.__doc__,
+            filler=filler,
         )
-        
+
         if asyncio.iscoroutinefunction(fn):
             @wraps(fn)
             async def async_wrapper(*args, **kwargs):
                 return await fn(*args, **kwargs)
-            
+
             setattr(async_wrapper, "_tool_info", tool_info)
             return async_wrapper
         else:
             @wraps(fn)
             def sync_wrapper(*args, **kwargs):
                 return fn(*args, **kwargs)
-            
+
             setattr(sync_wrapper, "_tool_info", tool_info)
             return sync_wrapper
-    
+
     if func is None:
         return create_wrapper
-    
+
     return create_wrapper(func)
 
 def build_pydantic_args_model(func: Callable[..., Any]) -> type[BaseModel]:

@@ -7,7 +7,7 @@ import time
 import logging
 from .event_emitter import EventEmitter
 from .llm.llm import LLM, ResponseChunk
-from .llm.chat_context import ChatRole,FunctionCallOutput
+from .llm.chat_context import ChatRole, FunctionCallOutput, ToolReply
 from .utils import is_function_tool, get_tool_info, UserState, AgentState
 from .agent import Agent
 from .metrics import metrics_collector
@@ -181,9 +181,31 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                         continue
                     
                     if tool:
+                        tool_info = get_tool_info(tool)
                         agent_session = getattr(self.agent, "session", None)
+
                         if agent_session:
                             agent_session._is_executing_tool = True
+
+                        # Initialise here so it's defined for the post-block break
+                        # check whether or not we enter the chat #2 round loop.
+                        _tool_loop_text_yielded = False
+
+                        # Yield filler as a normal LLM chunk so it flows through
+                        # the orchestrator's already-active speech_generation
+                        # synthesize() call. We CANNOT call session.say(filler)
+                        # here — speech_generation.synthesize holds tts_lock for
+                        # the entire turn, and a re-entrant session.say from
+                        # inside the function-call branch would deadlock waiting
+                        # on the same lock. Yielding routes the filler through
+                        # the existing TTS pipeline instead.
+                        if tool_info.filler:
+                            self.emit("generation_chunk", {
+                                "content": tool_info.filler,
+                                "metadata": {},
+                            })
+                            yield ResponseChunk(tool_info.filler, {}, ChatRole.ASSISTANT)
+                            _tool_loop_text_yielded = True
 
                         try:
                             result = await tool(**func_call["arguments"])
@@ -225,144 +247,179 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
 
                                 return
 
-                            chat_context = getattr(self.agent, "chat_context", None)
-                            if not chat_context:
-                                logger.warning("Chat context missing after tool execution")
-                                return
-
-                            chat_context.add_function_output(
-                                name=func_call["name"],
-                                output=json.dumps(result),
-                                call_id=func_call_id
-                            )
-
-                            max_tool_rounds = _max_total_tool_calls
-                            _tool_loop_text_yielded = False  
-                            for _round in range(max_tool_rounds):
-                                logger.debug(f"Post-tool LLM round {_round + 1}/{max_tool_rounds}")
-
-                                pending_calls = []
-                                buffered_text = []
-
-                                async for new_resp in self.llm.chat(
-                                    chat_context,
-                                    tools=self.agent.tools,
-                                    conversational_graph=self.graph_adapter if self.graph_adapter else None
-                                ):
-                                    if self._is_interrupted:
-                                        break
-                                    if not new_resp:
-                                        continue
-
-                                    if new_resp.metadata and "function_call" in new_resp.metadata:
-                                        _total_tool_calls += 1
-                                        if _total_tool_calls > _max_total_tool_calls:
-                                            logger.warning(f"Tool call limit reached ({_max_total_tool_calls}), stopping")
-                                            break
-                                        next_call = new_resp.metadata["function_call"]
-                                        _call_id_counter += 1
-                                        next_call_id = next_call.get("call_id") or f"call_{int(time.time())}_{_call_id_counter}"
-                                        logger.info(f"Chained tool call: {next_call['name']} (round {_round + 1}, total {_total_tool_calls}/{_max_total_tool_calls})")
-                                        pending_calls.append((next_call, next_call_id))
-                                    elif new_resp.content:
-                                        buffered_text.append((new_resp.content, new_resp.metadata, new_resp.role))
-
-                                if not pending_calls and buffered_text:
+                            # ToolReply: tool produced its own spoken response.
+                            # Yield the result text as another LLM chunk so it
+                            # flows through the same active synthesize() call
+                            # (just like the filler above). Skips chat #2 by
+                            # default so we avoid the wasted-server-work +
+                            # chain-state-wipe that the manual
+                            # asyncio.create_task + session.interrupt workaround
+                            # forces.
+                            if isinstance(result, ToolReply):
+                                chat_context = getattr(self.agent, "chat_context", None)
+                                if chat_context:
+                                    output_str = (
+                                        json.dumps(result.data)
+                                        if result.data is not None
+                                        else "ok"
+                                    )
+                                    chat_context.add_function_output(
+                                        name=func_call["name"],
+                                        output=output_str,
+                                        call_id=func_call_id,
+                                    )
+                                if result.say:
+                                    self.emit("generation_chunk", {
+                                        "content": result.say,
+                                        "metadata": {},
+                                    })
+                                    yield ResponseChunk(result.say, {}, ChatRole.ASSISTANT)
                                     _tool_loop_text_yielded = True
-                                    for content, metadata, role in buffered_text:
-                                        self.emit("generation_chunk", {"content": content, "metadata": metadata})
-                                        yield ResponseChunk(content, metadata, role)
-                                elif pending_calls and buffered_text:
-                                    logger.debug("Discarding intermediate text (tool calls pending)")
+                                if result.skip_followup:
+                                    _tool_loop_text_yielded = True
 
-                                if self._is_interrupted or not pending_calls:
-                                    break
+                            # Chat #2 path runs unless ToolReply explicitly said skip.
+                            if not (isinstance(result, ToolReply) and result.skip_followup):
+                                chat_context = getattr(self.agent, "chat_context", None)
+                                if not chat_context:
+                                    logger.warning("Chat context missing after tool execution")
+                                    return
 
-                                for next_call, next_call_id in pending_calls:
-                                    chat_context.add_function_call(
-                                        name=next_call["name"],
-                                        arguments=json.dumps(next_call["arguments"]),
-                                        call_id=next_call_id
+                                # ToolReply branch already recorded its data above;
+                                # only record raw returns here to avoid duplicates.
+                                if not isinstance(result, ToolReply):
+                                    chat_context.add_function_output(
+                                        name=func_call["name"],
+                                        output=json.dumps(result),
+                                        call_id=func_call_id
                                     )
 
-                                if len(pending_calls) == 1:
-                                    next_call, next_call_id = pending_calls[0]
-                                    next_tool = next(
-                                        (t for t in self.agent.tools
-                                         if is_function_tool(t) and get_tool_info(t).name == next_call["name"]),
-                                        None
-                                    )
-                                    if next_tool:
-                                        next_result = await next_tool(**next_call["arguments"])
-                                        chat_context.add_function_output(
+                                max_tool_rounds = _max_total_tool_calls
+                                for _round in range(max_tool_rounds):
+                                    logger.debug(f"Post-tool LLM round {_round + 1}/{max_tool_rounds}")
+
+                                    pending_calls = []
+                                    buffered_text = []
+
+                                    async for new_resp in self.llm.chat(
+                                        chat_context,
+                                        tools=self.agent.tools,
+                                        conversational_graph=self.graph_adapter if self.graph_adapter else None
+                                    ):
+                                        if self._is_interrupted:
+                                            break
+                                        if not new_resp:
+                                            continue
+
+                                        if new_resp.metadata and "function_call" in new_resp.metadata:
+                                            _total_tool_calls += 1
+                                            if _total_tool_calls > _max_total_tool_calls:
+                                                logger.warning(f"Tool call limit reached ({_max_total_tool_calls}), stopping")
+                                                break
+                                            next_call = new_resp.metadata["function_call"]
+                                            _call_id_counter += 1
+                                            next_call_id = next_call.get("call_id") or f"call_{int(time.time())}_{_call_id_counter}"
+                                            logger.info(f"Chained tool call: {next_call['name']} (round {_round + 1}, total {_total_tool_calls}/{_max_total_tool_calls})")
+                                            pending_calls.append((next_call, next_call_id))
+                                        elif new_resp.content:
+                                            buffered_text.append((new_resp.content, new_resp.metadata, new_resp.role))
+
+                                    if not pending_calls and buffered_text:
+                                        _tool_loop_text_yielded = True
+                                        for content, metadata, role in buffered_text:
+                                            self.emit("generation_chunk", {"content": content, "metadata": metadata})
+                                            yield ResponseChunk(content, metadata, role)
+                                    elif pending_calls and buffered_text:
+                                        logger.debug("Discarding intermediate text (tool calls pending)")
+
+                                    if self._is_interrupted or not pending_calls:
+                                        break
+
+                                    for next_call, next_call_id in pending_calls:
+                                        chat_context.add_function_call(
                                             name=next_call["name"],
-                                            output=json.dumps(next_result),
+                                            arguments=json.dumps(next_call["arguments"]),
                                             call_id=next_call_id
                                         )
-                                    else:
-                                        chat_context.add_function_output(
-                                            name=next_call["name"],
-                                            output=json.dumps({"error": f"Tool '{next_call['name']}' not found"}),
-                                            call_id=next_call_id,
-                                            is_error=True
-                                        )
-                                else:
-                                    logger.info(f"Executing {len(pending_calls)} tools in parallel")
 
-                                    async def _exec_tool(call_info):
-                                        nc, nc_id = call_info
-                                        t = next(
+                                    if len(pending_calls) == 1:
+                                        next_call, next_call_id = pending_calls[0]
+                                        next_tool = next(
                                             (t for t in self.agent.tools
-                                             if is_function_tool(t) and get_tool_info(t).name == nc["name"]),
+                                             if is_function_tool(t) and get_tool_info(t).name == next_call["name"]),
                                             None
                                         )
-                                        if t:
-                                            return nc, nc_id, await t(**nc["arguments"]), False
-                                        return nc, nc_id, {"error": f"Tool '{nc['name']}' not found"}, True
+                                        if next_tool:
+                                            next_result = await next_tool(**next_call["arguments"])
+                                            chat_context.add_function_output(
+                                                name=next_call["name"],
+                                                output=json.dumps(next_result),
+                                                call_id=next_call_id
+                                            )
+                                        else:
+                                            chat_context.add_function_output(
+                                                name=next_call["name"],
+                                                output=json.dumps({"error": f"Tool '{next_call['name']}' not found"}),
+                                                call_id=next_call_id,
+                                                is_error=True
+                                            )
+                                    else:
+                                        logger.info(f"Executing {len(pending_calls)} tools in parallel")
 
-                                    results = await asyncio.gather(
-                                        *[_exec_tool(pc) for pc in pending_calls],
-                                        return_exceptions=True
-                                    )
+                                        async def _exec_tool(call_info):
+                                            nc, nc_id = call_info
+                                            t = next(
+                                                (t for t in self.agent.tools
+                                                 if is_function_tool(t) and get_tool_info(t).name == nc["name"]),
+                                                None
+                                            )
+                                            if t:
+                                                return nc, nc_id, await t(**nc["arguments"]), False
+                                            return nc, nc_id, {"error": f"Tool '{nc['name']}' not found"}, True
 
-                                    for r in results:
-                                        if isinstance(r, Exception):
-                                            logger.error(f"Parallel tool error: {r}")
-                                            continue
-                                        nc, nc_id, output, is_err = r
-                                        chat_context.add_function_output(
-                                            name=nc["name"],
-                                            output=json.dumps(output),
-                                            call_id=nc_id,
-                                            is_error=is_err
+                                        results = await asyncio.gather(
+                                            *[_exec_tool(pc) for pc in pending_calls],
+                                            return_exceptions=True
                                         )
 
-                            last_item = chat_context.items[-1] if chat_context.items else None
-                            if not self._is_interrupted and not _tool_loop_text_yielded and isinstance(last_item, FunctionCallOutput):
-                                logger.info("Tool loop exhausted, forcing final text response")
-                                async for final_resp in self.llm.chat(
-                                    chat_context,
-                                    tools=None,
-                                    conversational_graph=self.graph_adapter if self.graph_adapter else None
-                                ):
-                                    if self._is_interrupted or not final_resp:
-                                        break
-                                    if final_resp.content:
-                                        self.emit("generation_chunk", {
-                                            "content": final_resp.content,
-                                            "metadata": final_resp.metadata
-                                        })
-                                        yield ResponseChunk(final_resp.content, final_resp.metadata, final_resp.role)
+                                        for r in results:
+                                            if isinstance(r, Exception):
+                                                logger.error(f"Parallel tool error: {r}")
+                                                continue
+                                            nc, nc_id, output, is_err = r
+                                            chat_context.add_function_output(
+                                                name=nc["name"],
+                                                output=json.dumps(output),
+                                                call_id=nc_id,
+                                                is_error=is_err
+                                            )
 
-                            if self._is_interrupted:
                                 last_item = chat_context.items[-1] if chat_context.items else None
-                                if isinstance(last_item, FunctionCallOutput):
-                                    logger.info(f"Tool execution interrupted after '{last_item.name}', adding closure")
-                                    msg = chat_context.add_message(
-                                        role=ChatRole.ASSISTANT,
-                                        content=f"[Used {last_item.name} tool — response interrupted]"
-                                    )
-                                    msg.interrupted = True
+                                if not self._is_interrupted and not _tool_loop_text_yielded and isinstance(last_item, FunctionCallOutput):
+                                    logger.info("Tool loop exhausted, forcing final text response")
+                                    async for final_resp in self.llm.chat(
+                                        chat_context,
+                                        tools=None,
+                                        conversational_graph=self.graph_adapter if self.graph_adapter else None
+                                    ):
+                                        if self._is_interrupted or not final_resp:
+                                            break
+                                        if final_resp.content:
+                                            self.emit("generation_chunk", {
+                                                "content": final_resp.content,
+                                                "metadata": final_resp.metadata
+                                            })
+                                            yield ResponseChunk(final_resp.content, final_resp.metadata, final_resp.role)
+
+                                if self._is_interrupted:
+                                    last_item = chat_context.items[-1] if chat_context.items else None
+                                    if isinstance(last_item, FunctionCallOutput):
+                                        logger.info(f"Tool execution interrupted after '{last_item.name}', adding closure")
+                                        msg = chat_context.add_message(
+                                            role=ChatRole.ASSISTANT,
+                                            content=f"[Used {last_item.name} tool — response interrupted]"
+                                        )
+                                        msg.interrupted = True
 
                         except Exception as e:
                             logger.error(f"Error executing function {func_call['name']}: {e}")
