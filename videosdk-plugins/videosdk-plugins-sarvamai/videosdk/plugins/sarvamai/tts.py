@@ -8,7 +8,7 @@ from typing import Any, AsyncIterator, Optional,Literal
 
 import aiohttp
 import httpx
-from videosdk.agents import TTS
+from videosdk.agents import TTS, FlushSentinel
 import logging
 
 logger = logging.getLogger(__name__)
@@ -275,6 +275,8 @@ class SarvamAITTS(TTS):
                     async for chunk in text:
                         if self._interrupted:
                             break
+                        if isinstance(chunk, FlushSentinel):
+                            continue
                         if chunk and chunk.strip():
                             parts.append(chunk)
 
@@ -367,6 +369,10 @@ class SarvamAITTS(TTS):
             async for text_chunk in text_iterator:
                 if self._interrupted:
                     break
+
+                if isinstance(text_chunk, FlushSentinel):
+                    await self._ws_connection.send_str(json.dumps({"type": "flush"}))
+                    continue
 
                 if not text_chunk or not text_chunk.strip():
                     continue
