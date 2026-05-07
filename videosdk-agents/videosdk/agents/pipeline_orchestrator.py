@@ -125,6 +125,8 @@ class PipelineOrchestrator(EventEmitter[Literal[
             self.speech_understanding.on("transcript_interim", self._wrap_async(self._on_transcript_interim))
             self.speech_understanding.on("speech_started", self._wrap_async(self._on_speech_started))
             self.speech_understanding.on("speech_stopped", self._wrap_async(self._on_speech_stopped))
+            self.speech_understanding.on("backchannel_detected", self._wrap_async(self._on_backchannel_detected))
+            self.speech_understanding.on("wait_detected", self._wrap_async(self._on_wait_detected))
             self.speech_understanding.on("turn_resumed", self._wrap_async(self._on_turn_resumed))
         
         if llm:
@@ -303,6 +305,21 @@ class PipelineOrchestrator(EventEmitter[Literal[
             return self.speech_understanding._accumulated_transcript
         return ""
     
+    def _is_agent_active(self) -> bool:
+        """True if the agent is generating or playing back a response — i.e.
+        there is something an interrupt would actually cancel.
+
+        Returns False when there's no agent/session (cleanup paths) or when
+        the agent is idle/listening with no in-flight playback.
+        """
+        if not (self.agent and self.agent.session):
+            return False
+        agent_state = self.agent.session.agent_state
+        cu = self.agent.session.current_utterance
+        is_playing_audio = bool(self.speech_generation and self.speech_generation.is_speaking)
+        playback_counts_for_turn = is_playing_audio and not (cu is not None and cu.done())
+        return (agent_state in (AgentState.SPEAKING, AgentState.THINKING)) or playback_counts_for_turn
+
     async def _on_transcript_final(self, data: dict) -> None:
         """Handle final transcript from speech understanding"""
         text = data["text"]
@@ -311,8 +328,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
         agent_state = self.agent.session.agent_state if self.agent and self.agent.session else None
         cu = self.agent.session.current_utterance if self.agent and self.agent.session else None
         is_playing_audio = bool(self.speech_generation and self.speech_generation.is_speaking)
-        playback_counts_for_turn = is_playing_audio and not (cu is not None and cu.done())
-        is_agent_active = (agent_state in (AgentState.SPEAKING, AgentState.THINKING)) or playback_counts_for_turn
+        is_agent_active = self._is_agent_active()
 
         if is_agent_active:
             word_count = len(text.strip().split()) if text.strip() else 0
@@ -424,7 +440,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
         text = data.get("text", "")
         if text and text.strip():
             await self.handle_stt_event(text)
-    
+
     async def _on_speech_started(self, data: dict) -> None:
         """Handle speech started event"""
         logger.info("[orchestrator] _on_speech_started fired")
@@ -437,7 +453,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 self._interruption_check_task = asyncio.create_task(
                     self._monitor_interruption_duration()
                 )
-    
+
     async def _on_speech_stopped(self, data: dict) -> None:
         """Handle speech stopped event"""
         logger.info("[orchestrator] _on_speech_stopped fired")
@@ -447,6 +463,43 @@ class PipelineOrchestrator(EventEmitter[Literal[
             logger.info("User stopped speaking, cancelling interruption check")
             self._interruption_check_task.cancel()
     
+    async def _on_backchannel_detected(self, data: dict) -> None:
+        """Backchannel detected — cancel the pending interrupt monitor and
+        resume TTS if it was paused (transcript was already dropped upstream)."""
+        if self._interruption_check_task is not None and not self._interruption_check_task.done():
+            logger.info("[orchestrator] Backchannel detected — cancelling pending interruption monitor")
+            self._interruption_check_task.cancel()
+
+        if self._is_in_false_interrupt_pause:
+            logger.info("[orchestrator] Backchannel detected — resuming paused TTS")
+            self._cancel_false_interrupt_timer()
+            self._is_in_false_interrupt_pause = False
+            self._false_interrupt_paused_speech = False
+            self._is_interrupted = False
+            if self.speech_generation and self.speech_generation.can_pause():
+                try:
+                    await self.speech_generation.resume()
+                except Exception as e:
+                    logger.error(f"[orchestrator] Failed to resume TTS after backchannel: {e}")
+
+    async def _on_wait_detected(self, data: dict) -> None:
+        """Wait detected — user explicitly told the agent to stop ("wait buddy", "hold on")"""
+        text = data.get("text", "")
+
+        if self._interruption_check_task is not None and not self._interruption_check_task.done():
+            self._interruption_check_task.cancel()
+
+        if not (self._is_agent_active() or self._is_in_false_interrupt_pause):
+            logger.info(f"[orchestrator] Wait detected while agent idle — transcript already dropped (text={text!r})")
+            return
+
+        logger.info(f"[orchestrator] Wait detected — interrupting pipeline immediately (text={text!r})")
+
+        if self._preemptive_generation_task and not self._preemptive_generation_task.done():
+            await self._cancel_preemptive_generation()
+
+        await self._interrupt_pipeline()
+
     async def _on_turn_resumed(self, data: dict) -> None:
         """Handle turn resumed event"""
         await self._cancel_preemptive_generation()
@@ -793,19 +846,28 @@ class PipelineOrchestrator(EventEmitter[Literal[
             if not handle.done():
                 handle._mark_done()
     
+    _FAST_INTERRUPT_CONFIRM_WINDOW: float = 0.08
+
     async def _monitor_interruption_duration(self) -> None:
-        """Monitor user speech duration during agent response"""
+        """Monitor user speech duration during agent response."""
         if self.interrupt_mode not in ("VAD_ONLY", "HYBRID"):
             return
-        
+
+        if (
+            self._turn_detector_supports_backchannel()
+            and self.speech_generation
+            and self.speech_generation.can_pause()
+        ):
+            delay = min(self.interrupt_min_duration, self._FAST_INTERRUPT_CONFIRM_WINDOW)
+        else:
+            delay = self.interrupt_min_duration
+
         try:
-            await asyncio.sleep(self.interrupt_min_duration)
-            
+            await asyncio.sleep(delay)
             if self.agent and self.agent.session and self.agent.session.current_utterance:
                 if self.agent.session.current_utterance.is_interruptible:
-                    logger.info(f"User speech duration exceeded {self.interrupt_min_duration}s threshold, triggering interruption")
+                    logger.info(f"User speech duration exceeded {delay}s threshold, triggering interruption")
                     await self._trigger_interruption()
-        
         except asyncio.CancelledError:
             logger.debug("Interruption monitoring cancelled")
     
@@ -835,14 +897,26 @@ class PipelineOrchestrator(EventEmitter[Literal[
         else:
             logger.info(f"[orchestrator] handle_stt_event: word_count={word_count}, min_words={self.interrupt_min_words}, mode={self.interrupt_mode}, no current_utterance")
         
-        if self.resume_on_false_interrupt and self._is_in_false_interrupt_pause and word_count >= self.interrupt_min_words:
+        if self._turn_detector_supports_backchannel():
+            if self._is_in_false_interrupt_pause:
+                return False
+            threshold = max(self.interrupt_min_words, 3)
+            if word_count < threshold:
+                return False
+            if self.agent and self.agent.session and self.agent.session.current_utterance:
+                if self.agent.session.current_utterance.is_interruptible:
+                    logger.info(f"[orchestrator] STT word_count {word_count} >= {threshold} (backchannel-aware) → pause-resume")
+                    await self._trigger_interruption()
+                    return True
+            return False
+
+        if self._supports_pause_resume() and self._is_in_false_interrupt_pause and word_count >= self.interrupt_min_words:
             logger.info(f"STT transcript received while in paused state, confirming real interruption")
             self._cancel_false_interrupt_timer()
             self._is_in_false_interrupt_pause = False
             self._false_interrupt_paused_speech = False
             await self._interrupt_pipeline()
             return True
-        
         if self.interrupt_mode in ("STT_ONLY", "HYBRID"):
             if word_count >= self.interrupt_min_words:
                 if self.agent and self.agent.session and self.agent.session.current_utterance:
@@ -854,23 +928,33 @@ class PipelineOrchestrator(EventEmitter[Literal[
                         logger.info(f"[orchestrator] Word count threshold met but utterance is not interruptible")
             else:
                 logger.info(f"[orchestrator] Word count {word_count} < min_words {self.interrupt_min_words}, ignoring")
-        
         return False
     
+    def _turn_detector_supports_backchannel(self) -> bool:
+        """True if the turn detector can label utterances as ``Backchannel``."""
+        td = self.speech_understanding.turn_detector if self.speech_understanding else None
+        return bool(td and getattr(td, "supports_backchannel_classification", False))
+
+    def _supports_pause_resume(self) -> bool:
+        """Whether interrupts pause-and-resume rather than fully clear."""
+        return self.resume_on_false_interrupt or self._turn_detector_supports_backchannel()
+
     async def _trigger_interruption(self) -> None:
         """Trigger interruption with optional pause/resume support"""
         if self._is_interrupted:
             return
-        
         if self.agent and self.agent.session and self.agent.session.current_utterance:
             if not self.agent.session.current_utterance.is_interruptible:
                 logger.info("Interruption disabled for current utterance")
                 return
-        
         self._is_interrupted = True
-        
-        can_resume = self.resume_on_false_interrupt and self.speech_generation and self.speech_generation.can_pause()
-        
+
+        can_resume = (
+            self._supports_pause_resume()
+            and self.speech_generation
+            and self.speech_generation.can_pause()
+        )
+
         if can_resume:
             logger.info("Pausing TTS for potential resume")
             self._false_interrupt_paused_speech = True

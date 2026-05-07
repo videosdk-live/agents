@@ -90,8 +90,8 @@ async def start_session(context: JobContext):
         vad=SileroVAD(),
         turn_detector=TurnDetector()
 
-        # turn_detector=TurnV2.roberta()
-        # turn_detector=TurnV2.gemma() 
+        # turn_detector=TurnV2.echo_small()
+        # turn_detector=TurnV2.echo_large(),
     )
 
     session = AgentSession(

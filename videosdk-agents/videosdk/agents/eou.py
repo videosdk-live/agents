@@ -9,7 +9,9 @@ logger = logging.getLogger(__name__)
 
 class EOU(EventEmitter[Literal["error"]]):
     """Base class for End of Utterance Detection implementations"""
-    
+
+    supports_backchannel_classification: bool = False
+
     def __init__(self, threshold: float = 0.7) -> None:
         super().__init__()
         self._label = f"{type(self).__module__}.{type(self).__name__}"
@@ -58,7 +60,15 @@ class EOU(EventEmitter[Literal["error"]]):
     def set_threshold(self, threshold: float) -> None:
         """Update the EOU detection threshold"""
         self._threshold = threshold
-    
+
+    @property
+    def last_state(self) -> Optional[str]:
+        """
+        Most recent turn state from the detector, or None.
+        TurnV2 returns one of ``Incomplete | Complete | Backchannel | Wait``
+        """
+        return None
+
     async def aclose(self) -> None:
         """Cleanup resources - should be overridden by subclasses to cleanup models"""
         logger.info(f"Cleaning up EOU: {self._label}")

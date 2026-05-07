@@ -320,13 +320,22 @@ _RETRYABLE_CODES = frozenset({
     grpc.StatusCode.INTERNAL,
 })
 
-_GRPC_COMPLETE_STATES = {"Complete", "Backchannel", "Wait"}
+TURN_STATE_INCOMPLETE = "Incomplete"
+TURN_STATE_COMPLETE = "Complete"
+TURN_STATE_BACKCHANNEL = "Backchannel"
+TURN_STATE_WAIT = "Wait"
+
+_KNOWN_TURN_STATES: frozenset[str] = frozenset(
+    {TURN_STATE_INCOMPLETE, TURN_STATE_COMPLETE, TURN_STATE_BACKCHANNEL, TURN_STATE_WAIT}
+)
+
+_FINALIZING_TURN_STATES: frozenset[str] = frozenset({TURN_STATE_COMPLETE})
 
 class TurnV2(EOU):
-    """End-of-Utterance detector backed by the Rust gRPC inference worker.
+    """End-of-Utterance detector
 
     Args:
-        model_id: ``"roberta"`` (default, faster) or ``"gemma"``.
+        model_id: ``"echo-small"`` (default, faster) or ``"echo-large"``.
         host: ``host:port`` of the gRPC server. Falls back to the
             ``VIDEOSDK_TURN_GRPC_HOST`` env var, then to ``localhost:50051``.
         threshold: EOU probability threshold (default ``0.7``).
@@ -337,10 +346,12 @@ class TurnV2(EOU):
             ungated dev servers).
     """
 
+    supports_backchannel_classification: bool = True
+
     def __init__(
         self,
         *,
-        model_id: str = "roberta",
+        model_id: str = "echo-small",
         host: Optional[str] = None,
         threshold: float = 0.7,
         timeout: float = DEFAULT_GRPC_TIMEOUT_SECONDS,
@@ -359,36 +370,37 @@ class TurnV2(EOU):
         self._channel: Optional[grpc.Channel] = None
         self._stub: Optional[turn_detection_pb2_grpc.TurnDetectionStub] = None
         self._stub_lock = threading.Lock()
+        self._last_state: Optional[str] = None
 
         threading.Thread(
             target=self._warmup, name="TurnV2-warmup", daemon=True
         ).start()
 
     @staticmethod
-    def roberta(
+    def echo_small(
         *,
         host: Optional[str] = None,
         threshold: float = 0.7,
         timeout: float = DEFAULT_GRPC_TIMEOUT_SECONDS,
         token: Optional[str] = None,
     ) -> "TurnV2":
-        """ONNX-based RoBERTa turn detector."""
+        """ONNX-based echo-small turn detector."""
         return TurnV2(
-            model_id="roberta", host=host, threshold=threshold,
+            model_id="echo-small", host=host, threshold=threshold,
             timeout=timeout, token=token,
         )
 
     @staticmethod
-    def gemma(
+    def echo_large(
         *,
         host: Optional[str] = None,
         threshold: float = 0.7,
         timeout: float = DEFAULT_GRPC_TIMEOUT_SECONDS,
         token: Optional[str] = None,
     ) -> "TurnV2":
-        """Higher-accuracy Gemma turn detector."""
+        """Higher-accuracy echo-large turn detector."""
         return TurnV2(
-            model_id="gemma", host=host, threshold=threshold,
+            model_id="echo-large", host=host, threshold=threshold,
             timeout=timeout, token=token,
         )
 
@@ -400,6 +412,7 @@ class TurnV2(EOU):
                 if t:
                     text = t
                     break
+        self._last_state = None
         if not text:
             return 0.0
 
@@ -410,6 +423,10 @@ class TurnV2(EOU):
                 stub = self._get_stub()
                 response = stub.Predict(
                     request, timeout=self.timeout, metadata=self._metadata
+                )
+                self._last_state = response.state
+                logger.info(
+                    f"[TurnV2] state={response.state!r} for text={text!r}"
                 )
                 return self._state_to_probability(response.state)
             except grpc.RpcError as e:
@@ -425,11 +442,22 @@ class TurnV2(EOU):
                 return 0.0
         return 0.0
 
+    @property
+    def last_state(self) -> Optional[str]:
+        """Raw state from the last successful Predict, or None.
+        One of ``Incomplete | Complete | Backchannel | Wait``."""
+        return self._last_state
+
     @staticmethod
     def _state_to_probability(state: str) -> float:
-        if state in _GRPC_COMPLETE_STATES:
+        """Map state label to the binary EOU probability.
+
+        Only ``Complete`` finalizes the turn (1.0). ``Incomplete``,
+        ``Backchannel`` and ``Wait`` all return 0.0
+        """
+        if state in _FINALIZING_TURN_STATES:
             return 1.0
-        if state == "Incomplete":
+        if state in _KNOWN_TURN_STATES:
             return 0.0
         logger.warning(f"[TurnV2] Unknown state {state!r} — treating as incomplete")
         return 0.0

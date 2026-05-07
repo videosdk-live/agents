@@ -73,8 +73,8 @@ async def entrypoint(ctx: JobContext):
         vad=SileroVAD(),
         turn_detector=Turn.namo(language="en"),
 
-        # turn_detector=TurnV2.roberta()
-        # turn_detector=TurnV2.gemma() 
+        # turn_detector=TurnV2.echo_large()
+        # turn_detector=TurnV2.echo_small()
     )
 
     session = AgentSession(

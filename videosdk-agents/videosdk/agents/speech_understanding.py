@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Callable, Awaitable, Literal, TYPE_CHECKING
+from typing import Callable, Awaitable, Literal, Optional, TYPE_CHECKING
 import asyncio
 import logging
 import time
@@ -8,7 +8,7 @@ from .event_emitter import EventEmitter
 from .stt.stt import STT, STTResponse, SpeechEventType
 from .vad import VAD, VADResponse, VADEventType
 from .eou import EOU
-from .llm.chat_context import ChatRole
+from .llm.chat_context import ChatContext, ChatRole
 from .denoise import Denoise
 from .metrics import metrics_collector
 from .utils import UserState, AgentState
@@ -21,16 +21,18 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript_final", "speech_started", "speech_stopped", "eou_detected"]]):
+class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript_final", "speech_started", "speech_stopped", "eou_detected", "backchannel_detected", "wait_detected"]]):
     """
     Handles speech input processing through VAD, STT, and Turn Detection.
-    
+
     Events:
     - transcript_interim: Interim transcription received
     - transcript_final: Final transcription ready for processing
     - speech_started: User started speaking (from VAD)
     - speech_stopped: User stopped speaking (from VAD)
     - eou_detected: End of utterance detected
+    - backchannel_detected: Turn detector classified the utterance as a backchannel. The accumulated transcript is dropped and never reaches the LLM, so the agent keeps speaking uninterrupted.
+    - wait_detected: Turn detector classified the utterance as a "wait" command. The accumulated transcript is dropped and never reaches the LLM/TTS; the orchestrator hard-cuts the agent's current speech.
     """
     
     def __init__(
@@ -259,6 +261,14 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
                 "text": self._preemptive_transcript
             })
     
+    def _build_eou_chat_context(self) -> "ChatContext":
+        """Build chat context for EOU"""
+        base_items = list(self.agent.chat_context.items) if self.agent else []
+        ctx = ChatContext(base_items)
+        if self._accumulated_transcript:
+            ctx.add_message(role=ChatRole.USER, content=self._accumulated_transcript)
+        return ctx
+
     async def _process_transcript_with_eou(self, new_transcript: str) -> None:
         """Process transcript with EOU-based decision making"""
         async with self._transcript_processing_lock:
@@ -266,29 +276,52 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
                 self._accumulated_transcript += " " + new_transcript
             else:
                 self._accumulated_transcript = new_transcript
-            
             delay = self.min_speech_wait_timeout
-            
+            eou_probability: float | None = None
+            eou_state: Optional[str] = None
             if self.mode == 'DEFAULT':
                 if self.turn_detector and self.agent:
                     metrics_collector.on_eou_start()
-                    eou_probability = self.turn_detector.get_eou_probability(self.agent.chat_context)
+                    eou_chat_context = self._build_eou_chat_context()
+                    eou_probability = await asyncio.to_thread(
+                        self.turn_detector.get_eou_probability, eou_chat_context
+                    )
+                    eou_state = self.turn_detector.last_state
                     metrics_collector.on_eou_complete()
-                    logger.info(f"EOU probability: {eou_probability}")
+                    logger.info(f"EOU probability: {eou_probability} | state: {eou_state}")
                     if eou_probability < self.eou_certainty_threshold:
                         delay = self.max_speech_wait_timeout
                     metrics_collector.on_wait_for_additional_speech(delay, eou_probability)
-                        
             elif self.mode == 'ADAPTIVE':
                 if self.turn_detector and self.agent:
                     metrics_collector.on_eou_start()
-                    eou_probability = self.turn_detector.get_eou_probability(self.agent.chat_context)
+                    eou_chat_context = self._build_eou_chat_context()
+                    eou_probability = await asyncio.to_thread(
+                        self.turn_detector.get_eou_probability, eou_chat_context
+                    )
+                    eou_state = self.turn_detector.last_state
                     metrics_collector.on_eou_complete()
-                    logger.info(f"EOU probability: {eou_probability}")
+                    logger.info(f"EOU probability: {eou_probability} | state: {eou_state}")
                     delay_range = self.max_speech_wait_timeout - self.min_speech_wait_timeout
                     wait_factor = 1.0 - eou_probability
                     delay = self.min_speech_wait_timeout + (delay_range * wait_factor)
                     metrics_collector.on_wait_for_additional_speech(delay, eou_probability)
+
+            if eou_state == "Backchannel":
+                self._drop_accumulated_transcript_and_emit(
+                    event="backchannel_detected",
+                    eou_probability=eou_probability,
+                    log_label="Backchannel",
+                )
+                return
+
+            if eou_state == "Wait":
+                self._drop_accumulated_transcript_and_emit(
+                    event="wait_detected",
+                    eou_probability=eou_probability,
+                    log_label="Wait",
+                )
+                return
 
             logger.info(f"Using delay: {delay} seconds")
             await self._wait_for_additional_speech(delay)
@@ -332,6 +365,30 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
 
             await self._finalize_transcript()
     
+    def _drop_accumulated_transcript_and_emit(
+        self,
+        *,
+        event: Literal["backchannel_detected", "wait_detected"],
+        eou_probability: float | None,
+        log_label: str,
+    ) -> None:
+        """Drop the in-progress transcript and emit a discard event."""
+        if self._wait_timer:
+            self._wait_timer.cancel()
+            self._wait_timer = None
+        self._record_wait_elapsed()
+        self._waiting_for_more_speech = False
+        dropped_text = self._accumulated_transcript
+        self._accumulated_transcript = ""
+        logger.info(
+            f"[speech_understanding] {log_label} detected — dropping transcript: '{dropped_text}'"
+        )
+        metrics_collector.emit_user_transcript_transport(dropped_text, type="final")
+        self.emit(event, {
+            "text": dropped_text,
+            "eou_probability": eou_probability,
+        })
+
     async def _finalize_transcript(self) -> None:
         """Finalize the accumulated transcript and emit event"""
         if not self._accumulated_transcript.strip():
