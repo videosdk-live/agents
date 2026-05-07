@@ -5,7 +5,6 @@ import base64
 import json
 import logging
 import os
-import re
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, List, Optional, Union
 
@@ -47,74 +46,6 @@ def _build_generation_config_payload(cfg: GenerationConfig) -> dict[str, Any]:
     if cfg.volume is not None:
         out["volume"] = cfg.volume
     return out
-
-
-class _SentenceBuffer:
-    """Streaming sentence boundary detector for per-sentence TTS flushing.
-
-    Operates in two modes:
-
-    1. **Trust-the-chunk (fast path)**: if the current buffer ends with a
-       sentence terminator [.!?], the most recent push completed a sentence —
-       emit the whole buffer as one unit. This handles the case where an
-       upstream tokenizer (e.g. ``BufferedSentenceStream``) is already feeding
-       us pre-segmented sentence chunks (with or without trailing whitespace).
-       Required because pre-segmented chunks often arrive *without* trailing
-       whitespace, which the slow path's regex would never match.
-
-    2. **Regex split (slow path)**: when the buffer doesn't end with a
-       terminator, scan for terminator+whitespace pairs *inside* the buffer.
-       Used for raw LLM token streaming where chunks land mid-sentence and may
-       contain multiple completed sentences before the boundary chunk arrives.
-
-    Both paths suppress splits shorter than ``_MIN_SENTENCE_CHARS`` to avoid
-    emitting common abbreviations (``Mr.``, ``Sec.``, ``I.O.U.``) prematurely.
-    Anything still buffered at end-of-stream is returned by ``drain()``.
-    """
-
-    _BOUNDARY = re.compile(r'[.!?]+["\')\]]?\s')
-    _MIN_SENTENCE_CHARS = 6
-
-    def __init__(self) -> None:
-        self._buf = ""
-
-    def push(self, text: str) -> List[str]:
-        if not text:
-            return []
-        self._buf += text
-        out: List[str] = []
-
-        # Fast path: chunk just completed a sentence (ends with [.!?]).
-        # Trust the upstream's chunk boundary and emit the whole buffer,
-        # rather than letting the regex split internal occurrences (e.g.
-        # 'Hello Mr. Smith said.' mistakenly into two sentences).
-        stripped = self._buf.rstrip()
-        if stripped and stripped[-1] in ".!?" and len(stripped) >= self._MIN_SENTENCE_CHARS:
-            out.append(stripped)
-            self._buf = ""
-            return out
-
-        # Slow path: scan for explicit terminator+whitespace boundaries inside
-        # the buffer. Used for raw LLM token streaming where chunks are partial.
-        search_from = 0
-        while True:
-            match = self._BOUNDARY.search(self._buf, search_from)
-            if not match:
-                break
-            end = match.end()
-            sentence = self._buf[:end].strip()
-            if len(sentence) < self._MIN_SENTENCE_CHARS:
-                search_from = match.end()
-                continue
-            self._buf = self._buf[end:]
-            search_from = 0
-            out.append(sentence)
-        return out
-
-    def drain(self) -> str:
-        rem = self._buf.strip()
-        self._buf = ""
-        return rem
 
 
 class CartesiaTTS(TTS):
@@ -296,51 +227,29 @@ class CartesiaTTS(TTS):
         return True
 
     async def _send_task(self, text_iterator: AsyncIterator[Union[str, FlushSentinel]], context_id: str) -> None:
-        """Pull LLM text chunks, accumulate into sentences, flush each sentence
-        immediately so Cartesia can begin synthesizing earlier sentences while the
-        LLM is still generating later ones."""
+        """Forward sentence-bounded chunks to Cartesia.
+
+        Sentence segmentation is handled upstream by the framework
+        (BasicSentenceTokenizer in pipeline_orchestrator) — each chunk
+        arriving here is already one sentence, for both LLM streams and
+        ``session.say()`` static text. Cartesia's server progressively
+        streams audio with ``max_buffer_delay_ms: 0`` so we just forward
+        each sentence verbatim. ``FlushSentinel`` is a no-op since there
+        is no client-side buffer to drain.
+        """
         has_sent_transcript = False
-        sentence_buf = _SentenceBuffer()
         base_payload = self._build_base_payload(context_id)
 
         try:
             async for chunk in text_iterator:
                 if self._interrupted:
                     break
-
-                # Pipeline-level segment boundary: drain whatever's buffered now
-                # rather than waiting for a terminator. Useful when upstream knows
-                # a logical break has occurred (tool-call boundary, paragraph end).
                 if isinstance(chunk, FlushSentinel):
-                    logger.info(f"[cartesia] >>>>>>>>>>>>>>>>>>>>>> FlushSentinel received → flushing partial buffer (context_id={context_id})")
-                    pending = sentence_buf.drain()
-                    if pending:
-                        logger.info(
-                            f"[cartesia] FlushSentinel received → flushing partial buffer "
-                            f"({len(pending)} chars, context_id={context_id})"
-                        )
-                        if await self._send_text_packet(base_payload, pending):
-                            has_sent_transcript = True
-                    else:
-                        logger.debug(
-                            f"[cartesia] FlushSentinel received, buffer empty (no-op, "
-                            f"context_id={context_id})"
-                        )
                     continue
-
                 if not chunk:
                     continue
-                for sentence in sentence_buf.push(chunk):
-                    if self._interrupted:
-                        break
-                    if await self._send_text_packet(base_payload, sentence):
-                        has_sent_transcript = True
-
-            if not self._interrupted:
-                remaining = sentence_buf.drain()
-                if remaining:
-                    if await self._send_text_packet(base_payload, remaining):
-                        has_sent_transcript = True
+                if await self._send_text_packet(base_payload, chunk):
+                    has_sent_transcript = True
 
         except Exception as e:
             logger.error(f"Error in send_task (context_id={context_id}): {e}")
