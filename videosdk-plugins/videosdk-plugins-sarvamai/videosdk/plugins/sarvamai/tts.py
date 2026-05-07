@@ -241,6 +241,17 @@ class SarvamAITTS(TTS):
         """Resets tracking for the first audio chunk latency."""
         self._first_chunk_sent = False
 
+    async def prewarm(self) -> None:
+        """Pre-establish the Sarvam WebSocket so the first ``synthesize()`` call
+        does not pay the TLS + auth + upgrade + initial-config cost. Safe to
+        call repeatedly."""
+        if not self.enable_streaming:
+            return
+        try:
+            await self._ensure_ws_connection()
+        except Exception as e:
+            logger.warning(f"Sarvam TTS prewarm failed (non-fatal): {e}")
+
     async def synthesize(
         self,
         text: AsyncIterator[str] | str,
