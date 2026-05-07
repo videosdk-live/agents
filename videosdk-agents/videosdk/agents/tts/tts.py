@@ -8,7 +8,7 @@ import asyncio
 logger = logging.getLogger(__name__)
 
 
-class FlushSentinel:
+class FlushMarker:
     """Marker passed through a TTS text iterator to signal a segment boundary.
 
     Plugins that support segmented WebSocket synthesis (e.g. Cartesia, ElevenLabs
@@ -21,7 +21,7 @@ class FlushSentinel:
     __slots__ = ()
 
 # Type alias for text streams that may carry flush markers.
-TTSTextChunk = Union[str, FlushSentinel]
+TTSTextChunk = Union[str, FlushMarker]
 
 class TTS(EventEmitter[Literal["error", "word_spoken"]]):
     """Base class for Text-to-Speech implementations"""
@@ -105,18 +105,6 @@ class TTS(EventEmitter[Literal["error", "word_spoken"]]):
     async def interrupt(self) -> None:
         """Interrupt the TTS process"""
         raise NotImplementedError
-
-    async def flush(self) -> None:
-        """Mark the end of the current synthesis segment without ending the stream.
-
-        Default is a no-op. Plugins that support segmented streaming (Cartesia,
-        ElevenLabs WS, etc.) override this to flush their internal text buffer
-        and signal the provider to render whatever has been sent so far.
-        Callers that want to influence the in-flight ``synthesize()`` should
-        prefer pushing a ``FlushSentinel`` into the text iterator instead — it
-        carries the boundary in-band and is honored by plugins that handle it.
-        """
-        pass
 
     async def prewarm(self) -> None:
         """Pre-establish provider connections so the first ``synthesize()`` call

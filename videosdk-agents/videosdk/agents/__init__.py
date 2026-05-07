@@ -93,7 +93,7 @@ from .llm.chat_context import (
 
 )
 from .stt.stt import STT, STTResponse, SpeechEventType, SpeechData
-from .tts.tts import TTS, FlushSentinel
+from .tts.tts import TTS, FlushMarker
 from .vad import VAD, VADResponse, VADEventType
 from .mcp.mcp_server import MCPServerStdio, MCPServerHTTP
 from .eou import EOU
@@ -151,7 +151,7 @@ __all__ = [
     "SpeechEventType",
     "SpeechData",
     "TTS",
-    "FlushSentinel",
+    "FlushMarker",
     "VAD",
     "VADResponse",
     "VADEventType",

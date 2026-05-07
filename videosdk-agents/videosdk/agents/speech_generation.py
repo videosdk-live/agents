@@ -4,7 +4,7 @@ from typing import AsyncIterator, Literal, TYPE_CHECKING, Any
 import asyncio
 import logging
 from .event_emitter import EventEmitter
-from .tts.tts import TTS, FlushSentinel
+from .tts.tts import TTS, FlushMarker
 from .utils import UserState, AgentState
 from .metrics import metrics_collector
 
@@ -103,7 +103,7 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
 
                 async for text_chunk in text_iterator:
                     nonlocal tts_start_recorded
-                    if isinstance(text_chunk, FlushSentinel):
+                    if isinstance(text_chunk, FlushMarker):
                         yield text_chunk
                         continue
                     logger.debug(f"[TTS DEBUG] Got text chunk: {len(text_chunk) if text_chunk else 0} chars")
@@ -117,8 +117,8 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
                         self.full_transcript += text_chunk
                     yield text_chunk
                     
-                logger.info("[speech_generation] >>>>>>>>>>>>>>>>>>>>>> Emitting FlushSentinel at end of LLM stream")
-                yield FlushSentinel()
+                logger.info("[speech_generation] >>>>>>>>>>>>>>>>>>>>>> Emitting FlushMarker at end of LLM stream")
+                yield FlushMarker()
             
             # Wrap the iterator
             response_iterator = character_counting_wrapper(response_iterator)

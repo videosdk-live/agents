@@ -561,10 +561,10 @@ async def segment_text(
         indices = [i for d in delimiters if (i := s.find(d)) != -1]
         return min(indices) if indices else -1
 
-    from .tts.tts import FlushSentinel
+    from .tts.tts import FlushMarker
 
     async for chunk in chunks:
-        if isinstance(chunk, FlushSentinel):
+        if isinstance(chunk, FlushMarker):
             continue
         if not chunk:
             continue

@@ -11,7 +11,7 @@ from .content_generation import ContentGeneration
 from .speech_generation import SpeechGeneration
 from .stt.stt import STT
 from .llm.llm import LLM
-from .tts.tts import TTS
+from .tts.tts import TTS, FlushMarker
 from .vad import VAD
 from .eou import EOU
 from .denoise import Denoise
@@ -68,6 +68,8 @@ async def _pipe_through_sentence_stream(
         async for segment in sentence_stream:
             logger.debug("[chunking] tokenizer → TTS: %r", segment)
             yield segment
+            yield FlushMarker()
+            
     finally:
         if not producer_task.done():
             producer_task.cancel()

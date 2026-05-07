@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(/Users/deepbhupatkar/Documents/GitHub/doing-interim/agents/venv/bin/python -c \"from videosdk.agents import SegmentFlush; print\\('SegmentFlush:', SegmentFlush\\)\")",
+      "Bash(/Users/deepbhupatkar/Documents/GitHub/doing-interim/agents/venv/bin/python -c \"from videosdk.plugins.cartesia import CartesiaTTS; from videosdk.plugins.elevenlabs import ElevenLabsTTS; from videosdk.plugins.sarvamai import SarvamAITTS; print\\('all plugins import ok'\\)\")",
+      "Bash(/Users/deepbhupatkar/Documents/GitHub/doing-interim/agents/venv/bin/python -c \"from videosdk.agents import FlushMarker; from videosdk.plugins.cartesia import CartesiaTTS; from videosdk.plugins.elevenlabs import ElevenLabsTTS; from videosdk.plugins.sarvamai import SarvamAITTS; print\\('FlushMarker:', FlushMarker, '— all plugins import ok'\\)\")"
+    ]
+  }
+}

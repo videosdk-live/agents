@@ -1,4 +1,4 @@
-from .tts import TTS, FlushSentinel
+from .tts import TTS, FlushMarker
 from .fallback_tts import FallbackTTS
 
-__all__ = ["TTS", "FlushSentinel", "FallbackTTS"]
+__all__ = ["TTS", "FlushMarker", "FallbackTTS"]
