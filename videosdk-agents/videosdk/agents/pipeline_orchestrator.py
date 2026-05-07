@@ -827,7 +827,19 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 tts = self.speech_generation.tts
                 emit = not bool(getattr(tts, "supports_word_timestamps", False))
                 metrics_collector.set_agent_response(message, emit_transport=emit)
-            await self.speech_generation.synthesize(message)
+
+            if self._tokenizer is not None:
+                async def _string_iter() -> AsyncIterator[str]:
+                    yield message
+                text_source = _pipe_through_sentence_stream(
+                    _string_iter(),
+                    self._tokenizer,
+                    language=self._chunking_language,
+                )
+                await self.speech_generation.synthesize(text_source)
+            else:
+                await self.speech_generation.synthesize(message)
+
             await playback_done.wait()
         finally:
             self.speech_generation.off("last_audio_byte", _on_playback_done)
