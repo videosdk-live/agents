@@ -8,7 +8,7 @@ from typing import Any, AsyncIterator, Optional,Literal
 
 import aiohttp
 import httpx
-from videosdk.agents import TTS, FlushSentinel
+from videosdk.agents import TTS, FlushMarker
 import logging
 
 logger = logging.getLogger(__name__)
@@ -286,7 +286,7 @@ class SarvamAITTS(TTS):
                     async for chunk in text:
                         if self._interrupted:
                             break
-                        if isinstance(chunk, FlushSentinel):
+                        if isinstance(chunk, FlushMarker):
                             continue
                         if chunk and chunk.strip():
                             parts.append(chunk)
@@ -371,8 +371,9 @@ class SarvamAITTS(TTS):
         text normalisation server-side. Re-tokenising client-side via a word
         regex would strip currency symbols (``₹``, ``$``) and split
         comma-grouped digits (``50,000`` → ``['50', '000']``), so we send each
-        chunk's text exactly as received and let the server do its job. A
-        single trailing ``flush`` drains any remainder below ``min_buffer_size``.
+        chunk's text exactly as received and let the server do its job. Each
+        ``FlushMarker`` (per-sentence + terminal, injected upstream) drains
+        the server buffer so short sentences don't sit below ``min_buffer_size``.
         """
         if not self._ws_connection:
             raise ConnectionError("WebSocket is not connected.")
@@ -381,7 +382,7 @@ class SarvamAITTS(TTS):
                 if self._interrupted:
                     break
 
-                if isinstance(text_chunk, FlushSentinel):
+                if isinstance(text_chunk, FlushMarker):
                     await self._ws_connection.send_str(json.dumps({"type": "flush"}))
                     continue
 
@@ -390,9 +391,6 @@ class SarvamAITTS(TTS):
 
                 payload = {"type": "text", "data": {"text": text_chunk}}
                 await self._ws_connection.send_str(json.dumps(payload))
-
-            if not self._interrupted:
-                await self._ws_connection.send_str(json.dumps({"type": "flush"}))
         except Exception as e:
             self.emit("error", f"TTS synthesis failed: {str(e)}")
             logger.error( f"Failed to send text chunks via WebSocket: {e}")

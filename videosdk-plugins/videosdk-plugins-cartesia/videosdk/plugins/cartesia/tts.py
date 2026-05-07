@@ -10,7 +10,7 @@ from typing import Any, AsyncIterator, List, Optional, Union
 
 import aiohttp
 
-from videosdk.agents import TTS, FlushSentinel
+from videosdk.agents import TTS, FlushMarker
 
 logger = logging.getLogger(__name__)
 
@@ -139,7 +139,7 @@ class CartesiaTTS(TTS):
 
     async def synthesize(
         self,
-        text: AsyncIterator[Union[str, FlushSentinel]] | str,
+        text: AsyncIterator[Union[str, FlushMarker]] | str,
         voice_id: Optional[Union[str, List[float]]] = None,
         **kwargs: Any,
     ) -> None:
@@ -226,7 +226,7 @@ class CartesiaTTS(TTS):
         await self._ws_connection.send_str(json.dumps(payload))
         return True
 
-    async def _send_task(self, text_iterator: AsyncIterator[Union[str, FlushSentinel]], context_id: str) -> None:
+    async def _send_task(self, text_iterator: AsyncIterator[Union[str, FlushMarker]], context_id: str) -> None:
         """Forward sentence-bounded chunks to Cartesia.
 
         Sentence segmentation is handled upstream by the framework
@@ -234,7 +234,7 @@ class CartesiaTTS(TTS):
         arriving here is already one sentence, for both LLM streams and
         ``session.say()`` static text. Cartesia's server progressively
         streams audio with ``max_buffer_delay_ms: 0`` so we just forward
-        each sentence verbatim. ``FlushSentinel`` is a no-op since there
+        each sentence verbatim. ``FlushMarker`` is a no-op since there
         is no client-side buffer to drain.
         """
         has_sent_transcript = False
@@ -244,7 +244,7 @@ class CartesiaTTS(TTS):
             async for chunk in text_iterator:
                 if self._interrupted:
                     break
-                if isinstance(chunk, FlushSentinel):
+                if isinstance(chunk, FlushMarker):
                     continue
                 if not chunk:
                     continue

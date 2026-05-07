@@ -8,7 +8,7 @@ import json
 import aiohttp
 import weakref
 from dataclasses import dataclass
-from videosdk.agents import TTS, segment_text, FlushSentinel
+from videosdk.agents import TTS, segment_text, FlushMarker
 import base64
 import uuid
 
@@ -278,7 +278,7 @@ class ElevenLabsTTS(TTS):
                         async for chunk in text:
                             if self._should_stop:
                                 break
-                            if isinstance(chunk, FlushSentinel):
+                            if isinstance(chunk, FlushMarker):
                                 await self.flush_context(context_id)
                                 continue
                             if not chunk:
