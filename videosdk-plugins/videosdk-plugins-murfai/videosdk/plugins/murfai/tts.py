@@ -8,15 +8,19 @@ import json
 import aiohttp
 import weakref
 from dataclasses import dataclass
-from videosdk.agents import TTS, segment_text
+from videosdk.agents import TTS, FlushMarker, segment_text
 import base64
+import logging
 import uuid
+
+logger = logging.getLogger(__name__)
 
 MURFAI_SAMPLE_RATE = 24000
 MURFAI_CHANNELS = 1
 DEFAULT_MODEL = "Falcon"
-DEFAULT_VOICE_ID = "en-US-natalie" 
+DEFAULT_VOICE_ID = "en-US-natalie"
 DEFAULT_REGION = "GLOBAL"
+DEFAULT_CONNECTION_MAX_AGE_SEC = 300.0
 
 REGION_URLS = {
     "GLOBAL": "global.api.murf.ai",
@@ -53,6 +57,9 @@ class MurfAITTS(TTS):
         voice: str = DEFAULT_VOICE_ID,
         voice_settings: MurfAIVoiceSettings | None = None,
         enable_streaming: bool = True,
+        min_buffer_size: int = 3,
+        max_buffer_delay_in_ms: int = 0,
+        max_connection_age_sec: float = DEFAULT_CONNECTION_MAX_AGE_SEC,
     ) -> None:
         """Initialize the Murf.ai TTS plugin.
 
@@ -63,6 +70,13 @@ class MurfAITTS(TTS):
             voice (str): The voice ID to use.
             voice_settings (Optional[MurfAIVoiceSettings]): Advanced voice settings (pitch, rate, style).
             enable_streaming (bool): Whether to use WebSocket streaming (low latency) or HTTP chunks.
+            min_buffer_size (int): WebSocket only. Server-side minimum character count
+                before flushing. Lower → lower TTFB, higher → smoother prosody. Defaults to 3.
+            max_buffer_delay_in_ms (int): WebSocket only. Server-side max wait time
+                before flushing accumulated text. ``0`` means flush as soon as
+                ``min_buffer_size`` is met. Defaults to 0.
+            max_connection_age_sec (float): Refresh the WebSocket after this many seconds
+                to avoid hitting Murf's idle/session limits.
         """
         super().__init__(
             sample_rate=MURFAI_SAMPLE_RATE, num_channels=MURFAI_CHANNELS
@@ -78,7 +92,11 @@ class MurfAITTS(TTS):
         self.voice = voice
         self.enable_streaming = enable_streaming
         self.voice_settings = voice_settings or MurfAIVoiceSettings()
-        
+        self.min_buffer_size = min_buffer_size
+        self.max_buffer_delay_in_ms = max_buffer_delay_in_ms
+        self._max_connection_age_sec = max_connection_age_sec
+        self._ws_connect_time: float = 0.0
+
         base_domain = REGION_URLS.get(region.upper(), REGION_URLS["US_EAST"])
         self.http_base_url = f"https://{base_domain}/v1/speech"
         self.ws_base_url = f"wss://{base_domain}/v1/speech"
@@ -86,10 +104,15 @@ class MurfAITTS(TTS):
         self.audio_track = None
         self.loop = None
         self._first_chunk_sent = False
-        
+
         self._session = httpx.AsyncClient(
             timeout=httpx.Timeout(connect=15.0, read=30.0, write=5.0, pool=5.0),
             follow_redirects=True,
+            limits=httpx.Limits(
+                max_connections=50,
+                max_keepalive_connections=50,
+                keepalive_expiry=120,
+            ),
         )
 
         self._ws_session = None
@@ -106,9 +129,20 @@ class MurfAITTS(TTS):
     def reset_first_audio_tracking(self) -> None:
         self._first_chunk_sent = False
 
+    async def prewarm(self) -> None:
+        """Pre-establish the Murf WebSocket so the first ``synthesize()`` call
+        does not pay the TLS + auth + upgrade cost. Safe to call repeatedly.
+        Skipped automatically when ``enable_streaming=False``."""
+        if not self.enable_streaming:
+            return
+        try:
+            await self._ensure_connection()
+        except Exception as e:
+            logger.warning(f"Murf TTS prewarm failed (non-fatal): {e}")
+
     async def synthesize(
         self,
-        text: AsyncIterator[str] | str,
+        text: AsyncIterator[Union[str, FlushMarker]] | str,
         voice_id: Optional[str] = None,
         **kwargs: Any,
     ) -> None:
@@ -123,13 +157,13 @@ class MurfAITTS(TTS):
             if self.enable_streaming:
                 await self._stream_synthesis(text, target_voice)
             else:
-                if isinstance(text, AsyncIterator):
+                if isinstance(text, str):
+                    await self._chunked_synthesis(text, target_voice)
+                else:
                     async for segment in segment_text(text):
                         if self._should_stop:
                             break
                         await self._chunked_synthesis(segment, target_voice)
-                else:
-                    await self._chunked_synthesis(text, target_voice)
 
         except Exception as e:
             self.emit("error", f"TTS synthesis failed: {str(e)}")
@@ -178,8 +212,18 @@ class MurfAITTS(TTS):
             self.emit("error", f"Chunked synthesis failed: {str(e)}")
             raise
 
-    async def _stream_synthesis(self, text: Union[AsyncIterator[str], str], voice_id: str) -> None:
-        """WebSocket-based streaming synthesis"""
+    async def _stream_synthesis(
+        self,
+        text: Union[AsyncIterator[Union[str, FlushMarker]], str],
+        voice_id: str,
+    ) -> None:
+        """WebSocket-based streaming synthesis.
+
+        Forwards each text chunk verbatim with ``end=false``, sending a final
+        ``end=true`` packet at end-of-stream. ``FlushMarker`` is informational
+        — Murf's server flushes naturally based on ``min_buffer_size`` /
+        ``max_buffer_delay_in_ms``, so client-side flush packets aren't needed.
+        """
         try:
             await self._ensure_connection()
 
@@ -187,39 +231,56 @@ class MurfAITTS(TTS):
             done_future: asyncio.Future[None] = asyncio.get_event_loop().create_future()
             self.register_context(context_id, done_future)
 
-            async def _single_chunk_gen(s: str) -> AsyncIterator[str]:
-                yield s
-
             async def _send_chunks() -> None:
                 try:
-                    segments = []
                     if isinstance(text, str):
-                        async for segment in segment_text(_single_chunk_gen(text)):
-                            segments.append(segment)
-                    else:
-                        async for chunk in text:
-                            segments.append(chunk)
-                    
-                    for i, segment in enumerate(segments):
+                        if text.strip():
+                            await self.send_text(
+                                context_id, f"{text} ", voice_id,
+                                send_voice_config=True, is_end=True,
+                            )
+                        else:
+                            if not done_future.done():
+                                done_future.set_result(None)
+                        return
+
+                    has_sent = False
+                    async for chunk in text:
                         if self._should_stop:
                             break
-                        is_last = (i == len(segments) - 1)
+                        if isinstance(chunk, FlushMarker):
+                            # No-op: Murf's server flushes via min_buffer_size /
+                            # max_buffer_delay_in_ms. Client-side flush packets
+                            # would conflict with that buffering.
+                            continue
+                        if not chunk or not chunk.strip():
+                            continue
                         await self.send_text(
-                            context_id, 
-                            f"{segment} ", 
-                            voice_id,
-                            send_voice_config=False,
-                            is_end=is_last
+                            context_id, f"{chunk} ", voice_id,
+                            send_voice_config=False, is_end=False,
                         )
+                        has_sent = True
+
+                    if has_sent and not self._should_stop:
+                        await self.send_end(context_id, voice_id)
+                    elif not has_sent and not done_future.done():
+                        done_future.set_result(None)
 
                 except Exception as e:
                     if not done_future.done():
                         done_future.set_exception(e)
 
             sender = asyncio.create_task(_send_chunks())
-            
-            await done_future
-            await sender
+
+            try:
+                await done_future
+            finally:
+                if not sender.done():
+                    sender.cancel()
+                try:
+                    await sender
+                except (asyncio.CancelledError, Exception):
+                    pass
 
         except Exception as e:
             self.emit("error", f"Streaming synthesis failed: {str(e)}")
@@ -237,19 +298,22 @@ class MurfAITTS(TTS):
             await self.audio_track.add_new_bytes(audio_bytes)
 
     async def interrupt(self) -> None:
-        """Interrupt current synthesis and clear all contexts."""
+        """Stop emitting audio for the current synthesis. Keeps the WebSocket
+        open so the next turn does not pay reconnect cost; in-flight audio
+        chunks for cancelled contexts are dropped via the ``_context_futures``
+        filter in the receive loop."""
         self._should_stop = True
-        
+
         if self.audio_track:
             self.audio_track.interrupt()
-        
-        # Clear all pending futures
+
+        # Cancel pending futures so the receive loop drops further audio for
+        # these contexts. Server-side the contexts are also released, freeing
+        # provider compute.
         for fut in list(self._context_futures.values()):
             if not fut.done():
                 fut.cancel()
-        self._context_futures.clear()
-        
-        # Close all active contexts
+
         await self.close_all_contexts()
 
     async def aclose(self) -> None:
@@ -282,11 +346,23 @@ class MurfAITTS(TTS):
 
     async def _ensure_connection(self) -> None:
         async with self._connection_lock:
+            now = asyncio.get_event_loop().time()
+
             if self._ws_connection and not self._ws_connection.closed:
-                return
+                age = now - self._ws_connect_time
+                if age < self._max_connection_age_sec:
+                    return
+                logger.info(f"Refreshing Murf WebSocket (age={age:.1f}s)")
+                try:
+                    await self._ws_connection.close()
+                except Exception:
+                    pass
 
             if self._ws_session and not self._ws_session.closed:
-                await self._ws_session.close()
+                try:
+                    await self._ws_session.close()
+                except Exception:
+                    pass
 
             self._ws_session = aiohttp.ClientSession()
 
@@ -304,9 +380,12 @@ class MurfAITTS(TTS):
             headers = {"api_key": self.api_key}
 
             self._ws_connection = await asyncio.wait_for(
-                self._ws_session.ws_connect(full_ws_url, headers=headers), 
+                self._ws_session.ws_connect(
+                    full_ws_url, headers=headers, heartbeat=30.0
+                ),
                 timeout=10.0
             )
+            self._ws_connect_time = now
 
             if self._recv_task and not self._recv_task.done():
                 self._recv_task.cancel()
@@ -331,20 +410,22 @@ class MurfAITTS(TTS):
         """Sends a text segment to Murf."""
         if not self._ws_connection or self._ws_connection.closed:
             raise RuntimeError("WebSocket connection is closed")
-        
+
         if not text or not text.strip():
             return
-        
-        payload = {
+
+        payload: dict[str, Any] = {
             "text": text,
             "context_id": context_id,
-            "end": is_end
+            "end": is_end,
+            "min_buffer_size": self.min_buffer_size,
+            "max_buffer_delay_in_ms": self.max_buffer_delay_in_ms,
         }
-        
+
         if context_id not in self._active_contexts:
             payload["voice_config"] = self._get_voice_config(voice_id)
             self._active_contexts.add(context_id)
-        
+
         await self._ws_connection.send_str(json.dumps(payload))
     
     async def send_end(self, context_id: str, voice_id: str) -> None:
@@ -400,9 +481,14 @@ class MurfAITTS(TTS):
                         continue
 
                     if "audio" in data and data["audio"]:
+                        # Drop audio for cancelled contexts (interrupt() cancelled
+                        # the future). This is how barge-in avoids reconnecting.
+                        ctx_id = data.get("context_id")
+                        fut = self._context_futures.get(ctx_id) if ctx_id else None
+                        ctx_alive = fut is not None and not fut.done()
                         try:
                             audio_chunk = base64.b64decode(data["audio"])
-                            if audio_chunk and not self._should_stop:
+                            if audio_chunk and not self._should_stop and ctx_alive:
                                 await self._stream_audio_chunks(audio_chunk)
                         except Exception:
                             continue
