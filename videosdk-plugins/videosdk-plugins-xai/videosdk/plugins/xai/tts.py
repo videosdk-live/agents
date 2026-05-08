@@ -5,12 +5,12 @@ import base64
 import json
 import logging
 import os
-from typing import Any, AsyncIterator, Literal, Optional
+from typing import Any, AsyncIterator, Literal, Optional, Union
 from urllib.parse import urlencode
 
 import aiohttp
 
-from videosdk.agents import TTS
+from videosdk.agents import TTS, FlushMarker
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +20,8 @@ SUPPORTED_VOICES = {"eve", "ara", "rex", "sal", "leo"}
 SUPPORTED_SAMPLE_RATES = {8000, 16000, 22050, 24000, 44100, 48000}
 
 SUPPORTED_CODECS = {"pcm", "mulaw"}
+
+DEFAULT_CONNECTION_MAX_AGE_SEC = 300.0
 
 
 class XAITTS(TTS):
@@ -34,6 +36,7 @@ class XAITTS(TTS):
         optimize_streaming_latency: int = 0,
         text_normalization: bool = False,
         base_url: str = XAI_TTS_BASE_URL,
+        max_connection_age_sec: float = DEFAULT_CONNECTION_MAX_AGE_SEC,
     ) -> None:
         """Initialize the xAI TTS plugin.
 
@@ -116,9 +119,11 @@ class XAITTS(TTS):
         self.optimize_streaming_latency = optimize_streaming_latency
         self.text_normalization = text_normalization
         self.base_url = base_url
+        self._max_connection_age_sec = max_connection_age_sec
 
         self._ws_session: Optional[aiohttp.ClientSession] = None
         self._ws_connection: Optional[aiohttp.ClientWebSocketResponse] = None
+        self._ws_connect_time: float = 0.0
         self._connection_lock = asyncio.Lock()
         self._synthesis_lock = asyncio.Lock()
         self._receive_task: Optional[asyncio.Task] = None
@@ -131,13 +136,25 @@ class XAITTS(TTS):
         """Reset the first-audio-byte tracking state for the next synthesis turn."""
         self._first_chunk_sent = False
 
+    async def prewarm(self) -> None:
+        """Pre-establish the xAI WebSocket so the first ``synthesize()`` call
+        does not pay the TLS + auth + upgrade cost. Safe to call repeatedly."""
+        try:
+            await self._ensure_ws_connection()
+        except Exception as e:
+            logger.warning(f"xAI TTS prewarm failed (non-fatal): {e}")
+
     async def synthesize(
         self,
-        text: AsyncIterator[str] | str,
+        text: AsyncIterator[Union[str, FlushMarker]] | str,
         voice_id: Optional[str] = None,
         **kwargs: Any,
     ) -> None:
-        """Synthesize text to speech via xAI's bidirectional WebSocket API."""
+        """Synthesize text to speech via xAI's bidirectional WebSocket API.
+
+        ``FlushMarker`` segment markers in the input stream are silently dropped
+        — xAI has no per-sentence flush primitive, and the server segments
+        naturally on ``text.done``."""
         try:
             if not self.audio_track or not self.loop:
                 self.emit("error", "Audio track or event loop not set")
@@ -194,7 +211,7 @@ class XAITTS(TTS):
 
     async def _send_task(
         self,
-        text_iterator: AsyncIterator[str],
+        text_iterator: AsyncIterator[Union[str, FlushMarker]],
         done_future: asyncio.Future[None],
     ) -> None:
         """Send text.delta messages, then text.done at end of utterance."""
@@ -203,6 +220,10 @@ class XAITTS(TTS):
             async for chunk in text_iterator:
                 if self._interrupted:
                     break
+                if isinstance(chunk, FlushMarker):
+                    # xAI has no per-sentence flush primitive — the server
+                    # segments naturally on ``text.done`` at end-of-utterance.
+                    continue
                 if not chunk or not chunk.strip():
                     continue
                 if not self._ws_connection or self._ws_connection.closed:
@@ -282,6 +303,13 @@ class XAITTS(TTS):
         if self._interrupted or not audio_chunk:
             return
 
+        # Drop late audio that belongs to a cancelled synthesis: if the active
+        # done_future has already resolved (cancelled or completed), the frame
+        # is for a stale context and would bleed into the next turn.
+        future = self._current_done_future
+        if future is not None and future.done():
+            return
+
         if not self._first_chunk_sent:
             self._first_chunk_sent = True
             if self._first_audio_callback:
@@ -293,8 +321,13 @@ class XAITTS(TTS):
     async def _ensure_ws_connection(self) -> None:
         """Open or re-open the WebSocket connection if needed."""
         async with self._connection_lock:
+            now = asyncio.get_event_loop().time()
+
             if self._ws_connection and not self._ws_connection.closed:
-                return
+                age = now - self._ws_connect_time
+                if age < self._max_connection_age_sec:
+                    return
+                logger.info(f"Refreshing xAI WebSocket (age={age:.1f}s)")
 
             if self._receive_task and not self._receive_task.done():
                 self._receive_task.cancel()
@@ -338,6 +371,7 @@ class XAITTS(TTS):
                     ),
                     timeout=5.0,
                 )
+                self._ws_connect_time = now
                 self._receive_task = asyncio.create_task(self._receive_loop())
             except aiohttp.WSServerHandshakeError as e:
                 self.emit(
@@ -350,7 +384,10 @@ class XAITTS(TTS):
                 raise
 
     async def interrupt(self) -> None:
-        """Interrupt any in-flight synthesis and clear the audio_track buffer."""
+        """Stop emitting audio for the current synthesis. Keeps the WebSocket
+        open so the next turn does not pay reconnect cost; in-flight audio
+        frames received after this point are dropped via the done-future
+        filter in :meth:`_stream_audio`."""
         self._interrupted = True
 
         if self.audio_track:
@@ -358,13 +395,7 @@ class XAITTS(TTS):
 
         future = self._current_done_future
         if future and not future.done():
-            future.set_result(None)
-
-        if self._ws_connection and not self._ws_connection.closed:
-            try:
-                await self._ws_connection.close()
-            except Exception:
-                pass
+            future.cancel()
 
     async def aclose(self) -> None:
         """Gracefully clean up all resources."""
