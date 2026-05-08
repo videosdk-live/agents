@@ -5,12 +5,12 @@ import base64
 import json
 import logging
 import os
-from typing import Any, AsyncIterator, Optional
+from typing import Any, AsyncIterator, Optional, Union
 
 import aiohttp
 import httpx
 
-from videosdk.agents import TTS
+from videosdk.agents import TTS, FlushMarker
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +22,7 @@ INWORLD_TTS_WSS_ENDPOINT = "wss://api.inworld.ai/tts/v1/voice:streamBidirectiona
 DEFAULT_MODEL = "inworld-tts-1.5-max"
 DEFAULT_VOICE = "Sarah"
 DEFAULT_TEMPERATURE = 0.8
+DEFAULT_CONNECTION_MAX_AGE_SEC = 300.0
 
 
 class InworldAITTS(TTS):
@@ -60,6 +61,7 @@ class InworldAITTS(TTS):
         buffer_char_threshold: int | None = None,
         apply_text_normalization: str | None = None,
         speaking_rate: float | None = None,
+        max_connection_age_sec: float = DEFAULT_CONNECTION_MAX_AGE_SEC,
     ) -> None:
         """Initialize the InworldAI TTS plugin.
 
@@ -109,11 +111,13 @@ class InworldAITTS(TTS):
         self.buffer_char_threshold = buffer_char_threshold
         self.apply_text_normalization = apply_text_normalization
         self.speaking_rate = speaking_rate
+        self._max_connection_age_sec = max_connection_age_sec
 
         self.audio_track = None
         self.loop = None
         self._first_chunk_sent = False
         self._interrupted = False
+        self._ws_connect_time: float = 0.0
 
         self._auth_header = f"Basic {self.api_key}"
 
@@ -139,10 +143,20 @@ class InworldAITTS(TTS):
         """Reset the first audio tracking state for next TTS task"""
         self._first_chunk_sent = False
 
+    async def prewarm(self) -> None:
+        """Pre-establish the Inworld WebSocket so the first ``synthesize()``
+        call does not pay the TLS + auth + upgrade cost. Safe to call repeatedly.
+        Skipped automatically when ``enable_streaming=False``."""
+        if not self.enable_streaming:
+            return
+        try:
+            await self._ensure_ws_connection()
+        except Exception as e:
+            logger.warning(f"Inworld TTS prewarm failed (non-fatal): {e}")
 
     async def synthesize(
         self,
-        text: AsyncIterator[str] | str,
+        text: AsyncIterator[Union[str, FlushMarker]] | str,
         voice_id: Optional[str] = None,
         **kwargs: Any,
     ) -> None:
@@ -178,24 +192,31 @@ class InworldAITTS(TTS):
         await super().aclose()
 
     async def interrupt(self) -> None:
-        """Interrupt the TTS process"""
+        """Stop emitting audio for the current synthesis. Keeps the WebSocket
+        open so the next turn does not pay reconnect cost; in-flight audio
+        chunks for the cancelled context are dropped via context_id filtering
+        in the receive loop (cancelled futures stop new audio from streaming)."""
         self._interrupted = True
         if self.audio_track:
             self.audio_track.interrupt()
-        await self._close_ws_resources()
+
+        for fut in list(self._context_futures.values()):
+            if not fut.done():
+                fut.cancel()
 
     # ── WSS path ───────────────────────────────────────────────────────────
 
     async def _stream_synthesis(
         self,
-        text: AsyncIterator[str] | str,
+        text: AsyncIterator[Union[str, FlushMarker]] | str,
         voice_id: Optional[str],
     ) -> None:
         """WebSocket-based synthesis using the Inworld bidirectional endpoint.
 
-        Per call: open a fresh context with audio config, forward the text
-        chunks verbatim, send a trailing ``flush_context`` (and ``close_context``),
-        then await ``flushCompleted`` to know synthesis finished.
+        Per call: open a fresh context with audio config, forward text chunks
+        verbatim, dispatch a ``flush_context`` on every ``FlushMarker`` (mid-
+        stream sentence boundaries) plus once at end-of-stream, then send
+        ``close_context`` and await ``flushCompleted``.
         """
         context_id = ""
         try:
@@ -216,6 +237,9 @@ class InworldAITTS(TTS):
                 async for chunk in text:
                     if self._interrupted:
                         break
+                    if isinstance(chunk, FlushMarker):
+                        await self._send_flush(context_id)
+                        continue
                     if not chunk or not chunk.strip():
                         continue
                     await self._send_text(context_id, chunk)
@@ -242,17 +266,29 @@ class InworldAITTS(TTS):
                 del self._context_futures[context_id]
 
     async def _ensure_ws_connection(self) -> None:
-        """Open a WebSocket connection if one isn't already alive."""
+        """Open a WebSocket connection if one isn't already alive, refreshing
+        if older than ``max_connection_age_sec``."""
         async with self._connection_lock:
+            now = asyncio.get_event_loop().time()
+
             if self._ws_connection and not self._ws_connection.closed:
-                return
+                age = now - self._ws_connect_time
+                if age < self._max_connection_age_sec:
+                    return
+                logger.info(f"Refreshing Inworld WebSocket (age={age:.1f}s)")
 
             if self._receive_task and not self._receive_task.done():
                 self._receive_task.cancel()
             if self._ws_connection:
-                await self._ws_connection.close()
+                try:
+                    await self._ws_connection.close()
+                except Exception:
+                    pass
             if self._ws_session:
-                await self._ws_session.close()
+                try:
+                    await self._ws_session.close()
+                except Exception:
+                    pass
 
             try:
                 self._ws_session = aiohttp.ClientSession()
@@ -264,6 +300,7 @@ class InworldAITTS(TTS):
                     ),
                     timeout=10.0,
                 )
+                self._ws_connect_time = now
                 self._receive_task = asyncio.create_task(self._recv_loop())
             except Exception as e:
                 self.emit("error", f"Failed to connect to Inworld WSS: {e}")
@@ -419,12 +456,14 @@ class InworldAITTS(TTS):
 
     async def _http_synthesis(
         self,
-        text: AsyncIterator[str] | str,
+        text: AsyncIterator[Union[str, FlushMarker]] | str,
         voice_id: Optional[str],
     ) -> None:
         """HTTP streaming synthesis. For AsyncIterator inputs, accumulates
         all chunks into a single POST so currency / number patterns span a
-        single request — same fix pattern as Sarvam HTTP and OpenAI."""
+        single request — same fix pattern as Sarvam HTTP and OpenAI.
+        ``FlushMarker`` segment markers are silently dropped (HTTP path has no
+        per-segment flush primitive)."""
         if isinstance(text, str):
             if text.strip():
                 await self._http_post(text, voice_id)
@@ -434,6 +473,8 @@ class InworldAITTS(TTS):
         async for chunk in text:
             if self._interrupted:
                 break
+            if isinstance(chunk, FlushMarker):
+                continue
             if chunk and chunk.strip():
                 parts.append(chunk)
 
