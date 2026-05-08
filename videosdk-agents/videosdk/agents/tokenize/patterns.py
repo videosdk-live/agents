@@ -124,6 +124,8 @@ IDENTIFIER_REGEX: re.Pattern[str] = re.compile(
     r"\b[a-z_][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*){1,}\b"
 )
 
+NUMBER_GROUPING_REGEX: re.Pattern[str] = re.compile(r"\d{1,3}(?:,\d{2,3})+")
+
 MD_FENCED_CODE_REGEX: re.Pattern[str] = re.compile(
     r"```[^\n]*\n.*?\n?```",
     re.DOTALL,

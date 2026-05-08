@@ -20,8 +20,6 @@ class FlushMarker:
 
     __slots__ = ()
 
-# Type alias for text streams that may carry flush markers.
-TTSTextChunk = Union[str, FlushMarker]
 
 class TTS(EventEmitter[Literal["error", "word_spoken"]]):
     """Base class for Text-to-Speech implementations"""
@@ -84,18 +82,22 @@ class TTS(EventEmitter[Literal["error", "word_spoken"]]):
     @abstractmethod
     async def synthesize(
         self,
-        text: AsyncIterator[str] | str,
+        text: AsyncIterator[Union[str, FlushMarker]] | str,
         voice_id: Optional[str] = None,
         **kwargs: Any
     ) -> None:
         """
         Convert text to speech
-        
+
         Args:
-            text: Text to convert to speech (either string or async iterator of strings)
+            text: Text to convert to speech. Either a plain string or an async
+                iterator that may yield ``str`` chunks and ``FlushMarker``
+                segment-boundary markers. Plugins that don't support per-segment
+                flushing should drop the markers with an inline ``isinstance``
+                check (or rely on ``segment_text`` which already drops them).
             voice_id: Optional voice identifier
             **kwargs: Additional provider-specific arguments
-            
+
         Returns:
             None
         """
@@ -118,7 +120,7 @@ class TTS(EventEmitter[Literal["error", "word_spoken"]]):
 
     async def stream_synthesize(
         self,
-        text_stream: AsyncIterator[str],
+        text_stream: AsyncIterator[Union[str, FlushMarker]],
         **kwargs: Any
     ) -> AsyncIterator[bytes]:
         """
