@@ -7,7 +7,7 @@ import logging
 import numpy as np
 from dataclasses import dataclass
 
-from videosdk.agents import TTS, segment_text
+from videosdk.agents import TTS, FlushMarker, segment_text
 
 try:
     import boto3
@@ -100,6 +100,7 @@ class AWSPollyTTS(TTS):
         self.speed = speed
         self.pitch = pitch
         self._first_chunk_sent = False
+        self._interrupted = False
         if not self.region:
             raise ValueError(
                 "AWS region must be specified via parameter or AWS_DEFAULT_REGION env var")
@@ -120,39 +121,71 @@ class AWSPollyTTS(TTS):
         """Reset the first audio tracking state for next TTS task"""
         self._first_chunk_sent = False
 
-    async def synthesize(self, text_or_generator: Union[str, AsyncIterator[str]], **kwargs) -> None:
+    async def synthesize(
+        self,
+        text: AsyncIterator[Union[str, FlushMarker]] | str,
+        voice_id: Optional[str] = None,
+        **kwargs: Any,
+    ) -> None:
         if not self.audio_track or not self.loop:
             logger.error("Audio track or event loop not initialized.")
             return
 
+        self._interrupted = False
         try:
-            if isinstance(text_or_generator, str):
-                await self._process_text_segment(text_or_generator)
+            if isinstance(text, str):
+                await self._process_text_segment(text)
             else:
-                async for segment in segment_text(text_or_generator):
+                async for segment in segment_text(text):
+                    if self._interrupted:
+                        break
                     await self._process_text_segment(segment)
 
         except (BotoCoreError, ClientError) as e:
             logger.error(f"AWS Polly API error: {e}")
+            self.emit("error", f"AWS Polly API error: {e}")
         except Exception as e:
             logger.error(f"Error in AWSPollyTTS synthesis: {e}")
+            self.emit("error", f"AWS Polly synthesis failed: {e}")
 
     async def _process_text_segment(self, text_segment: str) -> None:
         """Process individual text segments for streaming TTS"""
-        if not text_segment.strip():
+        if not text_segment.strip() or self._interrupted:
             return
 
         ssml_text = self._build_ssml(text_segment)
 
-        response = await asyncio.to_thread(
-            self._client.synthesize_speech,
-            Text=ssml_text,
-            TextType="ssml",
-            OutputFormat="pcm",
-            VoiceId=self.voice,
-            SampleRate="16000",
-            Engine=self.engine
-        )
+        # Two-attempt retry on transient client errors (throttling, networking).
+        # 4xx other than throttling surface immediately.
+        last_exc: Optional[BaseException] = None
+        for attempt in range(2):
+            try:
+                response = await asyncio.to_thread(
+                    self._client.synthesize_speech,
+                    Text=ssml_text,
+                    TextType="ssml",
+                    OutputFormat="pcm",
+                    VoiceId=self.voice,
+                    SampleRate="16000",
+                    Engine=self.engine,
+                )
+                break
+            except ClientError as e:
+                code = e.response.get("Error", {}).get("Code", "")
+                if code in ("ThrottlingException", "RequestTimeout") and attempt == 0:
+                    last_exc = e
+                    await asyncio.sleep(0.25 * (2 ** attempt))
+                    continue
+                raise
+            except BotoCoreError as e:
+                if attempt == 0:
+                    last_exc = e
+                    await asyncio.sleep(0.25 * (2 ** attempt))
+                    continue
+                raise
+        else:
+            if last_exc:
+                raise last_exc
 
         audio_stream = response.get("AudioStream")
         if audio_stream:
@@ -160,7 +193,7 @@ class AWSPollyTTS(TTS):
             await self._stream_audio(audio_data)
 
     async def _stream_audio(self, audio_data: bytes):
-        if not audio_data:
+        if not audio_data or self._interrupted:
             return
 
         try:
@@ -253,9 +286,11 @@ class AWSPollyTTS(TTS):
 
     async def aclose(self):
         """Close the TTS connection"""
+        self._interrupted = True
         await super().aclose()
-        
+
     async def interrupt(self) -> None:
         """Interrupt the TTS audio stream"""
+        self._interrupted = True
         if self.audio_track:
             self.audio_track.interrupt()

@@ -7,7 +7,7 @@ import io
 import asyncio
 from pydub import AudioSegment
 
-from videosdk.agents import TTS, segment_text
+from videosdk.agents import TTS, FlushMarker, segment_text
 
 PAPLA_SAMPLE_RATE = 24000
 PAPLA_CHANNELS = 1
@@ -40,6 +40,7 @@ class PaplaTTS(TTS):
         self.loop = None
         self.base_url = base_url
         self._first_chunk_sent = False
+        self._interrupted = False
 
         self.api_key = api_key or os.getenv("PAPLA_API_KEY")
         if not self.api_key:
@@ -52,6 +53,11 @@ class PaplaTTS(TTS):
             timeout=httpx.Timeout(connect=15.0, read=30.0,
                                   write=5.0, pool=5.0),
             follow_redirects=True,
+            limits=httpx.Limits(
+                max_connections=50,
+                max_keepalive_connections=50,
+                keepalive_expiry=120,
+            ),
         )
 
     def reset_first_audio_tracking(self) -> None:
@@ -60,32 +66,38 @@ class PaplaTTS(TTS):
 
     async def synthesize(
         self,
-        text: AsyncIterator[str] | str,
+        text: AsyncIterator[Union[str, FlushMarker]] | str,
         voice_id: Optional[str] = None,
         **kwargs: Any,
     ) -> None:
         """
         Convert text to speech using Papla's streaming TTS API.
-        This now includes decoding the received MP3 audio to raw PCM.
+        Decodes the received MP3 audio to raw PCM before streaming.
+        ``FlushMarker`` segment-boundary markers are dropped — Papla's HTTP API
+        has no per-segment flush primitive.
         """
-        try:
-            if not self.audio_track or not self.loop:
-                self.emit(
-                    "error", "Audio track or event loop not set by the framework.")
-                return
+        if not self.audio_track or not self.loop:
+            self.emit(
+                "error", "Audio track or event loop not set by the framework.")
+            return
 
-            if isinstance(text, AsyncIterator):
-                async for segment in segment_text(text):
-                    await self._synthesize_segment(segment, voice_id, **kwargs)
+        self._interrupted = False
+        try:
+            if isinstance(text, str):
+                if not self._interrupted:
+                    await self._synthesize_segment(text, voice_id, **kwargs)
             else:
-                await self._synthesize_segment(text, voice_id, **kwargs)
+                async for segment in segment_text(text):
+                    if self._interrupted:
+                        break
+                    await self._synthesize_segment(segment, voice_id, **kwargs)
 
         except Exception as e:
             self.emit("error", f"Papla TTS synthesis failed: {str(e)}")
 
     async def _synthesize_segment(self, text: str, voice_id: Optional[str] = None, **kwargs: Any) -> None:
         """Synthesize a single text segment"""
-        if not text.strip():
+        if not text.strip() or self._interrupted:
             return
 
         target_voice = voice_id or DEFAULT_VOICE_ID
@@ -101,19 +113,40 @@ class PaplaTTS(TTS):
             "model_id": self.model_id,
         }
 
-        async with self._client.stream("POST", url, headers=headers, json=payload) as response:
-            response.raise_for_status()
+        for attempt in range(2):
+            try:
+                async with self._client.stream("POST", url, headers=headers, json=payload) as response:
+                    response.raise_for_status()
 
-            mp3_data = b""
-            async for chunk in response.aiter_bytes():
-                if chunk:
-                    mp3_data += chunk
+                    mp3_data = b""
+                    async for chunk in response.aiter_bytes():
+                        if self._interrupted:
+                            return
+                        if chunk:
+                            mp3_data += chunk
 
-            if mp3_data:
-                asyncio.create_task(self._decode_and_stream_pcm(mp3_data))
+                    if mp3_data and not self._interrupted:
+                        asyncio.create_task(self._decode_and_stream_pcm(mp3_data))
+                return
+
+            except (httpx.NetworkError, httpx.ConnectError, httpx.ReadTimeout) as e:
+                if attempt == 0 and not self._interrupted:
+                    await asyncio.sleep(0.25 * (2 ** attempt))
+                    continue
+                self.emit("error", f"Papla TTS network failure: {str(e)}")
+                return
+            except httpx.HTTPStatusError as e:
+                if not self._interrupted:
+                    self.emit(
+                        "error",
+                        f"Papla TTS HTTP error {e.response.status_code}: {e.response.text}",
+                    )
+                return
 
     async def _decode_and_stream_pcm(self, audio_bytes: bytes) -> None:
         """Decodes compressed audio (MP3) into raw PCM and streams it to the audio track."""
+        if self._interrupted:
+            return
         try:
             audio = AudioSegment.from_file(
                 io.BytesIO(audio_bytes), format=AUDIO_FORMAT)
@@ -128,6 +161,8 @@ class PaplaTTS(TTS):
                              PAPLA_CHANNELS * 2 * 20 / 1000)
 
             for i in range(0, len(pcm_data), chunk_size):
+                if self._interrupted:
+                    return
                 chunk = pcm_data[i:i + chunk_size]
 
                 if 0 < len(chunk) < chunk_size:
@@ -152,5 +187,6 @@ class PaplaTTS(TTS):
         await super().aclose()
 
     async def interrupt(self) -> None:
+        self._interrupted = True
         if self.audio_track:
             self.audio_track.interrupt()

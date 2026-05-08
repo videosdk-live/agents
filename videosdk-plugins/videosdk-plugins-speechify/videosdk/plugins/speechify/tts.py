@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, AsyncIterator, Literal, Optional
+from typing import Any, AsyncIterator, Literal, Optional, Union
 import os
 import httpx
 import io
@@ -8,7 +8,7 @@ import asyncio
 
 from pydub import AudioSegment
 
-from videosdk.agents import TTS, segment_text
+from videosdk.agents import TTS, FlushMarker
 
 SPEECHIFY_SAMPLE_RATE = 24000
 SPEECHIFY_CHANNELS = 1
@@ -26,6 +26,9 @@ class SpeechifyTTS(TTS):
         ] = "simba-english",
         language: Optional[str] = None,
         audio_format: Literal["mp3", "ogg", "aac"] = "mp3",
+        loudness_normalization: Optional[bool] = None,
+        text_normalization: Optional[bool] = None,
+        chunked_synthesis: bool = False,
     ) -> None:
         """Initialize the Speechify TTS plugin.
 
@@ -35,6 +38,15 @@ class SpeechifyTTS(TTS):
             model (Literal["simba-base", "simba-english", "simba-multilingual", "simba-turbo"]): The model to use for the TTS plugin. Defaults to "simba-english".
             language (Optional[str], optional): The language to use for the TTS plugin. Defaults to None.
             audio_format (Literal["mp3", "ogg", "aac"]): The audio format to use for the TTS plugin. Defaults to "mp3".
+            loudness_normalization (Optional[bool]): Forwarded as ``options.loudness_normalization``
+                in the request body. ``None`` lets the server apply its default.
+            text_normalization (Optional[bool]): Forwarded as ``options.text_normalization``
+                in the request body. ``None`` lets the server apply its default.
+            chunked_synthesis (bool): When ``True``, dispatches one POST per
+                ``FlushMarker`` segment boundary. When ``False`` (default), the
+                entire LLM stream is accumulated into a single POST for prosody
+                continuity. Set ``True`` only for very long utterances where
+                sub-sentence TTFB matters more than cross-sentence prosody.
         """
         super().__init__(
             sample_rate=SPEECHIFY_SAMPLE_RATE, num_channels=SPEECHIFY_CHANNELS
@@ -44,6 +56,9 @@ class SpeechifyTTS(TTS):
         self.model = model
         self.language = language
         self.audio_format = audio_format
+        self.loudness_normalization = loudness_normalization
+        self.text_normalization = text_normalization
+        self.chunked_synthesis = chunked_synthesis
         self.audio_track = None
         self.loop = None
         self._first_chunk_sent = False
@@ -63,6 +78,11 @@ class SpeechifyTTS(TTS):
             timeout=httpx.Timeout(connect=15.0, read=30.0,
                                   write=5.0, pool=5.0),
             follow_redirects=True,
+            limits=httpx.Limits(
+                max_connections=50,
+                max_keepalive_connections=50,
+                keepalive_expiry=120,
+            ),
         )
 
     def reset_first_audio_tracking(self) -> None:
@@ -71,7 +91,7 @@ class SpeechifyTTS(TTS):
 
     async def synthesize(
         self,
-        text: AsyncIterator[str] | str,
+        text: AsyncIterator[Union[str, FlushMarker]] | str,
         **kwargs: Any,
     ) -> None:
         try:
@@ -81,14 +101,45 @@ class SpeechifyTTS(TTS):
 
             self._interrupted = False
 
-            if isinstance(text, AsyncIterator):
-                async for segment in segment_text(text):
-                    if self._interrupted:
-                        break
-                    await self._stream_synthesis(segment)
-            else:
+            if isinstance(text, str):
                 if not self._interrupted:
                     await self._stream_synthesis(text)
+                return
+
+            if self.chunked_synthesis:
+                # One POST per FlushMarker boundary.
+                buf: list[str] = []
+                async for chunk in text:
+                    if self._interrupted:
+                        break
+                    if isinstance(chunk, FlushMarker):
+                        if buf:
+                            combined = "".join(buf)
+                            buf = []
+                            if combined.strip():
+                                await self._stream_synthesis(combined)
+                        continue
+                    if chunk and chunk.strip():
+                        buf.append(chunk)
+                if buf and not self._interrupted:
+                    tail = "".join(buf)
+                    if tail.strip():
+                        await self._stream_synthesis(tail)
+                return
+
+            # Default: accumulate full stream into one POST. FlushMarkers dropped.
+            parts: list[str] = []
+            async for chunk in text:
+                if self._interrupted:
+                    break
+                if isinstance(chunk, FlushMarker):
+                    continue
+                if chunk and chunk.strip():
+                    parts.append(chunk)
+            if parts and not self._interrupted:
+                combined_text = "".join(parts)
+                if combined_text.strip():
+                    await self._stream_synthesis(combined_text)
 
         except Exception as e:
             self.emit("error", f"Speechify TTS synthesis failed: {str(e)}")
@@ -98,58 +149,78 @@ class SpeechifyTTS(TTS):
         if not text.strip() or self._interrupted:
             return
 
-        try:
-            headers = {
-                "Accept": f"audio/{self.audio_format}",
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            }
+        headers = {
+            "Accept": f"audio/{self.audio_format}",
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
 
-            payload = {
-                "input": text,
-                "voice_id": self.voice_id,
-                "model": self.model,
-            }
+        payload: dict[str, Any] = {
+            "input": text,
+            "voice_id": self.voice_id,
+            "model": self.model,
+        }
 
-            if self.language:
-                payload["language"] = self.language
+        if self.language:
+            payload["language"] = self.language
 
-            async with self._http_client.stream(
-                "POST",
-                SPEECHIFY_STREAM_ENDPOINT,
-                headers=headers,
-                json=payload
-            ) as response:
-                response.raise_for_status()
+        # Server applies its own defaults when omitted.
+        options: dict[str, Any] = {}
+        if self.loudness_normalization is not None:
+            options["loudness_normalization"] = self.loudness_normalization
+        if self.text_normalization is not None:
+            options["text_normalization"] = self.text_normalization
+        if options:
+            payload["options"] = options
 
-                audio_data = b""
-                async for chunk in response.aiter_bytes():
-                    if self._interrupted:
-                        break
-                    if chunk:
-                        audio_data += chunk
+        for attempt in range(2):
+            try:
+                async with self._http_client.stream(
+                    "POST",
+                    SPEECHIFY_STREAM_ENDPOINT,
+                    headers=headers,
+                    json=payload
+                ) as response:
+                    response.raise_for_status()
 
-                if audio_data and not self._interrupted:
-                    await self._decode_and_stream(audio_data)
+                    audio_data = b""
+                    async for chunk in response.aiter_bytes():
+                        if self._interrupted:
+                            return
+                        if chunk:
+                            audio_data += chunk
 
-        except httpx.HTTPStatusError as e:
-            if not self._interrupted:
-                error_msg = f"HTTP error {e.response.status_code}"
-                try:
-                    error_data = e.response.json()
-                    if isinstance(error_data, dict) and "error" in error_data:
-                        error_msg = f"{error_msg}: {error_data['error']}"
-                except:
-                    pass
-                self.emit(
-                    "error", f"Speechify stream synthesis failed: {error_msg}")
-        except Exception as e:
-            if not self._interrupted:
-                self.emit("error", f"Stream synthesis failed: {str(e)}")
+                    if audio_data and not self._interrupted:
+                        await self._decode_and_stream(audio_data)
+                return
+
+            except (httpx.NetworkError, httpx.ConnectError, httpx.ReadTimeout) as e:
+                if attempt == 0 and not self._interrupted:
+                    await asyncio.sleep(0.25 * (2 ** attempt))
+                    continue
+                if not self._interrupted:
+                    self.emit("error", f"Speechify TTS network failure: {str(e)}")
+                return
+            except httpx.HTTPStatusError as e:
+                if not self._interrupted:
+                    error_msg = f"HTTP error {e.response.status_code}"
+                    try:
+                        error_data = e.response.json()
+                        if isinstance(error_data, dict) and "error" in error_data:
+                            error_msg = f"{error_msg}: {error_data['error']}"
+                    except Exception:
+                        pass
+                    self.emit(
+                        "error", f"Speechify stream synthesis failed: {error_msg}")
+                return
+            except Exception as e:
+                if not self._interrupted:
+                    self.emit("error", f"Stream synthesis failed: {str(e)}")
+                return
 
     async def _decode_and_stream(self, audio_bytes: bytes) -> None:
         """Decode compressed audio to PCM and stream it"""
-        if self._interrupted:
+        if self._interrupted or not audio_bytes:
             return
 
         try:

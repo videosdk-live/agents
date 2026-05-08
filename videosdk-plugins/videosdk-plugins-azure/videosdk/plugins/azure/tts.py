@@ -3,11 +3,11 @@ from __future__ import annotations
 import asyncio
 import os
 from dataclasses import dataclass, field
-from typing import Literal, AsyncIterator, Optional, Any
+from typing import Literal, AsyncIterator, Optional, Any, Union
 
 import httpx
 
-from videosdk.agents import TTS, segment_text 
+from videosdk.agents import TTS, FlushMarker, segment_text
 import logging
 
 logger = logging.getLogger(__name__)
@@ -183,7 +183,7 @@ class AzureTTS(TTS):
 
     async def synthesize(
         self,
-        text: AsyncIterator[str] | str,
+        text: AsyncIterator[Union[str, FlushMarker]] | str,
         voice_id: Optional[str] = None,
         **kwargs: Any,
     ) -> None:
@@ -194,14 +194,14 @@ class AzureTTS(TTS):
 
             self._interrupted = False
 
-            if isinstance(text, AsyncIterator):
+            if isinstance(text, str):
+                if not self._interrupted:
+                    await self._synthesize_segment(text, voice_id, **kwargs)
+            else:
                 async for segment in segment_text(text):
                     if self._interrupted:
                         break
                     await self._synthesize_segment(segment, voice_id, **kwargs)
-            else:
-                if not self._interrupted:
-                    await self._synthesize_segment(text, voice_id, **kwargs)
 
         except Exception as e:
             logger.error("Azure TTS synthesis failed: %s", str(e), exc_info=True)
@@ -214,49 +214,67 @@ class AzureTTS(TTS):
         if not text.strip() or self._interrupted:
             return
 
-        try:
-            
-            headers = {
-                "Content-Type": "application/ssml+xml",
-                "X-Microsoft-OutputFormat": self.AZURE_OUTPUT_FORMAT,
-                "User-Agent": "VideoSDK Agents", 
-            }
+        headers = {
+            "Content-Type": "application/ssml+xml",
+            "X-Microsoft-OutputFormat": self.AZURE_OUTPUT_FORMAT,
+            "User-Agent": "VideoSDK Agents",
+        }
 
-            if self.speech_auth_token:
-                headers["Authorization"] = f"Bearer {self.speech_auth_token}"
-            elif self.speech_key:
-                headers["Ocp-Apim-Subscription-Key"] = self.speech_key
+        if self.speech_auth_token:
+            headers["Authorization"] = f"Bearer {self.speech_auth_token}"
+        elif self.speech_key:
+            headers["Ocp-Apim-Subscription-Key"] = self.speech_key
 
-            ssml_data = self._build_ssml(text, voice_id or self.voice)
+        ssml_data = self._build_ssml(text, voice_id or self.voice)
+        url = self._get_endpoint_url()
 
-            response = await self._get_http_client().post(
-                url=self._get_endpoint_url(),
-                headers=headers,
-                content=ssml_data,
-            )
-            response.raise_for_status()
+        last_exc: Optional[BaseException] = None
+        for attempt in range(2):
+            try:
+                response = await self._get_http_client().post(
+                    url=url,
+                    headers=headers,
+                    content=ssml_data,
+                )
+                response.raise_for_status()
 
-            audio_data = b""
-            async for chunk in response.aiter_bytes(chunk_size=8192):
-                if self._interrupted: 
-                    break
-                if chunk: 
-                    audio_data += chunk
+                audio_data = b""
+                async for chunk in response.aiter_bytes(chunk_size=8192):
+                    if self._interrupted:
+                        break
+                    if chunk:
+                        audio_data += chunk
 
-            if audio_data and not self._interrupted:
-                await self._stream_audio_chunks(audio_data)
-                
-        except httpx.TimeoutException:
-            logger.error("Azure TTS request timeout")
-            self.emit("error", "Azure TTS request timeout")
-        except httpx.HTTPStatusError as e:
-            logger.error("Azure TTS HTTP error: %s - %s", e.response.status_code, e.response.text)
-            self.emit("error", f"Azure TTS HTTP error: {e.response.status_code} - {e.response.text}")
-        except Exception as e:
-            if not self._interrupted:
-                logger.error("Azure TTS synthesis failed: %s", str(e), exc_info=True)
-                self.emit("error", f"Azure TTS synthesis failed: {str(e)}")
-                raise
+                if audio_data and not self._interrupted:
+                    await self._stream_audio_chunks(audio_data)
+                return
+
+            except (httpx.NetworkError, httpx.ConnectError, httpx.ReadTimeout) as e:
+                last_exc = e
+                if attempt == 0 and not self._interrupted:
+                    await asyncio.sleep(0.25 * (2 ** attempt))
+                    continue
+                logger.error("Azure TTS network failure: %s", str(e))
+                self.emit("error", f"Azure TTS network failure: {str(e)}")
+                return
+            except httpx.TimeoutException as e:
+                last_exc = e
+                if attempt == 0 and not self._interrupted:
+                    await asyncio.sleep(0.25 * (2 ** attempt))
+                    continue
+                logger.error("Azure TTS request timeout")
+                self.emit("error", "Azure TTS request timeout")
+                return
+            except httpx.HTTPStatusError as e:
+                logger.error("Azure TTS HTTP error: %s - %s", e.response.status_code, e.response.text)
+                self.emit("error", f"Azure TTS HTTP error: {e.response.status_code} - {e.response.text}")
+                return
+            except Exception as e:
+                if not self._interrupted:
+                    logger.error("Azure TTS synthesis failed: %s", str(e), exc_info=True)
+                    self.emit("error", f"Azure TTS synthesis failed: {str(e)}")
+                    raise
+                return
 
     def _build_ssml(self, text: str, voice: str) -> str:
         lang = self.language or "en-US"

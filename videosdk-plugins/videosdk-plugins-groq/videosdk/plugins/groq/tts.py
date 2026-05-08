@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-from typing import Any, AsyncIterator, Literal, Optional
+from typing import Any, AsyncIterator, Literal, Optional, Union
 import httpx
 import os
 import asyncio
 
-from videosdk.agents import TTS, segment_text
+from videosdk.agents import TTS, FlushMarker, segment_text
 
 GROQ_TTS_SAMPLE_RATE = 24000
 GROQ_TTS_CHANNELS = 1
 
-DEFAULT_MODEL = "playai-tts"
-DEFAULT_VOICE = "Fritz-PlayAI"
+DEFAULT_MODEL = "canopylabs/orpheus-v1-english"
+DEFAULT_VOICE = "hannah"
 GROQ_TTS_ENDPOINT = "https://api.groq.com/openai/v1/audio/speech"
 
 SAMPLE_RATE_MAP = {
@@ -40,8 +40,12 @@ class GroqTTS(TTS):
 
         Args:
             api_key (Optional[str], optional): Groq API key. Defaults to None.
-            model (str): The model to use for the TTS plugin. Defaults to "playai-tts".
-            voice (str): The voice to use for the TTS plugin. Defaults to "Fritz-PlayAI".
+            model (str): The model to use for the TTS plugin. Defaults to
+                ``canopylabs/orpheus-v1-english``. Use ``canopylabs/orpheus-arabic-saudi``
+                for Arabic. (``playai-tts`` was decommissioned by Groq.)
+            voice (str): The voice to use for the TTS plugin. Defaults to ``hannah``.
+                Other Orpheus voices include ``troy``, ``austin``. See
+                https://console.groq.com/docs/text-to-speech/orpheus for the full list.
             speed (float): The speed to use for the TTS plugin. Must be between 0.5 and 5.0. Defaults to 1.0.
             response_format (Literal["flac", "mp3", "mulaw", "ogg", "wav"]): The response format to use for the TTS plugin. Defaults to "wav".
             sample_rate (int): The sample rate to use for the TTS plugin. Must be one of: 8000, 16000, 22050, 24000, 32000, 44100, 48000. Defaults to 24000.
@@ -64,6 +68,7 @@ class GroqTTS(TTS):
         self.response_format = response_format
         self._groq_sample_rate = sample_rate
         self._first_chunk_sent = False
+        self._interrupted = False
 
         self.api_key = api_key or os.getenv("GROQ_API_KEY")
         if not self.api_key:
@@ -88,7 +93,7 @@ class GroqTTS(TTS):
 
     async def synthesize(
         self,
-        text: AsyncIterator[str] | str,
+        text: AsyncIterator[Union[str, FlushMarker]] | str,
         voice_id: Optional[str] = None,
         **kwargs: Any,
     ) -> None:
@@ -96,20 +101,26 @@ class GroqTTS(TTS):
         Convert text to speech using Groq's TTS API and stream to audio track
 
         Args:
-            text: Text to convert to speech
+            text: Text to convert to speech, or an async iterator of text chunks.
+                ``FlushMarker`` segment boundaries are silently dropped — Groq's
+                HTTP API has no per-segment flush primitive.
             voice_id: Optional voice override
             **kwargs: Additional provider-specific arguments
         """
-        try:
-            if isinstance(text, AsyncIterator):
-                async for segment in segment_text(text):
-                    await self._synthesize_audio(segment, voice_id)
-            else:
-                await self._synthesize_audio(text, voice_id)
+        if not self.audio_track or not self.loop:
+            self.emit("error", "Audio track or event loop not set")
+            return
 
-            if not self.audio_track or not self.loop:
-                self.emit("error", "Audio track or event loop not set")
-                return
+        self._interrupted = False
+        try:
+            if isinstance(text, str):
+                if not self._interrupted:
+                    await self._synthesize_audio(text, voice_id)
+            else:
+                async for segment in segment_text(text):
+                    if self._interrupted:
+                        break
+                    await self._synthesize_audio(segment, voice_id)
 
         except Exception as e:
             self.emit("error", f"TTS synthesis failed: {str(e)}")
@@ -118,75 +129,97 @@ class GroqTTS(TTS):
         self, text: str, voice_id: Optional[str] = None
     ) -> None:
         """Call Groq API to synthesize audio"""
-        try:
-            headers = {
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            }
+        if not text or not text.strip() or self._interrupted:
+            return
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
 
-            payload = {
-                "model": self.model,
-                "input": text,
-                "voice": voice_id or self.voice,
-                "response_format": self.response_format,
-                "sample_rate": self._groq_sample_rate,
-                "speed": self.speed,
-            }
+        payload = {
+            "model": self.model,
+            "input": text,
+            "voice": voice_id or self.voice,
+            "response_format": self.response_format,
+            "sample_rate": self._groq_sample_rate,
+            "speed": self.speed,
+        }
 
-            async with self._client.stream(
-                "POST",
-                GROQ_TTS_ENDPOINT,
-                headers=headers,
-                json=payload,
-            ) as response:
-                response.raise_for_status()
+        for attempt in range(2):
+            try:
+                async with self._client.stream(
+                    "POST",
+                    GROQ_TTS_ENDPOINT,
+                    headers=headers,
+                    json=payload,
+                ) as response:
+                    if response.status_code >= 400:
+                        # Body must be read before .text/.json() are usable
+                        # on a streaming response.
+                        await response.aread()
+                    response.raise_for_status()
 
-                if self.response_format == "wav":
-                    audio_data = b""
-                    async for chunk in response.aiter_bytes():
-                        audio_data += chunk
+                    if self.response_format == "wav":
+                        audio_data = b""
+                        async for chunk in response.aiter_bytes():
+                            if self._interrupted:
+                                break
+                            audio_data += chunk
 
-                    pcm_data = self._extract_pcm_from_wav(audio_data)
-                    await self._stream_audio_chunks(pcm_data)
+                        if not self._interrupted:
+                            pcm_data = self._extract_pcm_from_wav(audio_data)
+                            await self._stream_audio_chunks(pcm_data)
+                    else:
+                        self.emit(
+                            "error",
+                            f"Format {self.response_format} requires decoding, which is not implemented yet",
+                        )
+                return
+
+            except (httpx.NetworkError, httpx.ConnectError, httpx.ReadTimeout) as e:
+                if attempt == 0 and not self._interrupted:
+                    await asyncio.sleep(0.25 * (2 ** attempt))
+                    continue
+                self.emit("error", f"Groq TTS network failure: {str(e)}")
+                return
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 401:
+                    self.emit(
+                        "error",
+                        "Groq API authentication failed. Please check your API key.",
+                    )
+                elif e.response.status_code == 400:
+                    try:
+                        error_data = e.response.json()
+                        error_msg = error_data.get("error", {}).get(
+                            "message", "Bad request"
+                        )
+                        self.emit("error", f"Groq TTS request error: {error_msg}")
+                    except Exception:
+                        self.emit(
+                            "error", f"Groq TTS bad request: {e.response.text}")
+                elif e.response.status_code == 429:
+                    self.emit(
+                        "error", "Groq TTS rate limit exceeded. Please try again later."
+                    )
                 else:
                     self.emit(
                         "error",
-                        f"Format {self.response_format} requires decoding, which is not implemented yet",
+                        f"Groq TTS HTTP error {e.response.status_code}: {e.response.text}",
                     )
-
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 401:
-                self.emit(
-                    "error",
-                    "Groq API authentication failed. Please check your API key.",
-                )
-            elif e.response.status_code == 400:
-                try:
-                    error_data = e.response.json()
-                    error_msg = error_data.get("error", {}).get(
-                        "message", "Bad request"
-                    )
-                    self.emit("error", f"Groq TTS request error: {error_msg}")
-                except:
-                    self.emit(
-                        "error", f"Groq TTS bad request: {e.response.text}")
-            elif e.response.status_code == 429:
-                self.emit(
-                    "error", "Groq TTS rate limit exceeded. Please try again later."
-                )
-            else:
-                self.emit(
-                    "error",
-                    f"Groq TTS HTTP error {e.response.status_code}: {e.response.text}",
-                )
-        except Exception as e:
-            self.emit("error", f"Groq TTS API call failed: {str(e)}")
+                return
+            except Exception as e:
+                if not self._interrupted:
+                    self.emit("error", f"Groq TTS API call failed: {str(e)}")
+                return
 
     async def _stream_audio_chunks(self, audio_bytes: bytes) -> None:
         """Stream audio data in chunks at 24kHz"""
         chunk_size = int(24000 * GROQ_TTS_CHANNELS * 2 * 20 / 1000)
 
         for i in range(0, len(audio_bytes), chunk_size):
+            if self._interrupted:
+                return
             chunk = audio_bytes[i: i + chunk_size]
 
             if len(chunk) < chunk_size and len(chunk) > 0:
@@ -222,5 +255,6 @@ class GroqTTS(TTS):
 
     async def interrupt(self) -> None:
         """Interrupt the TTS process"""
+        self._interrupted = True
         if self.audio_track:
             self.audio_track.interrupt()

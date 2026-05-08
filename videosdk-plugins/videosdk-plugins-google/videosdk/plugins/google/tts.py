@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from typing import Any, AsyncIterator, Literal
+from typing import Any, AsyncIterator, Literal, Union
 import os
 import asyncio
 from dataclasses import dataclass
 import logging
 
-from videosdk.agents import TTS, segment_text
+from videosdk.agents import TTS, FlushMarker, segment_text
 logger = logging.getLogger(__name__)
 
 GOOGLE_SAMPLE_RATE = 24000
@@ -85,6 +85,7 @@ class GoogleTTS(TTS):
         self.audio_track = None
         self.loop = None
         self._first_chunk_sent = False
+        self._interrupted = False
         self.voice_config = voice_config or GoogleVoiceConfig()
         self.custom_pronunciations = custom_pronunciations
         self.vertexai = vertexai
@@ -177,23 +178,37 @@ class GoogleTTS(TTS):
         """Reset the first audio tracking state for next TTS task"""
         self._first_chunk_sent = False
 
+    async def prewarm(self) -> None:
+        """Pre-warm the gRPC channel so the first ``synthesize()`` call doesn't
+        pay the TLS + HTTP/2 SETTINGS + auth handshake (~150–400ms). Safe to
+        call repeatedly."""
+        try:
+            channel = self._client.transport.grpc_channel
+            if hasattr(channel, "channel_ready"):
+                await channel.channel_ready()
+        except Exception as e:
+            logger.warning(f"Google TTS prewarm failed (non-fatal): {e}")
+
     async def synthesize(
         self,
-        text: AsyncIterator[str] | str,
+        text: AsyncIterator[Union[str, FlushMarker]] | str,
         **kwargs: Any,
     ) -> None:
+        if not self.audio_track or not self.loop:
+            self.emit("error", "Audio track or loop not initialized")
+            return
+
+        self._interrupted = False
         try:
             if self.streaming:
                 await self._synthesize_streaming(text)
-            elif isinstance(text, AsyncIterator):
-                async for segment in segment_text(text):
-                    await self._synthesize_audio(segment)
-            else:
+            elif isinstance(text, str):
                 await self._synthesize_audio(text)
-
-            if not self.audio_track or not self.loop:
-                self.emit("error", "Audio track or loop not initialized")
-                return
+            else:
+                async for segment in segment_text(text):
+                    if self._interrupted:
+                        break
+                    await self._synthesize_audio(segment)
 
         except Exception as e:
             self.emit("error", f"Google TTS synthesis failed: {str(e)}")
@@ -280,6 +295,13 @@ class GoogleTTS(TTS):
             else:
                 is_first = True
                 async for chunk in text:
+                    if self._interrupted:
+                        break
+                    # Drop FlushMarker — gRPC StreamingSynthesize has no flush
+                    # primitive, and the server segments naturally as text
+                    # arrives.
+                    if isinstance(chunk, FlushMarker):
+                        continue
                     if chunk:
                         yield tts.StreamingSynthesizeRequest(
                             input=_make_input(chunk, include_prompt=is_first)
@@ -290,11 +312,14 @@ class GoogleTTS(TTS):
             async for response in await self._client.streaming_synthesize(
                 request_generator()
             ):
+                if self._interrupted:
+                    break
                 if response.audio_content:
                     await self._stream_audio_chunks(response.audio_content, has_wav_header=False)
         except Exception as e:
-            self.emit("error", f"Google TTS streaming error: {str(e)}")
-            raise
+            if not self._interrupted:
+                self.emit("error", f"Google TTS streaming error: {str(e)}")
+                raise
 
     def _build_custom_pronunciations_proto(self) -> Any:
         """Convert self.custom_pronunciations to a CustomPronunciations proto."""
@@ -379,10 +404,14 @@ class GoogleTTS(TTS):
         self, audio_bytes: bytes, has_wav_header: bool = True
     ) -> None:
         """Chunk raw PCM and forward to the audio track."""
+        if self._interrupted:
+            return
         chunk_size = 960
         audio_data = self._remove_wav_header(audio_bytes) if has_wav_header else audio_bytes
 
         for i in range(0, len(audio_data), chunk_size):
+            if self._interrupted:
+                return
             chunk = audio_data[i:i + chunk_size]
 
             if len(chunk) < chunk_size and len(chunk) > 0:
@@ -412,5 +441,6 @@ class GoogleTTS(TTS):
         await super().aclose()
 
     async def interrupt(self) -> None:
+        self._interrupted = True
         if self.audio_track:
             self.audio_track.interrupt()
