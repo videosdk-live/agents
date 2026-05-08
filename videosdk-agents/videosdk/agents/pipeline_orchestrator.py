@@ -11,7 +11,7 @@ from .content_generation import ContentGeneration
 from .speech_generation import SpeechGeneration
 from .stt.stt import STT
 from .llm.llm import LLM
-from .tts.tts import TTS, FlushMarker
+from .tts.tts import TTS
 from .vad import VAD
 from .eou import EOU
 from .denoise import Denoise
@@ -68,8 +68,7 @@ async def _pipe_through_sentence_stream(
         async for segment in sentence_stream:
             logger.debug("[chunking] tokenizer → TTS: %r", segment)
             yield segment
-            yield FlushMarker()
-            
+
     finally:
         if not producer_task.done():
             producer_task.cancel()
@@ -830,14 +829,18 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 emit = not bool(getattr(tts, "supports_word_timestamps", False))
                 metrics_collector.set_agent_response(message, emit_transport=emit)
 
-            if self._tokenizer is not None:
+            if self._tokenizer is not None or self._text_filter is not None:
                 async def _string_iter() -> AsyncIterator[str]:
                     yield message
-                text_source = _pipe_through_sentence_stream(
-                    _string_iter(),
-                    self._tokenizer,
-                    language=self._chunking_language,
-                )
+                text_source: AsyncIterator[Any] = _string_iter()
+                if self._text_filter is not None:
+                    text_source = self._text_filter.filter(text_source)
+                if self._tokenizer is not None:
+                    text_source = _pipe_through_sentence_stream(
+                        text_source,
+                        self._tokenizer,
+                        language=self._chunking_language,
+                    )
                 await self.speech_generation.synthesize(text_source)
             else:
                 await self.speech_generation.synthesize(message)
