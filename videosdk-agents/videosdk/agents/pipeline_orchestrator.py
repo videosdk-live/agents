@@ -24,29 +24,29 @@ from .metrics import metrics_collector
 if TYPE_CHECKING:
     from .agent import Agent
     from .pipeline_hooks import PipelineHooks
-    from .tokenize import SentenceTokenizer, TextFilter
+    from .tokenize import SentenceChunker, TextFilter
 
 logger = logging.getLogger(__name__)
 
 
-async def _pipe_through_sentence_stream(
+async def _pipe_through_chunk_stream(
     upstream: AsyncIterator[str],
-    tokenizer: "SentenceTokenizer",
+    chunker: "SentenceChunker",
     *,
     language: str | None = None,
 ) -> AsyncIterator[str]:
-    """Push an async text iterator through a ``SentenceTokenizer.stream()``.
+    """Push an async text iterator through a ``SentenceChunker.stream()``.
 
     Spawns a background task that reads from ``upstream`` and pushes into the
-    sentence stream; the returned iterator yields sentence-sized segments as
-    the stream emits them. On upstream exhaustion, ``end_input()`` is called so
-    the stream flushes its buffer.
+    sentence chunk stream; the returned iterator yields sentence-sized segments
+    as the stream emits them. On upstream exhaustion, ``end_input()`` is called
+    so the stream flushes its buffer.
 
     Cancellation propagates: cancelling the consumer cancels the producer task
-    and closes the sentence stream cleanly, so barge-in cuts TTS within one
+    and closes the chunk stream cleanly, so barge-in cuts TTS within one
     iteration of the inner loop.
     """
-    sentence_stream = tokenizer.stream(language=language)
+    sentence_stream = chunker.stream(language=language)
 
     async def _producer() -> None:
         try:
@@ -55,12 +55,12 @@ async def _pipe_through_sentence_stream(
                     await sentence_stream.push_text(chunk)
         except asyncio.CancelledError:
             raise
-        except Exception:  # pragma: no cover - defensive
+        except Exception: 
             logger.error("Upstream raised inside sentence pipe", exc_info=True)
         finally:
             try:
                 await sentence_stream.end_input()
-            except Exception:  # pragma: no cover - defensive
+            except Exception: 
                 logger.debug("end_input raised during pipe shutdown", exc_info=True)
 
     producer_task = asyncio.create_task(_producer())
@@ -124,7 +124,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
         context_window: Any | None = None,
         voice_mail_detector: VoiceMailDetector | None = None,
         hooks: "PipelineHooks | None" = None,
-        tokenizer: "SentenceTokenizer | None" = None,
+        chunker: "SentenceChunker | None" = None,
         text_filter: "TextFilter | None" = None,
         chunking_language: str = "auto",
     ) -> None:
@@ -140,7 +140,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
         self.hooks = hooks
 
         # Text chunking / filtering (cascade-mode only).
-        self._tokenizer = tokenizer
+        self._chunker = chunker
         self._text_filter = text_filter
         self._chunking_language = chunking_language
         
@@ -733,10 +733,10 @@ class PipelineOrchestrator(EventEmitter[Literal[
                         text_source = tts_stream_gen()
                         if self._text_filter is not None:
                             text_source = self._text_filter.filter(text_source)
-                        if self._tokenizer is not None:
-                            text_source = _pipe_through_sentence_stream(
+                        if self._chunker is not None:
+                            text_source = _pipe_through_chunk_stream(
                                 text_source,
-                                self._tokenizer,
+                                self._chunker,
                                 language=self._chunking_language,
                             )
                         if self.hooks:
@@ -829,16 +829,16 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 emit = not bool(getattr(tts, "supports_word_timestamps", False))
                 metrics_collector.set_agent_response(message, emit_transport=emit)
 
-            if self._tokenizer is not None or self._text_filter is not None:
+            if self._chunker is not None or self._text_filter is not None:
                 async def _string_iter() -> AsyncIterator[str]:
                     yield message
                 text_source: AsyncIterator[Any] = _string_iter()
                 if self._text_filter is not None:
                     text_source = self._text_filter.filter(text_source)
-                if self._tokenizer is not None:
-                    text_source = _pipe_through_sentence_stream(
+                if self._chunker is not None:
+                    text_source = _pipe_through_chunk_stream(
                         text_source,
-                        self._tokenizer,
+                        self._chunker,
                         language=self._chunking_language,
                     )
                 await self.speech_generation.synthesize(text_source)

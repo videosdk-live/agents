@@ -4,12 +4,13 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 
 
-class SentenceStream(ABC):
-    """Push-based stream adapter for sentence tokenizers.
+class SentenceChunkStream(ABC):
+    """Push-based stream adapter for sentence chunkers.
 
-    A ``SentenceStream`` is single-use: open it with ``SentenceTokenizer.stream()``,
-    push text as deltas arrive, call ``end_input()`` when the upstream source
-    closes, and iterate over it to receive sentence-sized strings.
+    A ``SentenceChunkStream`` is single-use: open it with
+    ``SentenceChunker.stream()``, push text as deltas arrive, call
+    ``end_input()`` when the upstream source closes, and iterate over it to
+    receive sentence-sized strings.
     """
 
     @abstractmethod
@@ -33,8 +34,8 @@ class SentenceStream(ABC):
     def __aiter__(self) -> AsyncIterator[str]:
         ...
 
-class SentenceTokenizer(ABC):
-    """Abstract tokenizer that splits text into sentence-sized segments."""
+class SentenceChunker(ABC):
+    """Abstract chunker that splits text into sentence-sized segments for TTS."""
 
     @abstractmethod
     def tokenize(self, text: str, *, language: str | None = None) -> list[str]:
@@ -43,28 +44,28 @@ class SentenceTokenizer(ABC):
         Args:
             text: Full text to split.
             language: Optional ISO 639-1 language hint. When omitted, the
-                tokenizer uses its internal heuristic (usually script detection).
+                chunker uses its internal heuristic (usually script detection).
 
         Returns:
             A list of sentence-sized strings with leading/trailing whitespace stripped.
         """
 
     @abstractmethod
-    def stream(self, *, language: str | None = None) -> SentenceStream:
-        """Open a push-based stream for incremental tokenization.
+    def stream(self, *, language: str | None = None) -> SentenceChunkStream:
+        """Open a push-based stream for incremental chunking.
 
         Args:
             language: Optional ISO 639-1 language hint forwarded to ``tokenize``.
 
         Returns:
-            A fresh ``SentenceStream`` instance.
+            A fresh ``SentenceChunkStream`` instance.
         """
 
 
 class TextFilter(ABC):
-    """Pre-tokenization text transformation.
+    """Pre-chunking text transformation.
 
-    Filters sit *before* the tokenizer. They may be stateful across a turn
+    Filters sit *before* the chunker. They may be stateful across a turn
     (e.g. tracking whether the stream is currently inside a Markdown code
     fence) and are reset between turns via ``reset()``.
     """
@@ -77,7 +78,7 @@ class TextFilter(ABC):
             chunks: Async iterator of raw LLM deltas.
 
         Yields:
-            Filtered text chunks ready to be consumed by a ``SentenceTokenizer``.
+            Filtered text chunks ready to be consumed by a ``SentenceChunker``.
         """
 
     @abstractmethod

@@ -5,7 +5,7 @@ import logging
 import time
 from collections.abc import AsyncIterator, Callable
 
-from .base import SentenceStream
+from .base import SentenceChunkStream
 from .patterns import NO_SPACE_SCRIPTS_REGEX
 
 logger = logging.getLogger(__name__)
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 _EOS: object = object()
 
 
-class BufferedSentenceStream(SentenceStream):
+class BufferedSentenceChunkStream(SentenceChunkStream):
     """Stream adapter that wraps a one-shot tokenize function.
 
     Strategy:
@@ -70,7 +70,7 @@ class BufferedSentenceStream(SentenceStream):
     async def push_text(self, text: str) -> None:
         """Feed more text into the stream."""
         if self._closed:
-            logger.debug("push_text on closed BufferedSentenceStream; ignored")
+            logger.debug("push_text on closed BufferedSentenceChunkStream; ignored")
             return
         if not text:
             return

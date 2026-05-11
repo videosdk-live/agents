@@ -4,7 +4,7 @@ import logging
 import re
 from functools import partial
 
-from .base import SentenceStream, SentenceTokenizer
+from .base import SentenceChunkStream, SentenceChunker
 from .patterns import (
     ABBREVIATIONS_BY_LANG,
     ABBREVIATIONS_EN,
@@ -39,8 +39,8 @@ _STRUCTURAL_PATTERNS: tuple[re.Pattern[str], ...] = (
 def _placeholder_char(idx: int) -> str:
     """Return a single Private Use Area char for placeholder index ``idx``."""
     return chr(PLACEHOLDER_BASE + idx)
-class BasicSentenceTokenizer(SentenceTokenizer):
-    """Default multilingual, Unicode-aware sentence tokenizer.
+class BasicSentenceChunker(SentenceChunker):
+    """Default multilingual, Unicode-aware sentence chunker.
 
     Works correctly without a ``language`` hint for every major world script.
     An explicit hint sharpens behaviour (abbreviation set, Greek ``;`` upgrade)
@@ -158,11 +158,11 @@ class BasicSentenceTokenizer(SentenceTokenizer):
             text = text.replace(key, value)
         return text
 
-    def stream(self, *, language: str | None = None) -> SentenceStream:
-        """Open a push-based stream adapter bound to this tokenizer."""
-        from .stream import BufferedSentenceStream
+    def stream(self, *, language: str | None = None) -> SentenceChunkStream:
+        """Open a push-based stream adapter bound to this chunker."""
+        from .stream import BufferedSentenceChunkStream
 
-        return BufferedSentenceStream(
+        return BufferedSentenceChunkStream(
             tokenize_fn=partial(self.tokenize_raw, language=language),
             strong_terminators=self._resolve_strong_for_stream(language),
             min_sentence_len=self._min_sentence_len,

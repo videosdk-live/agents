@@ -44,6 +44,18 @@ logger = logging.getLogger(__name__)
 _MAX_BUFFER: int = 2000
 _FILTER_PLACEHOLDER_BASE: int = PLACEHOLDER_BASE + 0x1000
 
+_CURRENCY_BY_LANG: dict[str, str] = {
+    "en": "usd",
+    "hi": "inr", "mr": "inr", "gu": "inr", "bn": "inr", "ta": "inr",
+    "te": "inr", "kn": "inr", "ml": "inr", "pa": "inr", "or": "inr",
+    "as": "inr", "si": "inr", "ne": "inr", "ur": "inr",
+}
+
+_VERBALIZE_LANGS: frozenset[str] = frozenset({
+    "en", "hi", "mr", "gu", "bn", "ta", "te", "kn", "ml", "pa", "or", "as",
+    "si", "ne", "ur",
+})
+
 
 class BasicTextFilter(TextFilter):
     """Default text filter with six independently-toggleable rules.
@@ -96,43 +108,6 @@ class BasicTextFilter(TextFilter):
             respect_quotes: (Reserved — currently a no-op; preserved state
                 is tracked per turn so future logic can use it.)
             respect_parens: (Reserved — same as above.)
-            ssml_flavor: How to render phone numbers and long digit runs
-                (OTPs, IDs) so the TTS reads them digit-by-digit rather
-                than as a parsed numeral. Pick the value that matches the
-                downstream TTS — the wrong choice is audibly broken.
-
-                * ``"none"`` (default) — emit plain text, no transform.
-                  Safe for any TTS; digit-by-digit is not guaranteed.
-                * ``"cartesia"`` — wrap in ``<spell>…</spell>``. Native
-                  handler in Cartesia Sonic-3. Sarvam, ElevenLabs, Google,
-                  Azure, Polly will read the tags LITERALLY ("less than
-                  spell greater than…") → broken pronunciation.
-                * ``"digits"`` — replace ``+91 98765 43210`` → ``9 1 9 8
-                  7 6 5 4 3 2 1 0`` (space-separated). Universal: works
-                  with Sarvam AI ``bulbul``, ElevenLabs, Google TTS,
-                  Azure, Polly, and Cartesia. Non-digit symbols in the
-                  phone pattern (``+``, ``(``, ``-``) are stripped so the
-                  TTS doesn't read "plus" or "paren".
-
-                Quick reference:
-                    Cartesia             → ``"cartesia"``
-                    Sarvam AI / ElevenLabs / Google / Azure / Polly
-                                         → ``"digits"``
-                    Unknown / plain text → ``"none"``
-            verbalize_currency: Convert ``$500,000`` → ``"five hundred
-                thousand dollars"`` (English) or ``₹10,00,000`` → ``"दस
-                लाख रुपये"`` (Hindi) before TTS. Fixes cases where
-                server-side TN reads currency amounts literally
-                ("comma zero zero zero"). Default ``True``.
-            verbalize_numbers: Also verbalize standalone cardinals (≥100 or
-                comma-grouped) so ``"a credit score of 800"`` becomes
-                ``"a credit score of eight hundred"``. 4-digit years and
-                numbers inside ``<spell>`` are skipped. Default ``False``
-                — opt-in to avoid surprising existing callers.
-            currency_hint: ISO 4217 lowercase (``"usd"``, ``"inr"``,
-                ``"eur"``, ``"gbp"``…) to disambiguate bare ``$``. If
-                ``None``, the symbol determines the word (``$`` → dollars,
-                ``₹`` → rupees/रुपये).
         """
         self._language = language
         self._strip_markdown = strip_markdown
@@ -153,6 +128,19 @@ class BasicTextFilter(TextFilter):
         self._in_code_fence: bool = False
         self._placeholder_counter: int = 0
         self._placeholder_map: dict[str, str] = {}
+
+    @classmethod
+    def for_language(cls, language: str | None) -> "BasicTextFilter":
+        """Build a filter pre-configured for ``language`` — used by ``Pipeline``
+        auto-wiring.
+
+        """
+        lang = language or "auto"
+        return cls(
+            language=lang,
+            verbalize_numbers=lang in _VERBALIZE_LANGS,
+            currency_hint=_CURRENCY_BY_LANG.get(lang),
+        )
 
     async def filter(self, chunks: AsyncIterator[str]) -> AsyncIterator[str]:
         """Transform an incoming chunk stream."""

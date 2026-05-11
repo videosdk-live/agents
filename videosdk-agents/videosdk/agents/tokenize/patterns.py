@@ -290,3 +290,14 @@ def detect_script(sample: str, *, default: str = "en") -> str:
     if "ko" in scores:
         return "ko"
     return max(scores.items(), key=lambda kv: kv[1])[0]
+
+
+def normalize_lang_code(code: str | None) -> str | None:
+    """Reduce an STT/TTS language tag to a bare ISO 639-1 code, or ``None``.
+    """
+    if not code:
+        return None
+    base = code.split("-", 1)[0].split("_", 1)[0].strip().lower()
+    if not base or base == "auto":
+        return None
+    return base

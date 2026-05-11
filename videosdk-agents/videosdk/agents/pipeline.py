@@ -27,10 +27,13 @@ from .utils import RealtimeMode,PipelineConfig, build_pipeline_config
 from .metrics import metrics_collector
 from .utils import UserState, AgentState
 from .tokenize import (
-    BasicSentenceTokenizer,
+    INDIC_LANGS,
+    BasicSentenceChunker,
     BasicTextFilter,
-    SentenceTokenizer,
+    IndicSentenceChunker,
+    SentenceChunker,
     TextFilter,
+    normalize_lang_code,
 )
 
 logger = logging.getLogger(__name__)
@@ -134,7 +137,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         realtime_config: RealtimeConfig | None = None,
         text_chunking: bool = True,
         text_filtering: bool = True,
-        tokenizer: SentenceTokenizer | None = None,
+        chunker: SentenceChunker | None = None,
         text_filter: TextFilter | None = None,
         chunking_language: str = "auto",
     ) -> None:
@@ -152,21 +155,13 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         self.voice_mail_detector = voice_mail_detector
 
         # Text chunking / filtering stage between LLM and TTS in cascade mode.
-        self.chunking_language = chunking_language
-        if not text_chunking:
-            self.tokenizer: SentenceTokenizer | None = None
-        elif tokenizer is not None:
-            self.tokenizer = tokenizer
-        else:
-            self.tokenizer = BasicSentenceTokenizer(language=chunking_language)
+        # Language resolution: explicit chunking_language > stt.language >
+        # tts.language > "auto" (script detection happens lazily at tokenize time).
+        resolved_lang = self._resolve_chunking_language(chunking_language, stt, tts)
+        self.chunking_language = resolved_lang
+        self.chunker = self._build_chunker(text_chunking, chunker, resolved_lang)
+        self.text_filter = self._build_text_filter(text_filtering, text_filter, resolved_lang)
 
-        if not text_filtering:
-            self.text_filter: TextFilter | None = None
-        elif text_filter is not None:
-            self.text_filter = text_filter
-        else:
-            self.text_filter = BasicTextFilter(language=chunking_language)
-        
         # Pipeline hooks for middleware/interception
         self.hooks = PipelineHooks()
         self.metrics = PipelineMetricsHooks()
@@ -218,10 +213,61 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         self._current_utterance_handle: UtteranceHandle | None = None
         
         self._setup_error_handlers()
-        
+
         self._auto_register()
         self._setup_global_listeners()
-    
+
+    @staticmethod
+    def _resolve_chunking_language(
+        chunking_language: str,
+        stt: STT | None,
+        tts: TTS | None,
+    ) -> str:
+        """Resolve the language used for chunking + text filtering.
+
+        Priority: explicit ``chunking_language`` > ``stt.language`` >
+        ``tts.language`` > ``"auto"`` (which makes ``BasicSentenceChunker``
+        fall back to per-segment script detection at tokenize time).
+        """
+        explicit = normalize_lang_code(chunking_language)
+        if explicit:
+            return explicit
+        for source in (stt, tts):
+            code = normalize_lang_code(getattr(source, "language", None))
+            if code:
+                return code
+        return "auto"
+
+    @staticmethod
+    def _build_chunker(
+        text_chunking: bool,
+        chunker: SentenceChunker | None,
+        language: str,
+    ) -> SentenceChunker | None:
+        """Pick the sentence chunker: ``IndicSentenceChunker`` for Indic
+        languages, ``BasicSentenceChunker`` otherwise. An explicit ``chunker``
+        wins; ``text_chunking=False`` disables it entirely."""
+        if not text_chunking:
+            return None
+        if chunker is not None:
+            return chunker
+        if language in INDIC_LANGS:
+            return IndicSentenceChunker(language=language)
+        return BasicSentenceChunker(language=language)
+
+    @staticmethod
+    def _build_text_filter(
+        text_filtering: bool,
+        text_filter: TextFilter | None,
+        language: str,
+    ) -> TextFilter | None:
+        """Pick the pre-chunk text filter — an explicit ``text_filter`` wins,
+        otherwise ``BasicTextFilter.for_language(language)``; ``text_filtering=
+        False`` disables it."""
+        if not text_filtering:
+            return None
+        return text_filter or BasicTextFilter.for_language(language)
+
     def _setup_global_listeners(self) -> None:
         from .event_bus import global_event_emitter
         
@@ -443,7 +489,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                 context_window=self.context_window,
                 voice_mail_detector=self.voice_mail_detector,
                 hooks=self.hooks,
-                tokenizer=self.tokenizer,
+                chunker=self.chunker,
                 text_filter=self.text_filter,
                 chunking_language=self.chunking_language,
             )
@@ -504,7 +550,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                 context_window=self.context_window,
                 voice_mail_detector=self.voice_mail_detector,
                 hooks=self.hooks,
-                tokenizer=self.tokenizer,
+                chunker=self.chunker,
                 text_filter=self.text_filter,
                 chunking_language=self.chunking_language,
             )
