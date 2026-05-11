@@ -1,15 +1,3 @@
-"""Pre-tokenization text filter.
-
-Handles the English-prosody issues enumerated in
-``LLM_TTS_CHUNKING_BEHAVIOR.md`` §6 — Markdown leakage, symbol read-aloud,
-punctuation-cluster splitting, quoted-speech handling, mid-path fragmentation,
-parenthetical loss.
-
-Runs *before* the sentence tokenizer in the cascade flow:
-
-    LLM deltas -> BasicTextFilter -> BasicSentenceTokenizer -> user hook -> TTS
-"""
-
 from __future__ import annotations
 
 import logging
