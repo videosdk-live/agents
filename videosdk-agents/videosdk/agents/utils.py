@@ -874,8 +874,8 @@ def resolve_videosdk_auth_token(explicit: Optional[str] = None) -> Optional[str]
 
 
 def generate_videosdk_token(
-    api_key: str,
-    secret: str,
+    api_key: str = "",
+    secret: str = "",
     *,
     ttl_seconds: int = 3600,
 ) -> str:
@@ -883,8 +883,8 @@ def generate_videosdk_token(
     Generate a pre-signed VideoSDK JWT token.
 
     Args:
-        api_key (str): Your VideoSDK API key.
-        secret (str): Your VideoSDK secret key.
+        api_key (str): Your VideoSDK API key. Falls back to ``VIDEOSDK_API_KEY`` env.
+        secret (str): Your VideoSDK secret key. Falls back to ``VIDEOSDK_SECRET_KEY`` env.
         ttl_seconds (int): Token validity in seconds (default: 3600).
 
     Returns:
@@ -897,14 +897,12 @@ def generate_videosdk_token(
             "PyJWT is required. Install it using: pip install PyJWT"
         ) from exc
 
-    now = int(time.time())
-     
-     
-    api_key = os.getenv("VIDEOSDK_API_KEY")
-    secret = os.getenv("VIDEOSDK_SECRET_KEY")
+    api_key = api_key or os.getenv("VIDEOSDK_API_KEY", "")
+    secret = secret or os.getenv("VIDEOSDK_SECRET_KEY", "")
     if not api_key or not secret:
         raise ValueError("VIDEOSDK_API_KEY and VIDEOSDK_SECRET_KEY are not set")
 
+    now = int(time.time())
     payload = {
         "apikey": api_key,
         "permissions": ["allow_join"],
