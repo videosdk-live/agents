@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Any, Callable, Optional, Literal, Awaitable
+from typing import Any, Callable, Optional, Literal, Awaitable,TYPE_CHECKING
 import asyncio
 import uuid
 
@@ -18,9 +18,13 @@ from .voice_mail_detector import VoiceMailDetector
 from .metrics import metrics_collector
 import logging
 import av
+
+if TYPE_CHECKING:
+    from .warm_transfer import WarmTransferConfig, WarmTransferResult
+
 logger = logging.getLogger(__name__)
 
-class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_changed"]]):
+class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_changed", "warm_transfer"]]):
     """
     Manages an agent session with its associated conversation flow and pipeline.
     """
@@ -68,6 +72,8 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         self.dtmf_handler = dtmf_handler
         self.voice_mail_detector = voice_mail_detector
         self._is_voice_mail_detected = False
+        self._warm_transfer_in_progress: bool = False
+        self._warm_transfer_task: Optional[asyncio.Task] = None
 
         # Set agent on pipeline (pipeline handles all internal wiring)
         if hasattr(self.pipeline, 'set_agent'):
@@ -721,3 +727,52 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
                 if participant_info.get("sipUser") and participant_info.get("sipCallType") == "outbound":
                     return True
         return False
+    
+    def on_warm_transfer(self, phase: Optional[str] = None, callback: Optional[Callable[..., Any]] = None):
+        """Subscribe to warm-transfer phase changes (decorator or imperative).
+
+        ``@session.on_warm_transfer()`` sees every phase; pass a phase name to
+        filter to one. Handlers are sync and receive the ``warm_transfer`` event
+        payload: ``{"phase": WarmTransferPhase, "data": {...}, "timestamp": float,
+        "consultation_room_id": Optional[str]}``.
+        """
+        def _wrap(handler: Callable[..., Any]) -> Callable[..., Any]:
+            if phase is None:
+                return self.on("warm_transfer", handler)
+
+            def _filtered(payload):
+                pv = payload.get("phase") if isinstance(payload, dict) else None
+                if getattr(pv, "value", pv) == phase:
+                    handler(payload)
+
+            _filtered.__name__ = f"{handler.__name__}__phase_{phase}"
+            return self.on("warm_transfer", _filtered)
+
+        return _wrap if callback is None else _wrap(callback)
+
+    async def warm_transfer(self, config: "WarmTransferConfig") -> "WarmTransferResult":
+        """Run a SIP-to-SIP warm transfer to a human supervisor.
+
+        See :mod:`videosdk.agents.warm_transfer` for the config surface and the
+        ``@session.on_warm_transfer(...)`` phase hook.
+
+        The transfer runs in its own task and is shielded from the caller of this
+        method being cancelled (this is usually invoked from a ``@function_tool``,
+        and that task gets cancelled whenever the caller talks over the agent /
+        triggers an interruption — which must not abort an in-flight transfer).
+        If the awaiting tool is cancelled, the transfer keeps running to
+        completion in the background; the result is simply not returned.
+        """
+        from .warm_transfer import WarmTransferRunner, WarmTransferError
+
+        if self._warm_transfer_in_progress:
+            raise WarmTransferError("A warm transfer is already in progress for this session.")
+        self._warm_transfer_in_progress = True
+        self._warm_transfer_task = asyncio.ensure_future(WarmTransferRunner(self, config).run())
+
+        def _clear(_task: "asyncio.Task") -> None:
+            self._warm_transfer_in_progress = False
+            self._warm_transfer_task = None
+
+        self._warm_transfer_task.add_done_callback(_clear)
+        return await asyncio.shield(self._warm_transfer_task)

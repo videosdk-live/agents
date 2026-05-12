@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 class VADEventType(str, Enum):
     START_OF_SPEECH = "start_of_speech"
     END_OF_SPEECH = "end_of_speech"
+    FRAME_PROCESSED = "frame_processed"
 
 
 @dataclass
@@ -22,6 +23,11 @@ class VADData:
     timestamp: float = 0.0
     speech_duration: float = 0.0
     silence_duration: float = 0.0
+    audio_frames: bytes | None = None
+    raw_probability: float = 0.0
+    inference_duration_ms: float = 0.0
+    energy: float = 0.0
+    samples_index: int = 0
 
 
 class VADResponse(BaseModel):

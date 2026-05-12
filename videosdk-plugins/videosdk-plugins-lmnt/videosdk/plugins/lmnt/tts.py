@@ -1,27 +1,34 @@
 from __future__ import annotations
 
-from typing import Any, AsyncIterator, Literal, Optional, Union
-import httpx
-import os
 import asyncio
+import json
+import logging
+import os
+from typing import Any, AsyncIterator, Literal, Optional, Union
 
-from videosdk.agents import TTS, segment_text
+import aiohttp
 
-LMNT_API_BASE_URL = "https://api.lmnt.com"
+from videosdk.agents import TTS, FlushMarker
+
+logger = logging.getLogger(__name__)
+
+LMNT_WSS_URL = "wss://api.lmnt.com/v1/ai/speech/stream"
 LMNT_SAMPLE_RATE = 24000
 LMNT_CHANNELS = 1
+LMNT_VERSION = "1.0"
 
 DEFAULT_MODEL = "blizzard"
 DEFAULT_VOICE = "ava"
 DEFAULT_LANGUAGE = "auto"
-DEFAULT_FORMAT = "wav"
+DEFAULT_FORMAT = "pcm_s16le"
 
 _LanguageCode = Union[
-    Literal["auto", "de", "en", "es", "fr", "hi", "id", "it", "ja",
-            "ko", "nl", "pl", "pt", "ru", "sv", "th", "tr", "uk", "vi", "zh"],
+    Literal["auto", "ar", "as", "bn", "cs", "da", "de", "en", "es", "fi", "fr",
+            "hi", "id", "it", "ja", "ko", "ml", "mr", "nl", "pl", "pt", "ru",
+            "sk", "sv", "ta", "te", "th", "tr", "uk", "ur", "vi", "zh"],
     str
 ]
-_FormatType = Union[Literal["aac", "mp3", "mulaw", "raw", "wav"], str]
+_FormatType = Union[Literal["mp3", "pcm_s16le", "pcm_f32le", "ulaw", "webm"], str]
 _SampleRate = Union[Literal[8000, 16000, 24000], int]
 
 
@@ -38,21 +45,23 @@ class LMNTTTS(TTS):
         seed: Optional[int] = None,
         temperature: float = 1.0,
         top_p: float = 0.8,
-        base_url: str = LMNT_API_BASE_URL,
+        ws_url: str = LMNT_WSS_URL,
     ) -> None:
-        """Initialize the LMNT TTS plugin.
+        """Initialize the LMNT TTS plugin (WebSocket streaming).
 
         Args:
-            api_key (Optional[str], optional): LMNT API key. Defaults to None.
-            voice (str): The voice to use for the TTS plugin. Defaults to "ava".
-            model (str): The model to use for the TTS plugin. Defaults to "blizzard".
-            language (_LanguageCode): The language to use for the TTS plugin. Defaults to "auto".
-            format (_FormatType): The format to use for the TTS plugin. Defaults to "wav".
-            sample_rate (_SampleRate): The sample rate to use for the TTS plugin. Must be one of: 8000, 16000, 24000. Defaults to 24000.
-            seed (Optional[int], optional): The seed to use for the TTS plugin. Defaults to None.
-            temperature (float): The temperature to use for the TTS plugin. Defaults to 1.0.
-            top_p (float): The top_p to use for the TTS plugin. Defaults to 0.8.
-            base_url (str): The base URL to use for the TTS plugin. Defaults to "https://api.lmnt.com".
+            api_key: LMNT API key. Falls back to ``LMNT_API_KEY`` env var.
+            voice: Voice id. Defaults to ``ava``.
+            model: Model id. Defaults to ``blizzard``.
+            language: ISO 639-1 language code or ``auto``. Defaults to ``auto``.
+            format: Audio output format. Defaults to ``pcm_s16le`` (raw 16-bit
+                little-endian PCM) — feeds the audio track directly with no
+                container/decoding step.
+            sample_rate: Output sample rate. One of 8000, 16000, 24000.
+            seed: Optional generation seed for reproducibility.
+            temperature: Sampling temperature, 0.0-1.0.
+            top_p: Nucleus sampling parameter, 0.0-1.0.
+            ws_url: Override for the WSS endpoint.
         """
         super().__init__(sample_rate=sample_rate, num_channels=LMNT_CHANNELS)
 
@@ -64,11 +73,13 @@ class LMNTTTS(TTS):
         self.seed = seed
         self.temperature = temperature
         self.top_p = top_p
-        self.base_url = base_url
+        self.ws_url = ws_url
         self.audio_track = None
         self.loop = None
         self._first_chunk_sent = False
         self._interrupted = False
+        self._session: Optional[aiohttp.ClientSession] = None
+        self._active_ws: Optional[aiohttp.ClientWebSocketResponse] = None
 
         self.api_key = api_key or os.getenv("LMNT_API_KEY")
         if not self.api_key:
@@ -77,160 +88,167 @@ class LMNTTTS(TTS):
                 "or LMNT_API_KEY environment variable"
             )
 
-        self._client = httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=15.0, read=30.0,
-                                  write=5.0, pool=5.0),
-            follow_redirects=True,
-            limits=httpx.Limits(
-                max_connections=50,
-                max_keepalive_connections=50,
-                keepalive_expiry=120,
-            ),
-        )
-
     def reset_first_audio_tracking(self) -> None:
-        """Reset the first audio tracking state for next TTS task"""
         self._first_chunk_sent = False
+
+    def _ensure_session(self) -> aiohttp.ClientSession:
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession()
+        return self._session
 
     async def synthesize(
         self,
-        text: AsyncIterator[str] | str,
+        text: AsyncIterator[Union[str, FlushMarker]] | str,
         voice_id: Optional[str] = None,
         **kwargs: Any,
     ) -> None:
+        """Synthesize via LMNT's WebSocket streaming API.
+
+        Each ``FlushMarker`` in the input stream is forwarded as a
+        ``{"flush": true}`` command, prompting LMNT to emit audio for the
+        current text buffer immediately. End-of-stream is signalled with
+        ``{"eof": true}``; the server then drains its buffer and closes the
+        connection.
         """
-        Convert text to speech using LMNT's TTS API and stream to audio track
-
-        Args:
-            text: Text to convert to speech
-            voice_id: Optional voice override (uses voice from __init__ if not provided)
-            **kwargs: Additional provider-specific arguments
-        """
-        try:
-            if not self.audio_track or not self.loop:
-                self.emit("error", "Audio track or event loop not set")
-                return
-
-            self._interrupted = False
-
-            if isinstance(text, AsyncIterator):
-                async for segment in segment_text(text):
-                    if self._interrupted:
-                        break
-                    await self._synthesize_segment(segment, voice_id, **kwargs)
-            else:
-                if not self._interrupted:
-                    await self._synthesize_segment(text, voice_id, **kwargs)
-
-        except Exception as e:
-            self.emit("error", f"TTS synthesis failed: {str(e)}")
-
-    async def _synthesize_segment(self, text: str, voice_id: Optional[str] = None, **kwargs: Any) -> None:
-        """Synthesize a single text segment"""
-        if not text.strip() or self._interrupted:
+        if not self.audio_track or not self.loop:
+            self.emit("error", "Audio track or event loop not set")
             return
 
-        target_voice = voice_id or self.voice
+        self._interrupted = False
 
-        payload = {
-            "voice": target_voice,
-            "text": text,
-            "model": kwargs.get("model", self.model),
-            "language": kwargs.get("language", self.language),
-            "format": kwargs.get("format", self.format),
-            "sample_rate": kwargs.get("sample_rate", self.output_sample_rate),
-            "temperature": kwargs.get("temperature", self.temperature),
-            "top_p": kwargs.get("top_p", self.top_p),
-        }
+        try:
+            ws = await asyncio.wait_for(
+                self._ensure_session().ws_connect(self.ws_url),
+                timeout=10.0,
+            )
+        except Exception as e:
+            self.emit("error", f"LMNT WSS connect failed: {e}")
+            return
 
-        seed = kwargs.get("seed", self.seed)
-        if seed is not None:
-            payload["seed"] = seed
+        self._active_ws = ws
+        try:
+            init = {
+                "X-API-Key": self.api_key,
+                "lmnt-version": LMNT_VERSION,
+                "voice": voice_id or self.voice,
+                "model": kwargs.get("model", self.model),
+                "format": kwargs.get("format", self.format),
+                "language": kwargs.get("language", self.language),
+                "sample_rate": kwargs.get("sample_rate", self.output_sample_rate),
+                "temperature": kwargs.get("temperature", self.temperature),
+                "top_p": kwargs.get("top_p", self.top_p),
+            }
+            seed = kwargs.get("seed", self.seed)
+            if seed is not None:
+                init["seed"] = seed
 
-        headers = {
-            "X-API-Key": self.api_key,
-            "Content-Type": "application/json",
-        }
+            await ws.send_json(init)
 
-        url = f"{self.base_url}/v1/ai/speech/bytes"
-
-        async with self._client.stream(
-            "POST",
-            url,
-            headers=headers,
-            json=payload
-        ) as response:
-            if response.status_code == 400:
-                error_data = await response.aread()
+            send_task = asyncio.create_task(self._send_text(ws, text))
+            try:
+                await self._receive_audio(ws)
+            finally:
+                if not send_task.done():
+                    send_task.cancel()
                 try:
-                    import json
-                    error_json = json.loads(error_data.decode())
-                    error_msg = error_json.get("error", "Bad request")
-                except:
-                    error_msg = "Bad request"
-                self.emit("error", f"LMNT API error: {error_msg}")
-                return
-            elif response.status_code == 401:
-                self.emit(
-                    "error", "LMNT API authentication failed. Please check your API key.")
-                return
-            elif response.status_code != 200:
-                self.emit(
-                    "error", f"LMNT API error: HTTP {response.status_code}")
-                return
+                    await send_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+        except Exception as e:
+            if not self._interrupted:
+                self.emit("error", f"LMNT WSS synthesis failed: {e}")
+        finally:
+            self._active_ws = None
+            try:
+                if not ws.closed:
+                    await ws.close()
+            except Exception:
+                pass
 
-            header_processed = False
-            accumulated_data = b""
+    async def _send_text(
+        self,
+        ws: aiohttp.ClientWebSocketResponse,
+        text: Union[AsyncIterator[Union[str, FlushMarker]], str],
+    ) -> None:
+        try:
+            if isinstance(text, str):
+                if text and not self._interrupted and not ws.closed:
+                    await ws.send_json({"text": text})
+            else:
+                async for chunk in text:
+                    if self._interrupted or ws.closed:
+                        break
+                    if isinstance(chunk, FlushMarker):
+                        await ws.send_json({"flush": True})
+                        continue
+                    if not chunk:
+                        continue
+                    await ws.send_json({"text": chunk})
 
-            async for chunk in response.aiter_bytes():
+            if not self._interrupted and not ws.closed:
+                await ws.send_json({"eof": True})
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            if not self._interrupted:
+                self.emit("error", f"LMNT send error: {e}")
+
+    async def _receive_audio(self, ws: aiohttp.ClientWebSocketResponse) -> None:
+        try:
+            async for msg in ws:
                 if self._interrupted:
                     break
-                if chunk:
-                    accumulated_data += chunk
-
-                    if not header_processed and len(accumulated_data) >= 44:
-                        if accumulated_data.startswith(b'RIFF'):
-                            data_pos = accumulated_data.find(b'data')
-                            if data_pos != -1:
-                                accumulated_data = accumulated_data[data_pos + 8:]
-                        header_processed = True
-
-                    if header_processed:
-                        chunk_size = int(
-                            self.output_sample_rate * LMNT_CHANNELS * 2 * 20 / 1000)  # 20ms chunks
-                        while len(accumulated_data) >= chunk_size:
-                            audio_chunk = accumulated_data[:chunk_size]
-                            accumulated_data = accumulated_data[chunk_size:]
-
-                            if not self._first_chunk_sent and self._first_audio_callback:
-                                self._first_chunk_sent = True
-                                await self._first_audio_callback()
-
-                            self.loop.create_task(
-                                self.audio_track.add_new_bytes(audio_chunk))
-                            await asyncio.sleep(0.01)
-
-            if accumulated_data and header_processed:
-                chunk_size = int(self.output_sample_rate *
-                                 LMNT_CHANNELS * 2 * 20 / 1000)
-                if len(accumulated_data) < chunk_size:
-                    accumulated_data += b'\x00' * \
-                        (chunk_size - len(accumulated_data))
-
-                if not self._first_chunk_sent and self._first_audio_callback:
-                    self._first_chunk_sent = True
-                    await self._first_audio_callback()
-
-                self.loop.create_task(
-                    self.audio_track.add_new_bytes(accumulated_data))
+                if msg.type == aiohttp.WSMsgType.BINARY:
+                    if not self._first_chunk_sent and self._first_audio_callback:
+                        self._first_chunk_sent = True
+                        await self._first_audio_callback()
+                    if self.audio_track:
+                        await self.audio_track.add_new_bytes(msg.data)
+                elif msg.type == aiohttp.WSMsgType.TEXT:
+                    try:
+                        data = json.loads(msg.data)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(data, dict) and data.get("error"):
+                        if not self._interrupted:
+                            self.emit("error", f"LMNT server error: {data['error']}")
+                        break
+                elif msg.type in (
+                    aiohttp.WSMsgType.CLOSED,
+                    aiohttp.WSMsgType.CLOSE,
+                    aiohttp.WSMsgType.CLOSING,
+                ):
+                    break
+                elif msg.type == aiohttp.WSMsgType.ERROR:
+                    if not self._interrupted:
+                        self.emit("error", f"LMNT WSS error: {ws.exception()}")
+                    break
+        except asyncio.CancelledError:
+            raise
 
     async def aclose(self) -> None:
-        """Cleanup resources"""
-        await self._client.aclose()
+        self._interrupted = True
+        if self._active_ws and not self._active_ws.closed:
+            try:
+                await self._active_ws.close()
+            except Exception:
+                pass
+        if self._session and not self._session.closed:
+            try:
+                await self._session.close()
+            except Exception:
+                pass
         await super().aclose()
 
     async def interrupt(self) -> None:
-        """Interrupt the TTS process"""
+        """Stop synthesis. Closes the active WSS so the server stops emitting
+        audio for the current session; the next ``synthesize()`` opens a
+        fresh connection."""
         self._interrupted = True
         if self.audio_track:
             self.audio_track.interrupt()
+        if self._active_ws and not self._active_ws.closed:
+            try:
+                await self._active_ws.close()
+            except Exception:
+                pass

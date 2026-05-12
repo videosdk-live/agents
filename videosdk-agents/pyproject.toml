@@ -48,6 +48,7 @@ dependencies = [
     "aec-audio-processing>=1.0.1",
     "sounddevice",
     "PyJWT",
+    "indic-nlp-library>=0.92",
 ]
 
 [project.optional-dependencies]

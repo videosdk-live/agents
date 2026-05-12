@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from typing import Any, AsyncIterator, Optional
+from typing import Any, AsyncIterator, Optional, Union
 import os
 import asyncio
 import httpx
 from dataclasses import dataclass
 
-from videosdk.agents import TTS
+from videosdk.agents import TTS, FlushMarker
 from videosdk.agents.utils import segment_text
 
 RESEMBLE_HTTP_STREAMING_URL = "https://f.cluster.resemble.ai/stream"
@@ -23,6 +23,7 @@ class ResembleTTS(TTS):
         voice_uuid: str = DEFAULT_VOICE_UUID,
         sample_rate: int = DEFAULT_SAMPLE_RATE,
         precision: str = DEFAULT_PRECISION,
+        model: Optional[str] = None,
     ) -> None:
         """Initialize the Resemble TTS plugin.
 
@@ -31,6 +32,9 @@ class ResembleTTS(TTS):
             voice_uuid (str): The voice UUID to use for the TTS plugin. Defaults to "55592656".
             sample_rate (int): The sample rate to use for the TTS plugin. Defaults to 22050.
             precision (str): The precision to use for the TTS plugin. Defaults to "PCM_16".
+            model (Optional[str], optional): Optional Resemble model name to override the
+                account default (e.g. ``"chatterbox"``, ``"chatterbox-turbo"``). When
+                ``None``, the server applies the account-level default model.
         """
         super().__init__(sample_rate=sample_rate, num_channels=1)
 
@@ -41,6 +45,7 @@ class ResembleTTS(TTS):
 
         self.voice_uuid = voice_uuid
         self.precision = precision
+        self.model = model
 
         self.audio_track = None
         self.loop = None
@@ -51,6 +56,11 @@ class ResembleTTS(TTS):
             timeout=httpx.Timeout(connect=15.0, read=30.0,
                                   write=5.0, pool=5.0),
             follow_redirects=True,
+            limits=httpx.Limits(
+                max_connections=50,
+                max_keepalive_connections=50,
+                keepalive_expiry=120,
+            ),
         )
 
     def reset_first_audio_tracking(self) -> None:
@@ -59,7 +69,7 @@ class ResembleTTS(TTS):
 
     async def synthesize(
         self,
-        text: AsyncIterator[str] | str,
+        text: AsyncIterator[Union[str, FlushMarker]] | str,
         **kwargs: Any,
     ) -> None:
         try:
@@ -69,14 +79,14 @@ class ResembleTTS(TTS):
 
             self._interrupted = False
 
-            if isinstance(text, AsyncIterator):
+            if isinstance(text, str):
+                if not self._interrupted:
+                    await self._synthesize_segment(text, **kwargs)
+            else:
                 async for segment in segment_text(text):
                     if self._interrupted:
                         break
                     await self._synthesize_segment(segment, **kwargs)
-            else:
-                if not self._interrupted:
-                    await self._synthesize_segment(text, **kwargs)
 
         except Exception as e:
             self.emit("error", f"Resemble TTS synthesis failed: {str(e)}")
@@ -98,50 +108,67 @@ class ResembleTTS(TTS):
             "Content-Type": "application/json",
         }
 
-        payload = {
+        payload: dict[str, Any] = {
             "voice_uuid": self.voice_uuid,
             "data": text,
             "precision": self.precision,
             "sample_rate": self.sample_rate,
         }
+        if self.model:
+            payload["model"] = self.model
 
-        try:
-            async with self._http_client.stream(
-                "POST",
-                RESEMBLE_HTTP_STREAMING_URL,
-                headers=headers,
-                json=payload
-            ) as response:
-                response.raise_for_status()
+        for attempt in range(2):
+            try:
+                async with self._http_client.stream(
+                    "POST",
+                    RESEMBLE_HTTP_STREAMING_URL,
+                    headers=headers,
+                    json=payload
+                ) as response:
+                    if response.status_code >= 400:
+                        # In streaming mode, body must be read before
+                        # .text/.json() are usable in the error handler.
+                        await response.aread()
+                    response.raise_for_status()
 
-                audio_data = b""
-                header_processed = False
+                    audio_data = b""
+                    header_processed = False
 
-                async for chunk in response.aiter_bytes():
-                    if self._interrupted:
-                        break
-                    if not header_processed:
-                        audio_data += chunk
-                        data_pos = audio_data.find(b"data")
-                        if data_pos != -1:
-                            header_size = data_pos + 8
-                            audio_data = audio_data[header_size:]
-                            header_processed = True
-                    else:
-                        if chunk:
+                    async for chunk in response.aiter_bytes():
+                        if self._interrupted:
+                            break
+                        if not header_processed:
                             audio_data += chunk
+                            data_pos = audio_data.find(b"data")
+                            if data_pos != -1:
+                                header_size = data_pos + 8
+                                audio_data = audio_data[header_size:]
+                                header_processed = True
+                        else:
+                            if chunk:
+                                audio_data += chunk
 
-                if audio_data and not self._interrupted:
-                    await self._stream_audio_chunks(audio_data)
+                    if audio_data and not self._interrupted:
+                        await self._stream_audio_chunks(audio_data)
+                return
 
-        except httpx.HTTPStatusError as e:
-            if not self._interrupted:
-                self.emit(
-                    "error", f"HTTP error {e.response.status_code}: {e.response.text}")
-        except Exception as e:
-            if not self._interrupted:
-                self.emit(
-                    "error", f"HTTP streaming synthesis failed: {str(e)}")
+            except (httpx.NetworkError, httpx.ConnectError, httpx.ReadTimeout) as e:
+                if attempt == 0 and not self._interrupted:
+                    await asyncio.sleep(0.25 * (2 ** attempt))
+                    continue
+                if not self._interrupted:
+                    self.emit("error", f"Resemble TTS network failure: {str(e)}")
+                return
+            except httpx.HTTPStatusError as e:
+                if not self._interrupted:
+                    self.emit(
+                        "error", f"HTTP error {e.response.status_code}: {e.response.text}")
+                return
+            except Exception as e:
+                if not self._interrupted:
+                    self.emit(
+                        "error", f"HTTP streaming synthesis failed: {str(e)}")
+                return
 
     async def _stream_audio_chunks(self, audio_bytes: bytes) -> None:
         """Stream audio data in chunks for smooth playback """

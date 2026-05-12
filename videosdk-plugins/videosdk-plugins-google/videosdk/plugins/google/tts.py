@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from typing import Any, AsyncIterator, Literal
+from typing import Any, AsyncIterator, Literal, Union
 import os
 import asyncio
 from dataclasses import dataclass
 import logging
 
-from videosdk.agents import TTS, segment_text
+from videosdk.agents import TTS, FlushMarker, segment_text
 logger = logging.getLogger(__name__)
 
 GOOGLE_SAMPLE_RATE = 24000
@@ -39,6 +39,8 @@ class GoogleTTS(TTS):
         vertexai: bool = False,
         vertexai_config: VertexAIConfig | None = None,
         streaming: bool = True,
+        model: str | None = None,
+        prompt: str | None = None,
     ) -> None:
         """Initialize the Google TTS plugin.
 
@@ -54,6 +56,14 @@ class GoogleTTS(TTS):
             vertexai_config: Project / location settings for Vertex AI.
             streaming: Use gRPC StreamingSynthesize for lower latency.
                        Compatible with vertexai=True — routes over gRPC to the regional endpoint.
+            model: Optional Gemini-TTS engine, e.g. "gemini-3.1-flash-tts-preview",
+                   "gemini-2.5-flash-tts", "gemini-2.5-flash-lite-preview-tts",
+                   or "gemini-2.5-pro-tts". When set, voice_config.name is the bare
+                   Gemini voice (e.g. "Kore", "Charon") — not a Chirp 3 HD locale-prefixed name.
+                   When None, the plugin uses standard Cloud TTS (Chirp 3 HD via voice name).
+            prompt: Natural-language style instruction for Gemini-TTS
+                    (e.g. "Speak in a warm, professional tone"). Only valid when
+                    model is a Gemini-TTS engine.
 
         Requires: pip install google-cloud-texttospeech
         """
@@ -75,20 +85,31 @@ class GoogleTTS(TTS):
         self.audio_track = None
         self.loop = None
         self._first_chunk_sent = False
+        self._interrupted = False
         self.voice_config = voice_config or GoogleVoiceConfig()
         self.custom_pronunciations = custom_pronunciations
         self.vertexai = vertexai
         self.vertexai_config = vertexai_config or VertexAIConfig()
         self.streaming = streaming
+        self.model = model
+        self.prompt = prompt
         if self.streaming and self.vertexai:
             raise ValueError("Streaming and vertexai cannot be used together.")
-        resolved_voice = (voice_config or GoogleVoiceConfig()).name
-        if streaming and not self._is_chirp3_hd_voice(resolved_voice):
+        if self.prompt is not None and self.model is None:
             raise ValueError(
-                f"Streaming synthesis only supports Chirp 3 HD voices "
+                "prompt is only supported with Gemini-TTS models. "
+                "Set model='gemini-3.1-flash-tts-preview' (or another gemini-*-tts model) "
+                "to use prompt-based style control."
+            )
+        resolved_voice = (voice_config or GoogleVoiceConfig()).name
+        if streaming and self.model is None and not self._is_chirp3_hd_voice(resolved_voice):
+            raise ValueError(
+                f"Streaming synthesis without a Gemini-TTS model only supports Chirp 3 HD voices "
                 f"(e.g. 'en-US-Chirp3-HD-Aoede'). "
                 f"Got: '{resolved_voice}'. "
-                f"See https://cloud.google.com/text-to-speech/docs/chirp3-hd for available voices."
+                f"For Gemini-TTS, pass model='gemini-3.1-flash-tts-preview' (or similar). "
+                f"See https://cloud.google.com/text-to-speech/docs/chirp3-hd or "
+                f"https://cloud.google.com/text-to-speech/docs/gemini-tts."
             )
 
         self._client = self._build_client(api_key)
@@ -157,23 +178,37 @@ class GoogleTTS(TTS):
         """Reset the first audio tracking state for next TTS task"""
         self._first_chunk_sent = False
 
+    async def prewarm(self) -> None:
+        """Pre-warm the gRPC channel so the first ``synthesize()`` call doesn't
+        pay the TLS + HTTP/2 SETTINGS + auth handshake (~150–400ms). Safe to
+        call repeatedly."""
+        try:
+            channel = self._client.transport.grpc_channel
+            if hasattr(channel, "channel_ready"):
+                await channel.channel_ready()
+        except Exception as e:
+            logger.warning(f"Google TTS prewarm failed (non-fatal): {e}")
+
     async def synthesize(
         self,
-        text: AsyncIterator[str] | str,
+        text: AsyncIterator[Union[str, FlushMarker]] | str,
         **kwargs: Any,
     ) -> None:
+        if not self.audio_track or not self.loop:
+            self.emit("error", "Audio track or loop not initialized")
+            return
+
+        self._interrupted = False
         try:
             if self.streaming:
                 await self._synthesize_streaming(text)
-            elif isinstance(text, AsyncIterator):
-                async for segment in segment_text(text):
-                    await self._synthesize_audio(segment)
-            else:
+            elif isinstance(text, str):
                 await self._synthesize_audio(text)
-
-            if not self.audio_track or not self.loop:
-                self.emit("error", "Audio track or loop not initialized")
-                return
+            else:
+                async for segment in segment_text(text):
+                    if self._interrupted:
+                        break
+                    await self._synthesize_audio(segment)
 
         except Exception as e:
             self.emit("error", f"Google TTS synthesis failed: {str(e)}")
@@ -183,20 +218,24 @@ class GoogleTTS(TTS):
         """Single-request synthesis via SynthesizeSpeech."""
         tts = self._tts
 
+        synthesis_input_kwargs: dict = {"text": text}
+        if self.prompt:
+            synthesis_input_kwargs["prompt"] = self.prompt
         if self.custom_pronunciations:
-            synthesis_input = tts.SynthesisInput(
-                text=text,
-                custom_pronunciations=self._build_custom_pronunciations_proto(),
+            synthesis_input_kwargs["custom_pronunciations"] = (
+                self._build_custom_pronunciations_proto()
             )
-        else:
-            synthesis_input = tts.SynthesisInput(text=text)
+        synthesis_input = tts.SynthesisInput(**synthesis_input_kwargs)
         is_studio = self.voice_config.name.startswith("en-US-Studio")
 
-        voice_params = tts.VoiceSelectionParams(
-            language_code=self.voice_config.languageCode,
-            name=self.voice_config.name,
-        )
-        if not is_studio:
+        voice_kwargs: dict = {
+            "language_code": self.voice_config.languageCode,
+            "name": self.voice_config.name,
+        }
+        if self.model:
+            voice_kwargs["model_name"] = self.model
+        voice_params = tts.VoiceSelectionParams(**voice_kwargs)
+        if not is_studio and not self.model:
             voice_params.ssml_gender = tts.SsmlVoiceGender[self.voice_config.ssmlGender]
         response = await self._client.synthesize_speech(
             input=synthesis_input,
@@ -219,11 +258,15 @@ class GoogleTTS(TTS):
         """Bidirectional gRPC streaming via StreamingSynthesize."""
         tts = self._tts
 
+        voice_kwargs: dict = {
+            "language_code": self.voice_config.languageCode,
+            "name": self.voice_config.name,
+        }
+        if self.model:
+            voice_kwargs["model_name"] = self.model
+
         streaming_config_kwargs: dict = dict(
-            voice=tts.VoiceSelectionParams(
-                language_code=self.voice_config.languageCode,
-                name=self.voice_config.name,
-            ),
+            voice=tts.VoiceSelectionParams(**voice_kwargs),
             streaming_audio_config=tts.StreamingAudioConfig(
                 audio_encoding=tts.AudioEncoding.PCM,
                 sample_rate_hertz=GOOGLE_SAMPLE_RATE,
@@ -237,28 +280,46 @@ class GoogleTTS(TTS):
 
         streaming_config = tts.StreamingSynthesizeConfig(**streaming_config_kwargs)
 
+        def _make_input(chunk: str, include_prompt: bool) -> Any:
+            kwargs: dict = {"text": chunk}
+            if include_prompt and self.prompt:
+                kwargs["prompt"] = self.prompt
+            return tts.StreamingSynthesisInput(**kwargs)
+
         async def request_generator() -> AsyncIterator[Any]:
             yield tts.StreamingSynthesizeRequest(streaming_config=streaming_config)
             if isinstance(text, str):
                 yield tts.StreamingSynthesizeRequest(
-                    input=tts.StreamingSynthesisInput(text=text)
+                    input=_make_input(text, include_prompt=True)
                 )
             else:
+                is_first = True
                 async for chunk in text:
+                    if self._interrupted:
+                        break
+                    # Drop FlushMarker — gRPC StreamingSynthesize has no flush
+                    # primitive, and the server segments naturally as text
+                    # arrives.
+                    if isinstance(chunk, FlushMarker):
+                        continue
                     if chunk:
                         yield tts.StreamingSynthesizeRequest(
-                            input=tts.StreamingSynthesisInput(text=chunk)
+                            input=_make_input(chunk, include_prompt=is_first)
                         )
+                        is_first = False
 
         try:
             async for response in await self._client.streaming_synthesize(
                 request_generator()
             ):
+                if self._interrupted:
+                    break
                 if response.audio_content:
                     await self._stream_audio_chunks(response.audio_content, has_wav_header=False)
         except Exception as e:
-            self.emit("error", f"Google TTS streaming error: {str(e)}")
-            raise
+            if not self._interrupted:
+                self.emit("error", f"Google TTS streaming error: {str(e)}")
+                raise
 
     def _build_custom_pronunciations_proto(self) -> Any:
         """Convert self.custom_pronunciations to a CustomPronunciations proto."""
@@ -343,10 +404,14 @@ class GoogleTTS(TTS):
         self, audio_bytes: bytes, has_wav_header: bool = True
     ) -> None:
         """Chunk raw PCM and forward to the audio track."""
+        if self._interrupted:
+            return
         chunk_size = 960
         audio_data = self._remove_wav_header(audio_bytes) if has_wav_header else audio_bytes
 
         for i in range(0, len(audio_data), chunk_size):
+            if self._interrupted:
+                return
             chunk = audio_data[i:i + chunk_size]
 
             if len(chunk) < chunk_size and len(chunk) > 0:
@@ -376,5 +441,6 @@ class GoogleTTS(TTS):
         await super().aclose()
 
     async def interrupt(self) -> None:
+        self._interrupted = True
         if self.audio_track:
             self.audio_track.interrupt()

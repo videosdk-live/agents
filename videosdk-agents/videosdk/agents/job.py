@@ -963,6 +963,32 @@ class JobContext:
             except Exception as e:
                 logger.error(f"Error in ctx.shutdown: {e}")
 
+    @staticmethod
+    def create_room_static(
+        auth_token: str,
+        signaling_base_url: str = "api.videosdk.live",
+    ) -> str:
+        """
+        Create a new VideoSDK room using only a token + base URL.
+
+        Same HTTP call as :meth:`get_room_id` but usable from contexts that
+        don't have a fully constructed JobContext (e.g. the warm-handoff
+        orchestrator spawning a consultation room).
+        """
+        url = f"https://{signaling_base_url}/v2/rooms"
+        headers = {"Authorization": auth_token}
+        try:
+            response = requests.post(url, headers=headers)
+            response.raise_for_status()
+        except requests.RequestException as e:
+            raise RuntimeError(f"Failed to create room: {e}") from e
+
+        data = response.json()
+        room_id = data.get("roomId")
+        if not room_id:
+            raise RuntimeError(f"Unexpected API response, missing roomId: {data}")
+        return room_id
+
     def get_room_id(self) -> str:
         """
         Creates a new room using the VideoSDK API and returns the room ID.
@@ -974,29 +1000,15 @@ class JobContext:
         if self.want_console:
             return None
 
-        if self.videosdk_auth:
-            base_url = self.room_options.signaling_base_url
-            url = f"https://{base_url}/v2/rooms"
-            headers = {"Authorization": self.videosdk_auth}
-
-            try:
-                response = requests.post(url, headers=headers)
-                response.raise_for_status()
-            except requests.RequestException as e:
-                raise RuntimeError(f"Failed to create room: {e}") from e
-
-            data = response.json()
-            room_id = data.get("roomId")
-            if not room_id:
-                raise RuntimeError(f"Unexpected API response, missing roomId: {data}")
-
-            return room_id
-        else:
+        if not self.videosdk_auth:
             raise ValueError(
                 "No VideoSDK auth available. Provide auth_token in RoomOptions, "
                 "set VIDEOSDK_AUTH_TOKEN, or set VIDEOSDK_API_KEY + VIDEOSDK_SECRET_KEY."
             )
-
+        return JobContext.create_room_static(
+            self.videosdk_auth,
+            self.room_options.signaling_base_url,
+        )
 
 def get_current_job_context() -> Optional["JobContext"]:
     """Get the current job context (used by pipeline constructors)"""

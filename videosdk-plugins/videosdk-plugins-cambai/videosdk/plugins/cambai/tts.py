@@ -4,12 +4,12 @@ import asyncio
 import os
 import wave
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Optional
+from typing import Any, AsyncIterator, Optional, Union
 
 import httpx
 import numpy as np
 
-from videosdk.agents import TTS, segment_text
+from videosdk.agents import TTS, FlushMarker, segment_text
 from scipy import signal
 
 
@@ -128,6 +128,7 @@ class CambAITTS(TTS):
         self.audio_track = None
         self.loop = None
         self._first_chunk_sent = False
+        self._interrupted = False
 
         self.api_key = api_key or os.getenv("CAMBAI_API_KEY")
         if not self.api_key:
@@ -177,16 +178,20 @@ class CambAITTS(TTS):
 
     async def synthesize(
         self,
-        text: AsyncIterator[str] | str,
+        text: AsyncIterator[Union[str, FlushMarker]] | str,
         voice_id: Optional[int] = None,
         **kwargs: Any,
     ) -> None:
+        self._interrupted = False
         try:
-            if isinstance(text, AsyncIterator):
-                async for segment in segment_text(text):
-                    await self._synthesize_segment(segment, voice_id)
+            if isinstance(text, str):
+                if not self._interrupted:
+                    await self._synthesize_segment(text, voice_id)
             else:
-                await self._synthesize_segment(text, voice_id)
+                async for segment in segment_text(text):
+                    if self._interrupted:
+                        break
+                    await self._synthesize_segment(segment, voice_id)
         except Exception as e:
             self.emit("error", f"TTS synthesis failed: {e}")
 
@@ -198,11 +203,13 @@ class CambAITTS(TTS):
         self, text: str, voice_id: Optional[int] = None
     ) -> None:
         """Call the CambAI streaming TTS API for a single text segment."""
-        if not text.strip():
+        if not text.strip() or self._interrupted:
             return
 
         if len(text) > 3000:
             for chunk in [text[i:i + 3000] for i in range(0, len(text), 3000)]:
+                if self._interrupted:
+                    return
                 await self._synthesize_segment(chunk, voice_id)
             return
 
@@ -225,60 +232,77 @@ class CambAITTS(TTS):
         if self.user_instructions is not None:
             payload["user_instructions"] = self.user_instructions
 
-        try:
-            async with self._client.stream(
-                "POST",
-                CAMB_AI_TTS_ENDPOINT,
-                headers=headers,
-                json=payload,
-            ) as response:
-                response.raise_for_status()
+        for attempt in range(2):
+            try:
+                async with self._client.stream(
+                    "POST",
+                    CAMB_AI_TTS_ENDPOINT,
+                    headers=headers,
+                    json=payload,
+                ) as response:
+                    response.raise_for_status()
 
-                audio_data = b""
-                async for chunk in response.aiter_bytes():
-                    if chunk:
-                        audio_data += chunk
+                    audio_data = b""
+                    async for chunk in response.aiter_bytes():
+                        if self._interrupted:
+                            return
+                        if chunk:
+                            audio_data += chunk
 
-            if self.output_configuration.format == "wav":
-                pcm_audio = self._extract_pcm_from_wav(audio_data)
-                if self.output_configuration.sample_rate == 48000:
-                    pcm_audio = self.resample_audio(pcm_audio)
-                await self._stream_audio_chunks(pcm_audio)
-            else:
-                self.emit(
-                    "error",
-                    f"Format '{self.output_configuration.format}' requires decoding, "
-                    "which is not yet implemented.",
-                )
+                if self.output_configuration.format == "wav" and not self._interrupted:
+                    pcm_audio = self._extract_pcm_from_wav(audio_data)
+                    if self.output_configuration.sample_rate == 48000:
+                        pcm_audio = self.resample_audio(pcm_audio)
+                    await self._stream_audio_chunks(pcm_audio)
+                elif self.output_configuration.format != "wav":
+                    self.emit(
+                        "error",
+                        f"Format '{self.output_configuration.format}' requires decoding, "
+                        "which is not yet implemented.",
+                    )
+                return
 
-        except httpx.HTTPStatusError as e:
-            status = e.response.status_code
-            if status == 401:
-                self.emit("error", "CambAI authentication failed — check your API key.")
-            elif status == 400:
-                try:
-                    msg = e.response.json().get("detail", e.response.text)
-                except Exception:
-                    msg = e.response.text
-                self.emit("error", f"CambAI bad request (400): {msg}")
-            elif status == 422:
-                try:
-                    msg = e.response.json()
-                except Exception:
-                    msg = e.response.text
-                self.emit("error", f"CambAI validation error (422): {msg}")
-            elif status == 429:
-                self.emit("error", "CambAI rate limit exceeded — please retry later.")
-            else:
-                self.emit("error", f"CambAI HTTP {status}: {e.response.text}")
-        except httpx.TimeoutException as e:
-            self.emit("error", f"CambAI request timed out: {e}")
-        except Exception as e:
-            self.emit("error", f"CambAI TTS API call failed: {e}")
+            except (httpx.NetworkError, httpx.ConnectError, httpx.ReadTimeout) as e:
+                if attempt == 0 and not self._interrupted:
+                    await asyncio.sleep(0.25 * (2 ** attempt))
+                    continue
+                self.emit("error", f"CambAI network failure: {e}")
+                return
+            except httpx.HTTPStatusError as e:
+                status = e.response.status_code
+                if status == 401:
+                    self.emit("error", "CambAI authentication failed — check your API key.")
+                elif status == 400:
+                    try:
+                        msg = e.response.json().get("detail", e.response.text)
+                    except Exception:
+                        msg = e.response.text
+                    self.emit("error", f"CambAI bad request (400): {msg}")
+                elif status == 422:
+                    try:
+                        msg = e.response.json()
+                    except Exception:
+                        msg = e.response.text
+                    self.emit("error", f"CambAI validation error (422): {msg}")
+                elif status == 429:
+                    self.emit("error", "CambAI rate limit exceeded — please retry later.")
+                else:
+                    self.emit("error", f"CambAI HTTP {status}: {e.response.text}")
+                return
+            except httpx.TimeoutException as e:
+                if attempt == 0 and not self._interrupted:
+                    await asyncio.sleep(0.25 * (2 ** attempt))
+                    continue
+                self.emit("error", f"CambAI request timed out: {e}")
+                return
+            except Exception as e:
+                if not self._interrupted:
+                    self.emit("error", f"CambAI TTS API call failed: {e}")
+                return
 
     async def _stream_audio_chunks(self, audio_bytes: bytes) -> None:
         """Push 24 kHz PCM audio to the audio track in ~20 ms frames."""
-        if not audio_bytes:
+        if not audio_bytes or self._interrupted:
             return
 
         if not self.audio_track or not self.loop:
@@ -293,6 +317,8 @@ class CambAITTS(TTS):
         chunk_size = int(OUTPUT_SAMPLE_RATE * CAMB_AI_CHANNELS * 2 * 20 / 1000)
 
         for i in range(0, len(audio_bytes), chunk_size):
+            if self._interrupted:
+                return
             chunk = audio_bytes[i: i + chunk_size]
             if 0 < len(chunk) < chunk_size:
                 chunk += b"\x00" * (chunk_size - len(chunk))
@@ -321,6 +347,7 @@ class CambAITTS(TTS):
         await super().aclose()
 
     async def interrupt(self) -> None:
+        self._interrupted = True
         if self.audio_track:
             self.audio_track.interrupt()
         self.reset_first_audio_tracking()
