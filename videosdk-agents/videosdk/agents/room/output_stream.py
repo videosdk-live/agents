@@ -44,7 +44,7 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         self._synthesis_complete = False
         self._needs_last_audio_callback = False
         self._last_speaking_time = 0.0
-        self._speaking_grace_period = 0.5 # 500ms grace period for jitter
+        self._speaking_grace_period = 0.2 # 200ms grace period for jitter
 
         # Pause/resume support - simple flag-based (no blocking)
         self._is_paused = False

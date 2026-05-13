@@ -26,6 +26,15 @@ from .job import get_current_job_context
 from .utils import RealtimeMode,PipelineConfig, build_pipeline_config
 from .metrics import metrics_collector
 from .utils import UserState, AgentState
+from .tokenize import (
+    INDIC_LANGS,
+    BasicSentenceChunker,
+    BasicTextFilter,
+    IndicSentenceChunker,
+    SentenceChunker,
+    TextFilter,
+    normalize_lang_code,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,10 +61,10 @@ class EOUConfig:
         min_val, max_val = self.min_max_speech_wait_timeout
         if not (isinstance(min_val, (int, float)) and isinstance(max_val, (int, float))):
             raise ValueError("min_max_speech_wait_timeout values must be numbers")
-        if min_val <= 0 or max_val <= 0:
-            raise ValueError("min_max_speech_wait_timeout values must be greater than 0")
-        if min_val >= max_val:
-            raise ValueError("min_speech_wait_timeout must be less than max_speech_wait_timeout")
+        if min_val < 0 or max_val < 0:
+            raise ValueError("min_max_speech_wait_timeout values must be non-negative")
+        if min_val > max_val:
+            raise ValueError("min_speech_wait_timeout must be less than or equal to max_speech_wait_timeout")
 
 
 @dataclass
@@ -64,6 +73,7 @@ class InterruptConfig:
     mode: Literal["VAD_ONLY", "STT_ONLY", "HYBRID"] = "HYBRID"
     interrupt_min_duration: float = 0.5
     interrupt_min_words: int = 2
+    interrupt_min_confidence: float = 0.0
     false_interrupt_pause_duration: float = 2.0
     resume_on_false_interrupt: bool = False
 
@@ -72,6 +82,8 @@ class InterruptConfig:
             raise ValueError("interrupt_min_duration must be greater than 0")
         if self.interrupt_min_words <= 0:
             raise ValueError("interrupt_min_words must be greater than 0")
+        if not (0.0 <= self.interrupt_min_confidence <= 1.0):
+            raise ValueError("interrupt_min_confidence must be between 0.0 and 1.0")
         if self.false_interrupt_pause_duration <= 0:
             raise ValueError("false_interrupt_pause_duration must be greater than 0")
 
@@ -123,6 +135,11 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         context_window: Any | None = None,
         voice_mail_detector: VoiceMailDetector | None = None,
         realtime_config: RealtimeConfig | None = None,
+        text_chunking: bool = True,
+        text_filtering: bool = True,
+        chunker: SentenceChunker | None = None,
+        text_filter: TextFilter | None = None,
+        chunking_language: str = "auto",
     ) -> None:
         super().__init__()
 
@@ -136,7 +153,15 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         self.graph_adapter = GraphPipelineAdapter(conversational_graph) if conversational_graph else None
         self.context_window = context_window
         self.voice_mail_detector = voice_mail_detector
-        
+
+        # Text chunking / filtering stage between LLM and TTS in cascade mode.
+        # Language resolution: explicit chunking_language > stt.language >
+        # tts.language > "auto" (script detection happens lazily at tokenize time).
+        resolved_lang = self._resolve_chunking_language(chunking_language, stt, tts)
+        self.chunking_language = resolved_lang
+        self.chunker = self._build_chunker(text_chunking, chunker, resolved_lang)
+        self.text_filter = self._build_text_filter(text_filtering, text_filter, resolved_lang)
+
         # Pipeline hooks for middleware/interception
         self.hooks = PipelineHooks()
         self.metrics = PipelineMetricsHooks()
@@ -188,10 +213,61 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         self._current_utterance_handle: UtteranceHandle | None = None
         
         self._setup_error_handlers()
-        
+
         self._auto_register()
         self._setup_global_listeners()
-    
+
+    @staticmethod
+    def _resolve_chunking_language(
+        chunking_language: str,
+        stt: STT | None,
+        tts: TTS | None,
+    ) -> str:
+        """Resolve the language used for chunking + text filtering.
+
+        Priority: explicit ``chunking_language`` > ``stt.language`` >
+        ``tts.language`` > ``"auto"`` (which makes ``BasicSentenceChunker``
+        fall back to per-segment script detection at tokenize time).
+        """
+        explicit = normalize_lang_code(chunking_language)
+        if explicit:
+            return explicit
+        for source in (stt, tts):
+            code = normalize_lang_code(getattr(source, "language", None))
+            if code:
+                return code
+        return "auto"
+
+    @staticmethod
+    def _build_chunker(
+        text_chunking: bool,
+        chunker: SentenceChunker | None,
+        language: str,
+    ) -> SentenceChunker | None:
+        """Pick the sentence chunker: ``IndicSentenceChunker`` for Indic
+        languages, ``BasicSentenceChunker`` otherwise. An explicit ``chunker``
+        wins; ``text_chunking=False`` disables it entirely."""
+        if not text_chunking:
+            return None
+        if chunker is not None:
+            return chunker
+        if language in INDIC_LANGS:
+            return IndicSentenceChunker(language=language)
+        return BasicSentenceChunker(language=language)
+
+    @staticmethod
+    def _build_text_filter(
+        text_filtering: bool,
+        text_filter: TextFilter | None,
+        language: str,
+    ) -> TextFilter | None:
+        """Pick the pre-chunk text filter — an explicit ``text_filter`` wins,
+        otherwise ``BasicTextFilter.for_language(language)``; ``text_filtering=
+        False`` disables it."""
+        if not text_filtering:
+            return None
+        return text_filter or BasicTextFilter.for_language(language)
+
     def _setup_global_listeners(self) -> None:
         from .event_bus import global_event_emitter
         
@@ -395,8 +471,8 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
             self.orchestrator = PipelineOrchestrator(
                 agent=agent,
                 stt=self.stt,
-                llm=None, 
-                tts=None,  
+                llm=None,
+                tts=None,
                 vad=self.vad,
                 turn_detector=self.turn_detector,
                 denoise=self.denoise,
@@ -406,15 +482,18 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                 interrupt_mode=self.interrupt_config.mode,
                 interrupt_min_duration=self.interrupt_config.interrupt_min_duration,
                 interrupt_min_words=self.interrupt_config.interrupt_min_words,
+                interrupt_min_confidence=self.interrupt_config.interrupt_min_confidence,
                 false_interrupt_pause_duration=self.interrupt_config.false_interrupt_pause_duration,
                 resume_on_false_interrupt=self.interrupt_config.resume_on_false_interrupt,
                 graph_adapter=None,
                 context_window=self.context_window,
                 voice_mail_detector=self.voice_mail_detector,
                 hooks=self.hooks,
+                chunker=self.chunker,
+                text_filter=self.text_filter,
+                chunking_language=self.chunking_language,
             )
             
-
             self.orchestrator.on("transcript_ready", self._wrap_async(self._on_transcript_ready_hybrid_stt))
             logger.info("Registered hybrid_stt event listener on orchestrator")
             
@@ -464,12 +543,16 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                 interrupt_mode=self.interrupt_config.mode,
                 interrupt_min_duration=self.interrupt_config.interrupt_min_duration,
                 interrupt_min_words=self.interrupt_config.interrupt_min_words,
+                interrupt_min_confidence=self.interrupt_config.interrupt_min_confidence,
                 false_interrupt_pause_duration=self.interrupt_config.false_interrupt_pause_duration,
                 resume_on_false_interrupt=self.interrupt_config.resume_on_false_interrupt,
                 graph_adapter=self.graph_adapter,
                 context_window=self.context_window,
                 voice_mail_detector=self.voice_mail_detector,
                 hooks=self.hooks,
+                chunker=self.chunker,
+                text_filter=self.text_filter,
+                chunking_language=self.chunking_language,
             )
             
             self.orchestrator.on("transcript_ready", lambda data: self.emit("transcript_ready", data))
@@ -861,7 +944,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         if self.config.is_realtime:
             if self._realtime_model:
                 await self._realtime_model.connect()
-                
+
                 if isinstance(self.llm, RealtimeLLMAdapter):
                     self.llm.on_user_speech_started(lambda data: self._on_user_speech_started_realtime(data))
                     self.llm.on_user_speech_ended(lambda data: asyncio.create_task(self._on_user_speech_ended_realtime(data)))
@@ -875,6 +958,16 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         else:
             if self.orchestrator:
                 await self.orchestrator.start()
+
+        # Pre-establish provider connections (e.g. Cartesia WebSocket) so the
+        # first turn doesn't pay TLS+WS handshake. No-op for plugins that don't
+        # override prewarm(). Failures are logged and swallowed — first turn
+        # will simply pay the handshake cost as before.
+        if self.tts:
+            try:
+                await self.tts.prewarm()
+            except Exception as e:
+                logger.debug(f"TTS prewarm failed (non-fatal): {e}")
     
     async def send_message(self, message: str, handle: UtteranceHandle) -> None:
         """

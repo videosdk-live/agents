@@ -1,11 +1,25 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import Any, AsyncIterator, Literal, Optional, Callable, Awaitable
+from typing import Any, AsyncIterator, Literal, Optional, Callable, Awaitable, Union
 from ..event_emitter import EventEmitter
 import logging
 import asyncio
 logger = logging.getLogger(__name__)
+
+
+class FlushMarker:
+    """Marker passed through a TTS text iterator to signal a segment boundary.
+
+    Plugins that support segmented WebSocket synthesis (e.g. Cartesia, ElevenLabs
+    streaming) treat this as "close the current segment, start a new one." It
+    lets the pipeline release a complete sentence to the TTS provider without
+    waiting for end-of-stream, reducing TTFB for the next segment. Plugins that
+    don't override ``flush()`` simply ignore it.
+    """
+
+    __slots__ = ()
+
 
 class TTS(EventEmitter[Literal["error", "word_spoken"]]):
     """Base class for Text-to-Speech implementations"""
@@ -68,18 +82,22 @@ class TTS(EventEmitter[Literal["error", "word_spoken"]]):
     @abstractmethod
     async def synthesize(
         self,
-        text: AsyncIterator[str] | str,
+        text: AsyncIterator[Union[str, FlushMarker]] | str,
         voice_id: Optional[str] = None,
         **kwargs: Any
     ) -> None:
         """
         Convert text to speech
-        
+
         Args:
-            text: Text to convert to speech (either string or async iterator of strings)
+            text: Text to convert to speech. Either a plain string or an async
+                iterator that may yield ``str`` chunks and ``FlushMarker``
+                segment-boundary markers. Plugins that don't support per-segment
+                flushing should drop the markers with an inline ``isinstance``
+                check (or rely on ``segment_text`` which already drops them).
             voice_id: Optional voice identifier
             **kwargs: Additional provider-specific arguments
-            
+
         Returns:
             None
         """
@@ -90,9 +108,19 @@ class TTS(EventEmitter[Literal["error", "word_spoken"]]):
         """Interrupt the TTS process"""
         raise NotImplementedError
 
+    async def prewarm(self) -> None:
+        """Pre-establish provider connections so the first ``synthesize()`` call
+        doesn't pay startup cost (TLS, WebSocket handshake, model warm-up).
+
+        Default is a no-op. Plugins with persistent connections (Cartesia,
+        ElevenLabs WS, etc.) override this. Safe to call multiple times — must
+        be idempotent.
+        """
+        pass
+
     async def stream_synthesize(
         self,
-        text_stream: AsyncIterator[str],
+        text_stream: AsyncIterator[Union[str, FlushMarker]],
         **kwargs: Any
     ) -> AsyncIterator[bytes]:
         """

@@ -149,6 +149,13 @@ class STT(EventEmitter[Literal["error"]]):
             if not feed_task.done():
                 feed_task.cancel()
     
+    async def flush(self) -> None:
+        """
+        Flush the STT buffer to force a final transcript.
+        This is a no-op by default, but can be overridden by implementations that support it.
+        """
+        pass
+
     async def aclose(self) -> None:
         """Cleanup resources"""
         logger.info(f"Cleaning up STT: {self.label}")

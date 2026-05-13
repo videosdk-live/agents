@@ -245,12 +245,6 @@ class DeepgramSTT(BaseSTT):
             flush_message = {"type": "Finalize"}
             await self._ws.send_str(json.dumps(flush_message)) 
 
-    async def flush(self) -> None:
-        """Send flush signal to Deepgram to trigger immediate transcription."""
-        if self._ws and not self._ws.closed:
-            flush_message = {"type": "Finalize"}
-            await self._ws.send_str(json.dumps(flush_message))
-
     async def aclose(self) -> None:
         """Cleanup resources"""
         self._closed = True
