@@ -307,7 +307,12 @@ class MixingCustomAudioStreamTrack(CustomAudioStreamTrack):
         elif len(background_arr) > len(primary_arr):
             background_arr = background_arr[:len(primary_arr)]
 
-        mixed_arr = np.add(primary_arr, background_arr, dtype=np.int16)
+        # Sum in int32 then clip to int16 range to avoid wrap-around distortion on loud peaks.
+        mixed_arr = np.clip(
+            primary_arr.astype(np.int32) + background_arr.astype(np.int32),
+            np.iinfo(np.int16).min,
+            np.iinfo(np.int16).max,
+        ).astype(np.int16)
         return mixed_arr.tobytes()
 
     def on_last_audio_byte(self, callback: Callable[[], Awaitable[None]]) -> None:
