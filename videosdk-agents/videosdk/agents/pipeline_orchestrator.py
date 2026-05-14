@@ -733,6 +733,13 @@ class PipelineOrchestrator(EventEmitter[Literal[
                             continue
 
                 if self.speech_generation:
+                    playback_done = asyncio.Event()
+
+                    def _on_playback_done(_data: Any = None) -> None:
+                        playback_done.set()
+
+                    self.speech_generation.on("last_audio_byte", _on_playback_done)
+                    self.speech_generation.on("synthesis_interrupted", _on_playback_done)
                     try:
                         text_source = tts_stream_gen()
                         if self._text_filter is not None:
@@ -746,9 +753,13 @@ class PipelineOrchestrator(EventEmitter[Literal[
                         if self.hooks:
                             text_source = self.hooks.process_llm_stream(text_source)
                         await self.speech_generation.synthesize(text_source)
+                        await playback_done.wait()
                     except asyncio.CancelledError:
                         if self.speech_generation:
                             await self.speech_generation.interrupt()
+                    finally:
+                        self.speech_generation.off("last_audio_byte", _on_playback_done)
+                        self.speech_generation.off("synthesis_interrupted", _on_playback_done)
             
             collector_task = asyncio.create_task(collector())
             tts_task = asyncio.create_task(tts_consumer())
@@ -784,7 +795,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
             elif full_response and self.agent:
                 logger.info(
                     "[ctx-add] SITE-A post-gather add (gen_id=%s is_interrupted=%s len=%d preview=%r)",
-                    my_generation_id, self._is_interrupted, len(full_response), full_response[:80],
+                    my_generation_id, self._is_interrupted, len(full_response), full_response,
                 )
                 self.agent.chat_context.add_message(
                     role=ChatRole.ASSISTANT,
