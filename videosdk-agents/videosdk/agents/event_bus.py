@@ -1,4 +1,4 @@
-from typing import TypeVar, Literal
+from typing import Any, Callable, TypeVar, Literal
 from .event_emitter import EventEmitter
 
 EventTypes = Literal[
@@ -17,24 +17,35 @@ EventTypes = Literal[
 T = TypeVar('T')
 
 class EventBus(EventEmitter[EventTypes]):
-    """Singleton event emitter for broadcasting and subscribing to global agent lifecycle events."""
+    """Per-session event emitter for agent lifecycle and transcript events."""
+_fallback_event_bus: EventBus = EventBus()
 
-    _instance = None
 
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super(EventBus, cls).__new__(cls)
-            cls._instance._initialized = False
-        return cls._instance
+def _resolve_event_bus() -> EventBus:
+    """Resolve the EventBus for the currently-running JobContext, if any."""
+    try:
+        from .utils import resolve_from_current_job_context
+    except Exception:
+        return _fallback_event_bus
+    return resolve_from_current_job_context("event_bus", _fallback_event_bus)
 
-    def __init__(self):
-        if not self._initialized:
-            super().__init__()
-            self._initialized = True
 
-    @classmethod
-    def get_instance(cls) -> 'EventBus':
-        """Return the singleton EventBus instance, creating it if necessary."""
-        return cls()
-    
-global_event_emitter = EventBus()
+class GlobalEventEmitter:
+    """Thin proxy that routes calls to the EventBus of the active JobContext."""
+
+    __slots__ = ()
+
+    def on(self, event: Any, callback: Callable[..., Any] | None = None) -> Callable[..., Any]:
+        return _resolve_event_bus().on(event, callback)
+
+    def off(self, event: Any, callback: Callable[..., Any]) -> None:
+        return _resolve_event_bus().off(event, callback)
+
+    def emit(self, event: Any, *args: Any) -> None:
+        return _resolve_event_bus().emit(event, *args)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(_resolve_event_bus(), name)
+
+
+global_event_emitter: Any = GlobalEventEmitter()

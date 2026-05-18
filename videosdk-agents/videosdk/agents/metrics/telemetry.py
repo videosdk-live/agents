@@ -98,10 +98,10 @@ class VideoSDKTelemetry:
  
             ctx = trace.set_span_in_context(parent_span) if parent_span else None
             
-            attiribute_id = generate_id()
+            attribute_id = generate_id()
             
             attributes = {} if attributes is None else attributes
-            attributes["attiribute_id"] = attiribute_id
+            attributes["attribute_id"] = attribute_id
             span_kwargs = {"context": ctx}
             
             current_perf = time.perf_counter()
@@ -114,7 +114,7 @@ class VideoSDKTelemetry:
                 diff_ns = int((current_perf - start_time) * 1_000_000_000)
                 start_absolute_time = current_abs - diff_ns
 
-            self.span_details[attiribute_id] = {
+            self.span_details[attribute_id] = {
                 "start_time": start_time, # perf_counter
                 "start_absolute_time": start_absolute_time # absolute ns
             }
@@ -154,9 +154,9 @@ class VideoSDKTelemetry:
             attribute_id = None  
             if hasattr(span, '_attributes'):  
             
-                attribute_id = span._attributes.get("attiribute_id")  
+                attribute_id = span._attributes.get("attribute_id")  
             elif hasattr(span, 'attributes'):  
-                attribute_id = span.attributes.get("attiribute_id")  
+                attribute_id = span.attributes.get("attribute_id")  
 
             data = self.span_details.get(attribute_id) if attribute_id else None  
 
