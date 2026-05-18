@@ -548,10 +548,10 @@ class STT(BaseSTT):
                 logger.info(f"[STT] {text} | Final: {is_final}")
             self._last_transcript = text.strip()
 
-            duration_ms = 0.0
+            duration = 0.0
             if is_final and self._pending_audio_bytes > 0:
                 sample_count = self._pending_audio_bytes / self._bytes_per_sample
-                duration_ms = (sample_count / self._input_sample_rate) * 1000.0
+                duration = sample_count / self._input_sample_rate
                 self._pending_audio_bytes = 0
 
             response = STTResponse(
@@ -562,7 +562,7 @@ class STT(BaseSTT):
                     text=text.strip(),
                     language=language,
                     confidence=confidence,
-                    duration=duration_ms,
+                    duration=duration,
                 ),
                 metadata={
                     "provider": self.provider,
