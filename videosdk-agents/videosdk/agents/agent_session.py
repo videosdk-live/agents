@@ -66,6 +66,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         self._thinking_audio_player: Optional[BackgroundAudioHandler] = None
         self._background_audio_player: Optional[BackgroundAudioHandler] = None
         self._thinking_was_playing = False
+        self._override_thinking: bool = False
         self.background_audio_config = background_audio
         self._is_executing_tool = False
         self._job_context = None
@@ -441,8 +442,15 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         return handle
     
     async def play_background_audio(self, config: BackgroundAudioHandlerConfig, override_thinking: bool) -> None:
-        """Play background audio on demand"""
-        if override_thinking and self._thinking_audio_player and self._thinking_audio_player.is_playing:
+        """Play background audio on demand.
+
+        override_thinking=True  -> thinking audio is allowed to layer over the background
+                                   music during LLM generation (stops on first TTS byte).
+        override_thinking=False -> background music is exclusive; thinking audio is
+                                   suppressed for as long as background is playing.
+        """
+        self._override_thinking = override_thinking
+        if not override_thinking and self._thinking_audio_player and self._thinking_audio_player.is_playing:
             await self.stop_thinking_audio()
             self._thinking_was_playing = True
 
@@ -473,6 +481,8 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             # Track background audio stop for metrics
             metrics_collector.on_background_audio_stop()
 
+        self._override_thinking = False
+
         if self._thinking_was_playing:
             await self.start_thinking_audio()
             self._thinking_was_playing = False
@@ -491,7 +501,13 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
     
     async def start_thinking_audio(self):
         """Start thinking audio"""
-        if self._background_audio_player and self._background_audio_player.is_playing:
+        if (
+            self._background_audio_player
+            and self._background_audio_player.is_playing
+            and not self._override_thinking
+        ):
+            return
+        if self._thinking_audio_player and self._thinking_audio_player.is_playing:
             return
 
         audio_track = self._get_audio_track()

@@ -13,8 +13,14 @@ class VoiceAgent(Agent):
         super().__init__(
             instructions="You are a helpful voice assistant that can answer questions and help with tasks. If the user asks to play music, use the control_background_music tool with action 'play'. To stop, use the action 'stop'.",
         )
-        self.set_thinking_audio()
-        
+        # Thinking audio plays while the agent is generating a response.
+        # Any libav-decodable file is supported: WAV, MP3, Ogg/Vorbis, Ogg/Opus, FLAC, M4A/AAC, ...
+        # Leave `file` unset to use the SDK's default `agent-keyboard.ogg`.
+        self.set_thinking_audio(
+            # file="path/to/your_thinking_sound.mp3",
+            volume=0.3,
+        )
+
     async def on_enter(self) -> None:
         await self.session.say("Hello, how can I help you today?")
     
@@ -28,7 +34,17 @@ class VoiceAgent(Agent):
         :param action: 'play' to start the music, 'stop' to end it.
         """
         if action.lower() == "play":
-            await self.play_background_audio(override_thinking=False,looping=True)
+            # Background music plays on-demand and can loop.
+            # Any libav-decodable file is supported: WAV, MP3, Ogg/Vorbis, Ogg/Opus, FLAC, M4A/AAC, ...
+            # Leave `file` unset to use the SDK's default `office-noise.ogg`.
+            # override_thinking=True  -> thinking audio layers over the music during LLM generation.
+            # override_thinking=False -> music is exclusive; thinking audio is suppressed while it plays.
+            await self.play_background_audio(
+                # file="path/to/your_background_music.mp3",
+                volume=0.8,
+                looping=True,
+                override_thinking=False,
+            )
             return "Background music started."
         elif action.lower() == "stop":
             await self.stop_background_audio()

@@ -52,10 +52,30 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         self._accepting_audio = True
         self._manual_audio_control = False
 
+        self._samples_played: int = 0
+        self._cumulative_input_samples: int = 0
+        self._synthesis_start_played: int = 0
+        self._synthesis_start_pushed: int = 0
+
+
     @property
     def can_pause(self) -> bool:
         """Returns True if this track supports pause/resume operations"""
         return True
+    def mark_synthesis_start(self) -> None:
+        """Anchor the per-synthesis baseline for played/pushed sample counters.
+        Called by SpeechGeneration at the top of each synthesize() so that
+        snapshot_playback() returns deltas relative to this turn only.
+        """
+        self._synthesis_start_played = self._samples_played
+        self._synthesis_start_pushed = self._cumulative_input_samples
+
+    def snapshot_playback(self) -> tuple[int, int]:
+        """Return (samples_played, samples_pushed) deltas for the active synthesis."""
+        played = max(0, self._samples_played - self._synthesis_start_played)
+        pushed = max(0, self._cumulative_input_samples - self._synthesis_start_pushed)
+        return played, pushed
+
 
     def interrupt(self):
         """Clear all buffers and reset state"""
@@ -160,7 +180,7 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         if not self._accepting_audio:
             logger.debug("Audio input currently disabled, dropping audio data")
             return
-        
+        self._cumulative_input_samples += len(audio_data) // (self.channels * self.sample_width)
         self.audio_data_buffer += audio_data
 
         while len(self.audio_data_buffer) >= self.chunk_size:
@@ -237,6 +257,7 @@ class CustomAudioStreamTrack(CustomAudioTrack):
                     p.update(bytes(p.buffer_size))
             elif len(self.frame_buffer) > 0:
                 frame = self.frame_buffer.pop(0)
+                self._samples_played += self.samples
                 self._is_speaking = True
                 self._last_speaking_time = time()
             else:
@@ -290,6 +311,7 @@ class MixingCustomAudioStreamTrack(CustomAudioStreamTrack):
 
     async def add_new_bytes(self, audio_data: bytes):
         """Overrides base method to buffer bytes instead of creating frames."""
+        self._cumulative_input_samples += len(audio_data) // (self.channels * self.sample_width)
         self.audio_data_buffer += audio_data
 
     async def add_background_bytes(self, audio_data: bytes):
@@ -307,7 +329,12 @@ class MixingCustomAudioStreamTrack(CustomAudioStreamTrack):
         elif len(background_arr) > len(primary_arr):
             background_arr = background_arr[:len(primary_arr)]
 
-        mixed_arr = np.add(primary_arr, background_arr, dtype=np.int16)
+        # Sum in int32 then clip to int16 range to avoid wrap-around distortion on loud peaks.
+        mixed_arr = np.clip(
+            primary_arr.astype(np.int32) + background_arr.astype(np.int32),
+            np.iinfo(np.int16).min,
+            np.iinfo(np.int16).max,
+        ).astype(np.int16)
         return mixed_arr.tobytes()
 
     def on_last_audio_byte(self, callback: Callable[[], Awaitable[None]]) -> None:
@@ -342,6 +369,7 @@ class MixingCustomAudioStreamTrack(CustomAudioStreamTrack):
             if has_primary:
                 primary_chunk = self.audio_data_buffer[: self.chunk_size]
                 self.audio_data_buffer = self.audio_data_buffer[self.chunk_size :]
+                self._samples_played += self.samples
                 self._is_speaking = True
                 self._last_speaking_time = time()
             elif getattr(self, "_is_speaking", False):

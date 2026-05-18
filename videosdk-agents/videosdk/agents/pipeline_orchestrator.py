@@ -662,6 +662,10 @@ class PipelineOrchestrator(EventEmitter[Literal[
         self._is_interrupted = False
         full_response = ""
         self._partial_response = ""
+
+        if self.speech_generation:
+            self.speech_generation.spoken_transcript = ""
+        
         
         try:
             if self.agent and self.agent.session and self.agent.session.is_background_audio_enabled:
@@ -782,6 +786,13 @@ class PipelineOrchestrator(EventEmitter[Literal[
                             continue
 
                 if self.speech_generation:
+                    playback_done = asyncio.Event()
+
+                    def _on_playback_done(_data: Any = None) -> None:
+                        playback_done.set()
+
+                    self.speech_generation.on("last_audio_byte", _on_playback_done)
+                    self.speech_generation.on("synthesis_interrupted", _on_playback_done)
                     try:
                         text_source = tts_stream_gen()
                         if self._text_filter is not None:
@@ -795,9 +806,13 @@ class PipelineOrchestrator(EventEmitter[Literal[
                         if self.hooks:
                             text_source = self.hooks.process_llm_stream(text_source)
                         await self.speech_generation.synthesize(text_source)
+                        await playback_done.wait()
                     except asyncio.CancelledError:
                         if self.speech_generation:
                             await self.speech_generation.interrupt()
+                    finally:
+                        self.speech_generation.off("last_audio_byte", _on_playback_done)
+                        self.speech_generation.off("synthesis_interrupted", _on_playback_done)
             
             collector_task = asyncio.create_task(collector())
             tts_task = asyncio.create_task(tts_consumer())
@@ -825,8 +840,16 @@ class PipelineOrchestrator(EventEmitter[Literal[
                     full_response = new_response
 
             if self._is_interrupted or self._generation_id != my_generation_id:
-                logger.info("[orchestrator] Skipping post-gather updates — turn was interrupted or generation superseded")
+                logger.info(
+                    "[ctx-add] SKIP post-gather add (gen_id=%s my_gen_id=%s is_interrupted=%s partial_len=%d full_len=%d)",
+                    self._generation_id, my_generation_id, self._is_interrupted,
+                    len(self._partial_response or ""), len(full_response or ""),
+                )
             elif full_response and self.agent:
+                logger.info(
+                    "[ctx-add] SITE-A post-gather add (gen_id=%s is_interrupted=%s len=%d preview=%r)",
+                    my_generation_id, self._is_interrupted, len(full_response), full_response,
+                )
                 self.agent.chat_context.add_message(
                     role=ChatRole.ASSISTANT,
                     content=full_response
@@ -1211,6 +1234,10 @@ class PipelineOrchestrator(EventEmitter[Literal[
     
     async def _interrupt_pipeline(self) -> None:
         """Interrupt all components"""
+        logger.info(
+            "[ctx-add] _interrupt_pipeline ENTER (gen_id=%s already_interrupted=%s partial_len=%d)",
+            self._generation_id, self._is_interrupted, len(self._partial_response or ""),
+        )
         self.agent.session._emit_agent_state(AgentState.LISTENING)
         self._is_interrupted = True
         self._cancel_false_interrupt_timer()
@@ -1236,20 +1263,46 @@ class PipelineOrchestrator(EventEmitter[Literal[
         if self._current_generation_task and not self._current_generation_task.done():
             self._current_generation_task.cancel()
 
-        if self._partial_response and metrics_collector.current_turn:
+        truncated_response = ""
+        source = "none"
+        sg_spoken_len = len(self.speech_generation.spoken_transcript) if self.speech_generation and self.speech_generation.spoken_transcript else 0
+        partial_len = len(self._partial_response or "")
+        if self.speech_generation and self.speech_generation.spoken_transcript:
+            truncated_response = self.speech_generation.spoken_transcript
+            source = "spoken_transcript"
+        elif self._partial_response:
+            truncated_response = self._partial_response
+            source = "partial_response(LLM)"
+        logger.info(
+            "[ctx-add] INTERRUPT source=%s spoken_len=%d partial_len=%d chosen_len=%d preview=%r",
+            source, sg_spoken_len, partial_len, len(truncated_response), truncated_response[:80],
+        )
+
+        if truncated_response and metrics_collector.current_turn:
             if not metrics_collector.current_turn.agent_speech:
-                metrics_collector.set_agent_response(self._partial_response)
+                metrics_collector.set_agent_response(truncated_response)
             else:
                 metrics_collector.emit_agent_transcript_transport(
                     metrics_collector.current_turn.agent_speech, type="final"
                 )
 
-        if self._partial_response and self.agent:
+        if truncated_response and self.agent:
+            last = self.agent.chat_context.items[-1] if self.agent.chat_context.items else None
+            last_info = (
+                f"role={getattr(last, 'role', None)} id={getattr(last, 'id', None)} "
+                f"len={len(getattr(last, 'content', '') or '') if isinstance(getattr(last, 'content', None), str) else 'list'}"
+                if last else "none"
+            )
+            logger.info(
+                "[ctx-add] SITE-B interrupt add (source=%s len=%d last_item=%s)",
+                source, len(truncated_response), last_info,
+            )
             msg = self.agent.chat_context.add_message(
                 role=ChatRole.ASSISTANT,
-                content=self._partial_response
+                content=truncated_response
             )
             msg.interrupted = True
+            logger.info("[ctx-add] SITE-B added msg id=%s interrupted=True", msg.id)
 
         if metrics_collector.current_turn:
             logger.info("[orchestrator] Completing interrupted turn")
