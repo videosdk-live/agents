@@ -23,7 +23,7 @@ from .eou import EOU
 from .denoise import Denoise
 from .voice_mail_detector import VoiceMailDetector
 from .job import get_current_job_context
-from .utils import RealtimeMode,PipelineConfig, build_pipeline_config
+from .utils import RealtimeMode, PipelineConfig, build_pipeline_config, format_provider_class
 from .metrics import metrics_collector
 from .utils import UserState, AgentState
 from .tokenize import (
@@ -612,7 +612,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                 original_pipeline_config["eou"] = {"class": p_class, "model": p_model}
         else:
             if self._realtime_model:
-                original_pipeline_config["realtime"] = {"class": self._realtime_model.__class__.__name__, "model": getattr(self._realtime_model, 'model', '')}
+                original_pipeline_config["realtime"] = {"class": format_provider_class(self._realtime_model), "model": getattr(self._realtime_model, 'model', '')}
             if self.stt:
                 p_class, p_model = get_provider_info(self.stt, 'stt')
                 original_pipeline_config["stt"] = {"class": p_class, "model": p_model}

@@ -4,6 +4,7 @@ import time
 from typing import List, Any, Optional, TYPE_CHECKING
 
 from .metrics import metrics_collector
+from .utils import format_provider_class
 
 logger = logging.getLogger(__name__)
 
@@ -28,8 +29,8 @@ class FallbackBase:
 
     @property
     def active_provider_class(self) -> str:
-        """Return the class name of the currently active provider"""
-        return self.active_provider.__class__.__name__
+        """Return the display class name of the currently active provider"""
+        return format_provider_class(self.active_provider)
 
     @property
     def label(self) -> str:

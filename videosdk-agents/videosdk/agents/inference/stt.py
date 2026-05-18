@@ -191,7 +191,7 @@ class STT(BaseSTT):
     @staticmethod
     def sarvam(
         *,
-        model_id: str = "saarika:v2.5",
+        model_id: str = "saaras:v3",
         language: str = "en-IN",
         input_sample_rate: int = 48000,
         output_sample_rate: int = 16000,
@@ -203,7 +203,7 @@ class STT(BaseSTT):
         Create an STT instance configured for Sarvam AI.
 
         Args:
-            model_id: Sarvam model (default: "saarika:v2.5")
+            model_id: Sarvam model (default: "saaras:v3")
             language: Language code (default: "en-IN"). Supports Indian languages.
             input_sample_rate: Input audio sample rate (default: 48000)
             output_sample_rate: Output sample rate for processing (default: 16000)
@@ -548,10 +548,10 @@ class STT(BaseSTT):
                 logger.info(f"[STT] {text} | Final: {is_final}")
             self._last_transcript = text.strip()
 
-            duration_ms = 0.0
+            duration = 0.0
             if is_final and self._pending_audio_bytes > 0:
                 sample_count = self._pending_audio_bytes / self._bytes_per_sample
-                duration_ms = (sample_count / self._input_sample_rate) * 1000.0
+                duration = sample_count / self._input_sample_rate
                 self._pending_audio_bytes = 0
 
             response = STTResponse(
@@ -562,7 +562,7 @@ class STT(BaseSTT):
                     text=text.strip(),
                     language=language,
                     confidence=confidence,
-                    duration=duration_ms,
+                    duration=duration,
                 ),
                 metadata={
                     "provider": self.provider,
