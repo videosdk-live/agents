@@ -116,16 +116,18 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
     def set_thinking_audio(self, file: str = None, volume: float = 0.3):
         """Set the thinking background for the agent"""
         if file is None:
-            file = os.path.join(os.path.dirname(__file__), 'resources', 'agent_keyboard.wav')
-        self._thinking_background_config = BackgroundAudioHandlerConfig(file_path=file,volume=volume,looping=True,enabled=True)
+            file = os.path.join(os.path.dirname(__file__), 'resources', 'agent-keyboard.ogg')
+        self._thinking_background_config = BackgroundAudioHandlerConfig(file_path=file, volume=volume, looping=True,
+                                                                        enabled=True)
 
     async def play_background_audio(self, file: str = None, volume: float = 1.0, looping: bool = False, override_thinking: bool = True) -> None:
         """Play background audio on demand"""
         if file is None:
-            file = os.path.join(os.path.dirname(__file__), 'resources', 'classical.wav')
-        
-        config = BackgroundAudioHandlerConfig(file_path=file,volume=volume,looping=looping,enabled=True,mode='mixing') 
-        
+            file = os.path.join(os.path.dirname(__file__), 'resources', 'office-noise.ogg')
+
+        config = BackgroundAudioHandlerConfig(file_path=file, volume=volume, looping=looping, enabled=True,
+                                              mode='mixing')
+
         await self.session.play_background_audio(config, override_thinking)
 
     async def stop_background_audio(self) -> None:
