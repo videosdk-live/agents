@@ -742,6 +742,25 @@ class _AudioUtils:
 audio = _AudioUtils()
 
 
+def format_provider_class(obj: Any) -> str:
+    """Display name for a provider component used in metrics.
+
+    Inference components (videosdk.agents.inference.*) carry a `provider`
+    attribute identifying the underlying gateway provider ("deepgram",
+    "google", "cartesia", ...). For those we surface `Videosdk-<provider>`
+    so metrics distinguish the inference path from direct plugin usage.
+    All other components fall back to their actual class name (e.g.
+    `DeepgramSTT`).
+    """
+    if obj is None:
+        return ""
+    cls = obj.__class__
+    provider = getattr(obj, "provider", None)
+    if isinstance(provider, str) and cls.__module__.startswith("videosdk.agents.inference"):
+        return f"Videosdk-{provider}"
+    return cls.__name__
+
+
 async def cancel_and_wait(task: asyncio.Task | None) -> None:
     """Cancel a task and wait for it to finish, suppressing CancelledError."""
     if not task or task.done():
