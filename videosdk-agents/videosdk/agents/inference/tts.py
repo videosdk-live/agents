@@ -150,8 +150,8 @@ class TTS(BaseTTS):
     @staticmethod
     def sarvam(
         *,
-        model_id="bulbul:v2",
-        speaker="anushka",
+        model_id="bulbul:v3",
+        speaker="shubh",
         language="en-IN",
         sample_rate=24000,
         enable_streaming=True,
@@ -163,7 +163,7 @@ class TTS(BaseTTS):
 
         Args:
             model_id: Sarvam model (default: "bulbul:v2")
-            speaker: Speaker voice (default: "anushka")
+            speaker: Speaker voice (default: "shubh")
             language: Language code (default: "en-IN")
             sample_rate: Audio sample rate (default: 24000)
             enable_streaming: Enable streaming mode (default: True)
