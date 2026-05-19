@@ -9,12 +9,9 @@ from videosdk.agents import (
 )
 from videosdk.agents.inference import STT, TTS, LLM, Turn
 from videosdk.plugins.silero import SileroVAD
-from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
 from dotenv import load_dotenv
 
 load_dotenv(override=True)
-
-pre_download_model()
 
 logging.basicConfig(
     level=logging.INFO,
@@ -63,9 +60,9 @@ async def entrypoint(ctx: JobContext):
             language="en-IN",
         ),
         llm=LLM.google(
-            model_id="gemini-2.0-flash",
+            model_id="gemini-3-flash-preview",
         ),
-        tts=TTS.sarvam(model_id="bulbul:v2", speaker="anushka", language="en-IN"),
+        tts=TTS.sarvam(model_id="bulbul:v3", speaker="shubh", language="en-IN"),
         vad=SileroVAD(),
         turn_detector=Turn.namo(language="en"),
     )
@@ -85,7 +82,6 @@ def make_context() -> JobContext:
         # room_id="<room_id>",
         name="VideoSDK's Cascade Inference Agent",
         playground=True,
-        signallin_base_url="dev-api.videosdk.live",
     )
 
     return JobContext(room_options=room_options)
