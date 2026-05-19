@@ -200,6 +200,21 @@ class OpenAISTT(BaseSTT):
                     self._ws_task.cancel()
                     self._ws_task = None
 
+    async def flush(self) -> None:
+        """Force OpenAI to finalize the current audio buffer immediately.
+        """
+        if not self.enable_streaming:
+            if self._audio_buffer:
+                await self._process_audio_buffer()
+            return
+
+        if not self._ws or self._ws.closed:
+            return
+        try:
+            await self._ws.send_json({"type": "input_audio_buffer.commit"})
+        except Exception as e:
+            print(f"Error flushing OpenAI STT: {str(e)}")
+
     async def _transcribe_non_streaming(self, audio_frames: bytes) -> None:
         """HTTP-based transcription using OpenAI audio/transcriptions API with custom VAD"""
         if not audio_frames:

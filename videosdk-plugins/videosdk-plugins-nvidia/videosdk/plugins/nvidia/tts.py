@@ -6,7 +6,7 @@ import logging
 import inspect
 from typing import Any, AsyncIterator
 
-from videosdk.agents import TTS
+from videosdk.agents import TTS, FlushMarker
 
 try:
     import riva.client
@@ -82,6 +82,12 @@ class NvidiaTTS(TTS):
                 async for chunk in text:
                     if self._interrupted:
                         break
+                    # Pipeline yields a terminal FlushMarker at end of LLM
+                    # stream — skip it; Riva's online API takes the full
+                    # utterance text and segments server-side, so per-segment
+                    # flush markers have no equivalent here.
+                    if isinstance(chunk, FlushMarker):
+                        continue
                     input_text += chunk
             else:
                 input_text = text

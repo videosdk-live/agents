@@ -160,7 +160,7 @@ class Realtime(RealtimeBaseModel[RealtimeEventTypes]):
     @staticmethod
     def gemini(
         *,
-        model: str = "gemini-2.5-flash-native-audio-preview-12-2025",
+        model: str = "gemini-3.1-flash-live-preview",
         voice: Voice = "Puck",
         language_code: str = "en-US",
         temperature: float | None = None,
@@ -177,7 +177,7 @@ class Realtime(RealtimeBaseModel[RealtimeEventTypes]):
         Create a Realtime instance configured for Google Gemini.
 
         Args:
-            model: Gemini model identifier (default: "gemini-2.0-flash-exp")
+            model: Gemini model identifier (default: "gemini-3.1-flash-live-preview")
             voice: Voice ID for audio output. Options: 'Puck', 'Charon', 'Kore', 'Fenrir', 'Aoede'
             language_code: Language code for speech synthesis (default: "en-US")
             temperature: Controls randomness in responses (0.0 to 1.0)
@@ -716,6 +716,27 @@ class Realtime(RealtimeBaseModel[RealtimeEventTypes]):
                 )
 
                 accumulated_output_text = ""
+
+        elif event_type == "usage_metadata":
+            usage = {
+                k: event_data.get(k)
+                for k in (
+                    "input_tokens",
+                    "output_tokens",
+                    "total_tokens",
+                    "input_text_tokens",
+                    "output_text_tokens",
+                    "input_audio_tokens",
+                    "output_audio_tokens",
+                    "input_image_tokens",
+                    "output_image_tokens",
+                    "input_cached_tokens",
+                    "thoughts_tokens",
+                )
+                if event_data.get(k) is not None
+            }
+            if usage:
+                metrics_collector.set_realtime_usage(usage)
 
         elif event_type == "response_interrupted":
             if self.audio_track and "AUDIO" in self.config.response_modalities:

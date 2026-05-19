@@ -6,7 +6,7 @@ import os
 import openai
 import asyncio
 
-from videosdk.agents import TTS, segment_text
+from videosdk.agents import TTS, FlushMarker
 
 OPENAI_TTS_SAMPLE_RATE = 24000
 OPENAI_TTS_CHANNELS = 1
@@ -23,22 +23,38 @@ class OpenAITTS(TTS):
         *,
         api_key: str | None = None,
         model: str = DEFAULT_MODEL,
-        voice: str = DEFAULT_VOICE,
+        voice: str | dict[str, str] = DEFAULT_VOICE,
         speed: float = 1.0,
         instructions: str | None = None,
+        language: str | None = None,
         base_url: str | None = None,
         response_format: str = "pcm",
+        chunked_synthesis: bool = False,
     ) -> None:
         """Initialize the OpenAI TTS plugin.
 
         Args:
             api_key (Optional[str], optional): OpenAI API key. Defaults to None.
             model (str): The model to use for the TTS plugin. Defaults to "gpt-4o-mini-tts".
-            voice (str): The voice to use for the TTS plugin. Defaults to "ash".
+                Built-in options: "gpt-4o-mini-tts" (recommended, supports instructions),
+                "tts-1" (low latency), "tts-1-hd" (higher quality).
+            voice (str | dict): Built-in voice name (e.g. "marin", "cedar", "ash", "coral")
+                or a custom voice reference dict {"id": "voice_xxx"}. Defaults to "ash".
+                For best quality with gpt-4o-mini-tts, use "marin" or "cedar".
             speed (float): The speed to use for the TTS plugin. Defaults to 1.0.
-            instructions (Optional[str], optional): Additional instructions for the TTS plugin. Defaults to None.
+            instructions (Optional[str], optional): Natural-language style control
+                ("Speak in a cheerful tone", accent hints, etc.). Only honored by
+                gpt-4o-mini-tts; ignored by tts-1 / tts-1-hd. Defaults to None.
+            language (Optional[str], optional): ISO language hint (e.g. "hi", "mr", "fr").
+                Useful for non-English input or with custom voices. Defaults to None.
             base_url (Optional[str], optional): Custom base URL for the OpenAI API. Defaults to None.
             response_format (str): The response format to use for the TTS plugin. Defaults to "pcm".
+            chunked_synthesis (bool): When ``True``, dispatch one POST per ``FlushMarker``
+                boundary received from the upstream pipeline. When ``False`` (default),
+                the entire LLM stream is accumulated into a single POST — better for
+                prosody continuity and request economics. Set ``True`` only for very
+                long utterances (>30s) where sub-sentence TTFB matters more than
+                cross-sentence prosody. Defaults to False.
         """
         super().__init__(sample_rate=OPENAI_TTS_SAMPLE_RATE, num_channels=OPENAI_TTS_CHANNELS)
 
@@ -46,9 +62,11 @@ class OpenAITTS(TTS):
         self.voice = voice
         self.speed = speed
         self.instructions = instructions
+        self.language = language
         self.audio_track = None
         self.loop = None
         self.response_format = response_format
+        self.chunked_synthesis = chunked_synthesis
         self._first_chunk_sent = False
         self._current_synthesis_task: asyncio.Task | None = None
         self._interrupted = False
@@ -78,9 +96,10 @@ class OpenAITTS(TTS):
     def azure(
         *,
         model: str = DEFAULT_MODEL,
-        voice: str = DEFAULT_VOICE,
+        voice: str | dict[str, str] = DEFAULT_VOICE,
         speed: float = 1.0,
         instructions: str | None = None,
+        language: str | None = None,
         azure_endpoint: str | None = None,
         azure_deployment: str | None = None,
         api_version: str | None = None,
@@ -90,6 +109,7 @@ class OpenAITTS(TTS):
         project: str | None = None,
         base_url: str | None = None,
         response_format: str = "pcm",
+        chunked_synthesis: bool = False,
         timeout: httpx.Timeout | None = None,
     ) -> "OpenAITTS":
         """
@@ -142,7 +162,9 @@ class OpenAITTS(TTS):
             voice=voice,
             speed=speed,
             instructions=instructions,
+            language=language,
             response_format=response_format,
+            chunked_synthesis=chunked_synthesis,
         )
         instance._client = azure_client
         return instance
@@ -153,15 +175,16 @@ class OpenAITTS(TTS):
 
     async def synthesize(
         self,
-        text: AsyncIterator[str] | str,
-        voice_id: Optional[str] = None,
+        text: AsyncIterator[Union[str, FlushMarker]] | str,
+        voice_id: Optional[str | dict[str, str]] = None,
         **kwargs: Any,
     ) -> None:
         """
-        Convert text to speech using OpenAI's TTS API and stream to audio track
+        Convert text to speech using OpenAI's TTS API and stream to audio track.
 
         Args:
-            text: Text to convert to speech
+            text: Text to convert to speech, or async iterator yielding ``str``
+                chunks and ``FlushMarker`` segment boundaries.
             voice_id: Optional voice override
             **kwargs: Additional provider-specific arguments
         """
@@ -172,26 +195,71 @@ class OpenAITTS(TTS):
 
             self._interrupted = False
 
-            if isinstance(text, AsyncIterator):
-                async for segment in segment_text(text):
-                    if self._interrupted:
-                        break
-                    await self._synthesize_segment(segment, voice_id, **kwargs)
-            else:
+            if isinstance(text, str):
                 if not self._interrupted:
                     await self._synthesize_segment(text, voice_id, **kwargs)
+                return
+
+            if self.chunked_synthesis:
+                buf: list[str] = []
+                async for chunk in text:
+                    if self._interrupted:
+                        break
+                    if isinstance(chunk, FlushMarker):
+                        if buf:
+                            combined = "".join(buf)
+                            buf = []
+                            if combined.strip():
+                                await self._synthesize_segment(combined, voice_id, **kwargs)
+                        continue
+                    if chunk and chunk.strip():
+                        buf.append(chunk)
+                if buf and not self._interrupted:
+                    tail = "".join(buf)
+                    if tail.strip():
+                        await self._synthesize_segment(tail, voice_id, **kwargs)
+                return
+
+            parts: list[str] = []
+            async for chunk in text:
+                if self._interrupted:
+                    break
+                if isinstance(chunk, FlushMarker):
+                    continue
+                if chunk and chunk.strip():
+                    parts.append(chunk)
+            if parts and not self._interrupted:
+                combined_text = "".join(parts)
+                if combined_text.strip():
+                    await self._synthesize_segment(combined_text, voice_id, **kwargs)
 
         except Exception as e:
             self.emit("error", f"TTS synthesis failed: {str(e)}")
-            raise 
+            raise
 
-    async def _synthesize_segment(self, text: str, voice_id: Optional[str] = None, **kwargs: Any) -> None:
-        """Synthesize a single text segment"""
+    async def _synthesize_segment(
+        self,
+        text: str,
+        voice_id: Optional[str | dict[str, str]] = None,
+        **kwargs: Any,
+    ) -> None:
+        """Synthesize a single text segment.
+
+        Streams audio frames to the audio track as they arrive from OpenAI's
+        chunked HTTP response. Maintains a leftover buffer between iterations
+        so partial bytes don't get silence-padded mid-stream — padding only
+        applies to the final frame at end-of-response.
+        """
         if not text.strip() or self._interrupted:
             return
 
+        # 20ms frame @ 24kHz, 16-bit, mono = 960 bytes
+        frame_size = int(
+            OPENAI_TTS_SAMPLE_RATE * OPENAI_TTS_CHANNELS * 2 * 20 / 1000
+        )
+        leftover = bytearray()
+
         try:
-            audio_data = b""
             async with self._client.audio.speech.with_streaming_response.create(
                 model=self.model,
                 voice=voice_id or self.voice,
@@ -199,15 +267,34 @@ class OpenAITTS(TTS):
                 speed=self.speed,
                 response_format=self.response_format,
                 **({"instructions": self.instructions} if self.instructions else {}),
+                **({"extra_body": {"language": self.language}} if self.language else {}),
             ) as response:
                 async for chunk in response.iter_bytes():
                     if self._interrupted:
                         break
-                    if chunk:
-                        audio_data += chunk
+                    if not chunk:
+                        continue
+                    leftover.extend(chunk)
 
-            if audio_data and not self._interrupted:
-                await self._stream_audio_chunks(audio_data)
+                    # Emit complete 20ms frames as soon as they're available.
+                    while len(leftover) >= frame_size and not self._interrupted:
+                        frame = bytes(leftover[:frame_size])
+                        del leftover[:frame_size]
+
+                        if not self._first_chunk_sent and self._first_audio_callback:
+                            self._first_chunk_sent = True
+                            await self._first_audio_callback()
+
+                        asyncio.create_task(self.audio_track.add_new_bytes(frame))
+                        await asyncio.sleep(0.001)
+
+            # End of stream: zero-pad the final partial frame and emit.
+            if leftover and not self._interrupted:
+                frame = bytes(leftover) + b"\x00" * (frame_size - len(leftover))
+                if not self._first_chunk_sent and self._first_audio_callback:
+                    self._first_chunk_sent = True
+                    await self._first_audio_callback()
+                asyncio.create_task(self.audio_track.add_new_bytes(frame))
 
         except Exception as e:
             if not self._interrupted:

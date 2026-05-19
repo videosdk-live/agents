@@ -3,6 +3,7 @@ import logging
 import time
 import requests
 from typing import Dict, Any, Optional
+from ..event_bus import global_event_emitter
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +37,20 @@ class RecordingManager:
             )
             logger.info(f"starting participant recording response completed for id {participant_id} and response {response.text}")
             response.raise_for_status()
+            global_event_emitter.emit("RECORDING_STATUS", {
+                "status": "started",
+                "participant_id": participant_id,
+                "type": "participant"
+            })
         except Exception as e:
             response_text = getattr(getattr(e, 'response', None), 'text', 'N/A')
             logger.error(f"Error starting recording for participant {participant_id}: {e} | response={response_text}")
+            global_event_emitter.emit("RECORDING_STATUS", {
+                "status": "failed",
+                "participant_id": participant_id,
+                "type": "participant",
+                "error": str(e)
+            })
 
     async def stop_participant_recording(self, participant_id: str):
         """
@@ -56,9 +68,20 @@ class RecordingManager:
             )
             logger.info(f"stop participant recording response for id {participant_id} and response {response.text}")
             response.raise_for_status()
+            global_event_emitter.emit("RECORDING_STATUS", {
+                "status": "stopped",
+                "participant_id": participant_id,
+                "type": "participant"
+            })
         except Exception as e:
             response_text = getattr(getattr(e, 'response', None), 'text', 'N/A')
             logger.error(f"Error stopping recording for participant {participant_id}: {e} | response={response_text}")
+            global_event_emitter.emit("RECORDING_STATUS", {
+                "status": "failed",
+                "participant_id": participant_id,
+                "type": "participant_stop",
+                "error": str(e)
+            })
 
     async def start_track_recording(self, participant_id: str, kind: str) -> bool:
         """
@@ -90,6 +113,12 @@ class RecordingManager:
                     response.text,
                 )
                 response.raise_for_status()
+                global_event_emitter.emit("RECORDING_STATUS", {
+                    "status": "started",
+                    "participant_id": participant_id,
+                    "type": "track",
+                    "kind": kind
+                })
                 return True
             except Exception as e:
                 response_text = getattr(getattr(e, 'response', None), 'text', 'N/A')
@@ -105,6 +134,13 @@ class RecordingManager:
                 if attempt + 1 < max_attempts and time.monotonic() < deadline:
                     await asyncio.sleep(1.0)
                 else:
+                    global_event_emitter.emit("RECORDING_STATUS", {
+                        "status": "failed",
+                        "participant_id": participant_id,
+                        "type": "track",
+                        "kind": kind,
+                        "error": str(e)
+                    })
                     break
 
         return False
@@ -130,6 +166,12 @@ class RecordingManager:
                 response.text,
             )
             response.raise_for_status()
+            global_event_emitter.emit("RECORDING_STATUS", {
+                "status": "stopped",
+                "participant_id": participant_id,
+                "type": "track",
+                "kind": kind
+            })
         except Exception as e:
             response_text = getattr(getattr(e, 'response', None), 'text', 'N/A')
             logger.error(
@@ -139,6 +181,13 @@ class RecordingManager:
                 e,
                 response_text,
             )
+            global_event_emitter.emit("RECORDING_STATUS", {
+                "status": "failed",
+                "participant_id": participant_id,
+                "type": "track_stop",
+                "kind": kind,
+                "error": str(e)
+            })
 
     async def merge_participant_recordings(
         self,

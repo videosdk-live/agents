@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Literal, Optional
+import asyncio
 import inspect
 from .event_emitter import EventEmitter
 from .llm.chat_context import ChatContext
@@ -77,7 +78,10 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
     @property
     def instructions(self) -> str:
         """Get the instructions for the agent"""
-        return self._instructions
+        base_instructions=""
+        if self.session and self.session.pipeline.graph_adapter:
+            base_instructions = self.session.pipeline.graph_adapter.get_system_instructions()
+        return base_instructions + self._instructions
 
     @instructions.setter
     def instructions(self, value: str) -> None:
@@ -107,21 +111,23 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
     
     async def hangup(self) -> None:
         """Hang up the agent"""
-        await self.session.hangup("manual_hangup")
+        asyncio.create_task(self.session.hangup("manual_hangup"))
     
     def set_thinking_audio(self, file: str = None, volume: float = 0.3):
         """Set the thinking background for the agent"""
         if file is None:
-            file = os.path.join(os.path.dirname(__file__), 'resources', 'agent_keyboard.wav')
-        self._thinking_background_config = BackgroundAudioHandlerConfig(file_path=file,volume=volume,looping=True,enabled=True)
+            file = os.path.join(os.path.dirname(__file__), 'resources', 'agent-keyboard.ogg')
+        self._thinking_background_config = BackgroundAudioHandlerConfig(file_path=file, volume=volume, looping=True,
+                                                                        enabled=True)
 
     async def play_background_audio(self, file: str = None, volume: float = 1.0, looping: bool = False, override_thinking: bool = True) -> None:
         """Play background audio on demand"""
         if file is None:
-            file = os.path.join(os.path.dirname(__file__), 'resources', 'classical.wav')
-        
-        config = BackgroundAudioHandlerConfig(file_path=file,volume=volume,looping=looping,enabled=True,mode='mixing') 
-        
+            file = os.path.join(os.path.dirname(__file__), 'resources', 'office-noise.ogg')
+
+        config = BackgroundAudioHandlerConfig(file_path=file, volume=volume, looping=looping, enabled=True,
+                                              mode='mixing')
+
         await self.session.play_background_audio(config, override_thinking)
 
     async def stop_background_audio(self) -> None:

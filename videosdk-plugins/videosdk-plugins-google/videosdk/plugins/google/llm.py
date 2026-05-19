@@ -25,7 +25,6 @@ from videosdk.agents import (
     build_gemini_schema,
     ChatContent,
     ImageContent,
-    ConversationalGraphResponse
 )
 from dataclasses import dataclass
 
@@ -175,7 +174,7 @@ class GoogleLLM(LLM):
                 config_params["thinking_config"] = thinking_config
             if conversational_graph:
                 config_params["response_mime_type"] = "application/json"
-                config_params["response_json_schema"] = ConversationalGraphResponse.model_json_schema()
+                config_params["response_json_schema"] = conversational_graph.get_response_schema()
             
             if system_instruction:
                 config_params["system_instruction"] = [types.Part(text=system_instruction)]

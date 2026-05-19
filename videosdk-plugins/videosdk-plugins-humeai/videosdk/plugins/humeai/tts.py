@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, AsyncIterator, Literal, Optional
+from typing import Any, AsyncIterator, Literal, Optional, Union
 import os
 import httpx
 import asyncio
@@ -8,7 +8,7 @@ import json
 import base64
 import numpy as np
 
-from videosdk.agents import TTS, segment_text
+from videosdk.agents import TTS, FlushMarker, segment_text
 
 try:
     from scipy import signal
@@ -48,6 +48,7 @@ class HumeAITTS(TTS):
         self.audio_track = None
         self.loop = None
         self._first_chunk_sent = False
+        self._interrupted = False
 
         if self.instant_mode and not self.voice:
             raise ValueError("Voice required for instant mode")
@@ -56,7 +57,15 @@ class HumeAITTS(TTS):
         if not self.api_key:
             raise ValueError("HUMEAI_API_KEY required")
 
-        self._session = httpx.AsyncClient(timeout=30.0)
+        self._session = httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=15.0, read=30.0, write=5.0, pool=5.0),
+            follow_redirects=True,
+            limits=httpx.Limits(
+                max_connections=50,
+                max_keepalive_connections=50,
+                keepalive_expiry=120,
+            ),
+        )
 
     def reset_first_audio_tracking(self) -> None:
         """Reset the first audio tracking state for next TTS task"""
@@ -64,20 +73,24 @@ class HumeAITTS(TTS):
 
     async def synthesize(
         self,
-        text: AsyncIterator[str] | str,
+        text: AsyncIterator[Union[str, FlushMarker]] | str,
         voice_id: Optional[str] = None,
         **kwargs: Any,
     ) -> None:
-        try:
-            if not self.audio_track or not self.loop:
-                self.emit("error", "Audio track not set")
-                return
+        if not self.audio_track or not self.loop:
+            self.emit("error", "Audio track not set")
+            return
 
-            if isinstance(text, AsyncIterator):
-                async for segment in segment_text(text):
-                    await self._synthesize_audio(segment, voice_id, **kwargs)
+        self._interrupted = False
+        try:
+            if isinstance(text, str):
+                if not self._interrupted:
+                    await self._synthesize_audio(text, voice_id, **kwargs)
             else:
-                await self._synthesize_audio(text, voice_id, **kwargs)
+                async for segment in segment_text(text):
+                    if self._interrupted:
+                        break
+                    await self._synthesize_audio(segment, voice_id, **kwargs)
 
         except Exception as e:
             self.emit("error", f"Synthesis failed: {str(e)}")
@@ -113,50 +126,64 @@ class HumeAITTS(TTS):
             "Content-Type": "application/json"
         }
 
-        try:
-            async with self._session.stream(
-                "POST", url, headers=headers, json=payload
-            ) as response:
-                response.raise_for_status()
+        for attempt in range(2):
+            try:
+                async with self._session.stream(
+                    "POST", url, headers=headers, json=payload
+                ) as response:
+                    response.raise_for_status()
 
-                buffer = b""
-                async for chunk in response.aiter_bytes():
-                    lines = (buffer + chunk).split(b"\n")
-                    buffer = lines.pop()
+                    buffer = b""
+                    async for chunk in response.aiter_bytes():
+                        if self._interrupted:
+                            return
+                        lines = (buffer + chunk).split(b"\n")
+                        buffer = lines.pop()
 
-                    for line in lines:
-                        if line.strip():
-                            try:
-                                data = json.loads(line)
-                                if "audio" in data and data["audio"]:
-                                    audio_bytes = base64.b64decode(
-                                        data["audio"])
-                                    if self.response_format == "wav":
-                                        audio_bytes = self._remove_wav_header(
-                                            audio_bytes)
-                                    await self._stream_audio_chunks(audio_bytes)
-                            except json.JSONDecodeError:
-                                continue
+                        for line in lines:
+                            if self._interrupted:
+                                return
+                            if line.strip():
+                                try:
+                                    data = json.loads(line)
+                                    if "audio" in data and data["audio"]:
+                                        audio_bytes = base64.b64decode(
+                                            data["audio"])
+                                        if self.response_format == "wav":
+                                            audio_bytes = self._remove_wav_header(
+                                                audio_bytes)
+                                        await self._stream_audio_chunks(audio_bytes)
+                                except json.JSONDecodeError:
+                                    continue
 
-                if buffer.strip():
-                    try:
-                        data = json.loads(buffer)
-                        if "audio" in data and data["audio"]:
-                            audio_bytes = base64.b64decode(data["audio"])
-                            if self.response_format == "wav":
-                                audio_bytes = self._remove_wav_header(
-                                    audio_bytes)
-                            await self._stream_audio_chunks(audio_bytes)
-                    except json.JSONDecodeError:
-                        pass
+                    if buffer.strip() and not self._interrupted:
+                        try:
+                            data = json.loads(buffer)
+                            if "audio" in data and data["audio"]:
+                                audio_bytes = base64.b64decode(data["audio"])
+                                if self.response_format == "wav":
+                                    audio_bytes = self._remove_wav_header(
+                                        audio_bytes)
+                                await self._stream_audio_chunks(audio_bytes)
+                        except json.JSONDecodeError:
+                            pass
+                return
 
-        except Exception as e:
-            self.emit("error", f"Streaming failed: {str(e)}")
-            raise
+            except (httpx.NetworkError, httpx.ConnectError, httpx.ReadTimeout) as e:
+                if attempt == 0 and not self._interrupted:
+                    await asyncio.sleep(0.25 * (2 ** attempt))
+                    continue
+                self.emit("error", f"Hume TTS network failure: {str(e)}")
+                return
+            except Exception as e:
+                if not self._interrupted:
+                    self.emit("error", f"Streaming failed: {str(e)}")
+                    raise
+                return
 
     async def _stream_audio_chunks(self, audio_bytes: bytes) -> None:
         """Stream audio with 48kHz->24kHz resampling"""
-        if not audio_bytes:
+        if not audio_bytes or self._interrupted:
             return
 
         try:
@@ -169,6 +196,8 @@ class HumeAITTS(TTS):
 
             chunk_size = 960
             for i in range(0, len(audio_bytes), chunk_size):
+                if self._interrupted:
+                    return
                 chunk = audio_bytes[i: i + chunk_size]
                 if len(chunk) < chunk_size and len(chunk) > 0:
                     chunk += b"\x00" * (chunk_size - len(chunk))
@@ -198,5 +227,6 @@ class HumeAITTS(TTS):
 
     async def interrupt(self) -> None:
         """Interrupt TTS"""
+        self._interrupted = True
         if self.audio_track:
             self.audio_track.interrupt()

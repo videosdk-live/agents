@@ -1,5 +1,5 @@
 uvicorn
-videosdk>=0.2.5
+videosdk>=0.3.2
 numpy
 httpx
 aiohttp

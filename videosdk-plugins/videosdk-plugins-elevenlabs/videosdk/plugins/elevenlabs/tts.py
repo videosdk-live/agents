@@ -8,7 +8,7 @@ import json
 import aiohttp
 import weakref
 from dataclasses import dataclass
-from videosdk.agents import TTS, segment_text
+from videosdk.agents import TTS, segment_text, FlushMarker
 import base64
 import uuid
 
@@ -19,6 +19,24 @@ DEFAULT_MODEL = "eleven_flash_v2_5"
 DEFAULT_VOICE_ID = "ErXwobaYiN019PkySvjV"
 API_BASE_URL = "https://api.elevenlabs.io/v1"
 WS_INACTIVITY_TIMEOUT = 300
+
+
+def _normalize_base_url(url: str) -> str:
+    """Coerce user-supplied base URLs into a form ``aiohttp.ws_connect`` accepts.
+
+    Tolerates two common shorthand variants so users can pass either
+    ``"api.us.elevenlabs.io"`` or ``"https://api.us.elevenlabs.io"`` without
+    crashing the WS upgrade with the URL itself as the error message:
+
+    - prepends ``https://`` if no scheme is present
+    - appends ``/v1`` if missing (the path the API expects)
+    """
+    if not url.startswith(("http://", "https://")):
+        url = f"https://{url}"
+    url = url.rstrip("/")
+    if not url.endswith("/v1"):
+        url = f"{url}/v1"
+    return url
 
 
 @dataclass
@@ -43,9 +61,10 @@ class ElevenLabsTTS(TTS):
         enable_streaming: bool = True,
         inactivity_timeout: int = WS_INACTIVITY_TIMEOUT,
         language: str = "en",
-        enable_ssml_parsing:bool=False,
-        apply_text_normalization:Literal["auto","on","off"]="auto",
-        auto_mode:bool=False
+        enable_ssml_parsing: bool = False,
+        apply_text_normalization: Literal["auto", "on", "off"] = "auto",
+        auto_mode: bool = True,
+        word_timestamps: bool = False,
     ) -> None:
         """Initialize the ElevenLabs TTS plugin.
 
@@ -65,10 +84,16 @@ class ElevenLabsTTS(TTS):
                 When set to  auto, the system will automatically decide whether to apply text normalization (e.g., spelling out numbers)
                 with "on", text normalization will always be applied, while with "off", it will be skipped. 
                 For "eleven_turbo_v2_5" and "eleven_flash_v2_5" models, text normalization can only be enabled with Enterprise plans. Defaults to "auto".
-            auto_mode (bool): Reduces latency by disabling chunk schedule and buffers. Recommended for full sentences/phrases.
+            auto_mode (bool): Reduces latency by disabling the server-side chunk_length_schedule
+                buffer (default [120, 160, 250, 290] chars before first audio). Defaults to True
+                because the upstream pipeline orchestrator already feeds TTS sentence-bounded
+                chunks. Set to False only if you are streaming raw mid-sentence tokens directly
+                and want ElevenLabs to buffer for higher prosody quality at the cost of TTFB.
         """
         super().__init__(
-            sample_rate=ELEVENLABS_SAMPLE_RATE, num_channels=ELEVENLABS_CHANNELS
+            sample_rate=ELEVENLABS_SAMPLE_RATE,
+            num_channels=ELEVENLABS_CHANNELS,
+            word_timestamps=word_timestamps,
         )
 
         self.model = model
@@ -81,7 +106,7 @@ class ElevenLabsTTS(TTS):
         self.audio_track = None
         self.loop = None
         self.response_format = response_format
-        self.base_url = base_url
+        self.base_url = _normalize_base_url(base_url)
         self.enable_streaming = enable_streaming
         self.voice_settings = voice_settings or VoiceSettings()
         self.inactivity_timeout = inactivity_timeout
@@ -109,9 +134,35 @@ class ElevenLabsTTS(TTS):
         self._active_contexts: set[str] = set()
         self._context_futures: dict[str, asyncio.Future[None]] = {}
 
+        self._audio_start_time: Optional[float] = None
+        self._spoken_words: list[str] = []
+        self._word_schedule_tasks: list[asyncio.Task] = []
+        self._last_scheduled_start_sec: float = -1.0
+        self._pending_word_chars: list[str] = []
+        self._pending_word_start_sec: Optional[float] = None
+
     def reset_first_audio_tracking(self) -> None:
         """Reset the first audio tracking state for next TTS task"""
         self._first_chunk_sent = False
+        self._audio_start_time = None
+        self._spoken_words = []
+        for task in self._word_schedule_tasks:
+            if not task.done():
+                task.cancel()
+        self._word_schedule_tasks = []
+        self._last_scheduled_start_sec = -1.0
+        self._pending_word_chars = []
+        self._pending_word_start_sec = None
+
+    async def prewarm(self) -> None:
+        """Pre-establish the ElevenLabs WebSocket so the first ``synthesize()`` call
+        does not pay the TLS + auth + upgrade cost. Safe to call repeatedly."""
+        if not self.enable_streaming:
+            return
+        try:
+            await self._ensure_connection(self.voice)
+        except Exception as e:
+            self.emit("error", f"ElevenLabs prewarm failed: {e}")
 
     async def synthesize(
         self,
@@ -195,7 +246,14 @@ class ElevenLabsTTS(TTS):
             raise
 
     async def _stream_synthesis(self, text: Union[AsyncIterator[str], str], voice_id: str) -> None:
-        """WebSocket-based streaming synthesis using multi-context connection"""
+        """WebSocket-based streaming synthesis using multi-context connection.
+
+        Forwards text verbatim into a single context. The server buffers and
+        normalises (currency, decimals, mixed-script numbers); client-side
+        re-segmentation here would split tokens like ``₹50,000`` and break
+        prosody, so we deliberately don't do it. One trailing ``flush_context``
+        + ``close_context`` finalises the turn.
+        """
         try:
             await self._ensure_connection(voice_id)
 
@@ -203,26 +261,34 @@ class ElevenLabsTTS(TTS):
             done_future: asyncio.Future[None] = asyncio.get_event_loop().create_future()
             self.register_context(context_id, done_future)
 
-            async def _single_chunk_gen(s: str) -> AsyncIterator[str]:
-                yield s
-
+            flush_on_chunk = bool(self.auto_mode)
             async def _send_chunks() -> None:
                 try:
                     first_message_sent = False
                     if isinstance(text, str):
-                        async for segment in segment_text(_single_chunk_gen(text)):
-                            if self._should_stop:
-                                break
-                            await self.send_text(context_id, f"{segment} ",
-                                                 voice_settings=None if first_message_sent else self._voice_settings_dict(),
-                                                 flush=True)
+                        if text:
+                            await self.send_text(
+                                context_id,
+                                f"{text} ",
+                                voice_settings=self._voice_settings_dict(),
+                                flush=flush_on_chunk,
+                            )
                             first_message_sent = True
                     else:
                         async for chunk in text:
                             if self._should_stop:
                                 break
-                            await self.send_text(context_id, f"{chunk} ",
-                                                 voice_settings=None if first_message_sent else self._voice_settings_dict())
+                            if isinstance(chunk, FlushMarker):
+                                await self.flush_context(context_id)
+                                continue
+                            if not chunk:
+                                continue
+                            await self.send_text(
+                                context_id,
+                                f"{chunk} ",
+                                voice_settings=None if first_message_sent else self._voice_settings_dict(),
+                                flush=flush_on_chunk,
+                            )
                             first_message_sent = True
 
                     if not self._should_stop:
@@ -234,12 +300,20 @@ class ElevenLabsTTS(TTS):
 
             sender = asyncio.create_task(_send_chunks())
 
-            await done_future
-            await sender
+            try:
+                await done_future
+            finally:
+                if not sender.done():
+                    sender.cancel()
+                try:
+                    await sender
+                except (asyncio.CancelledError, Exception):
+                    pass
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             self.emit("error", f"Streaming synthesis failed: {str(e)}")
-
             raise
 
     def _voice_settings_dict(self) -> dict[str, Any]:
@@ -254,21 +328,104 @@ class ElevenLabsTTS(TTS):
         if not audio_bytes or self._should_stop:
             return
 
-        if not self._first_chunk_sent and hasattr(self, '_first_audio_callback') and self._first_audio_callback:
+        if not self._first_chunk_sent:
             self._first_chunk_sent = True
-            asyncio.create_task(self._first_audio_callback())
+            self._audio_start_time = asyncio.get_event_loop().time()
+            if hasattr(self, '_first_audio_callback') and self._first_audio_callback:
+                asyncio.create_task(self._first_audio_callback())
 
         if self.audio_track and self.loop:
             await self.audio_track.add_new_bytes(audio_bytes)
 
+    async def _schedule_word_emit(self, word: str, start_sec: float) -> None:
+        """Emit a ``word_spoken`` event at the moment its audio begins to play."""
+        while self._audio_start_time is None and not self._should_stop:
+            await asyncio.sleep(0.01)
+        if self._should_stop or self._audio_start_time is None:
+            return
+
+        target_time = self._audio_start_time + float(start_sec)
+        now = asyncio.get_event_loop().time()
+        delay = target_time - now
+        if delay > 0:
+            try:
+                await asyncio.sleep(delay)
+            except asyncio.CancelledError:
+                return
+        if self._should_stop:
+            return
+
+        self._spoken_words.append(word)
+        cumulative = " ".join(self._spoken_words)
+        try:
+            self.emit("word_spoken", {"word": word, "cumulative_text": cumulative})
+        except Exception:
+            pass
+
+    def _schedule_words_from_alignment(self, alignment: dict) -> None:
+        """Parse an ElevenLabs alignment payload and schedule per-word emits.
+
+        ElevenLabs returns character-level alignment (``chars`` /
+        ``charStartTimesMs``). We aggregate consecutive non-whitespace chars
+        into whole words, then schedule each word at its first-char start time
+        so the UI renders word-by-word synced with audio playback.
+        """
+        if not alignment:
+            return
+        chars = alignment.get("chars") or alignment.get("characters") or []
+        if "charStartTimesMs" in alignment:
+            starts_sec = [float(t) / 1000.0 for t in alignment["charStartTimesMs"]]
+        elif "character_start_times_seconds" in alignment:
+            starts_sec = [float(t) for t in alignment["character_start_times_seconds"]]
+        else:
+            return
+
+        for ch, start_sec in zip(chars, starts_sec):
+            if ch.isspace():
+                self._flush_pending_word()
+            else:
+                if not self._pending_word_chars:
+                    self._pending_word_start_sec = start_sec
+                self._pending_word_chars.append(ch)
+
+    def _flush_pending_word(self) -> None:
+        """Schedule emission of any word currently being accumulated."""
+        if not self._pending_word_chars or self._pending_word_start_sec is None:
+            self._pending_word_chars = []
+            self._pending_word_start_sec = None
+            return
+        word = "".join(self._pending_word_chars)
+        start_sec = self._pending_word_start_sec
+        self._pending_word_chars = []
+        self._pending_word_start_sec = None
+        if start_sec <= self._last_scheduled_start_sec:
+            return
+        self._last_scheduled_start_sec = start_sec
+        self._word_schedule_tasks.append(
+            asyncio.create_task(self._schedule_word_emit(word, start_sec))
+        )
+
     async def interrupt(self) -> None:
-        """Simple but effective interruption"""
+        """Stop emitting audio for the current synthesis. Keeps the WebSocket
+        open so the next turn does not pay reconnect cost; tells ElevenLabs to
+        stop generating via ``close_context`` (saves server compute), and drops
+        any in-flight audio chunks client-side via context_id filtering in
+        ``_recv_loop``."""
         self._should_stop = True
+
+        for task in self._word_schedule_tasks:
+            if not task.done():
+                task.cancel()
+        self._word_schedule_tasks = []
 
         if self.audio_track:
             self.audio_track.interrupt()
 
         await self.close_all_contexts()
+
+        for fut in list(self._context_futures.values()):
+            if not fut.done():
+                fut.cancel()
 
     async def aclose(self) -> None:
         """Cleanup resources"""
@@ -322,6 +479,10 @@ class ElevenLabsTTS(TTS):
                 "model_id": self.model,
                 "output_format": self.response_format,
                 "inactivity_timeout": self.inactivity_timeout,
+                "language_code": self.language,
+                "enable_ssml_parsing": str(self.enable_ssml_parsing).lower(),
+                "apply_text_normalization": self.apply_text_normalization,
+                "auto_mode": str(self.auto_mode).lower(),
             }
             param_string = "&".join([f"{k}={v}" for k, v in params.items()])
             full_ws_url = f"{ws_url}?{param_string}"
@@ -392,16 +553,28 @@ class ElevenLabsTTS(TTS):
                             fut.set_exception(RuntimeError(data["error"]))
                         continue
 
-                    if data.get("audio"):
+                    ctx_id = data.get("contextId")
+                    fut = self._context_futures.get(ctx_id) if ctx_id else None
+                    ctx_alive = fut is not None and not fut.done()
+
+                    if data.get("audio") and ctx_alive:
                         audio_chunk = base64.b64decode(data["audio"]) if isinstance(data["audio"], str) else None
                         if audio_chunk:
-                            if not self._first_chunk_sent and hasattr(self, '_first_audio_callback') and self._first_audio_callback:
+                            if not self._first_chunk_sent:
                                 self._first_chunk_sent = True
-                                asyncio.create_task(self._first_audio_callback())
+                                self._audio_start_time = asyncio.get_event_loop().time()
+                                if hasattr(self, '_first_audio_callback') and self._first_audio_callback:
+                                    asyncio.create_task(self._first_audio_callback())
                             if self.audio_track:
                                 await self.audio_track.add_new_bytes(audio_chunk)
+                    if self.supports_word_timestamps and ctx_alive:
+                        alignment = data.get("alignment") or data.get("normalizedAlignment")
+                        if alignment:
+                            self._schedule_words_from_alignment(alignment)
 
                     if data.get("is_final") or data.get("isFinal"):
+                        if self.supports_word_timestamps:
+                            self._flush_pending_word()
                         ctx_id = data.get("contextId")
                         if ctx_id:
                             fut = self._context_futures.pop(ctx_id, None)

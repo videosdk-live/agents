@@ -192,8 +192,6 @@ class ContextWindow:
             if isinstance(item, ChatMessage):
                 role_label = item.role.value.capitalize()
                 text = self._extract_text(item)
-                if item.interrupted:
-                    text += " [interrupted]"
                 lines.append(f"{role_label}: {text}")
             elif isinstance(item, FunctionCall):
                 lines.append(f"[Tool Call: {item.name}] args={item.arguments}")

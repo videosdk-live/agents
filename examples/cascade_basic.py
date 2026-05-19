@@ -97,7 +97,7 @@ async def start_session(context: JobContext):
 
 def make_context() -> JobContext:
     room_options = RoomOptions(
-        room_id="<room_id>", # Replace it with your actual room_id
+        # room_id="<room_id>", # Replace it with your actual room_id
         name="Cascade Agent",
         playground=True,
     )

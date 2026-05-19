@@ -1,4 +1,3 @@
-import asyncio
 import os
 from videosdk.agents import Agent, AgentSession, Pipeline, WorkerJob, JobContext, RoomOptions
 from videosdk.plugins.deepgram import DeepgramSTT
@@ -10,8 +9,6 @@ import logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 
 pre_download_model()
-logging.getLogger().setLevel(logging.CRITICAL)
-# pre_download_model()
 class VoiceAgent(Agent):
     def __init__(self):
         super().__init__(
@@ -38,7 +35,7 @@ async def entrypoint(ctx: JobContext):
     session = AgentSession(
         agent=agent, 
         pipeline=pipeline,
-        wake_up=45
+        wake_up=15
     )
     
     async def on_wake_up():

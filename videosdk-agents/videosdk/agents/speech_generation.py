@@ -4,7 +4,7 @@ from typing import AsyncIterator, Literal, TYPE_CHECKING, Any
 import asyncio
 import logging
 from .event_emitter import EventEmitter
-from .tts.tts import TTS
+from .tts.tts import TTS, FlushMarker
 from .utils import UserState, AgentState
 from .metrics import metrics_collector
 
@@ -44,6 +44,36 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
         self.tts_lock = asyncio.Lock()
         self._is_interrupted = False
         self.full_transcript = ""
+
+        self.spoken_transcript: str = ""
+        self._tier2_spoken_transcript: str = ""
+
+        if self.tts and getattr(self.tts, "supports_word_timestamps", False):
+            try:
+                self.tts.on("word_spoken", self._on_tts_word_spoken)
+            except Exception as e:
+                logger.debug(f"Failed to subscribe to TTS word_spoken: {e}")
+            self.on("last_audio_byte", self._on_final_agent_transcript)
+
+    def _on_tts_word_spoken(self, data: Any) -> None:
+        """Handler for TTS ``word_spoken`` events — emits an interim transcript."""
+        if not isinstance(data, dict):
+            return
+        cumulative = data.get("cumulative_text", "")
+        if cumulative:
+            self._tier2_spoken_transcript = cumulative
+            if metrics_collector:
+                metrics_collector.emit_agent_transcript_transport(
+                    cumulative, type="interim"
+                )
+
+    def _on_final_agent_transcript(self, data: Any) -> None:
+        """Emit the final agent transcript after playback completes.
+        """
+        if self.full_transcript and metrics_collector:
+            metrics_collector.emit_agent_transcript_transport(
+                self.full_transcript, type="final"
+            )
     
     async def start(self) -> None:
         """Start the speech generation component"""
@@ -74,13 +104,17 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
 
             self.full_transcript = ""
             tts_start_recorded = False
+            self.spoken_transcript = ""
+            self._tier2_spoken_transcript = ""
             async def character_counting_wrapper(text_iterator: AsyncIterator[str]):
-                
+
                 async for text_chunk in text_iterator:
                     nonlocal tts_start_recorded
+                    if isinstance(text_chunk, FlushMarker):
+                        yield text_chunk
+                        continue
                     logger.debug(f"[TTS DEBUG] Got text chunk: {len(text_chunk) if text_chunk else 0} chars")
                     if text_chunk and metrics_collector:
-                        # Count characters in this chunk
                         if not tts_start_recorded:
                             metrics_collector.on_tts_start()
                             tts_start_recorded = True
@@ -89,6 +123,9 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
                     if text_chunk:
                         self.full_transcript += text_chunk
                     yield text_chunk
+                    
+                logger.info("[speech_generation] >>>>>>>>>>>>>>>>>>>>>> Emitting FlushMarker at end of LLM stream")
+                yield FlushMarker()
             
             # Wrap the iterator
             response_iterator = character_counting_wrapper(response_iterator)
@@ -102,6 +139,9 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
                         if hasattr(self.agent.session.pipeline, "audio_track"):
                             self.audio_track = self.agent.session.pipeline.audio_track
                 
+                if self.audio_track and hasattr(self.audio_track, "mark_synthesis_start"):
+                    self.audio_track.mark_synthesis_start()
+
                 if self.audio_track and hasattr(self.audio_track, "enable_audio_input"):
                     self.audio_track.enable_audio_input(manual_control=True)
                 
@@ -131,7 +171,8 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
                             await self.audio_track.add_new_bytes(audio_chunk)
 
                     if self.full_transcript and metrics_collector.current_turn:
-                        metrics_collector.set_agent_response(self.full_transcript)
+                        emit = not getattr(self.tts, "supports_word_timestamps", False)
+                        metrics_collector.set_agent_response(self.full_transcript, emit_transport=emit)
                     metrics_collector.on_agent_speech_end()
                     metrics_collector.complete_turn()
 
@@ -175,6 +216,8 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
                         self.audio_track = self.agent.session.pipeline.audio_track
                     else:
                         logger.warning("Audio track not found in pipeline - last audio callback will be skipped")
+            if self.audio_track and hasattr(self.audio_track, "mark_synthesis_start"):
+                self.audio_track.mark_synthesis_start()
             
             if self.audio_track and hasattr(self.audio_track, "enable_audio_input"):
                 self.audio_track.enable_audio_input(manual_control=True)
@@ -197,14 +240,14 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
 
             async def on_last_audio_byte():
                 """Called when synthesis is complete"""
-                if self.full_transcript and metrics_collector.current_turn:
-                    pass
                 metrics_collector.on_agent_speech_end()
                 metrics_collector.complete_turn()
 
                 if self.agent and self.agent.session:
                     self.agent.session._emit_agent_state(AgentState.IDLE)
                     self.agent.session._emit_user_state(UserState.IDLE)
+                    self.agent.session._reply_in_progress = False
+                    self.agent.session._reset_wake_up_timer()
 
                 if self.hooks and self.hooks.has_agent_turn_end_hooks():
                     await self.hooks.trigger_agent_turn_end()
@@ -265,14 +308,41 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
             finally:
                 if self.agent and self.agent.session and self.agent.session.is_background_audio_enabled:
                     await self.agent.session.stop_thinking_audio()
-                
-                if self.agent and self.agent.session:
+
+                if self.agent and self.agent.session and self._is_interrupted:
                     self.agent.session._reply_in_progress = False
                     self.agent.session._reset_wake_up_timer()
+                elif self.agent and self.agent.session:
+                    self.agent.session._reply_in_progress = False
+
+    def compute_spoken_transcript(self) -> str:
+        """Best-effort estimate of the portion of full_transcript that was
+        actually played out to the listener at the moment of call.
+        """
+        if not self.full_transcript:
+            return ""
+        if self._tier2_spoken_transcript:
+            return self._tier2_spoken_transcript.strip()
+        if not self.audio_track or not hasattr(self.audio_track, "snapshot_playback"):
+            return ""
+        played, pushed = self.audio_track.snapshot_playback()
+        if pushed <= 0:
+            return ""
+        fraction = max(0.0, min(1.0, played / pushed))
+        char_cutoff = int(len(self.full_transcript) * fraction)
+        if char_cutoff <= 0:
+            return ""
+        truncated = self.full_transcript[:char_cutoff]
+
+        last_break = max(truncated.rfind(" "), truncated.rfind("\n"))
+        if last_break <= 0:
+            return ""
+        return truncated[:last_break].strip()
     
     async def interrupt(self) -> None:
         """Interrupt the current synthesis"""
         self._is_interrupted = True
+        self.spoken_transcript = self.compute_spoken_transcript()
 
         if self.tts:
             await self.tts.interrupt()

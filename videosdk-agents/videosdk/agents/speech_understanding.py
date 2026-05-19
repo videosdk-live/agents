@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Callable, Awaitable, Literal, TYPE_CHECKING
 import asyncio
 import logging
+import time
 from .event_emitter import EventEmitter
 from .stt.stt import STT, STTResponse, SpeechEventType
 from .vad import VAD, VADResponse, VADEventType
@@ -63,6 +64,7 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
         self._accumulated_transcript = ""
         self._waiting_for_more_speech = False
         self._wait_timer: asyncio.TimerHandle | None = None
+        self._wait_started_at: float | None = None
         self._transcript_processing_lock = asyncio.Lock()
         self._is_user_speaking = False
         self._stt_started = False
@@ -78,13 +80,26 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
         # Stream STT state
         self._stt_stream_task: asyncio.Task | None = None
         self._stt_stream_queue: asyncio.Queue | None = None
-        
+
+        # VAD speech context — carries metadata from VAD events for downstream use
+        self._last_speech_audio: bytes | None = None
+        self._last_speech_confidence: float = 0.0
+        self._last_speech_energy: float = 0.0
+
+        # Real-time VAD frame state — updated ~31 times/sec by FRAME_PROCESSED
+        self._current_vad_probability: float = 0.0
+        self._current_vad_energy: float = 0.0
+        self._current_vad_speaking: bool = False
+
         # Setup event handlers
         if self.stt:
             self.stt.on_stt_transcript(self._on_stt_transcript)
         if self.vad:
             self.vad.on_vad_event(self._on_vad_event)
-    
+            # Register for per-frame updates if the VAD supports it.
+            if hasattr(self.vad, "on_inference"):
+                self.vad.on_inference(self._on_vad_frame)
+
     def update_preemptive_generation_flag(self) -> None:
         """Update the preemptive generation flag based on current STT instance"""
         self._enable_preemptive_generation = getattr(self.stt, 'enable_preemptive_generation', False) if self.stt else False
@@ -158,10 +173,25 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
             self._stt_stream_queue = None
     
     async def _on_vad_event(self, vad_response: VADResponse) -> None:
-        """Handle VAD events"""
-        logger.info(f"[speech_understanding] _on_vad_event: {vad_response.event_type.value} | confidence={vad_response.data.confidence:.4f} | _is_user_speaking={self._is_user_speaking}")
+        if self.agent and getattr(self.agent, "session", None) is not None:       
+            if not getattr(self.agent.session, "_accept_user_input", True):
+                return
+       
+        """Handle VAD events, forwarding rich metadata to downstream consumers."""
+        vad_data = vad_response.data
+        logger.info(
+            f"[speech_understanding] _on_vad_event: {vad_response.event_type.value} "
+            f"| confidence={vad_data.confidence:.4f} "
+            f"| energy={vad_data.energy:.4f} "
+            f"| raw_prob={vad_data.raw_probability:.4f} "
+            f"| _is_user_speaking={self._is_user_speaking}"
+        )
+
         if vad_response.event_type == VADEventType.START_OF_SPEECH:
+            logger.info("VAD: EVENT START_OF_SPEECH RECEIVED .............................")
             self._is_user_speaking = True
+            self._last_speech_confidence = vad_data.confidence
+            self._last_speech_energy = vad_data.energy
             self.agent.session._emit_user_state(UserState.SPEAKING)
             if not (self.agent.session.agent_state == AgentState.SPEAKING or self.agent.session.agent_state == AgentState.THINKING):
                 self.agent.session._emit_agent_state(AgentState.LISTENING)
@@ -170,10 +200,20 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
                 logger.debug("User continued speaking, cancelling wait timer")
                 await self._handle_continued_speech()
 
-            self.emit("speech_started")
+            self.emit("speech_started", {
+                "confidence": vad_data.confidence,
+                "energy": vad_data.energy,
+                "speech_duration": vad_data.speech_duration,
+                "timestamp": vad_data.timestamp,
+            })
 
         elif vad_response.event_type == VADEventType.END_OF_SPEECH:
+            logger.info("VAD: EVENT END_OF_SPEECH RECEIVED .............................")
             self._is_user_speaking = False
+            self._last_speech_audio = vad_data.audio_frames
+            self._last_speech_confidence = vad_data.confidence
+            self._last_speech_energy = vad_data.energy
+
             try:
                 if self.stt:
                     await self.stt.flush()
@@ -181,13 +221,50 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
                 logger.error(f"Error flushing STT: {e}")
             metrics_collector.on_user_speech_end()
             metrics_collector.on_stt_start()
-            self.emit("speech_stopped")
+
+            self.emit("speech_stopped", {
+                "confidence": vad_data.confidence,
+                "energy": vad_data.energy,
+                "speech_duration": vad_data.speech_duration,
+                "silence_duration": vad_data.silence_duration,
+                "timestamp": vad_data.timestamp,
+                "has_audio": vad_data.audio_frames is not None,
+            })
 
             if not self._stt_started and self.stt:
                 self._stt_started = True
-    
+                
+    def _on_vad_frame(self, vad_response: VADResponse) -> None:
+        """Handle per-frame FRAME_PROCESSED events (~31/sec).
+
+        This is intentionally synchronous (not async) to avoid creating
+        ~31 asyncio tasks per second.  It only sets three scalar values.
+        """
+        vad_data = vad_response.data
+        self._current_vad_probability = vad_data.confidence
+        self._current_vad_energy = vad_data.energy
+        self._current_vad_speaking = vad_data.is_speech
+
+    @property
+    def current_vad_probability(self) -> float:
+        """Real-time speech probability from the most recent VAD frame."""
+        return self._current_vad_probability
+
+    @property
+    def current_vad_energy(self) -> float:
+        """Real-time audio energy from the most recent VAD frame."""
+        return self._current_vad_energy
+
+    @property
+    def current_vad_speaking(self) -> bool:
+        """Whether the VAD currently considers the user to be speaking."""
+        return self._current_vad_speaking
+
     async def _on_stt_transcript(self, stt_response: STTResponse) -> None:
         """Handle STT transcript events"""
+        if self.agent and getattr(self.agent, "session", None) is not None:
+            if not getattr(self.agent.session, "_accept_user_input", True):
+                return
         if self._waiting_for_more_speech:
             await self._handle_continued_speech()
 
@@ -217,11 +294,12 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
                 self.emit("transcript_final", {
                     "text": text,
                     "is_preemptive": True,
+                    "confidence": confidence,
                     "metadata": stt_response.metadata
                 })
             else:
                 await self._process_transcript_with_eou(text)
-                
+
         elif stt_response.event_type == SpeechEventType.INTERIM:
             # If on_stt_start() was never called (no VAD END_OF_SPEECH fired),
             # call it on the first INTERIM so STT latency measures from first
@@ -232,8 +310,11 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
             if metrics_collector._stt_start_time is None:
                 metrics_collector.on_stt_start()
             metrics_collector.on_stt_interim_end()
+            if getattr(self.stt, "forward_interim_transcripts", False):
+                metrics_collector.emit_user_transcript_transport(text, type="interim")
             self.emit("transcript_interim", {
                 "text": text,
+                "confidence": stt_response.data.confidence,
                 "metadata": stt_response.metadata
             })
             
@@ -262,17 +343,21 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
             if self.mode == 'DEFAULT':
                 if self.turn_detector and self.agent:
                     metrics_collector.on_eou_start()
-                    eou_probability = self.turn_detector.get_eou_probability(self.agent.chat_context)
+                    eou_probability = await asyncio.to_thread(
+                        self.turn_detector.get_eou_probability, self.agent.chat_context
+                    )
                     metrics_collector.on_eou_complete()
                     logger.info(f"EOU probability: {eou_probability}")
                     if eou_probability < self.eou_certainty_threshold:
                         delay = self.max_speech_wait_timeout
                     metrics_collector.on_wait_for_additional_speech(delay, eou_probability)
-                        
+
             elif self.mode == 'ADAPTIVE':
                 if self.turn_detector and self.agent:
                     metrics_collector.on_eou_start()
-                    eou_probability = self.turn_detector.get_eou_probability(self.agent.chat_context)
+                    eou_probability = await asyncio.to_thread(
+                        self.turn_detector.get_eou_probability, self.agent.chat_context
+                    )
                     metrics_collector.on_eou_complete()
                     logger.info(f"EOU probability: {eou_probability}")
                     delay_range = self.max_speech_wait_timeout - self.min_speech_wait_timeout
@@ -288,24 +373,38 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
         if self._waiting_for_more_speech:
             if self._wait_timer:
                 self._wait_timer.cancel()
-        
+            self._record_wait_elapsed()
+
         self._waiting_for_more_speech = True
-        
+        self._wait_started_at = time.perf_counter()
+
         loop = asyncio.get_event_loop()
         self._wait_timer = loop.call_later(
             delay,
             lambda: asyncio.create_task(self._on_speech_timeout())
         )
+
+    def _record_wait_elapsed(self) -> None:
+        """Report the actual elapsed wait time to metrics, then clear the start marker."""
+        if self._wait_started_at is None:
+            return
+        elapsed = time.perf_counter() - self._wait_started_at
+        self._wait_started_at = None
+        try:
+            metrics_collector.on_wait_for_additional_speech_complete(elapsed)
+        except Exception as e:
+            logger.error(f"Failed to record actual wait duration: {e}")
     
     async def _on_speech_timeout(self) -> None:
         """Handle timeout when no additional speech is detected"""
         async with self._transcript_processing_lock:
             if not self._waiting_for_more_speech:
                 return
-            
+
             self._waiting_for_more_speech = False
             self._wait_timer = None
-            
+            self._record_wait_elapsed()
+
             await self._finalize_transcript()
     
     async def _finalize_transcript(self) -> None:
@@ -333,7 +432,8 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
         if self._wait_timer:
             self._wait_timer.cancel()
             self._wait_timer = None
-        
+
+        self._record_wait_elapsed()
         self._waiting_for_more_speech = False
     
     async def _handle_turn_resumed(self, resumed_text: str) -> None:
@@ -346,7 +446,16 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
         self.emit("turn_resumed", {
             "text": resumed_text
         })
-    
+
+    def get_last_speech_audio(self) -> bytes | None:
+        """Return the raw PCM int16 audio from the most recent speech segment.
+
+        Available after an END_OF_SPEECH event when the VAD provides
+        audio frames.  Returns ``None`` if no audio has been captured yet
+        or if the VAD does not support audio frame capture.
+        """
+        return self._last_speech_audio
+
     def check_preemptive_match(self, final_text: str) -> bool:
         """
         Check if final transcript matches preflight transcript.
@@ -384,10 +493,12 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
         if self._wait_timer:
             self._wait_timer.cancel()
             self._wait_timer = None
-        
+
         self._accumulated_transcript = ""
         self._waiting_for_more_speech = False
+        self._wait_started_at = None
         self._preemptive_transcript = None
+        self._last_speech_audio = None
 
         if self.vad:
             try:

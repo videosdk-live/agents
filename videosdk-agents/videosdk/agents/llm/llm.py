@@ -10,25 +10,6 @@ import logging
 import json
 logger = logging.getLogger(__name__)
 
-
-
-class ExtractedField(BaseModel):
-    key: str = Field(..., description="The name of the field")
-    value: Union[str, int, float, bool] = Field(..., description="The value of the field")
-
-class ConversationalGraphResponse(BaseModel):
-    """ Data model to hold Conversational Graph response data."""
-    
-    response_to_user:str = Field(..., description="Response to the user by agent")
-    extracted_values:List[ExtractedField] = Field(default_factory=list, description="List of extracted values from the user input")
-    move_forward:bool = Field(False, description="If we want to Move forward to the next state")
-    reasoning:str = Field("", description="Reasoning for the response")
-    chosen_branch:str = Field(None, description="Chosen branch for the move forward")
-    is_off_topic:bool = Field(False, description="Is the user input off topic")
-    backtrack_to_state:str = Field(None, description="Backtrack to the state")
-    current_state_id:str = Field(None, description="exact state_id of current state")
-    
-
 class TokenBudget(BaseModel):
     """Structured token usage from an LLM response."""
     input_tokens: int = 0
@@ -89,6 +70,7 @@ class LLM(EventEmitter[Literal["error"]]):
         self,
         messages: ChatContext,
         tools: list[FunctionTool] | None = None,
+        conversational_graph:Optional[Any] = None,
         **kwargs: Any
     ) -> AsyncIterator[LLMResponse]:
         """
@@ -97,6 +79,7 @@ class LLM(EventEmitter[Literal["error"]]):
         Args:
             messages (ChatContext): The conversation context containing message history.
             tools (list[FunctionTool] | None, optional): List of available function tools for the LLM to use.
+            conversational_graph(Any  | None, optional): GraphAdapter object for using graph methods.
             **kwargs (Any): Additional arguments specific to the LLM provider implementation.
 
         Returns:

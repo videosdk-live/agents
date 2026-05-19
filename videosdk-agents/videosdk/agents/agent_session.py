@@ -1,15 +1,15 @@
 from __future__ import annotations
-from typing import Any, Callable, Optional, Literal, Awaitable
+from typing import Any, Callable, Optional, Literal, Awaitable,TYPE_CHECKING
 import asyncio
 import uuid
 
 from .agent import Agent
 from .llm.chat_context import ChatRole
 from .pipeline import Pipeline
-from .utils import get_tool_info, UserState, AgentState
-from .utterance_handle import UtteranceHandle 
+from .utils import get_tool_info, UserState, AgentState, format_provider_class
+from .utterance_handle import UtteranceHandle
 import time
-from .job import get_current_job_context
+from .job import get_current_job_context, ObservabilityOptions
 from .event_emitter import EventEmitter
 from .event_bus import global_event_emitter
 from .background_audio import BackgroundAudioHandler,BackgroundAudioHandlerConfig
@@ -18,9 +18,13 @@ from .voice_mail_detector import VoiceMailDetector
 from .metrics import metrics_collector
 import logging
 import av
+
+if TYPE_CHECKING:
+    from .warm_transfer import WarmTransferConfig, WarmTransferResult
+
 logger = logging.getLogger(__name__)
 
-class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_changed"]]):
+class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_changed", "warm_transfer"]]):
     """
     Manages an agent session with its associated conversation flow and pipeline.
     """
@@ -49,6 +53,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         self.agent = agent
         self.pipeline = pipeline
         self.agent.session = self
+        self._accept_user_input: bool = False
         self.wake_up = wake_up
         self.on_wake_up: Optional[Callable[[], None] | Callable[[], Any]] = None
         self._wake_up_task: Optional[asyncio.Task] = None
@@ -61,12 +66,15 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         self._thinking_audio_player: Optional[BackgroundAudioHandler] = None
         self._background_audio_player: Optional[BackgroundAudioHandler] = None
         self._thinking_was_playing = False
+        self._override_thinking: bool = False
         self.background_audio_config = background_audio
         self._is_executing_tool = False
         self._job_context = None
         self.dtmf_handler = dtmf_handler
         self.voice_mail_detector = voice_mail_detector
         self._is_voice_mail_detected = False
+        self._warm_transfer_in_progress: bool = False
+        self._warm_transfer_task: Optional[asyncio.Task] = None
 
         # Set agent on pipeline (pipeline handles all internal wiring)
         if hasattr(self.pipeline, 'set_agent'):
@@ -125,9 +133,11 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
 
     def _start_wake_up_timer(self) -> None:
         if self.wake_up is not None and self.on_wake_up is not None:
+            if self._wake_up_task and not self._wake_up_task.done():
+                self._wake_up_task.cancel()
             self._wake_up_timer_active = True
             self._wake_up_task = asyncio.create_task(self._wake_up_timer_loop())
-    
+
     def _reset_wake_up_timer(self) -> None:
         if self.wake_up is not None and self.on_wake_up is not None:
             if self._reply_in_progress:
@@ -136,8 +146,9 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
                 self._wake_up_task.cancel()
             self._wake_up_timer_active = True
             self._wake_up_task = asyncio.create_task(self._wake_up_timer_loop())
-    
+
     def _pause_wake_up_timer(self) -> None:
+        self._wake_up_timer_active = False
         if self._wake_up_task and not self._wake_up_task.done():
             self._wake_up_task.cancel()
     
@@ -149,7 +160,12 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
     async def _wake_up_timer_loop(self) -> None:
         try:
             await asyncio.sleep(self.wake_up)
-            if self._wake_up_timer_active and self.on_wake_up and not self._reply_in_progress:
+            if (
+                self._wake_up_timer_active
+                and self.on_wake_up
+                and not self._reply_in_progress
+                and self._user_state != UserState.SPEAKING
+            ):
                 if asyncio.iscoroutinefunction(self.on_wake_up):
                     asyncio.create_task(self.on_wake_up())
                 else:
@@ -188,6 +204,8 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         self,
         wait_for_participant: bool = False,
         run_until_shutdown: bool = False,
+        *,
+        observability: Optional[ObservabilityOptions] = None,
         **kwargs: Any
     ) -> None:
         """
@@ -198,25 +216,60 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         3. Start the pipeline processing
         4. Start wake-up timer if configured (but only if callback is set)
         5. Optionally handle full lifecycle management (connect, wait, shutdown)
-        
+
         Args:
             wait_for_participant: If True, wait for a participant to join before starting
             run_until_shutdown: If True, manage the full lifecycle including connection,
                                waiting for shutdown signals, and cleanup. This is a convenience
                                that internally calls ctx.run_until_shutdown() with this session.
+            observability: Grouped recording/traces/metrics/logs config. When passed, it
+                           is applied to ``ctx.room_options.observability`` before the
+                           room connects, taking precedence over any value set on
+                           ``RoomOptions``. Requires ``run_until_shutdown=True``; a
+                           warning is logged otherwise.
             **kwargs: Additional arguments to pass to the pipeline start method
-            
+
         Examples:
             Simple start (manual lifecycle management):
             ```python
             await session.start()
             ```
-            
+
             Full lifecycle management (recommended):
             ```python
             await session.start(wait_for_participant=True, run_until_shutdown=True)
             ```
+
+            Inline observability:
+            ```python
+            await session.start(
+                wait_for_participant=True,
+                run_until_shutdown=True,
+                observability=ObservabilityOptions(
+                    recording=RecordingOptions(video=True),
+                ),
+            )
+            ```
         """
+        if observability is not None:
+            ctx = None
+            try:
+                ctx = get_current_job_context()
+            except Exception as e:
+                logger.warning(f"Could not resolve JobContext for observability overrides: {e}")
+            if ctx is not None and ctx.room_options is not None:
+                if not run_until_shutdown:
+                    logger.warning(
+                        "observability= passed to session.start() but run_until_shutdown=False; "
+                        "overrides only apply if ctx.connect() has not yet run."
+                    )
+                ctx.room_options.observability = observability
+            else:
+                logger.warning(
+                    "observability= passed to session.start() but no active JobContext "
+                    "(or no RoomOptions) was found; ignoring."
+                )
+
         if run_until_shutdown:
             try:
                 ctx = get_current_job_context()
@@ -269,7 +322,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
                 metrics_collector.set_provider_info("eou", p_class, p_model)
         else:
             if self.pipeline._realtime_model:
-                metrics_collector.set_provider_info("realtime", self.pipeline._realtime_model.__class__.__name__, getattr(self.pipeline._realtime_model, 'model', ''))
+                metrics_collector.set_provider_info("realtime", format_provider_class(self.pipeline._realtime_model), getattr(self.pipeline._realtime_model, 'model', ''))
             if self.pipeline.stt:
                 p_class, p_model = self._get_provider_info(self.pipeline.stt, 'stt')
                 metrics_collector.set_provider_info("stt", p_class, p_model)
@@ -329,6 +382,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
                     await audio_stream_enabled.wait()
                     logger.info("SIP user audio stream enabled, proceeding with on_enter")
                     await self.agent.on_enter()
+                    self._accept_user_input = True
                     global_event_emitter.emit("AGENT_STARTED", {"session": self})
                     if self.on_wake_up is not None:
                         self._start_wake_up_timer()
@@ -342,6 +396,8 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             return 
 
         await self.agent.on_enter()
+        self._accept_user_input = True
+
         global_event_emitter.emit("AGENT_STARTED", {"session": self})
         if self.on_wake_up is not None:
             self._start_wake_up_timer()
@@ -353,10 +409,10 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             return "", ""
         default_model = configs.get(comp_name, {}).get('model', '')
         if hasattr(component, 'active_provider') and component.active_provider is not None:
-            provider_class = component.active_provider.__class__.__name__
+            provider_class = format_provider_class(component.active_provider)
             model = getattr(component.active_provider, 'model', getattr(component.active_provider, 'model_id', getattr(component.active_provider, 'speech_model', getattr(component.active_provider, 'voice_id', getattr(component.active_provider, 'voice', getattr(component.active_provider, 'speaker', default_model))))))
         else:
-            provider_class = component.__class__.__name__
+            provider_class = format_provider_class(component)
             model = getattr(component, 'model', getattr(component, 'model_id', getattr(component, 'speech_model', getattr(component, 'voice_id', getattr(component, 'voice', getattr(component, 'speaker', default_model))))))
         return provider_class, str(model)
 
@@ -368,6 +424,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         continue after the tool returns.
         """
         handle = UtteranceHandle(utterance_id=f"utt_{uuid.uuid4().hex[:8]}", interruptible=interruptible)
+        self._accept_user_input = True
         if not self._is_executing_tool:
             if self.current_utterance and not self.current_utterance.done():
                 self.current_utterance.interrupt()
@@ -385,8 +442,15 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         return handle
     
     async def play_background_audio(self, config: BackgroundAudioHandlerConfig, override_thinking: bool) -> None:
-        """Play background audio on demand"""
-        if override_thinking and self._thinking_audio_player and self._thinking_audio_player.is_playing:
+        """Play background audio on demand.
+
+        override_thinking=True  -> thinking audio is allowed to layer over the background
+                                   music during LLM generation (stops on first TTS byte).
+        override_thinking=False -> background music is exclusive; thinking audio is
+                                   suppressed for as long as background is playing.
+        """
+        self._override_thinking = override_thinking
+        if not override_thinking and self._thinking_audio_player and self._thinking_audio_player.is_playing:
             await self.stop_thinking_audio()
             self._thinking_was_playing = True
 
@@ -417,6 +481,8 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             # Track background audio stop for metrics
             metrics_collector.on_background_audio_stop()
 
+        self._override_thinking = False
+
         if self._thinking_was_playing:
             await self.start_thinking_audio()
             self._thinking_was_playing = False
@@ -435,7 +501,13 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
     
     async def start_thinking_audio(self):
         """Start thinking audio"""
-        if self._background_audio_player and self._background_audio_player.is_playing:
+        if (
+            self._background_audio_player
+            and self._background_audio_player.is_playing
+            and not self._override_thinking
+        ):
+            return
+        if self._thinking_audio_player and self._thinking_audio_player.is_playing:
             return
 
         audio_track = self._get_audio_track()
@@ -479,6 +551,8 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         Returns:
             UtteranceHandle: A handle to track the utterance lifecycle
         """
+        self._accept_user_input = True
+
         if self._reply_in_progress:
             if self.current_utterance:
                 return self.current_utterance
@@ -535,6 +609,27 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         if hasattr(self.pipeline, 'interrupt'):
             self.pipeline.interrupt()
 
+    def get_context_history(
+        self,
+        *,
+        include_function_calls: bool = False,
+        include_system_messages: bool = False,
+    ) -> list[dict]:
+        """
+        Get the current chat context history (role/content items).
+
+        Users can access the conversation history whenever they want, without needing
+        any transcript hooks.
+        """
+        if not self.agent or not self.agent.chat_context:
+            return []
+
+        context_copy = self.agent.chat_context.copy(
+            exclude_function_calls=not include_function_calls,
+            exclude_system_messages=not include_system_messages,
+        )
+        return context_copy.to_dict()["items"]
+
     async def close(self) -> None:
         """
         Close the agent session.
@@ -554,7 +649,6 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             traces_flow_manager.end_agent_session_closed()
 
         self._cancel_wake_up_timer()
-        
 
         logger.info("Cleaning up agent session")
         try:
@@ -649,3 +743,52 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
                 if participant_info.get("sipUser") and participant_info.get("sipCallType") == "outbound":
                     return True
         return False
+    
+    def on_warm_transfer(self, phase: Optional[str] = None, callback: Optional[Callable[..., Any]] = None):
+        """Subscribe to warm-transfer phase changes (decorator or imperative).
+
+        ``@session.on_warm_transfer()`` sees every phase; pass a phase name to
+        filter to one. Handlers are sync and receive the ``warm_transfer`` event
+        payload: ``{"phase": WarmTransferPhase, "data": {...}, "timestamp": float,
+        "consultation_room_id": Optional[str]}``.
+        """
+        def _wrap(handler: Callable[..., Any]) -> Callable[..., Any]:
+            if phase is None:
+                return self.on("warm_transfer", handler)
+
+            def _filtered(payload):
+                pv = payload.get("phase") if isinstance(payload, dict) else None
+                if getattr(pv, "value", pv) == phase:
+                    handler(payload)
+
+            _filtered.__name__ = f"{handler.__name__}__phase_{phase}"
+            return self.on("warm_transfer", _filtered)
+
+        return _wrap if callback is None else _wrap(callback)
+
+    async def warm_transfer(self, config: "WarmTransferConfig") -> "WarmTransferResult":
+        """Run a SIP-to-SIP warm transfer to a human supervisor.
+
+        See :mod:`videosdk.agents.warm_transfer` for the config surface and the
+        ``@session.on_warm_transfer(...)`` phase hook.
+
+        The transfer runs in its own task and is shielded from the caller of this
+        method being cancelled (this is usually invoked from a ``@function_tool``,
+        and that task gets cancelled whenever the caller talks over the agent /
+        triggers an interruption — which must not abort an in-flight transfer).
+        If the awaiting tool is cancelled, the transfer keeps running to
+        completion in the background; the result is simply not returned.
+        """
+        from .warm_transfer import WarmTransferRunner, WarmTransferError
+
+        if self._warm_transfer_in_progress:
+            raise WarmTransferError("A warm transfer is already in progress for this session.")
+        self._warm_transfer_in_progress = True
+        self._warm_transfer_task = asyncio.ensure_future(WarmTransferRunner(self, config).run())
+
+        def _clear(_task: "asyncio.Task") -> None:
+            self._warm_transfer_in_progress = False
+            self._warm_transfer_task = None
+
+        self._warm_transfer_task.add_done_callback(_clear)
+        return await asyncio.shield(self._warm_transfer_task)

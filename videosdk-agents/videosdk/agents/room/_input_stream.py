@@ -4,6 +4,7 @@ import numpy as np
 from videosdk import Stream
 from ..event_bus import global_event_emitter
 from typing import Optional
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -20,9 +21,16 @@ class InputStreamManager:
         """
         Add audio listener for a participant stream.
         """
+        frame_count = 0  
+
         while True:
             try:
                 frame = await stream.track.recv()
+                frame_count += 1
+
+                if frame_count % 500 == 0:
+                    logger.info(f"Processed {frame_count} audio frames  timestamp :: {datetime.now()}")
+
                 global_event_emitter.emit("ON_SPEECH_IN", {"frame": frame, "stream": stream})
                 
                 audio_data = frame.to_ndarray()[0]
@@ -36,7 +44,7 @@ class InputStreamManager:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"Audio processing error: {e}")
+                logger.error(f"Audio processing error after {frame_count} frames: {e}")
                 break
 
     async def add_video_listener(self, stream: Stream):

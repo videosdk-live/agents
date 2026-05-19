@@ -21,9 +21,9 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "videosdk-agents>=1.0.5",
+    "videosdk-agents>=1.0.14",
     "google-genai >= 1.14.0",
-    "google-cloud-texttospeech >= 2.24, < 3",
+    "google-cloud-texttospeech >= 2.29, < 3",
     "google-cloud-speech >= 2, < 3",
     "scipy",
     "protobuf>=5.29,<6.0",
