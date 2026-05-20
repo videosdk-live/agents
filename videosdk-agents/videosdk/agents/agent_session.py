@@ -6,8 +6,8 @@ import uuid
 from .agent import Agent
 from .llm.chat_context import ChatRole
 from .pipeline import Pipeline
-from .utils import get_tool_info, UserState, AgentState
-from .utterance_handle import UtteranceHandle 
+from .utils import get_tool_info, UserState, AgentState, format_provider_class
+from .utterance_handle import UtteranceHandle
 import time
 from .job import get_current_job_context, ObservabilityOptions
 from .event_emitter import EventEmitter
@@ -322,7 +322,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
                 metrics_collector.set_provider_info("eou", p_class, p_model)
         else:
             if self.pipeline._realtime_model:
-                metrics_collector.set_provider_info("realtime", self.pipeline._realtime_model.__class__.__name__, getattr(self.pipeline._realtime_model, 'model', ''))
+                metrics_collector.set_provider_info("realtime", format_provider_class(self.pipeline._realtime_model), getattr(self.pipeline._realtime_model, 'model', ''))
             if self.pipeline.stt:
                 p_class, p_model = self._get_provider_info(self.pipeline.stt, 'stt')
                 metrics_collector.set_provider_info("stt", p_class, p_model)
@@ -409,10 +409,10 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             return "", ""
         default_model = configs.get(comp_name, {}).get('model', '')
         if hasattr(component, 'active_provider') and component.active_provider is not None:
-            provider_class = component.active_provider.__class__.__name__
+            provider_class = format_provider_class(component.active_provider)
             model = getattr(component.active_provider, 'model', getattr(component.active_provider, 'model_id', getattr(component.active_provider, 'speech_model', getattr(component.active_provider, 'voice_id', getattr(component.active_provider, 'voice', getattr(component.active_provider, 'speaker', default_model))))))
         else:
-            provider_class = component.__class__.__name__
+            provider_class = format_provider_class(component)
             model = getattr(component, 'model', getattr(component, 'model_id', getattr(component, 'speech_model', getattr(component, 'voice_id', getattr(component, 'voice', getattr(component, 'speaker', default_model))))))
         return provider_class, str(model)
 

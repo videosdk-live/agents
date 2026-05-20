@@ -583,7 +583,7 @@ class MetricsCollector:
             stt.stt_latency = stt_latency
             stt.stt_confidence = confidence
             stt.stt_duration = duration
-            logger.info(f"stt latency: {stt_latency}ms | stt confidence: {confidence} | stt duration: {duration}ms")
+            logger.info(f"stt latency: {stt_latency}ms | stt confidence: {confidence} | stt duration: {duration}")
 
         if transcript:
             stt.stt_transcript = transcript
