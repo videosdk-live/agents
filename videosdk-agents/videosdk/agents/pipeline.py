@@ -1,5 +1,6 @@
 from typing import Any, Literal, Optional, Callable, Dict, List, Tuple
 import asyncio
+import gc
 import logging
 import av
 from dataclasses import dataclass, field, asdict
@@ -37,6 +38,8 @@ from .tokenize import (
 )
 
 logger = logging.getLogger(__name__)
+
+_GC_FROZEN = False
 
 from .pipeline_utils import (
     NO_CHANGE, 
@@ -959,15 +962,33 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
             if self.orchestrator:
                 await self.orchestrator.start()
 
-        # Pre-establish provider connections (e.g. Cartesia WebSocket) so the
-        # first turn doesn't pay TLS+WS handshake. No-op for plugins that don't
-        # override prewarm(). Failures are logged and swallowed — first turn
-        # will simply pay the handshake cost as before.
-        if self.tts:
+        prewarm_t0 = time.perf_counter()
+        warmed = []
+        for component in (self.tts, self.vad, self.turn_detector):
+            if component is None:
+                continue
             try:
-                await self.tts.prewarm()
+                await component.prewarm()
+                warmed.append(type(component).__name__)
             except Exception as e:
-                logger.debug(f"TTS prewarm failed (non-fatal): {e}")
+                logger.debug(
+                    f"{type(component).__name__} prewarm failed (non-fatal): {e}"
+                )
+        if warmed:
+            logger.info(
+                f"Pipeline prewarm complete: {', '.join(warmed)} "
+                f"in {(time.perf_counter() - prewarm_t0) * 1000:.0f} ms"
+            )
+
+        global _GC_FROZEN
+        if not _GC_FROZEN:
+            try:
+                gc.collect()
+                gc.freeze()
+                _GC_FROZEN = True
+                logger.info("Pipeline prewarm: gc.freeze() applied (once per process)")
+            except Exception as e:
+                logger.debug(f"gc.freeze after prewarm skipped (non-fatal): {e}")
     
     async def send_message(self, message: str, handle: UtteranceHandle) -> None:
         """
