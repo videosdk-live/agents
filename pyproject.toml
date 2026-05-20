@@ -1,3 +1,14 @@
+[tool.uv]
+# indic-nlp-library 0.92 mistakenly declares the docs-only tools sphinx-argparse
+# and sphinx-rtd-theme as *runtime* dependencies. Override them with an
+# always-false marker so uv drops them — and the transitive `sphinx` +
+# sphinxcontrib-* packages — from the resolution. The library's actual code
+# (indicnlp.tokenize / .transliterate) never imports sphinx.
+override-dependencies = [
+    "sphinx-argparse ; sys_platform == 'never'",
+    "sphinx-rtd-theme ; sys_platform == 'never'",
+]
+
 [tool.uv.workspace]
 members = [
     "videosdk-agents",
