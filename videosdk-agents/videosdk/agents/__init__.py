@@ -89,8 +89,10 @@ from .llm.chat_context import (
     ChatContent,
     FunctionCall,
     FunctionCallOutput,
-    ImageContent
-
+    ImageContent,
+    AgentHandoff,
+    AgentConfigUpdate,
+    ReadOnlyChatContext,
 )
 from .stt.stt import STT, STTResponse, SpeechEventType, SpeechData
 from .tts.tts import TTS, FlushMarker
@@ -154,6 +156,9 @@ __all__ = [
     "WorkerJob",
     "LLM",
     "ChatContext",
+    "AgentHandoff",
+    "AgentConfigUpdate",
+    "ReadOnlyChatContext",
     "ChatRole",
     "ChatMessage",
     "ChatContent",
