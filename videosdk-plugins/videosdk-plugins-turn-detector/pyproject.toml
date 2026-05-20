@@ -23,7 +23,7 @@ classifiers = [
 dependencies = [
     "videosdk-agents>=1.0.13",
     "transformers>=4.47.1",
-    "numpy>=1.27",
+    "numpy>=1.26",
     "onnxruntime>=1.18",
     "jinja2",
 ]
