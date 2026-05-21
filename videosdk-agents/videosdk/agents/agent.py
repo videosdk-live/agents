@@ -14,6 +14,7 @@ from .llm.chat_context import ChatContext, ChatRole
 from .mcp.mcp_manager import MCPToolManager
 from .mcp.mcp_server import MCPServiceProvider
 from .background_audio import BackgroundAudioHandlerConfig
+from .base_instructions import BASE_VOICE_INSTRUCTIONS
 import logging
 import os
 import av
@@ -47,8 +48,9 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
     Abstract base class for creating custom agents.
     Inherits from EventEmitter to handle agent events and state updates.
     """
-    def __init__(self, instructions: str, tools: List[FunctionTool] = None, agent_id: str = None, mcp_servers: List[MCPServiceProvider] = None, inherit_context: bool = False, knowledge_base: KnowledgeBase | None = None):
+    def __init__(self, instructions: str, tools: List[FunctionTool] = None, agent_id: str = None, mcp_servers: List[MCPServiceProvider] = None, inherit_context: bool = False, knowledge_base: KnowledgeBase | None = None, use_base_instructions: bool = True):
         super().__init__()
+        self.use_base_instructions = use_base_instructions
         self._tools = tools
         self._llm = None
         self._stt = None
@@ -75,21 +77,30 @@ class Agent(EventEmitter[Literal["agent_started"]], ABC):
             if is_function_tool(attr):
                 self._tools.append(attr)
 
+    def _apply_base(self, text: str) -> str:
+        """Prepend the default voice-agent persona unless opted out."""
+        if self.use_base_instructions:
+            return f"{BASE_VOICE_INSTRUCTIONS}\n\n{text}"
+        return text
+
     @property
     def instructions(self) -> str:
-        """Get the instructions for the agent"""
-        base_instructions=""
+        """Get the fully-composed instructions, including the base voice
+        persona prefix. Not the inverse of the setter: the setter accepts the
+        raw developer string, this returns the composed prompt."""
+        graph_instructions = ""
         if self.session and self.session.pipeline.graph_adapter:
-            base_instructions = self.session.pipeline.graph_adapter.get_system_instructions()
-        return base_instructions + self._instructions
+            graph_instructions = self.session.pipeline.graph_adapter.get_system_instructions()
+        return self._apply_base(graph_instructions + self._instructions)
 
     @instructions.setter
     def instructions(self, value: str) -> None:
-        """Set the instructions for the agent"""
+        """Set the instructions for the agent. Pass the raw developer string;
+        the base voice persona prefix is applied automatically."""
         self._instructions = value
         self.chat_context.add_message(
             role=ChatRole.SYSTEM,
-            content=value
+            content=self._apply_base(value)
         )
 
     @property

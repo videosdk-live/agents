@@ -36,6 +36,7 @@ def setup_logging(level=logging.INFO):
 # based on the log_level field in WorkerOptions. No manual setup required.
 
 from .agent import Agent
+from .base_instructions import BASE_VOICE_INSTRUCTIONS
 from .agent_session import AgentSession
 from .utils import UserState, AgentState, PipelineMode, RealtimeMode, PipelineComponent, PipelineConfig
 from .pipeline import Pipeline, EOUConfig, InterruptConfig
@@ -130,6 +131,7 @@ from .tokenize import (
 
 __all__ = [
     "Agent",
+    "BASE_VOICE_INSTRUCTIONS",
     "AgentSession",
     "UserState",
     "AgentState",
