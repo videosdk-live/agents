@@ -15,7 +15,7 @@ from videosdk.agents import TTS as BaseTTS, FlushMarker
 
 logger = logging.getLogger(__name__)
 
-VIDEOSDK_INFERENCE_URL = "wss://dev-inference-gateway.videosdk.live"
+VIDEOSDK_INFERENCE_URL = "wss://dev-inference.videosdk.live"
 DEFAULT_SAMPLE_RATE = 24000
 DEFAULT_CHANNELS = 1
 # CustomAudioStreamTrack hardcodes 24kHz — any provider rate ≠ 24kHz must be
@@ -299,6 +299,7 @@ class TTS(BaseTTS):
         language="en",
         enable_streaming=True,
         config=None,
+        base_url=None,
     ) -> "TTS":
         """
         Create a TTS instance configured for the VideoSDK native provider.
@@ -331,7 +332,8 @@ class TTS(BaseTTS):
             language=language,
             config=config,
             enable_streaming=enable_streaming,
-            sample_rate=16000
+            sample_rate=16000,
+            base_url=base_url,
         )
 
     # ==================== Core ====================
