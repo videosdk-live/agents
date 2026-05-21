@@ -201,7 +201,7 @@ class OpenAILLM(LLM):
                     "OpenAI API key must be provided either through api_key parameter "
                     "or OPENAI_API_KEY environment variable"
                 )
-            _timeout = timeout or httpx.Timeout(connect=15.0, read=5.0, write=5.0, pool=5.0)
+            _timeout = timeout or httpx.Timeout(connect=15.0, read=10.0, write=5.0, pool=5.0)
             self._client = openai.AsyncOpenAI(
                 api_key=self.api_key,
                 base_url=base_url or None,
@@ -426,7 +426,7 @@ class OpenAILLM(LLM):
         if not api_key and not azure_ad_token:
             raise ValueError("Either API key or Azure AD token must be provided")
 
-        _timeout = timeout or httpx.Timeout(connect=15.0, read=5.0, write=5.0, pool=5.0)
+        _timeout = timeout or httpx.Timeout(connect=15.0, read=10.0, write=5.0, pool=5.0)
         azure_client = openai.AsyncAzureOpenAI(
             max_retries=max_retries,
             azure_endpoint=azure_endpoint,
