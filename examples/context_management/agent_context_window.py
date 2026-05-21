@@ -63,9 +63,13 @@ class LongCallAgent(Agent):
     async def on_enter(self) -> None:
         await self.session.say("Support here — walk me through what's happening.")
 
+    async def on_exit(self):
+        await self.session.say("Thank you for calling, Have a nice day.")
+
     @function_tool
     async def escalate_to_manager(self) -> str:
         """Escalate the call to manager authority for the rest of the call."""
+        logging.info("Tool invoked: escalate_to_manager")
         # --- Phase 1 primitive --------------------------------------------
         # Record a mid-conversation config change. AgentConfigUpdate is a
         # structural item: it feeds active_config_at() and is excluded from
@@ -87,6 +91,43 @@ class LongCallAgent(Agent):
         await self.session.reply(instructions=instructions)
         return "Escalated — manager authority is now active."
 
+    @function_tool
+    async def approve_refund(self, order_id: str, amount: float) -> str:
+        """Approve a refund on an order. Manager authority — unlocked after
+        escalation; refunds are capped at $500.
+
+        Args:
+            order_id: The order receiving the refund.
+            amount: Refund amount in USD; anything above 500 is rejected.
+        """
+        logging.info(
+            "Tool invoked: approve_refund(order_id=%s, amount=%.2f)",
+            order_id,
+            amount,
+        )
+        if amount > 500:
+            return (
+                f"Refund of ${amount:.2f} exceeds the $500 manager limit on "
+                f"order {order_id} — needs director approval."
+            )
+        return f"Approved a ${amount:.2f} refund on order {order_id}."
+
+    @function_tool
+    async def waive_fee(self, order_id: str, fee_type: str) -> str:
+        """Waive a fee on an order. Manager authority — unlocked after
+        escalation.
+
+        Args:
+            order_id: The order the fee is on.
+            fee_type: The fee to waive (e.g. "late payment", "restocking").
+        """
+        logging.info(
+            "Tool invoked: waive_fee(order_id=%s, fee_type=%s)",
+            order_id,
+            fee_type,
+        )
+        return f"Waived the {fee_type} fee on order {order_id}."
+
 
 async def entrypoint(ctx: JobContext) -> None:
     # --- Phase 1 primitive ------------------------------------------------
@@ -96,7 +137,7 @@ async def entrypoint(ctx: JobContext) -> None:
     # items (system/developer messages, handoffs, config updates) are
     # preserved through both.
     context_window = ContextWindow(
-        max_tokens=8000,        # compress + truncate once the context exceeds this
+        max_tokens=500,        # compress + truncate once the context exceeds this
         keep_recent_turns=4,    # keep the last 4 user turns verbatim
     )
     pipeline = Pipeline(

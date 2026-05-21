@@ -73,6 +73,7 @@ class SupervisorAgent(Agent):
         Args:
             order_id: The order to evaluate (e.g. "4471").
         """
+        logging.info("Tool invoked: check_refund_eligibility(order_id=%s)", order_id)
         # --- Phase 1 primitive --------------------------------------------
         # Fork a FRESH, scoped context for the sub-agent: just its own
         # instructions + a one-line task brief, no parent conversation

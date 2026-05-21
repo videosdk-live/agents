@@ -73,6 +73,7 @@ class IntakeAgent(Agent):
         Args:
             reason: Short reason for the transfer (e.g. "disputed charge").
         """
+        logging.info("Tool invoked: transfer_to_billing(reason=%s)", reason)
         # --- Phase 1 primitive ---------------------------------------------
         # Record the handoff on the shared context. AgentHandoff is a
         # structural item: it stays in the context for audit and for the
