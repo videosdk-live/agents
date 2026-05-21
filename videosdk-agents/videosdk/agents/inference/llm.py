@@ -188,7 +188,7 @@ class LLM(BaseLLM):
     @staticmethod
     def sarvam(
         *,
-        model_id: str = "sarvam-m",
+        model_id: str = "sarvam-30b",
         config: Optional[Dict] = None,
         temperature: float = 0.7,
         tool_choice: ToolChoice = "auto",
@@ -200,7 +200,7 @@ class LLM(BaseLLM):
         Create an LLM instance configured for Sarvam AI.
 
         Args:
-            model_id: Sarvam model identifier (default: "sarvam-m")
+            model_id: Sarvam model identifier (default: "sarvam-30b")
             config: Optional extra config dict
             temperature: Controls randomness in responses (0.0 to 1.0)
             tool_choice: Tool calling mode ("auto", "required", "none")
