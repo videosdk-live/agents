@@ -149,13 +149,20 @@ class ChatContext:
         arguments: str,
         call_id: Optional[str] = None,
         agent_id: Optional[str] = None,
+        metadata: Optional[dict] = None,
     ) -> FunctionCall:
-        """Add a function call to the context."""
+        """Add a function call to the context.
+
+        ``metadata`` carries provider-specific per-call data — notably the
+        Gemini ``thought_signature`` — which must travel with this exact call
+        when the context is later converted for the provider.
+        """
         call = FunctionCall(
             name=name,
             arguments=arguments,
             call_id=call_id or f"call_{uuid.uuid4().hex[:12]}",
             agent_id=agent_id,
+            metadata=metadata,
         )
         self._items.append(call)
         return call
