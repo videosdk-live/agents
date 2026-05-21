@@ -9,13 +9,18 @@ import logging
 from typing import Any, AsyncIterator, Optional, Dict
 
 import aiohttp
-from videosdk.agents import TTS as BaseTTS
+import numpy as np
+from scipy import signal
+from videosdk.agents import TTS as BaseTTS, FlushMarker
 
 logger = logging.getLogger(__name__)
 
-VIDEOSDK_INFERENCE_URL = "wss://inference-gateway.videosdk.live"
+VIDEOSDK_INFERENCE_URL = "wss://dev-inference-gateway.videosdk.live"
 DEFAULT_SAMPLE_RATE = 24000
 DEFAULT_CHANNELS = 1
+# CustomAudioStreamTrack hardcodes 24kHz — any provider rate ≠ 24kHz must be
+# resampled here, otherwise playback runs fast/slow with pitch shift.
+TRACK_SAMPLE_RATE = 24000
 
 MIN_CHARS_FOR_TTS = 5
 
@@ -302,7 +307,11 @@ class TTS(BaseTTS):
             model_id: VideoSDK model identifier (default: "namo")
             voice_id: Voice identifier (default: "amalthea")
             language: Language code (default: "en")
+            sample_rate: Audio sample rate (default: 16000). Must match the
+                rate the server emits — a mismatch makes playback sound
+                sped up or slowed down.
             enable_streaming: Enable streaming mode (default: True)
+            base_url: Custom inference gateway URL
             config: Optional provider-specific configuration overrides
 
         Returns:
@@ -312,15 +321,17 @@ class TTS(BaseTTS):
             "model": model_id,
             "voice_id": voice_id,
             "language": language,
-            "sample_rate": DEFAULT_SAMPLE_RATE,
+            "sample_rate": 16000,
             **(config or {}),
         }
         return TTS(
             provider="videosdk",
             model_id=model_id,
+            voice_id=voice_id,
             language=language,
             config=config,
             enable_streaming=enable_streaming,
+            sample_rate=16000
         )
 
     # ==================== Core ====================
@@ -603,7 +614,9 @@ class TTS(BaseTTS):
                         and self._synthesis_id > self._interrupted_at_id
                         and self.audio_track
                     ):
-                        await self.audio_track.add_new_bytes(msg.data)
+                        chunk = self._remove_wav_header(msg.data)
+                        chunk = self._resample_for_track(chunk)
+                        await self.audio_track.add_new_bytes(chunk)
                     else:
                         logger.debug(
                             "[InferenceTTS] Discarding stale binary audio chunk"
@@ -687,6 +700,7 @@ class TTS(BaseTTS):
         try:
             audio_bytes = base64.b64decode(audio_b64)
             audio_bytes = self._remove_wav_header(audio_bytes)
+            audio_bytes = self._resample_for_track(audio_bytes)
             if not self._first_chunk_sent and self._first_audio_callback:
                 self._first_chunk_sent = True
                 await self._first_audio_callback()
@@ -702,6 +716,22 @@ class TTS(BaseTTS):
             if data_pos != -1:
                 return audio_bytes[data_pos + 8 :]
         return audio_bytes
+
+    def _resample_for_track(self, audio_bytes: bytes) -> bytes:
+        """Resample s16le PCM from self._sample_rate to the track's 24kHz.
+
+        The audio track is hardcoded at 24kHz, so any other source rate would
+        play back at the wrong speed/pitch (e.g. 16kHz audio played as 24kHz
+        sounds 1.5× faster and noticeably sharper).
+        """
+        if self._sample_rate == TRACK_SAMPLE_RATE or not audio_bytes:
+            return audio_bytes
+        samples = np.frombuffer(audio_bytes, dtype=np.int16)
+        if samples.size == 0:
+            return audio_bytes
+        target_len = int(samples.size * TRACK_SAMPLE_RATE / self._sample_rate)
+        resampled = signal.resample(samples, target_len)
+        return np.clip(resampled, -32768, 32767).astype(np.int16).tobytes()
 
     # ==================== Control ====================
 
