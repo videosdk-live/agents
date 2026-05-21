@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal, TYPE_CHECKING, Any, AsyncIterator
+from typing import Iterable, Literal, TYPE_CHECKING, Any, AsyncIterator
 import asyncio
 import uuid
 import logging
@@ -826,13 +826,22 @@ class PipelineOrchestrator(EventEmitter[Literal[
             if self.agent and self.agent.session and self.agent.session.is_background_audio_enabled:
                 await self.agent.session.stop_thinking_audio()
     
-    async def say(self, message: str, handle: UtteranceHandle) -> None:
+    async def say(
+        self,
+        message: str,
+        handle: UtteranceHandle,
+        audio_data: bytes | bytearray | Iterable[bytes] | AsyncIterator[bytes] | None = None,
+    ) -> None:
         """
         Direct TTS synthesis (for initial messages).
 
         Args:
             message: Message to synthesize
             handle: Utterance handle to track
+            audio_data: Optional pre-synthesized PCM bytes. When provided,
+                bypasses TTS synthesis entirely and streams these bytes to
+                the agent audio track. Chunker and TTS text filter are
+                also skipped on this path.
         """
         if not self.speech_generation:
             handle._mark_done()
@@ -847,6 +856,14 @@ class PipelineOrchestrator(EventEmitter[Literal[
         self.speech_generation.on("synthesis_interrupted", _on_playback_done)
 
         try:
+            if audio_data is not None:
+                metrics_collector.set_agent_response(message, emit_transport=True)
+                await self.speech_generation.synthesize_audio_bytes(
+                    audio_data, message, handle=handle
+                )
+                await playback_done.wait()
+                return
+
             if not (self.hooks and self.hooks.has_tts_stream_hook()):
                 tts = self.speech_generation.tts
                 emit = not bool(getattr(tts, "supports_word_timestamps", False))

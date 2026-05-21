@@ -1,4 +1,4 @@
-from typing import Any, Literal, Optional, Callable, Dict, List, Tuple
+from typing import Any, AsyncIterator, Iterable, Literal, Optional, Callable, Dict, List, Tuple, Union
 import asyncio
 import logging
 import av
@@ -969,17 +969,29 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
             except Exception as e:
                 logger.debug(f"TTS prewarm failed (non-fatal): {e}")
     
-    async def send_message(self, message: str, handle: UtteranceHandle) -> None:
+    async def send_message(
+        self,
+        message: str,
+        handle: UtteranceHandle,
+        audio_data: Optional[Union[bytes, bytearray, Iterable[bytes], AsyncIterator[bytes]]] = None,
+    ) -> None:
         """
         Send a message to the pipeline.
-        
+
         Args:
             message: Message text to send
             handle: Utterance handle to track
+            audio_data: Optional pre-synthesized PCM bytes. When provided in
+                cascade mode, bypasses TTS and streams the bytes directly.
+                Ignored in realtime mode (logs a warning).
         """
         self._current_utterance_handle = handle
-        
+
         if self.config.is_realtime:
+            if audio_data is not None:
+                logger.warning(
+                    "audio_data is not supported in realtime mode; falling back to LLM generation"
+                )
             if isinstance(self.llm, RealtimeLLMAdapter):
                 self.llm.current_utterance = handle
                 try:
@@ -989,7 +1001,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                     handle._mark_done()
         else:
             if self.orchestrator:
-                await self.orchestrator.say(message, handle)
+                await self.orchestrator.say(message, handle, audio_data=audio_data)
             else:
                 logger.warning("No orchestrator available")
                 handle._mark_done()
