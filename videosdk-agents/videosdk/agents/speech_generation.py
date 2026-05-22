@@ -126,7 +126,6 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
                         self.full_transcript += text_chunk
                     yield text_chunk
                     
-                logger.info("[speech_generation] >>>>>>>>>>>>>>>>>>>>>> Emitting FlushMarker at end of LLM stream")
                 yield FlushMarker()
             
             # Wrap the iterator
