@@ -1,5 +1,6 @@
 import os
 import logging
+import threading
 import urllib.request
 import numpy as np
 import onnxruntime
@@ -13,6 +14,32 @@ _MODEL_DOWNLOAD_URL = (
 _CACHE_DIR = Path.home() / ".cache" / "videosdk" / "silero"
 
 SAMPLE_RATES = [8000, 16000]
+
+_session_cache: dict[tuple, onnxruntime.InferenceSession] = {}
+_session_cache_lock = threading.Lock()
+
+def _ensure_model_downloaded() -> str:
+    """Download silero_vad.onnx into the local cache if not present.
+
+    Returns the absolute path to the cached model file.
+    """
+    cached = _CACHE_DIR / "silero_vad.onnx"
+    if cached.exists():
+        return str(cached)
+    os.makedirs(str(_CACHE_DIR), exist_ok=True)
+    urllib.request.urlretrieve(_MODEL_DOWNLOAD_URL, str(cached))
+    logger.info("Silero VAD model downloaded")
+    return str(cached)
+
+
+def pre_download_model() -> None:
+    """Pre-download the Silero VAD ONNX model into the local cache.
+
+    Mirrors the turn-detector plugin's `pre_download_model()`. Call this
+    at module level (before `WorkerJob.start`) so spawned worker
+    processes never pay the network download on first job.
+    """
+    _ensure_model_downloaded()
 
 
 class VadModelWrapper:
@@ -96,40 +123,48 @@ class VadModelWrapper:
         use_cpu_only: bool,
         onnx_file_path: str | Path | None = None,
     ) -> onnxruntime.InferenceSession:
-        """Create an optimised ONNX Runtime InferenceSession.
+        """Create or reuse an optimised ONNX Runtime InferenceSession.
 
-        Improvements over v1:
-        * Thread spinning disabled — no busy-wait when idle.
-        * Sequential execution mode — deterministic ordering.
-        * Custom model path support — bring your own fine-tuned model.
+        Sessions are cached at module level keyed by (use_cpu_only,
+        resolved_path), so repeated SileroVAD() constructions in the
+        same process share a single underlying session.
 
         Resolution order: onnx_file_path -> cached download (~/.cache/videosdk/silero).
         """
-        session_opts = onnxruntime.SessionOptions()
-        session_opts.inter_op_num_threads = 1
-        session_opts.intra_op_num_threads = 1
-        session_opts.execution_mode = onnxruntime.ExecutionMode.ORT_SEQUENTIAL
-        session_opts.add_session_config_entry("session.intra_op.allow_spinning", "0")
-        session_opts.add_session_config_entry("session.inter_op.allow_spinning", "0")
-
-        providers = (
-            ["CPUExecutionProvider"]
-            if use_cpu_only and "CPUExecutionProvider" in onnxruntime.get_available_providers()
-            else None
-        )
-
         if onnx_file_path is not None:
-            onnx_file_path = Path(onnx_file_path)
-            if not onnx_file_path.exists():
-                raise FileNotFoundError(f"Silero VAD model file not found: {onnx_file_path}")
-            return onnxruntime.InferenceSession(
-                str(onnx_file_path), sess_options=session_opts, providers=providers
+            resolved_path = Path(onnx_file_path).resolve()
+            if not resolved_path.exists():
+                raise FileNotFoundError(f"Silero VAD model file not found: {resolved_path}")
+            resolved_path_str = str(resolved_path)
+        else:
+            resolved_path_str = _ensure_model_downloaded()
+
+        cache_key = (bool(use_cpu_only), resolved_path_str)
+
+        cached_session = _session_cache.get(cache_key)
+        if cached_session is not None:
+            return cached_session
+
+        with _session_cache_lock:
+            cached_session = _session_cache.get(cache_key)
+            if cached_session is not None:
+                return cached_session
+
+            session_opts = onnxruntime.SessionOptions()
+            session_opts.inter_op_num_threads = 1
+            session_opts.intra_op_num_threads = 1
+            session_opts.execution_mode = onnxruntime.ExecutionMode.ORT_SEQUENTIAL
+            session_opts.add_session_config_entry("session.intra_op.allow_spinning", "0")
+            session_opts.add_session_config_entry("session.inter_op.allow_spinning", "0")
+
+            providers = (
+                ["CPUExecutionProvider"]
+                if use_cpu_only and "CPUExecutionProvider" in onnxruntime.get_available_providers()
+                else None
             )
 
-        cached = str(_CACHE_DIR / "silero_vad.onnx")
-        if not os.path.exists(cached):
-            os.makedirs(str(_CACHE_DIR), exist_ok=True)
-            urllib.request.urlretrieve(_MODEL_DOWNLOAD_URL, cached)
-            logger.info("Silero VAD model downloaded")
-
-        return onnxruntime.InferenceSession(cached, sess_options=session_opts, providers=providers)
+            session = onnxruntime.InferenceSession(
+                resolved_path_str, sess_options=session_opts, providers=providers
+            )
+            _session_cache[cache_key] = session
+            return session
