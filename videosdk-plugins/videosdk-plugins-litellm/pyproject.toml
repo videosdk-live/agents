@@ -23,7 +23,7 @@ classifiers = [
 dependencies = [
     "videosdk-agents>=1.0.12",
     "videosdk-plugins-openai>=1.0.12",
-    "litellm>=1.60,<1.85",
+    "litellm>=1.80.0,<1.87.0",
 ]
 
 [tool.hatch.version]
