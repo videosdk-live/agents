@@ -1,5 +1,6 @@
 import logging
 import os
+import threading
 import numpy as np
 from typing import Optional
 from videosdk.agents import EOU, ChatContext, ChatMessage, ChatRole
@@ -9,6 +10,10 @@ from huggingface_hub import hf_hub_download
 logger = logging.getLogger(__name__)
 
 NAMO_ONNX_FILENAME = "model_quant.onnx"
+
+_tokenizer_cache: dict[Optional[str], object] = {}
+_session_cache: dict[Optional[str], object] = {}
+_init_lock = threading.Lock()
 
 def _get_hf_model_repo(language: Optional[str] = None) -> str:
     """
@@ -71,25 +76,47 @@ class NamoTurnDetectorV1(EOU):
         self._initialize_model()
     
     def _initialize_model(self):
-        """Initialize the ONNX model and tokenizer"""
+        """Initialize (or reuse) the ONNX model and tokenizer.
+
+        Caches tokenizer + ORT session per language at module level so
+        repeated NamoTurnDetectorV1(language=...) constructions in the
+        same process share the heavy resources.
+        """
         try:
             import onnxruntime as ort
-            
-            hf_repo = _get_hf_model_repo(self.language)
-            
-            if self.language is None:
-                self.tokenizer = AutoTokenizer.from_pretrained(hf_repo)
-                self.max_length = 8192
-            else:
-                self.tokenizer = DistilBertTokenizer.from_pretrained(hf_repo)
-                self.max_length = 512
-                        
 
-            model_path = hf_hub_download(repo_id=hf_repo, filename=NAMO_ONNX_FILENAME)
-            
-            self.session = ort.InferenceSession(model_path)
-            print(f"Model loaded successfully from {hf_repo}.")
-            
+            self.max_length = 8192 if self.language is None else 512
+            cache_key = self.language
+
+            cached_tokenizer = _tokenizer_cache.get(cache_key)
+            cached_session = _session_cache.get(cache_key)
+            if cached_tokenizer is not None and cached_session is not None:
+                self.tokenizer = cached_tokenizer
+                self.session = cached_session
+                return
+
+            with _init_lock:
+                cached_tokenizer = _tokenizer_cache.get(cache_key)
+                cached_session = _session_cache.get(cache_key)
+                if cached_tokenizer is None or cached_session is None:
+                    hf_repo = _get_hf_model_repo(self.language)
+
+                    if cached_tokenizer is None:
+                        if self.language is None:
+                            cached_tokenizer = AutoTokenizer.from_pretrained(hf_repo)
+                        else:
+                            cached_tokenizer = DistilBertTokenizer.from_pretrained(hf_repo)
+                        _tokenizer_cache[cache_key] = cached_tokenizer
+
+                    if cached_session is None:
+                        model_path = hf_hub_download(repo_id=hf_repo, filename=NAMO_ONNX_FILENAME)
+                        cached_session = ort.InferenceSession(model_path)
+                        _session_cache[cache_key] = cached_session
+                        logger.info(f"Namo model loaded from {hf_repo}.")
+
+            self.tokenizer = cached_tokenizer
+            self.session = cached_session
+
         except Exception as e:
             print(f"Error loading model: {e}")
             logger.error(f"Failed to initialize TurnDetection model: {e}")

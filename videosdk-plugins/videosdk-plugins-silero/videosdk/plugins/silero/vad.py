@@ -194,6 +194,21 @@ class SileroVAD(BaseVAD):
         self._inference_count = 0
 
 
+    async def prewarm(self) -> None:
+        """Run one dummy inference to warm the ONNX kernel + allocator.
+
+        The model and session are already built in ``__init__``; this only
+        warms the inference path so the first real frame doesn't pay
+        kernel-JIT cost. Idempotent — failures are logged and swallowed.
+        """
+        try:
+            frame_size = self._silero.frame_size
+            dummy = np.zeros(frame_size, dtype=np.float32)
+            await asyncio.to_thread(self._silero.process, dummy)
+            self._silero.reset_state() 
+        except Exception as e:
+            logger.debug(f"SileroVAD prewarm skipped (non-fatal): {e}")
+
     def on_inference(self, callback: Callable[[VADResponse], Awaitable[None] | None]) -> None:
         """Register callback for FRAME_PROCESSED events (~31/sec at 16 kHz).
 
