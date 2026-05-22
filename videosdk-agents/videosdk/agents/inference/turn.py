@@ -59,6 +59,15 @@ class Turn(EOU):
         threshold: EOU probability threshold (default: ``0.7``).
         base_url: Override for the inference gateway URL.
         timeout: Per-request timeout in seconds.
+        max_connection_attempts: After this many consecutive failed requests
+            (non-200, timeout, invalid payload, etc.) the client stops calling
+            the gateway and returns ``fallback_probability`` for the rest of
+            the session. The counter resets on the next successful response.
+            Default: 5.
+        fallback_probability: Probability returned once the breaker has
+            tripped. Default ``0.7`` matches the default threshold, so a
+            disabled turn detector lets the pipeline assume end-of-utterance
+            rather than stalling.
     """
 
     def __init__(
@@ -70,6 +79,8 @@ class Turn(EOU):
         threshold: float = 0.7,
         base_url: Optional[str] = None,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        max_connection_attempts: int = 5,
+        fallback_probability: float = 0.7,
     ) -> None:
         super().__init__(threshold=threshold)
 
@@ -84,14 +95,24 @@ class Turn(EOU):
         self.language = language
         self.base_url = (base_url or DEFAULT_TURN_HTTP_URL).rstrip("/")
         self.timeout = timeout
+        self.max_connection_attempts: int = max(1, int(max_connection_attempts))
+        self.fallback_probability: float = float(fallback_probability)
 
         self._session: Optional[requests.Session] = None
         self._logged_first_success: bool = False
 
+        # Circuit breaker: consecutive failed HTTP attempts. When it reaches
+        # max_connection_attempts, every subsequent call returns
+        # fallback_probability without hitting the network.
+        self._consecutive_failures: int = 0
+        self._turn_disabled: bool = False
+
         logger.info(
             f"[InferenceTurn] Configured (base_url={self.base_url}, "
             f"provider={self.provider}, model={self.model_id}, "
-            f"language={self.language or 'multilingual'}, threshold={threshold})"
+            f"language={self.language or 'multilingual'}, threshold={threshold}, "
+            f"max_connection_attempts={self.max_connection_attempts}, "
+            f"fallback_probability={self.fallback_probability})"
         )
 
     # ==================== Factory Methods ====================
@@ -103,6 +124,8 @@ class Turn(EOU):
         threshold: float = 0.7,
         base_url: Optional[str] = None,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        max_connection_attempts: int = 5,
+        fallback_probability: float = 0.7,
     ) -> "Turn":
         """
         Create a Turn detector backed by the server-hosted Namo Turn Detector v1.
@@ -113,6 +136,8 @@ class Turn(EOU):
             threshold: EOU probability threshold (default: ``0.7``).
             base_url: Override for the inference gateway URL.
             timeout: Per-request timeout in seconds.
+            max_connection_attempts: Failures before the breaker trips. Default: 5.
+            fallback_probability: Probability emitted once disabled. Default: 0.7.
         """
         return Turn(
             provider="videosdk",
@@ -121,6 +146,8 @@ class Turn(EOU):
             threshold=threshold,
             base_url=base_url,
             timeout=timeout,
+            max_connection_attempts=max_connection_attempts,
+            fallback_probability=fallback_probability,
         )
 
     @staticmethod
@@ -129,6 +156,8 @@ class Turn(EOU):
         threshold: float = 0.7,
         base_url: Optional[str] = None,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        max_connection_attempts: int = 5,
+        fallback_probability: float = 0.7,
     ) -> "Turn":
         """
         Create a Turn detector backed by the server-hosted TurnSense model
@@ -138,6 +167,8 @@ class Turn(EOU):
             threshold: EOU probability threshold (default: ``0.7``).
             base_url: Override for the inference gateway URL.
             timeout: Per-request timeout in seconds.
+            max_connection_attempts: Failures before the breaker trips. Default: 5.
+            fallback_probability: Probability emitted once disabled. Default: 0.7.
         """
         return Turn(
             provider="turnsense",
@@ -146,6 +177,8 @@ class Turn(EOU):
             threshold=threshold,
             base_url=base_url,
             timeout=timeout,
+            max_connection_attempts=max_connection_attempts,
+            fallback_probability=fallback_probability,
         )
 
     @staticmethod
@@ -154,6 +187,8 @@ class Turn(EOU):
         threshold: float = 0.7,
         base_url: Optional[str] = None,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        max_connection_attempts: int = 5,
+        fallback_probability: float = 0.7,
     ) -> "Turn":
         """
         Create a Turn detector backed by the server-hosted VideoSDK BERT model
@@ -163,6 +198,8 @@ class Turn(EOU):
             threshold: EOU probability threshold (default: ``0.7``).
             base_url: Override for the inference gateway URL.
             timeout: Per-request timeout in seconds.
+            max_connection_attempts: Failures before the breaker trips. Default: 5.
+            fallback_probability: Probability emitted once disabled. Default: 0.7.
         """
         return Turn(
             provider="videosdk",
@@ -171,7 +208,48 @@ class Turn(EOU):
             threshold=threshold,
             base_url=base_url,
             timeout=timeout,
+            max_connection_attempts=max_connection_attempts,
+            fallback_probability=fallback_probability,
         )
+
+    # ==================== Circuit Breaker ====================
+
+    def _record_attempt_failure(self, reason: str) -> float:
+        """
+        Increment the consecutive-failure counter and trip the breaker once it
+        reaches ``max_connection_attempts``. Returns the probability value the
+        caller should emit on this turn — ``0.0`` while pre-trip, or
+        ``fallback_probability`` once disabled.
+        """
+        if self._turn_disabled:
+            return self.fallback_probability
+
+        self._consecutive_failures += 1
+        logger.warning(
+            f"[InferenceTurn] Attempt failure "
+            f"{self._consecutive_failures}/{self.max_connection_attempts}: {reason}"
+        )
+
+        if self._consecutive_failures >= self.max_connection_attempts:
+            self._turn_disabled = True
+            logger.error(
+                f"[InferenceTurn] Disabled for session after "
+                f"{self._consecutive_failures} failed attempts — emitting "
+                f"probability={self.fallback_probability} for the rest of the "
+                f"turns (provider={self.provider}, model={self.model_id})"
+            )
+            return self.fallback_probability
+
+        return 0.0
+
+    def _record_attempt_success(self) -> None:
+        """Reset the consecutive-failure counter on a successful response."""
+        if self._consecutive_failures > 0:
+            logger.info(
+                f"[InferenceTurn] Recovered after {self._consecutive_failures} "
+                f"failed attempt(s) — resetting counter"
+            )
+            self._consecutive_failures = 0
 
     # ==================== Core EOU Interface ====================
 
@@ -183,7 +261,14 @@ class Turn(EOU):
         the base :class:`EOU` interface is synchronous and the caller invokes it
         from inside an ``asyncio`` task. Requests are expected to be short
         (<100 ms) and the timeout is capped by ``self.timeout``.
+
+        After ``max_connection_attempts`` consecutive failures the client stops
+        calling the gateway and returns ``fallback_probability`` for the rest
+        of the session.
         """
+        if self._turn_disabled:
+            return self.fallback_probability
+
         payload = self._build_payload(chat_context)
         if payload is None:
             return 0.0
@@ -205,35 +290,49 @@ class Turn(EOU):
                     f"[InferenceTurn] HTTP {response.status_code}: {response.text}"
                 )
                 self.emit("error", f"HTTP {response.status_code}: {response.text}")
-                return 0.0
+                return self._record_attempt_failure(
+                    f"HTTP {response.status_code}"
+                )
 
             data = response.json()
             probability = data.get("probability", 0.0)
             if not isinstance(probability, (int, float)):
                 logger.error(f"[InferenceTurn] Invalid probability: {probability!r}")
-                return 0.0
+                return self._record_attempt_failure("invalid probability payload")
+
+            probability_f = float(probability)
+
+            # A zero probability typically means the server omitted the field
+            # (default 0.0 from .get) or returned a placeholder payload with
+            # no real model signal. Treat it as a failed attempt for breaker
+            # purposes, but keep returning 0.0 downstream while pre-trip so
+            # EOU logic still sees "no end-of-utterance" as before.
+            if probability_f == 0.0:
+                return self._record_attempt_failure("probability=0.0")
+
+            self._record_attempt_success()
 
             if not self._logged_first_success:
                 self._logged_first_success = True
                 logger.info(
                     f"[InferenceTurn] Connected successfully to {self.base_url}/v1/turn "
-                    f"(first probability={float(probability):.4f})"
+                    f"(first probability={probability_f:.4f})"
                 )
 
-            return float(probability)
+            return probability_f
 
         except requests.Timeout:
             logger.error(f"[InferenceTurn] Request timed out after {self.timeout}s")
             self.emit("error", "turn detection request timed out")
-            return 0.0
+            return self._record_attempt_failure("timeout")
         except requests.RequestException as e:
             logger.error(f"[InferenceTurn] Request failed: {e}")
             self.emit("error", f"turn detection request failed: {e}")
-            return 0.0
+            return self._record_attempt_failure(f"request exception: {e}")
         except Exception as e:
             logger.error(f"[InferenceTurn] Unexpected error: {e}")
             self.emit("error", f"turn detection error: {e}")
-            return 0.0
+            return self._record_attempt_failure(f"unexpected error: {e}")
 
     # ==================== Helpers ====================
 

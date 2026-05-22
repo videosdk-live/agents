@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal, TYPE_CHECKING, Any, AsyncIterator
+from typing import Iterable, Literal, TYPE_CHECKING, Any, AsyncIterator
 import asyncio
 import uuid
 import logging
@@ -120,6 +120,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
         interrupt_min_confidence: float = 0.0,
         false_interrupt_pause_duration: float = 2.0,
         resume_on_false_interrupt: bool = False,
+        interrupt_fade_duration: float = 0.4,
         graph_adapter: Any | None = None,
         context_window: Any | None = None,
         voice_mail_detector: VoiceMailDetector | None = None,
@@ -151,6 +152,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
         self.interrupt_min_confidence = interrupt_min_confidence
         self.false_interrupt_pause_duration = false_interrupt_pause_duration
         self.resume_on_false_interrupt = resume_on_false_interrupt
+        self.interrupt_fade_duration = interrupt_fade_duration
         
         # Interruption state
         self._generation_id = 0
@@ -242,6 +244,9 @@ class PipelineOrchestrator(EventEmitter[Literal[
         """Set audio track for TTS output"""
         if self.speech_generation:
             self.speech_generation.set_audio_track(audio_track)
+            
+        if audio_track is not None and hasattr(audio_track, "interrupt_fade_duration"):
+            audio_track.interrupt_fade_duration = self.interrupt_fade_duration
     
     def set_voice_mail_detector(self, detector: VoiceMailDetector | None) -> None:
         """Configure voicemail detection"""
@@ -879,13 +884,22 @@ class PipelineOrchestrator(EventEmitter[Literal[
             if self.agent and self.agent.session and self.agent.session.is_background_audio_enabled:
                 await self.agent.session.stop_thinking_audio()
     
-    async def say(self, message: str, handle: UtteranceHandle) -> None:
+    async def say(
+        self,
+        message: str,
+        handle: UtteranceHandle,
+        audio_data: bytes | bytearray | Iterable[bytes] | AsyncIterator[bytes] | None = None,
+    ) -> None:
         """
         Direct TTS synthesis (for initial messages).
 
         Args:
             message: Message to synthesize
             handle: Utterance handle to track
+            audio_data: Optional pre-synthesized PCM bytes. When provided,
+                bypasses TTS synthesis entirely and streams these bytes to
+                the agent audio track. Chunker and TTS text filter are
+                also skipped on this path.
         """
         if not self.speech_generation:
             handle._mark_done()
@@ -900,6 +914,14 @@ class PipelineOrchestrator(EventEmitter[Literal[
         self.speech_generation.on("synthesis_interrupted", _on_playback_done)
 
         try:
+            if audio_data is not None:
+                metrics_collector.set_agent_response(message, emit_transport=True)
+                await self.speech_generation.synthesize_audio_bytes(
+                    audio_data, message, handle=handle
+                )
+                await playback_done.wait()
+                return
+
             if not (self.hooks and self.hooks.has_tts_stream_hook()):
                 tts = self.speech_generation.tts
                 emit = not bool(getattr(tts, "supports_word_timestamps", False))
