@@ -1,17 +1,19 @@
 from __future__ import annotations
 
-from typing import AsyncIterator, Literal, TYPE_CHECKING, Any
+from typing import AsyncIterator, Iterable, Literal, TYPE_CHECKING, Any, Union
 import asyncio
 import logging
 from .event_emitter import EventEmitter
 from .tts.tts import TTS, FlushMarker
 from .utils import UserState, AgentState
 from .metrics import metrics_collector
+from .audio_cache import _iter_audio_bytes
 
 if TYPE_CHECKING:
     from .agent import Agent
     from .room.output_stream import CustomAudioStreamTrack
     from .pipeline_hooks import PipelineHooks
+    from .utterance_handle import UtteranceHandle
 
 logger = logging.getLogger(__name__)
 
@@ -337,7 +339,133 @@ class SpeechGeneration(EventEmitter[Literal["synthesis_started", "first_audio_by
         if last_break <= 0:
             return ""
         return truncated[:last_break].strip()
-    
+
+    async def synthesize_audio_bytes(
+        self,
+        audio_data: Union[bytes, Iterable[bytes], AsyncIterator[bytes]],
+        text: str,
+        handle: "UtteranceHandle | None" = None,
+    ) -> None:
+        """Push pre-synthesized PCM bytes to the audio track, bypassing TTS.
+
+        Emits the same ``synthesis_started`` / ``first_audio_byte`` /
+        ``last_audio_byte`` / ``synthesis_interrupted`` events as
+        :meth:`synthesize`, so downstream listeners (orchestrator,
+        metrics, hooks) keep working without changes.
+
+        Args:
+            audio_data: Raw int16 PCM at the audio track's sample rate.
+                Accepts a single ``bytes`` blob, an iterable of ``bytes``
+                chunks, or an async iterator of ``bytes`` chunks.
+            text: The text being spoken — used for transcripts/metrics
+                even though no synthesis happens.
+            handle: Optional utterance handle; checked between chunks so
+                mid-playback interruption stops the stream promptly.
+        """
+        self._is_interrupted = False
+        self.full_transcript = text
+        self.spoken_transcript = ""
+        self._tier2_spoken_transcript = ""
+
+        if not self.audio_track:
+            if (
+                self.agent
+                and self.agent.session
+                and hasattr(self.agent.session, "pipeline")
+                and hasattr(self.agent.session.pipeline, "audio_track")
+            ):
+                self.audio_track = self.agent.session.pipeline.audio_track
+
+        if not self.audio_track:
+            logger.warning(
+                "No audio track available for cached audio playback"
+            )
+            self.emit("last_audio_byte", {})
+            return
+        
+        if hasattr(self.audio_track, "mark_synthesis_start"):
+            self.audio_track.mark_synthesis_start()
+
+        if hasattr(self.audio_track, "enable_audio_input"):
+            self.audio_track.enable_audio_input(manual_control=True)
+
+        async def _on_last_audio_byte_cb() -> None:
+            metrics_collector.on_agent_speech_end()
+            metrics_collector.complete_turn()
+            if self.agent and self.agent.session:
+                self.agent.session._emit_agent_state(AgentState.IDLE)
+                self.agent.session._emit_user_state(UserState.IDLE)
+                self.agent.session._reply_in_progress = False
+                self.agent.session._reset_wake_up_timer()
+            if self.hooks and self.hooks.has_agent_turn_end_hooks():
+                await self.hooks.trigger_agent_turn_end()
+            logger.info(
+                "Cached audio playback complete - Agent and User set to IDLE"
+            )
+            self.emit("last_audio_byte", {})
+
+        if hasattr(self.audio_track, "on_last_audio_byte"):
+            self.audio_track.on_last_audio_byte(_on_last_audio_byte_cb)
+
+        self.emit("synthesis_started", {})
+        metrics_collector.on_tts_start()
+
+        if self.hooks and self.hooks.has_agent_turn_start_hooks():
+            await self.hooks.trigger_agent_turn_start()
+
+        first_chunk_sent = False
+        try:
+            async for chunk in _iter_audio_bytes(audio_data):
+                if self._is_interrupted or (handle is not None and handle.interrupted):
+                    self.spoken_transcript = self.compute_spoken_transcript()
+                    if hasattr(self.audio_track, "interrupt"):
+                        self.audio_track.interrupt()
+                    self.emit("synthesis_interrupted", {})
+                    return
+                if not chunk:
+                    continue
+                await self.audio_track.add_new_bytes(chunk)
+                if not first_chunk_sent:
+                    first_chunk_sent = True
+                    metrics_collector.on_tts_first_byte()
+                    metrics_collector.on_agent_speech_start()
+                    if self.agent and self.agent.session and self.agent.session.is_background_audio_enabled:
+                        await self.agent.session.stop_thinking_audio()
+                    self.emit("first_audio_byte", {})
+                    if self.agent and self.agent.session:
+                        self.agent.session._emit_agent_state(AgentState.SPEAKING)
+                        self.agent.session._emit_user_state(UserState.LISTENING)
+
+            if hasattr(self.audio_track, "mark_synthesis_complete"):
+                self.audio_track.mark_synthesis_complete()
+
+            if not first_chunk_sent:
+                self.emit("last_audio_byte", {})
+
+            if self.avatar and hasattr(self.avatar, "send_segment_end"):
+                await self.avatar.send_segment_end()
+
+        except asyncio.CancelledError:
+            logger.info("Cached audio playback cancelled")
+            self.emit("synthesis_interrupted", {})
+            raise
+        except Exception as e:
+            logger.error(f"Error during cached audio playback: {e}")
+            self.emit("synthesis_error", {"error": str(e)})
+            raise
+        finally:
+            if (
+                self.agent
+                and self.agent.session
+                and self.agent.session.is_background_audio_enabled
+            ):
+                await self.agent.session.stop_thinking_audio()
+            if self.agent and self.agent.session and self._is_interrupted:
+                self.agent.session._reply_in_progress = False
+                self.agent.session._reset_wake_up_timer()
+            elif self.agent and self.agent.session:
+                self.agent.session._reply_in_progress = False
+
     async def interrupt(self) -> None:
         """Interrupt the current synthesis"""
         self._is_interrupted = True

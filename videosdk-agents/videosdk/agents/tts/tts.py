@@ -136,8 +136,9 @@ class TTS(EventEmitter[Literal["error", "word_spoken"]]):
             Audio bytes
         """
         original_track = self.audio_track
+        original_loop = getattr(self, "loop", None)
         frame_queue = asyncio.Queue()
-        
+
         class QueueTrack:
             def __init__(self):
                 self.hooks = None
@@ -151,9 +152,12 @@ class TTS(EventEmitter[Literal["error", "word_spoken"]]):
                 pass
             def interrupt(self):
                 pass
-                
+
         mock_track = QueueTrack()
         self.audio_track = mock_track
+
+        if original_loop is None:
+            self.loop = asyncio.get_running_loop()
         
         async def synthesize_task():
             try:
@@ -183,6 +187,8 @@ class TTS(EventEmitter[Literal["error", "word_spoken"]]):
                         
         finally:
             self.audio_track = original_track
+            if original_loop is None:
+                self.loop = None
             if not task.done():
                 task.cancel()
 

@@ -60,6 +60,7 @@ from .event_emitter import EventEmitter
 from .job import WorkerJob, JobContext, RoomOptions, RecordingOptions, Options, WebSocketConfig, WebRTCConfig, TracesOptions, MetricsOptions, LoggingOptions, ObservabilityOptions
 from .worker import Worker, WorkerOptions, WorkerType
 from .utterance_handle import UtteranceHandle
+from .audio_cache import TTSAudioCache, load_audio_file
 
 # New execution module exports
 from .execution import (
@@ -241,4 +242,6 @@ __all__ = [
     "normalize_lang_code",
     "INDIC_LANGS",
     "pre_warm_tokenizer",
+    "TTSAudioCache",
+    "load_audio_file",
 ]
