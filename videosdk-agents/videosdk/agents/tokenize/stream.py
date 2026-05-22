@@ -142,10 +142,13 @@ class BufferedSentenceChunkStream(SentenceChunkStream):
             logger.error("Tokenizer raised during flush", exc_info=True)
             segments = [self._buffer]
 
+        logger.debug("[chunking] flush: buffer=%r -> segments=%r", self._buffer, segments)
+        
         self._buffer = ""
         for segment in segments:
             stripped = segment.strip()
             if stripped:
+                logger.debug("[chunking] flush emit: %r", stripped)
                 await self._queue.put(stripped)
 
     def _ensure_idle_task(self) -> None:
@@ -171,9 +174,22 @@ class BufferedSentenceChunkStream(SentenceChunkStream):
         async with self._buffer_lock:
             if len(self._buffer) < self._idle_min_chars:
                 return
+            
+            stripped = self._buffer.rstrip()
+            if stripped and stripped[-1] in self._strong_set:
+                self._buffer = ""
+                logger.debug(
+                    "Idle-flush emitting complete sentence %d chars", len(stripped)
+                )
+                await self._queue.put(stripped)
+                return
 
             cut_index = self._find_fallback_cut(self._buffer)
             if cut_index <= 0:
+                return
+            
+            remainder = self._buffer[cut_index:].strip()
+            if len(remainder) < self._idle_min_chars:
                 return
 
             segment = self._buffer[:cut_index].strip()
