@@ -1,4 +1,5 @@
 import logging
+import threading
 import numpy as np
 from typing import Optional
 from .model import HG_MODEL, ONNX_FILENAME
@@ -9,6 +10,10 @@ import os
 from videosdk.agents import EOU, ChatContext, ChatMessage, ChatRole
 
 logger = logging.getLogger(__name__)
+
+_tokenizer_cache = None
+_session_cache = None
+_init_lock = threading.Lock()
 
 
 def _download_from_hf_hub(repo_id, filename, cache_dir=None, **kwargs):
@@ -79,22 +84,37 @@ class TurnDetector(EOU):
         self._initialize_model()
 
     def _initialize_model(self):
-        """Initialize the ONNX model and tokenizer"""
+        """Initialize (or reuse) the ONNX model and tokenizer.
+
+        Uses module-level caches so that repeated TurnDetector()
+        constructions in the same process share a single tokenizer
+        and ORT session.
+        """
+        global _tokenizer_cache, _session_cache
         try:
             import onnxruntime as ort
             from transformers import AutoTokenizer
 
-            self.tokenizer = AutoTokenizer.from_pretrained(HG_MODEL)
+            if _tokenizer_cache is not None and _session_cache is not None:
+                self.tokenizer = _tokenizer_cache
+                self.session = _session_cache
+                return
 
-            model_path = _download_from_hf_hub(
-                repo_id=HG_MODEL,
-                filename=ONNX_FILENAME,
-            )
+            with _init_lock:
+                if _tokenizer_cache is None:
+                    _tokenizer_cache = AutoTokenizer.from_pretrained(HG_MODEL)
+                if _session_cache is None:
+                    model_path = _download_from_hf_hub(
+                        repo_id=HG_MODEL,
+                        filename=ONNX_FILENAME,
+                    )
+                    _session_cache = ort.InferenceSession(
+                        model_path,
+                        providers=["CPUExecutionProvider"],
+                    )
 
-            self.session = ort.InferenceSession(
-                model_path,
-                providers=["CPUExecutionProvider"]
-            )
+            self.tokenizer = _tokenizer_cache
+            self.session = _session_cache
 
         except Exception as e:
             logger.error(f"Failed to initialize TurnSense model: {e}")
