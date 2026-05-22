@@ -120,6 +120,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
         interrupt_min_confidence: float = 0.0,
         false_interrupt_pause_duration: float = 2.0,
         resume_on_false_interrupt: bool = False,
+        interrupt_fade_duration: float = 0.4,
         graph_adapter: Any | None = None,
         context_window: Any | None = None,
         voice_mail_detector: VoiceMailDetector | None = None,
@@ -151,6 +152,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
         self.interrupt_min_confidence = interrupt_min_confidence
         self.false_interrupt_pause_duration = false_interrupt_pause_duration
         self.resume_on_false_interrupt = resume_on_false_interrupt
+        self.interrupt_fade_duration = interrupt_fade_duration
         
         # Interruption state
         self._generation_id = 0
@@ -240,6 +242,9 @@ class PipelineOrchestrator(EventEmitter[Literal[
         """Set audio track for TTS output"""
         if self.speech_generation:
             self.speech_generation.set_audio_track(audio_track)
+            
+        if audio_track is not None and hasattr(audio_track, "interrupt_fade_duration"):
+            audio_track.interrupt_fade_duration = self.interrupt_fade_duration
     
     def set_voice_mail_detector(self, detector: VoiceMailDetector | None) -> None:
         """Configure voicemail detection"""

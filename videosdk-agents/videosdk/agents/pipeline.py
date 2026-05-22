@@ -76,6 +76,7 @@ class InterruptConfig:
     interrupt_min_confidence: float = 0.0
     false_interrupt_pause_duration: float = 2.0
     resume_on_false_interrupt: bool = False
+    interrupt_fade_duration: float = 0.4
 
     def __post_init__(self):
         if self.interrupt_min_duration <= 0:
@@ -86,6 +87,8 @@ class InterruptConfig:
             raise ValueError("interrupt_min_confidence must be between 0.0 and 1.0")
         if self.false_interrupt_pause_duration <= 0:
             raise ValueError("false_interrupt_pause_duration must be greater than 0")
+        if self.interrupt_fade_duration < 0:
+            raise ValueError("interrupt_fade_duration must be >= 0")
 
 
 @dataclass
@@ -485,6 +488,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                 interrupt_min_confidence=self.interrupt_config.interrupt_min_confidence,
                 false_interrupt_pause_duration=self.interrupt_config.false_interrupt_pause_duration,
                 resume_on_false_interrupt=self.interrupt_config.resume_on_false_interrupt,
+                interrupt_fade_duration=self.interrupt_config.interrupt_fade_duration,
                 graph_adapter=None,
                 context_window=self.context_window,
                 voice_mail_detector=self.voice_mail_detector,
@@ -546,6 +550,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                 interrupt_min_confidence=self.interrupt_config.interrupt_min_confidence,
                 false_interrupt_pause_duration=self.interrupt_config.false_interrupt_pause_duration,
                 resume_on_false_interrupt=self.interrupt_config.resume_on_false_interrupt,
+                interrupt_fade_duration=self.interrupt_config.interrupt_fade_duration,
                 graph_adapter=self.graph_adapter,
                 context_window=self.context_window,
                 voice_mail_detector=self.voice_mail_detector,
