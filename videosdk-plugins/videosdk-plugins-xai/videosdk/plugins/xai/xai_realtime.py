@@ -110,6 +110,7 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
         self._generated_text_in_current_response = False
 
     def set_agent(self, agent: Agent) -> None:
+        self._agent = agent
         if agent.instructions:
             self._instructions = agent.instructions
         self._tools = agent.tools
@@ -190,7 +191,7 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
         session_update = {
             "type": "session.update",
             "session": {
-                "instructions": self._instructions,
+                "instructions": self._instructions_with_context(),
                 "voice": self.config.voice,
                 "audio": {
                     "input": {
@@ -494,6 +495,17 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
                 logger.warning(f"Tool {name} not found")
                 result = {"error": "Tool not found"}
 
+            self.emit(
+                "realtime_model_function_executed",
+                {
+                    "name": name,
+                    "arguments": args_str,
+                    "call_id": call_id,
+                    "output": result if isinstance(result, str) else json.dumps(result),
+                    "is_error": not found,
+                },
+            )
+
             await self.send_event({
                 "type": "conversation.item.create",
                 "item": {
@@ -507,7 +519,42 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
                 self._has_unprocessed_tool_outputs = True
 
         except Exception as e:
+            self.emit(
+                "realtime_model_function_executed",
+                {
+                    "name": name,
+                    "arguments": args_str,
+                    "call_id": call_id,
+                    "output": str(e),
+                    "is_error": True,
+                },
+            )
             logger.error(f"Error executing function {name}: {e}")
+
+    def _instructions_with_context(self) -> str:
+        """Return the session instructions with prior conversation folded in.
+
+        Seeding history by streaming conversation.item.create events right
+        after connect wedges the realtime session, so prior conversation
+        (e.g. after a cascade→realtime switch) is folded into the instructions
+        sent in session.update instead. Best-effort: any failure falls back to
+        the plain instructions.
+        """
+        base = self._instructions
+        agent = getattr(self, "_agent", None)
+        if not agent or not getattr(agent, "chat_context", None):
+            return base
+        if not agent.chat_context.items:
+            return base
+        try:
+            from videosdk.agents.llm.format_converters import render_context_as_text
+            prior = render_context_as_text(agent.chat_context)
+            if prior.strip():
+                logger.info("xAI realtime: seeded prior conversation into instructions")
+                return f"{base}\n\n## Prior conversation\n{prior}"
+        except Exception as e:
+            logger.warning(f"xAI realtime: chat context seeding failed: {e}")
+        return base
 
     async def send_event(self, event: Dict[str, Any]) -> None:
         if self._session and not self._closing:

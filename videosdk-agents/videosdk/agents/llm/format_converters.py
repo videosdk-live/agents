@@ -337,3 +337,33 @@ async def to_google_contents(
             )
 
     return contents, system_instruction
+
+
+def render_context_as_text(ctx: ChatContext) -> str:
+    """Render a chat context as a compact plain-text transcript.
+
+    Used to seed realtime providers that accept no structured history and
+    only a system prompt (Ultravox). SYSTEM/DEVELOPER messages are skipped —
+    the live system prompt already covers them.
+    """
+    lines: list[str] = []
+    for item in ctx.items:
+        if isinstance(item, ChatMessage):
+            if item.role in (ChatRole.SYSTEM, ChatRole.DEVELOPER):
+                continue
+            if isinstance(item.content, str):
+                text = item.content
+            elif isinstance(item.content, list):
+                text = " ".join(str(p) for p in item.content if isinstance(p, str))
+            else:
+                text = ""
+            if not text.strip():
+                continue
+            speaker = "User" if item.role == ChatRole.USER else "Assistant"
+            lines.append(f"{speaker}: {text.strip()}")
+        elif isinstance(item, FunctionCall):
+            lines.append(f"[tool call] {item.name}({item.arguments})")
+        elif isinstance(item, FunctionCallOutput):
+            tag = "tool error" if item.is_error else "tool result"
+            lines.append(f"[{tag}] {item.name} -> {item.output}")
+    return "\n".join(lines)

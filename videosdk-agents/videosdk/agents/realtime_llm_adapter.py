@@ -45,6 +45,7 @@ class RealtimeLLMAdapter(EventEmitter):
         self.realtime_model.on("agent_speech_started", lambda data: self.emit("agent_speech_started", data))
         self.realtime_model.on("agent_speech_ended", lambda data: self.emit("agent_speech_ended", data))
         self.realtime_model.on("realtime_model_transcription", lambda data: self.emit("realtime_model_transcription", data))
+        self.realtime_model.on("realtime_model_function_executed", lambda data: self.emit("realtime_model_function_executed", data))
         self.realtime_model.on("llm_text_output", lambda data: self.emit("llm_text_output", data))
     
     def set_agent(self, agent: Agent) -> None:
@@ -172,7 +173,11 @@ class RealtimeLLMAdapter(EventEmitter):
     def on_transcription(self, callback) -> None:
         """Register callback for transcription events"""
         self.realtime_model.on("realtime_model_transcription", callback)
-    
+
+    def on_function_executed(self, callback) -> None:
+        """Register callback for realtime tool-execution events"""
+        self.realtime_model.on("realtime_model_function_executed", callback)
+
     @property
     def current_utterance(self):
         """Get current utterance handle"""

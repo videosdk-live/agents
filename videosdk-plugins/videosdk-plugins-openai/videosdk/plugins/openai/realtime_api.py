@@ -165,24 +165,38 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         self._agent_speaking = False
 
     def set_agent(self, agent: Agent) -> None:
+        self._agent = agent
         self._instructions = agent.instructions
         self._tools = agent.tools
         self.tools_formatted = self._format_tools_for_session(self._tools)
         self._formatted_tools = self.tools_formatted
 
     async def connect(self) -> None:
+        logger.info("[switch debug] OpenAI connect: start (model=%s)", self.model)
         headers = {"Agent": "VideoSDK Agents"}
         headers["Authorization"] = f"Bearer {self.api_key}"
-        headers["OpenAI-Beta"] = "realtime=v1"
+        # GA Realtime API — do NOT send "OpenAI-Beta: realtime=v1". That header
+        # opts into the retired Beta API, which the server now rejects with
+        # "The Realtime Beta API is no longer supported."
 
         url = self.process_base_url(self.base_url, self.model)
 
         self._session = await self._create_session(url, headers)
+        logger.info("[switch debug] OpenAI connect: websocket session created")
         await self._handle_websocket(self._session)
+        logger.info("[switch debug] OpenAI connect: send/receive loops started")
         await self.send_first_session_update()
+        logger.info("[switch debug] OpenAI connect: session.update sent — connect() done")
 
     async def handle_audio_input(self, audio_data: bytes) -> None:
         """Handle incoming audio data from the user"""
+        if not getattr(self, "_switch_debug_audio_logged", False):
+            self._switch_debug_audio_logged = True
+            logger.info(
+                "[switch debug] OpenAI handle_audio_input: first user audio "
+                "(session=%s closing=%s modalities=%s)",
+                self._session is not None, self._closing, self.config.modalities,
+            )
         if self._session and not self._closing and "audio" in self.config.modalities:
             if self.current_utterance and not self.current_utterance.is_interruptible:
                 logger.info("Interruption is disabled for the current utterance. Not processing audio input.")
@@ -319,6 +333,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
     
     async def create_response(self) -> None:
         """Create a response to the OpenAI realtime API"""
+        logger.info("[switch debug] OpenAI create_response called")
         if not self._session:
             self.emit("error", "No active WebSocket session")
             raise RuntimeError("No active WebSocket session")
@@ -380,6 +395,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         """Handle incoming WebSocket messages"""
         try:
             event_type = data.get("type")
+            logger.info("[switch debug] OpenAI event received: %s", event_type)
 
             if event_type == "input_audio_buffer.speech_started":
                 await self._handle_speech_started(data)
@@ -396,13 +412,16 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
             elif event_type == "response.content_part.added":
                 await self._handle_content_part_added(data)
 
-            elif event_type == "response.text.delta":
+            elif event_type in ("response.text.delta", "response.output_text.delta"):
                 await self._handle_text_delta(data)
 
-            elif event_type == "response.audio.delta":
+            elif event_type in ("response.audio.delta", "response.output_audio.delta"):
                 await self._handle_audio_delta(data)
 
-            elif event_type == "response.audio_transcript.delta":
+            elif event_type in (
+                "response.audio_transcript.delta",
+                "response.output_audio_transcript.delta",
+            ):
                 await self._handle_audio_transcript_delta(data)
 
             elif event_type == "response.done":
@@ -473,6 +492,16 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
                             try:
                                 metrics_collector.add_function_tool_call(tool_name=name)
                                 result = await tool(**arguments)
+                                self.emit(
+                                    "realtime_model_function_executed",
+                                    {
+                                        "name": name,
+                                        "arguments": item.get("arguments", "{}"),
+                                        "call_id": item.get("call_id"),
+                                        "output": result if isinstance(result, str) else json.dumps(result),
+                                        "is_error": False,
+                                    },
+                                )
                                 await self.send_event(
                                     {
                                         "type": "conversation.item.create",
@@ -498,6 +527,16 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
                                 )
 
                             except Exception as e:
+                                self.emit(
+                                    "realtime_model_function_executed",
+                                    {
+                                        "name": name,
+                                        "arguments": item.get("arguments", "{}"),
+                                        "call_id": item.get("call_id"),
+                                        "output": str(e),
+                                        "is_error": True,
+                                    },
+                                )
                                 self.emit(
                                     "error", f"Error executing function {name}: {e}"
                                 )
@@ -628,7 +667,18 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         """Handle function call arguments done"""
 
     async def _handle_error(self, data: dict) -> None:
-        """Handle error events"""
+        """Handle error events from the OpenAI Realtime API.
+
+        Previously a silent no-op, which made every API-side failure
+        (invalid model, bad session config, rejected items) invisible.
+        """
+        error = data.get("error", data)
+        if isinstance(error, dict):
+            message = error.get("message") or error.get("code") or str(error)
+        else:
+            message = str(error)
+        logger.error(f"OpenAI Realtime API error: {message}")
+        self.emit("error", f"OpenAI Realtime API error: {message}")
 
     async def _cleanup_session(self, session: OpenAISession) -> None:
         """Clean up session resources"""
@@ -672,62 +722,82 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         await super().aclose()
 
     async def send_first_session_update(self) -> None:
-        """Send initial session update with default values after connection"""
+        """Send the initial session.update using the GA Realtime API schema.
+
+        The GA ``session`` object differs from the retired Beta schema:
+        - ``modalities`` → ``output_modalities``
+        - flat ``voice`` / ``input_audio_format`` / ``output_audio_format`` /
+          ``turn_detection`` / ``input_audio_transcription`` are nested under
+          ``audio.input`` / ``audio.output``
+        - audio formats are objects (``{"type": "audio/pcm", "rate": N}``)
+        - ``session.type`` is ``"realtime"``; the model is set via the
+          connect URL, not the session object.
+        """
         if not self._session:
             return
 
-        turn_detection = None
-        input_audio_transcription = None
+        audio_mode = "audio" in self.config.modalities
 
-        if "audio" in self.config.modalities:
-            turn_detection = (
-                self.config.turn_detection.model_dump(
-                    by_alias=True,
-                    exclude_unset=True,
-                    exclude_defaults=True,
-                )
-                if self.config.turn_detection
-                else None
-            )
-            input_audio_transcription = (
-                self.config.input_audio_transcription.model_dump(
-                    by_alias=True,
-                    exclude_unset=True,
-                    exclude_defaults=True,
-                )
-                if self.config.input_audio_transcription
-                else None
-            )
-
-        session_update = {
-            "type": "session.update",
-            "session": {
-                "model": self.model,
-                "instructions": self._instructions
-                or "You are a helpful assistant that can answer questions and help with tasks.",
-                "temperature": self.config.temperature,
-                "tool_choice": self.config.tool_choice,
-                "tools": self._formatted_tools or [],
-                "modalities": self.config.modalities,
-                "max_response_output_tokens": "inf",
-            },
+        session: Dict[str, Any] = {
+            "type": "realtime",
+            "instructions": self._instructions_with_context(),
+            "output_modalities": ["audio"] if audio_mode else ["text"],
+            "tools": self._formatted_tools or [],
+            "tool_choice": self.config.tool_choice,
         }
 
-        if "audio" in self.config.modalities:
-            session_update["session"]["voice"] = self.config.voice
-            session_update["session"]["input_audio_format"] = DEFAULT_INPUT_AUDIO_FORMAT
-            session_update["session"][
-                "output_audio_format"
-            ] = DEFAULT_OUTPUT_AUDIO_FORMAT
-            if turn_detection:
-                session_update["session"]["turn_detection"] = turn_detection
-            if input_audio_transcription:
-                session_update["session"][
-                    "input_audio_transcription"
-                ] = input_audio_transcription
+        if audio_mode:
+            audio: Dict[str, Any] = {
+                "input": {
+                    "format": {"type": "audio/pcm", "rate": self.target_sample_rate},
+                },
+                "output": {
+                    "format": {"type": "audio/pcm", "rate": 24000},
+                    "voice": self.config.voice,
+                },
+            }
+            if self.config.turn_detection:
+                audio["input"]["turn_detection"] = self.config.turn_detection.model_dump(
+                    by_alias=True, exclude_unset=True, exclude_defaults=True,
+                )
+            if self.config.input_audio_transcription:
+                audio["input"]["transcription"] = (
+                    self.config.input_audio_transcription.model_dump(
+                        by_alias=True, exclude_unset=True, exclude_defaults=True,
+                    )
+                )
+            session["audio"] = audio
 
-        # Send the event
-        await self.send_event(session_update)
+        logger.info("[switch debug] OpenAI send_first_session_update: GA session.update")
+        await self.send_event({"type": "session.update", "session": session})
+
+    def _instructions_with_context(self) -> str:
+        """Return the session instructions with prior conversation folded in.
+
+        Seeding history by streaming conversation.item.create events right
+        after connect wedges the realtime session, so prior conversation
+        (e.g. after a cascade→realtime switch) is folded into the instructions
+        sent in session.update instead. Best-effort: any failure falls back to
+        the plain instructions.
+        """
+        base = (
+            self._instructions
+            or "You are a helpful assistant that can answer questions and help with tasks."
+        )
+        agent = getattr(self, "_agent", None)
+        if not agent or not getattr(agent, "chat_context", None):
+            return base
+        if not agent.chat_context.items:
+            return base
+        try:
+            from videosdk.agents.llm.format_converters import render_context_as_text
+            prior = render_context_as_text(agent.chat_context)
+            if prior.strip():
+                logger.info("OpenAI realtime: seeded prior conversation into instructions")
+                return f"{base}\n\n## Prior conversation\n{prior}"
+        except Exception as e:
+            logger.warning(f"OpenAI realtime: chat context seeding failed: {e}")
+        return base
 
     def process_base_url(self, url: str, model: str) -> str:
         if url.startswith("http"):

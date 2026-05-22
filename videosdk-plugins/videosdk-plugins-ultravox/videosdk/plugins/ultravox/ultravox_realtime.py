@@ -100,6 +100,7 @@ class UltravoxRealtime(RealtimeBaseModel[UltravoxEventTypes]):
         self.formatted_tools = []
         
     def set_agent(self, agent: Agent) -> None:
+        self._agent = agent
         self._instructions = agent.instructions
         self.tools = agent.tools
         self.formatted_tools = self._convert_tools_to_ultravox_format(self.tools)
@@ -137,8 +138,23 @@ class UltravoxRealtime(RealtimeBaseModel[UltravoxEventTypes]):
     async def _create_session(self) -> UltravoxSession:
         """Create a new Ultravox WebSocket session"""
         try:
+            system_prompt = self._instructions
+            agent = getattr(self, "_agent", None)
+            if agent and getattr(agent, "chat_context", None) and agent.chat_context.items:
+                try:
+                    from videosdk.agents.llm.format_converters import render_context_as_text
+                    prior = render_context_as_text(agent.chat_context)
+                    if prior.strip():
+                        system_prompt = (
+                            f"{self._instructions}\n\n"
+                            f"## Prior conversation\n{prior}"
+                        )
+                        logger.info("Ultravox: seeded prior conversation into systemPrompt")
+                except Exception as e:
+                    logger.warning(f"Ultravox: chat context seeding failed: {e}")
+
             call_payload = {
-                "systemPrompt": self._instructions,
+                "systemPrompt": system_prompt,
                 "model": self.model,
                 "medium": {
                     "serverWebSocket": {
@@ -327,8 +343,28 @@ class UltravoxRealtime(RealtimeBaseModel[UltravoxEventTypes]):
                 try:
                     metrics_collector.add_function_tool_call(tool_name=tool_info.name)
                     result = await tool(**parameters)
+                    self.emit(
+                        "realtime_model_function_executed",
+                        {
+                            "name": tool_name,
+                            "arguments": json.dumps(parameters or {}),
+                            "call_id": invocation_id,
+                            "output": result if isinstance(result, str) else json.dumps(result),
+                            "is_error": False,
+                        },
+                    )
                     await self._send_tool_result(invocation_id, result)
                 except Exception as e:
+                    self.emit(
+                        "realtime_model_function_executed",
+                        {
+                            "name": tool_name,
+                            "arguments": json.dumps(parameters or {}),
+                            "call_id": invocation_id,
+                            "output": str(e),
+                            "is_error": True,
+                        },
+                    )
                     logger.error(f"Ultravox: Tool execution failed: {e}")
                     await self._send_tool_result(
                         invocation_id, None, error_message=str(e)
