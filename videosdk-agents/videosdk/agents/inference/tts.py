@@ -9,7 +9,7 @@ import logging
 from typing import Any, AsyncIterator, Optional, Dict
 
 import aiohttp
-from videosdk.agents import TTS as BaseTTS
+from videosdk.agents import TTS as BaseTTS, FlushMarker
 
 logger = logging.getLogger(__name__)
 
@@ -513,6 +513,20 @@ class TTS(BaseTTS):
                         "[InferenceTTS] Stream aborted — interrupted or superseded"
                     )
                     return
+
+                if isinstance(chunk, FlushMarker):
+                    if (
+                        buffer
+                        and not self._interrupted
+                        and self._synthesis_id == synthesis_id
+                    ):
+                        combined = " ".join(buffer).strip()
+                        if combined:
+                            await self._send_text(combined, synthesis_id)
+                            first_chunk_sent = True
+                        buffer.clear()
+                        last_send_time = asyncio.get_event_loop().time()
+                    continue
 
                 if not chunk or not chunk.strip():
                     continue

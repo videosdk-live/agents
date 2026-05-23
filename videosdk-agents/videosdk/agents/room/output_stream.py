@@ -52,6 +52,11 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         self._accepting_audio = True
         self._manual_audio_control = False
 
+        # Fade-out on real interruption (seconds). 0 disables the fade and
+        # restores the legacy instant buffer-clear.
+        self.interrupt_fade_duration: float = 0.4
+        self._faded_tail_pending: bool = False
+
         self._samples_played: int = 0
         self._cumulative_input_samples: int = 0
         self._synthesis_start_played: int = 0
@@ -77,12 +82,108 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         return played, pushed
 
 
+    def _frame_to_pcm_bytes(self, frame: AudioFrame) -> bytes:
+        """Extract raw int16 PCM bytes from an AudioFrame built by buildAudioFrames().
+
+        Uses ``to_ndarray()`` (the exact inverse of ``from_ndarray()``) rather
+        than reading ``frame.planes[0]`` directly, since a plane's buffer can be
+        alignment-padded beyond ``samples * sample_width``.
+        """
+        arr = frame.to_ndarray()
+        return arr.astype(np.int16, copy=False).tobytes()
+
+    def _apply_fade_out(self, pcm: bytes) -> bytes:
+        """Apply an exponential fade-out (0 dB → ~-60 dB) to mono int16 PCM.
+
+        Mono assumption (channels == 1): the flat sample array is the per-sample
+        timeline. A multi-channel track would need the ramp repeated per channel.
+        """
+        samples = np.frombuffer(pcm, dtype=np.int16)
+        n = samples.shape[0]
+        if n == 0:
+            return b""
+        t = np.linspace(0.0, 1.0, num=n, dtype=np.float32)
+        gain = np.power(10.0, -3.0 * t, dtype=np.float32) 
+        gain[-1] = 0.0  
+        faded = np.clip(
+            samples.astype(np.float32) * gain,
+            np.iinfo(np.int16).min,
+            np.iinfo(np.int16).max,
+        )
+        return faded.astype(np.int16).tobytes()
+
+    def _collect_pending_pcm(self) -> bytes:
+        """Return the TTS PCM still queued for playback, for fade-out on interrupt.
+
+        The base track keeps it as built AudioFrames in ``frame_buffer`` (and in
+        ``_paused_frames`` while paused). Overridden by mixing tracks, which keep
+        raw bytes in ``audio_data_buffer`` instead.
+        """
+        pending = bytearray()
+        for f in (*self.frame_buffer, *self._paused_frames):
+            try:
+                pending += self._frame_to_pcm_bytes(f)
+            except Exception as e:
+                logger.warning(f"Skipping frame during fade extraction: {e}")
+        return bytes(pending)
+
+    def _load_faded_audio(self, faded_bytes: bytes) -> None:
+        """Re-chunk faded PCM into AudioFrames and queue them in frame_buffer.
+
+        The final partial chunk is zero-padded to chunk_size (it is already near
+        silence at the tail of the fade, so the padding is inaudible).
+        """
+        buf = bytearray(faded_bytes)
+        rem = len(buf) % self.chunk_size
+        if rem:
+            buf += bytes(self.chunk_size - rem)
+        for i in range(0, len(buf), self.chunk_size):
+            try:
+                self.frame_buffer.append(
+                    self.buildAudioFrames(bytes(buf[i : i + self.chunk_size]))
+                )
+            except Exception as e:
+                logger.error(f"Error building faded audio frame: {e}")
+
     def interrupt(self):
-        """Clear all buffers and reset state"""
-        logger.info("Audio track interrupted, clearing buffers.")
+        """Interrupt playback.
+
+        When ``interrupt_fade_duration > 0`` the agent's buffered TTS audio is
+        not cut instantly — a short exponential fade-out tail is kept so the
+        voice ducks gracefully to silence. Otherwise all buffers are cleared
+        immediately (legacy behavior).
+        """
+
+        if self._faded_tail_pending:
+            logger.debug("Audio track interrupt re-entered — faded tail already pending.")
+            self._is_paused = False
+            self._last_speaking_time = 0.0
+            self._synthesis_complete = False
+            self._needs_last_audio_callback = False
+            self._accepting_audio = not self._manual_audio_control
+            return
+
+        pending = b""
+        if self.interrupt_fade_duration and self.interrupt_fade_duration > 0:
+            pending = self._collect_pending_pcm()
+
         self.frame_buffer.clear()
         self.audio_data_buffer.clear()
         self._paused_frames.clear()
+
+        if pending:
+            fade_frames = max(1, round(self.interrupt_fade_duration / AUDIO_PTIME))
+            fade_bytes_len = fade_frames * self.chunk_size
+            faded_tail = self._apply_fade_out(bytes(pending[:fade_bytes_len]))
+            if faded_tail:
+                self._load_faded_audio(faded_tail)
+                self._faded_tail_pending = True
+                logger.info(
+                    f"Audio track interrupted — fading out {len(faded_tail) // self.chunk_size} frame(s)."
+                )
+        else:
+            logger.info("Audio track interrupted, clearing buffers.")
+
         self._is_paused = False
         self._last_speaking_time = 0.0
         self._synthesis_complete = False
@@ -136,6 +237,7 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         """
         self._manual_audio_control = manual_control
         self._accepting_audio = True
+        self._faded_tail_pending = False
         logger.debug(f"Audio input enabled (manual_control={manual_control})")
 
     def on_last_audio_byte(self, callback: Callable[[], Awaitable[None]]) -> None:
@@ -306,8 +408,35 @@ class MixingCustomAudioStreamTrack(CustomAudioStreamTrack):
         self.background_audio_buffer = bytearray()
 
     def interrupt(self):
+        """Interrupt playback.
+
+        The base implementation applies the exponential fade-out — here the
+        overridden ``_collect_pending_pcm`` / ``_load_faded_audio`` make it act
+        on ``audio_data_buffer`` (where this track keeps queued TTS audio).
+        ``background_audio_buffer`` is cleared outright — background audio is
+        never faded.
+        """
         super().interrupt()
         self.background_audio_buffer.clear()
+
+    def _collect_pending_pcm(self) -> bytes:
+        """Mixing tracks build frames just-in-time, so queued TTS audio lives in
+        ``audio_data_buffer`` as raw bytes. ``background_audio_buffer`` is
+        deliberately excluded — background audio is never faded.
+        """
+        return bytes(self.audio_data_buffer)
+
+    def _load_faded_audio(self, faded_bytes: bytes) -> None:
+        """Mixing tracks play from ``audio_data_buffer``; queue the faded tail
+        there. Padded to a chunk_size multiple so recv() fully drains it — a
+        sub-chunk remainder would never be consumed and would leave
+        ``is_speaking`` stuck True.
+        """
+        buf = bytearray(faded_bytes)
+        rem = len(buf) % self.chunk_size
+        if rem:
+            buf += bytes(self.chunk_size - rem)
+        self.audio_data_buffer = buf
 
     async def add_new_bytes(self, audio_data: bytes):
         """Overrides base method to buffer bytes instead of creating frames."""

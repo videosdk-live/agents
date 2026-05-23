@@ -87,6 +87,15 @@ class VAD(EventEmitter[Literal["error", "info"]]):
         """Signal that no more audio will arrive. Subclasses may override."""
         pass
 
+    async def prewarm(self) -> None:
+        """Load models and warm inference kernels so the first
+        ``process_audio()`` call doesn't pay cold-start cost.
+
+        Default is a no-op. Plugins with local ONNX/ML models (SileroVAD)
+        override this. Safe to call multiple times — must be idempotent.
+        """
+        pass
+
     async def aclose(self) -> None:
         """Cleanup resources"""
         logger.info(f"Cleaning up VAD: {self.label}")
