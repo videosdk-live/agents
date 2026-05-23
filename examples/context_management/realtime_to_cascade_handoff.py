@@ -39,13 +39,11 @@ from videosdk.plugins.cartesia import CartesiaTTS
 from videosdk.plugins.silero import SileroVAD
 from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
 
-# --- Realtime provider (pick one) -------------------------------------------
-# Gemini Live is active. To try another provider, comment the Gemini import +
-# block in make_realtime_model() and uncomment one of the others.
+# --- Realtime provider imports (the one used in make_realtime_model() picks the provider) ---
 from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig
-# from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig
-# from videosdk.plugins.xai import XAIRealtime, XAIRealtimeConfig
-# from videosdk.plugins.ultravox import UltravoxRealtime, UltravoxLiveConfig
+from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig, OpenAILLM
+from videosdk.plugins.xai import XAIRealtime, XAIRealtimeConfig
+from videosdk.plugins.ultravox import UltravoxRealtime, UltravoxLiveConfig
 
 logging.basicConfig(
     level=logging.INFO,
@@ -129,6 +127,14 @@ class SupportAgent(Agent):
         Call this when the caller asks for the detailed or standard mode.
         """
         logging.info("Tool invoked: switch_to_cascade")
+
+        # Idempotent: after the switch the cascade LLM still has this tool, and
+        # — reading a switch-heavy history — keeps calling it, looping
+        # change_pipeline forever. Ignore repeat calls once switched.
+        if self._switched:
+            logging.info("Already on the cascade pipeline — ignoring repeat switch.")
+            return {"status": "already on the cascade pipeline"}
+        self._switched = True
 
         # The realtime half's transcript turns and tool calls are recorded on
         # the shared chat_context — log how much carries into the switch.

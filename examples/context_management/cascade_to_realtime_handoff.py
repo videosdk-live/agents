@@ -11,9 +11,8 @@ On connect, the realtime model **seeds itself** from that ``chat_context`` —
 prior user/assistant turns — so the realtime half of the call continues with
 the history of the cascade half.
 
-Realtime provider: pick one in ``make_realtime_model()`` below. Gemini Live is
-active; OpenAI, xAI, and Ultravox are commented out — uncomment one block (and
-comment the Gemini block + its import) to try that provider.
+Realtime provider: pick one in ``make_realtime_model()`` below. Exactly one
+block must be uncommented — swap which one to try a different provider.
 
 Scope note: switching the pipeline mid-call and seeding the realtime model is
 existing/this-feature SDK behavior — this file is a wiring pattern. Running it
