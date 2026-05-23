@@ -31,6 +31,7 @@ from videosdk.agents import (
     JobContext,
     RoomOptions,
     WorkerJob,
+    EOUConfig,
 )
 from videosdk.plugins.deepgram import DeepgramSTT
 from videosdk.plugins.google import GoogleLLM  # cascade LLM — always used
@@ -38,11 +39,9 @@ from videosdk.plugins.cartesia import CartesiaTTS
 from videosdk.plugins.silero import SileroVAD
 from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
 
-# --- Realtime provider (pick one) -------------------------------------------
-# Gemini Live is active. To try another provider, comment the Gemini import +
-# block in make_realtime_model() and uncomment one of the others.
+# --- Realtime provider imports (the one used in make_realtime_model() picks the provider) ---
 from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig
-from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig
+from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig, OpenAILLM
 from videosdk.plugins.xai import XAIRealtime, XAIRealtimeConfig
 from videosdk.plugins.ultravox import UltravoxRealtime, UltravoxLiveConfig
 
@@ -60,17 +59,17 @@ def make_realtime_model():
     Each provider seeds itself from the agent's ``chat_context`` on connect
     (the realtime context-management feature). Exactly one block must be live.
     """
-    # --- Gemini Live (active) ---
-    # return GeminiRealtime(
-    #     model="gemini-3.1-flash-live-preview",
-    #     config=GeminiLiveConfig(voice="Leda", response_modalities=["AUDIO"]),
-    # )
+    # --- Gemini Live ---
+    return GeminiRealtime(
+        model="gemini-3.1-flash-live-preview",
+        config=GeminiLiveConfig(voice="Leda", response_modalities=["AUDIO"]),
+    )
 
     # --- OpenAI Realtime ---
-    return OpenAIRealtime(
-        model="gpt-realtime",
-        config=OpenAIRealtimeConfig(voice="alloy", modalities=["text", "audio"]),
-    )
+    # return OpenAIRealtime(
+    #     model="gpt-realtime",
+    #     config=OpenAIRealtimeConfig(voice="alloy", modalities=["text", "audio"]),
+    # )
 
     # --- xAI Realtime ---
     # return XAIRealtime(
@@ -88,13 +87,15 @@ class SupportAgent(Agent):
     def __init__(self) -> None:
         super().__init__(
             instructions=(
-                "You are a support agent for an online store. Help the caller "
-                "with their order. If they ask for faster, snappier, or more "
-                "natural-sounding responses, call switch_to_realtime."
+                "You are a support agent for an online store. Always respond "
+                "in English. Help the caller with their order. If they ask for "
+                "faster, snappier, or more natural-sounding responses, call "
+                "switch_to_realtime."
             ),
             agent_id="support",
         )
         self._switch_task: asyncio.Task | None = None
+        self._switched = False
 
     async def on_enter(self) -> None:
         await self.session.say(
@@ -126,6 +127,14 @@ class SupportAgent(Agent):
         """
         logging.info("Tool invoked: switch_to_realtime")
 
+        # Idempotent: after the switch the realtime model still has this tool,
+        # and — seeded with a switch-heavy context — keeps calling it, looping
+        # change_pipeline forever. Ignore repeat calls once switched.
+        if self._switched:
+            logging.info("Already on the realtime pipeline — ignoring repeat switch.")
+            return {"status": "already on the realtime pipeline"}
+        self._switched = True
+
         # The cascade half's transcript turns and tool calls are recorded on
         # the shared chat_context — log how much carries into the switch.
         items = self.chat_context.items
@@ -143,14 +152,11 @@ class SupportAgent(Agent):
         # touched; it carries across, and on connect the realtime model seeds
         # itself from it.
         async def _do_switch() -> None:
-            logging.info("[switch debug] _do_switch: calling change_pipeline")
             await self.session.pipeline.change_pipeline(llm=make_realtime_model())
-            logging.info("[switch debug] _do_switch: change_pipeline returned; calling session.say")
             await self.session.say(
                 "Done — I've switched to realtime mode. I still have our whole "
                 "conversation, so let's keep going."
             )
-            logging.info("[switch debug] _do_switch: session.say returned")
 
         self._switch_task = asyncio.create_task(_do_switch())
         # Tools return a dict — realtime providers require structured results.
@@ -165,6 +171,11 @@ async def entrypoint(ctx: JobContext) -> None:
         tts=CartesiaTTS(),
         vad=SileroVAD(),
         turn_detector=TurnDetector(),
+        eou_config=EOUConfig(
+            mode='ADAPTIVE',
+            # EOU mode: 'DEFAULT' uses fixed min/max timeouts; 'ADAPTIVE' computes a continuous timeout based on confidence.
+            min_max_speech_wait_timeout=[0.1, 0.5],  # Tuple (min_duration, max_duration) for EOU.
+        ),
     )
     session = AgentSession(agent=SupportAgent(), pipeline=pipeline)
     await session.start(wait_for_participant=True, run_until_shutdown=True)

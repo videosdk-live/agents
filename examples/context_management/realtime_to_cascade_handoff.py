@@ -13,9 +13,8 @@ records the realtime model's finalized transcript turns AND its tool calls
 reads that same ``chat_context`` — so it continues with the full history of the
 realtime half, tool calls included.
 
-Realtime provider: pick one in ``make_realtime_model()`` below. Gemini Live is
-active; OpenAI, xAI, and Ultravox are commented out — uncomment one block (and
-comment the Gemini block + its import) to try that provider.
+Realtime provider: pick one in ``make_realtime_model()`` below. Exactly one
+block must be uncommented — swap which one to try a different provider.
 
 Scope note: switching the pipeline mid-call and recording realtime activity
 into ``chat_context`` is existing/this-feature SDK behavior — this file is a
@@ -91,13 +90,15 @@ class SupportAgent(Agent):
     def __init__(self) -> None:
         super().__init__(
             instructions=(
-                "You are a support agent for an online store. Help the caller "
-                "with their order. If they ask for the detailed, careful, or "
-                "standard mode, call switch_to_cascade."
+                "You are a support agent for an online store. Always respond "
+                "in English. Help the caller with their order. If they ask "
+                "for the detailed, careful, or standard mode, call "
+                "switch_to_cascade."
             ),
             agent_id="support",
         )
         self._switch_task: asyncio.Task | None = None
+        self._switched = False
 
     async def on_enter(self) -> None:
         await self.session.say(
@@ -149,7 +150,6 @@ class SupportAgent(Agent):
         # transcript turns and tool calls already recorded on it carry across,
         # and the cascade LLM reads that history on its next turn.
         async def _do_switch() -> None:
-            logging.info("[switch debug] _do_switch: calling change_pipeline")
             await self.session.pipeline.change_pipeline(
                 stt=DeepgramSTT(),
                 llm=GoogleLLM(model="gemini-3.1-flash-lite-preview"),
@@ -157,12 +157,10 @@ class SupportAgent(Agent):
                 vad=SileroVAD(),
                 turn_detector=TurnDetector(),
             )
-            logging.info("[switch debug] _do_switch: change_pipeline returned; calling session.say")
             await self.session.say(
                 "Done — I've switched to standard mode. I still have everything "
                 "we covered, so let's keep going."
             )
-            logging.info("[switch debug] _do_switch: session.say returned")
 
         self._switch_task = asyncio.create_task(_do_switch())
         # Tools return a dict — realtime providers require structured results.
