@@ -161,8 +161,12 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         self._formatted_tools: Optional[List[Dict[str, Any]]] = None
         self.config: OpenAIRealtimeConfig = config or OpenAIRealtimeConfig()
         self.input_sample_rate = 48000
-        self.target_sample_rate = 16000
+        # GA Realtime API: audio/pcm is fixed at 24kHz. This drives both the
+        # resample target for outgoing user audio and the rate declared in
+        # session.audio.input.format — they must stay equal.
+        self.target_sample_rate = 24000
         self._agent_speaking = False
+        self._active_response_id: Optional[str] = None
 
     def set_agent(self, agent: Agent) -> None:
         self._agent = agent
@@ -172,7 +176,6 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         self._formatted_tools = self.tools_formatted
 
     async def connect(self) -> None:
-        logger.info("[switch debug] OpenAI connect: start (model=%s)", self.model)
         headers = {"Agent": "VideoSDK Agents"}
         headers["Authorization"] = f"Bearer {self.api_key}"
         # GA Realtime API — do NOT send "OpenAI-Beta: realtime=v1". That header
@@ -181,32 +184,71 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
 
         url = self.process_base_url(self.base_url, self.model)
 
-        self._session = await self._create_session(url, headers)
-        logger.info("[switch debug] OpenAI connect: websocket session created")
-        await self._handle_websocket(self._session)
-        logger.info("[switch debug] OpenAI connect: send/receive loops started")
-        await self.send_first_session_update()
-        logger.info("[switch debug] OpenAI connect: session.update sent — connect() done")
+        # After a cascade→realtime switch the shared audio track still carries
+        # the previous TTS framing, which misframes realtime audio output.
+        # Reframe it for OpenAI Realtime's 24kHz PCM — mirrors the Gemini/xAI
+        # plugins, which reconfigure the track on connect for the same reason.
+        if self.audio_track and "audio" in self.config.modalities:
+            try:
+                from fractions import Fraction
+                self.audio_track.sample_rate = self.target_sample_rate
+                self.audio_track.time_base_fraction = Fraction(1, self.target_sample_rate)
+                self.audio_track.samples = int(0.02 * self.target_sample_rate)
+                self.audio_track.chunk_size = int(
+                    self.audio_track.samples
+                    * getattr(self.audio_track, "channels", 1)
+                    * getattr(self.audio_track, "sample_width", 2)
+                )
+            except Exception as e:
+                logger.warning(f"OpenAI realtime: could not reconfigure audio track: {e}")
+
+        try:
+            self._session = await self._create_session(url, headers)
+            await self._handle_websocket(self._session)
+            await self.send_first_session_update()
+        except aiohttp.WSServerHandshakeError as e:
+            # Bad/expired API key, wrong URL, or rejected model fail here —
+            # before the WebSocket opens, so the receive loop (and
+            # _handle_error) never run. Surface it on the error channel.
+            message = (
+                f"OpenAI Realtime connection rejected (HTTP {e.status}): {e.message}"
+            )
+            if e.status in (401, 403):
+                message += " — verify OPENAI_API_KEY is set and valid."
+            logger.error(message)
+            self.emit("error", message)
+            raise
+        except Exception as e:
+            message = f"OpenAI Realtime connection failed: {e}"
+            logger.error(message)
+            self.emit("error", message)
+            raise
 
     async def handle_audio_input(self, audio_data: bytes) -> None:
         """Handle incoming audio data from the user"""
-        if not getattr(self, "_switch_debug_audio_logged", False):
-            self._switch_debug_audio_logged = True
-            logger.info(
-                "[switch debug] OpenAI handle_audio_input: first user audio "
-                "(session=%s closing=%s modalities=%s)",
-                self._session is not None, self._closing, self.config.modalities,
-            )
         if self._session and not self._closing and "audio" in self.config.modalities:
             if self.current_utterance and not self.current_utterance.is_interruptible:
                 logger.info("Interruption is disabled for the current utterance. Not processing audio input.")
                 return
-            audio_data = np.frombuffer(audio_data, dtype=np.int16)
-            audio_data = signal.resample(
-                audio_data,
-                int(len(audio_data) * self.target_sample_rate / self.input_sample_rate),
+            # WebRTC source (aiortc) delivers 48 kHz s16 stereo-interleaved
+            # frames flattened to bytes — _input_stream's frame.to_ndarray()[0]
+            # is one row of L,R,L,R samples, NOT mono. Mix channels to mono
+            # BEFORE resampling: without this, the buffer is twice the true
+            # mono length, and once we declare GA's required rate=24000 the
+            # server reads it at half real-time speed → both the transcription
+            # model and the realtime LLM hear slowed-down speech and hallucinate
+            # random-language tokens. (Gemini Live papers over this by declaring
+            # rate=48000; GA OpenAI cannot — audio/pcm is fixed at 24 kHz.)
+            raw = np.frombuffer(audio_data, dtype=np.int16)
+            if raw.size >= 2 and raw.size % 2 == 0:
+                mono = raw.reshape(-1, 2).astype(np.float32).mean(axis=1)
+            else:
+                mono = raw.astype(np.float32)
+            resampled = signal.resample(
+                mono,
+                int(len(mono) * self.target_sample_rate / self.input_sample_rate),
             )
-            audio_data = audio_data.astype(np.int16).tobytes()
+            audio_data = np.clip(resampled, -32767, 32767).astype(np.int16).tobytes()
             base64_audio_data = base64.b64encode(audio_data).decode("utf-8")
             audio_event = {
                 "type": "input_audio_buffer.append",
@@ -250,7 +292,9 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
                     "role": "assistant",
                     "content": [
                         {
-                            "type": "text",
+                            # GA: assistant/output message content is "output_text"
+                            # (the Beta API's "text" is rejected).
+                            "type": "output_text",
                             "text": "Repeat the user's exact message back to them:"
                             + message
                             + "DO NOT ADD ANYTHING ELSE",
@@ -333,7 +377,6 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
     
     async def create_response(self) -> None:
         """Create a response to the OpenAI realtime API"""
-        logger.info("[switch debug] OpenAI create_response called")
         if not self._session:
             self.emit("error", "No active WebSocket session")
             raise RuntimeError("No active WebSocket session")
@@ -369,6 +412,11 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
                     await session.ws.send_str(str(msg))
         except asyncio.CancelledError:
             pass
+        except ConnectionError as e:
+            # The WebSocket was closed underneath us. Don't leak an unretrieved
+            # task exception, but do log it — a mid-session close here is a
+            # symptom, not just teardown noise.
+            logger.warning("OpenAI Realtime send loop stopped — connection closed: %s", e)
         finally:
             await self._cleanup_session(session)
 
@@ -378,15 +426,33 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
             while not self._closing:
                 msg = await session.ws.receive()
 
-                if msg.type == aiohttp.WSMsgType.CLOSED:
-                    self.emit("error", f"WebSocket closed with reason: {msg.extra}")
+                if msg.type in (
+                    aiohttp.WSMsgType.CLOSED,
+                    aiohttp.WSMsgType.CLOSE,
+                    aiohttp.WSMsgType.CLOSING,
+                ):
+                    # Server (or aiohttp's heartbeat) closed the socket. Log the
+                    # close code so the cause is visible — 1000 clean, 1006
+                    # abnormal/heartbeat, 1011 server error, 4xxx app-specific.
+                    logger.error(
+                        "OpenAI Realtime WebSocket closed by server "
+                        "(msg_type=%s close_code=%s reason=%s)",
+                        msg.type.name, session.ws.close_code, msg.extra,
+                    )
+                    self.emit(
+                        "error",
+                        f"OpenAI Realtime WebSocket closed: "
+                        f"code={session.ws.close_code} reason={msg.extra}",
+                    )
                     break
                 elif msg.type == aiohttp.WSMsgType.ERROR:
+                    logger.error("OpenAI Realtime WebSocket error: %s", msg.data)
                     self.emit("error", f"WebSocket error: {msg.data}")
                     break
                 elif msg.type == aiohttp.WSMsgType.TEXT:
                     await self._handle_message(json.loads(msg.data))
         except Exception as e:
+            logger.error("OpenAI Realtime receive loop crashed: %s", e, exc_info=True)
             self.emit("error", f"WebSocket receive error: {str(e)}")
         finally:
             await self._cleanup_session(session)
@@ -395,7 +461,6 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         """Handle incoming WebSocket messages"""
         try:
             event_type = data.get("type")
-            logger.info("[switch debug] OpenAI event received: %s", event_type)
 
             if event_type == "input_audio_buffer.speech_started":
                 await self._handle_speech_started(data)
@@ -469,7 +534,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
 
     async def _handle_response_created(self, data: dict) -> None:
         """Handle initial response creation"""
-        response_id = data.get("response", {}).get("id")
+        self._active_response_id = data.get("response", {}).get("id")
 
     async def _handle_output_item_added(self, data: dict) -> None:
         """Handle new output item addition"""
@@ -593,9 +658,13 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
             if self.current_utterance and not self.current_utterance.is_interruptible:
                 logger.info("Interruption is disabled for the current utterance. Not interrupting OpenAI realtime session.")
                 return
-            cancel_event = {"type": "response.cancel", "event_id": str(uuid.uuid4())}
-            await self.send_event(cancel_event)
-            metrics_collector.on_interrupted()
+            # Only cancel when a response is actually in flight — GA rejects a
+            # stray response.cancel with "no active response found".
+            if self._active_response_id:
+                cancel_event = {"type": "response.cancel", "event_id": str(uuid.uuid4())}
+                await self.send_event(cancel_event)
+                self._active_response_id = None
+                metrics_collector.on_interrupted()
         if self.audio_track:
             self.audio_track.interrupt()
         if self._agent_speaking:
@@ -653,6 +722,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
             except Exception:
                 pass
             self._current_audio_transcript = ""
+        self._active_response_id = None
         self.audio_track.mark_synthesis_complete()
         # self.emit("agent_speech_ended", {})
         # metrics_collector.on_agent_speech_end()
@@ -685,6 +755,10 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
         if self._closing:
             return
 
+        logger.info(
+            "OpenAI Realtime session teardown — closing send/receive loops "
+            "(ws_closed=%s)", session.ws.closed,
+        )
         self._closing = True
 
         for task in session.tasks:
@@ -768,7 +842,6 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
                 )
             session["audio"] = audio
 
-        logger.info("[switch debug] OpenAI send_first_session_update: GA session.update")
         await self.send_event({"type": "session.update", "session": session})
 
     def _instructions_with_context(self) -> str:
@@ -794,7 +867,25 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
             prior = render_context_as_text(agent.chat_context)
             if prior.strip():
                 logger.info("OpenAI realtime: seeded prior conversation into instructions")
-                return f"{base}\n\n## Prior conversation\n{prior}"
+                # Sharper framing than a bare "## Prior conversation" header.
+                # OpenAI realtime tends to read the system block as policy/
+                # backstory and improvise, losing specifics ("order 456",
+                # "damaged", prior tool results). Explicitly tell it this is a
+                # live conversation it is in the middle of, with already-known
+                # facts it must reuse instead of re-asking.
+                return (
+                    f"{base}\n\n"
+                    "## Ongoing conversation — you are mid-call with this caller\n"
+                    "The transcript below is everything that has already been said and "
+                    "done on this call. You remember every detail. Continue from this "
+                    "point — do NOT re-introduce yourself, do NOT re-ask for information "
+                    "the caller already provided (names, IDs, order numbers, reasons), "
+                    "and refer back to specifics naturally when relevant. Treat any "
+                    "`[tool result]` lines as facts you already know; do NOT re-call "
+                    "those tools for the same inputs.\n\n"
+                    f"{prior}\n\n"
+                    "## End of prior transcript — continue the call now."
+                )
         except Exception as e:
             logger.warning(f"OpenAI realtime: chat context seeding failed: {e}")
         return base
