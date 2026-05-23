@@ -459,7 +459,7 @@ class ChatContext:
 
         Every item from ``other`` is merged, timestamp-ordered and
         de-duplicated by id. This is the most complete merge-back; the
-        ``merge_result`` and ``merge_summary`` variants merge less.
+        ``merge_result`` and ``merge_with_summary`` variants merge less.
 
         Args:
             other: The sub-agent's context.
@@ -505,7 +505,7 @@ class ChatContext:
             self._items.append(merged)
         return self
 
-    async def merge_summary(
+    async def merge_with_summary(
         self,
         other: ChatContext,
         *,

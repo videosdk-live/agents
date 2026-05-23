@@ -10,7 +10,7 @@ Phase 1 primitives demonstrated:
   - ``ChatContext.fork_brief(...)``     — a fresh, scoped context for the sub-agent
   - ``ChatContext.fork_filtered(...)``  — alternative: instructions + recent turns
   - ``ChatContext.merge_result(...)``   — pull only the sub-agent's conclusion back
-  - ``ChatContext.merge_summary(...)``  — alternative: pull an LLM summary back
+  - ``ChatContext.merge_with_summary(...)`` — alternative: pull an LLM summary back
   - ``ReadOnlyChatContext``             — hand the sub-agent a non-mutating view
 
 Scope note: Phase 1 ships the *context-layer* primitives (fork/merge). The
@@ -109,7 +109,7 @@ class SupervisorAgent(Agent):
         # Merge the sub-agent's work back into the supervisor's context.
         # merge_result pulls ONLY the final answer (cheapest). To instead pull
         # an LLM-condensed summary of everything the sub-agent did, use:
-        #   await self.chat_context.merge_summary(
+        #   await self.chat_context.merge_with_summary(
         #       sub_ctx, llm=self.session.pipeline.llm, agent_id="refund-checker")
         await self.chat_context.merge_result(sub_ctx, agent_id="refund-checker")
 

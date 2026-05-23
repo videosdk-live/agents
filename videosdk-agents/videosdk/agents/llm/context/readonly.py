@@ -45,4 +45,4 @@ class ReadOnlyChatContext(ChatContext):
     summarize = _readonly_async
     merge = _readonly_async
     merge_result = _readonly_async
-    merge_summary = _readonly_async
+    merge_with_summary = _readonly_async
