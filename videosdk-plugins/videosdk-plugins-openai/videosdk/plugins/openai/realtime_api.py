@@ -184,23 +184,8 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
 
         url = self.process_base_url(self.base_url, self.model)
 
-        # After a cascade→realtime switch the shared audio track still carries
-        # the previous TTS framing, which misframes realtime audio output.
-        # Reframe it for OpenAI Realtime's 24kHz PCM — mirrors the Gemini/xAI
-        # plugins, which reconfigure the track on connect for the same reason.
-        if self.audio_track and "audio" in self.config.modalities:
-            try:
-                from fractions import Fraction
-                self.audio_track.sample_rate = self.target_sample_rate
-                self.audio_track.time_base_fraction = Fraction(1, self.target_sample_rate)
-                self.audio_track.samples = int(0.02 * self.target_sample_rate)
-                self.audio_track.chunk_size = int(
-                    self.audio_track.samples
-                    * getattr(self.audio_track, "channels", 1)
-                    * getattr(self.audio_track, "sample_width", 2)
-                )
-            except Exception as e:
-                logger.warning(f"OpenAI realtime: could not reconfigure audio track: {e}")
+        if "audio" in self.config.modalities:
+            self.reframe_audio_track(self.target_sample_rate)
 
         try:
             self._session = await self._create_session(url, headers)
@@ -814,7 +799,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
 
         session: Dict[str, Any] = {
             "type": "realtime",
-            "instructions": self._instructions_with_context(),
+            "instructions": self.instructions_with_context(self._instructions),
             "output_modalities": ["audio"] if audio_mode else ["text"],
             "tools": self._formatted_tools or [],
             "tool_choice": self.config.tool_choice,
@@ -844,51 +829,6 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
 
         await self.send_event({"type": "session.update", "session": session})
 
-    def _instructions_with_context(self) -> str:
-        """Return the session instructions with prior conversation folded in.
-
-        Seeding history by streaming conversation.item.create events right
-        after connect wedges the realtime session, so prior conversation
-        (e.g. after a cascade→realtime switch) is folded into the instructions
-        sent in session.update instead. Best-effort: any failure falls back to
-        the plain instructions.
-        """
-        base = (
-            self._instructions
-            or "You are a helpful assistant that can answer questions and help with tasks."
-        )
-        agent = getattr(self, "_agent", None)
-        if not agent or not getattr(agent, "chat_context", None):
-            return base
-        if not agent.chat_context.items:
-            return base
-        try:
-            from videosdk.agents.llm.format_converters import render_context_as_text
-            prior = render_context_as_text(agent.chat_context)
-            if prior.strip():
-                logger.info("OpenAI realtime: seeded prior conversation into instructions")
-                # Sharper framing than a bare "## Prior conversation" header.
-                # OpenAI realtime tends to read the system block as policy/
-                # backstory and improvise, losing specifics ("order 456",
-                # "damaged", prior tool results). Explicitly tell it this is a
-                # live conversation it is in the middle of, with already-known
-                # facts it must reuse instead of re-asking.
-                return (
-                    f"{base}\n\n"
-                    "## Ongoing conversation — you are mid-call with this caller\n"
-                    "The transcript below is everything that has already been said and "
-                    "done on this call. You remember every detail. Continue from this "
-                    "point — do NOT re-introduce yourself, do NOT re-ask for information "
-                    "the caller already provided (names, IDs, order numbers, reasons), "
-                    "and refer back to specifics naturally when relevant. Treat any "
-                    "`[tool result]` lines as facts you already know; do NOT re-call "
-                    "those tools for the same inputs.\n\n"
-                    f"{prior}\n\n"
-                    "## End of prior transcript — continue the call now."
-                )
-        except Exception as e:
-            logger.warning(f"OpenAI realtime: chat context seeding failed: {e}")
-        return base
 
     def process_base_url(self, url: str, model: str) -> str:
         if url.startswith("http"):

@@ -273,23 +273,8 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
 
             if not self.audio_track and "AUDIO" in self.config.response_modalities:
                 logger.warning("audio_track not set — it should be assigned externally by the pipeline before connect().")
-            elif self.audio_track and "AUDIO" in self.config.response_modalities:
-                # Reconfigure the shared audio track for Gemini Live's PCM
-                # output rate. After a cascade→realtime switch the track still
-                # carries the previous TTS framing, which misframes the
-                # realtime audio. Mirrors what the xAI plugin does on connect.
-                try:
-                    from fractions import Fraction
-                    self.audio_track.sample_rate = self.target_sample_rate
-                    self.audio_track.time_base_fraction = Fraction(1, self.target_sample_rate)
-                    self.audio_track.samples = int(0.02 * self.target_sample_rate)
-                    self.audio_track.chunk_size = int(
-                        self.audio_track.samples
-                        * getattr(self.audio_track, "channels", 1)
-                        * getattr(self.audio_track, "sample_width", 2)
-                    )
-                except Exception as e:
-                    logger.warning(f"Gemini realtime: could not reconfigure audio track: {e}")
+            elif "AUDIO" in self.config.response_modalities:
+                self.reframe_audio_track(self.target_sample_rate)
 
             try:
                 initial_session = await self._create_session()
@@ -326,23 +311,10 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         logger.info(f"Creating Gemini Session with modalities: {self.config.response_modalities}, has_audio_output: {has_audio_output}")
 
         # Seed prior conversation history (e.g. after a cascade→realtime
-        # pipeline switch) by folding it into the system instruction. Gemini
-        # Live rejects post-connect history injection via send_client_content
-        # (the server closes the socket with WebSocket 1007), so the history
-        # rides along in the setup message instead — best-effort.
-        system_instruction = self._instructions
-        agent = getattr(self, "_agent", None)
-        if agent and getattr(agent, "chat_context", None) and agent.chat_context.items:
-            try:
-                from videosdk.agents.llm.format_converters import render_context_as_text
-                prior = render_context_as_text(agent.chat_context)
-                if prior.strip():
-                    system_instruction = (
-                        f"{self._instructions}\n\n## Prior conversation\n{prior}"
-                    )
-                    logger.info("Gemini realtime: seeded prior conversation into system instruction")
-            except Exception as e:
-                logger.warning(f"Gemini realtime: chat context seeding failed: {e}")
+        # pipeline switch) into the system instruction. Gemini Live rejects
+        # post-connect history injection via send_client_content (server
+        # closes the socket with WS 1007), so history rides along in setup.
+        system_instruction = self.instructions_with_context(self._instructions)
 
         config = LiveConnectConfig(
             response_modalities=self.config.response_modalities,

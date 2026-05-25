@@ -126,12 +126,7 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
         self._session = await self._create_session(self.base_url, headers)
         await self._handle_websocket(self._session)
         
-        if self.audio_track:
-            from fractions import Fraction
-            self.audio_track.sample_rate = self.target_sample_rate
-            self.audio_track.time_base_fraction = Fraction(1, self.target_sample_rate)
-            self.audio_track.samples = int(0.02 * self.target_sample_rate)
-            self.audio_track.chunk_size = int(self.audio_track.samples * getattr(self.audio_track, "channels", 1) * getattr(self.audio_track, "sample_width", 2))
+        self.reframe_audio_track(self.target_sample_rate)
         
         try:
             await asyncio.wait_for(self._session_ready.wait(), timeout=10.0)
@@ -191,7 +186,7 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
         session_update = {
             "type": "session.update",
             "session": {
-                "instructions": self._instructions_with_context(),
+                "instructions": self.instructions_with_context(self._instructions),
                 "voice": self.config.voice,
                 "audio": {
                     "input": {
@@ -530,31 +525,6 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
                 },
             )
             logger.error(f"Error executing function {name}: {e}")
-
-    def _instructions_with_context(self) -> str:
-        """Return the session instructions with prior conversation folded in.
-
-        Seeding history by streaming conversation.item.create events right
-        after connect wedges the realtime session, so prior conversation
-        (e.g. after a cascade→realtime switch) is folded into the instructions
-        sent in session.update instead. Best-effort: any failure falls back to
-        the plain instructions.
-        """
-        base = self._instructions
-        agent = getattr(self, "_agent", None)
-        if not agent or not getattr(agent, "chat_context", None):
-            return base
-        if not agent.chat_context.items:
-            return base
-        try:
-            from videosdk.agents.llm.format_converters import render_context_as_text
-            prior = render_context_as_text(agent.chat_context)
-            if prior.strip():
-                logger.info("xAI realtime: seeded prior conversation into instructions")
-                return f"{base}\n\n## Prior conversation\n{prior}"
-        except Exception as e:
-            logger.warning(f"xAI realtime: chat context seeding failed: {e}")
-        return base
 
     async def send_event(self, event: Dict[str, Any]) -> None:
         if self._session and not self._closing:

@@ -138,20 +138,7 @@ class UltravoxRealtime(RealtimeBaseModel[UltravoxEventTypes]):
     async def _create_session(self) -> UltravoxSession:
         """Create a new Ultravox WebSocket session"""
         try:
-            system_prompt = self._instructions
-            agent = getattr(self, "_agent", None)
-            if agent and getattr(agent, "chat_context", None) and agent.chat_context.items:
-                try:
-                    from videosdk.agents.llm.format_converters import render_context_as_text
-                    prior = render_context_as_text(agent.chat_context)
-                    if prior.strip():
-                        system_prompt = (
-                            f"{self._instructions}\n\n"
-                            f"## Prior conversation\n{prior}"
-                        )
-                        logger.info("Ultravox: seeded prior conversation into systemPrompt")
-                except Exception as e:
-                    logger.warning(f"Ultravox: chat context seeding failed: {e}")
+            system_prompt = self.instructions_with_context(self._instructions)
 
             call_payload = {
                 "systemPrompt": system_prompt,
