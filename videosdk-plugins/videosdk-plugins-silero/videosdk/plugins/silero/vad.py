@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import collections
 import concurrent.futures
+import threading
 import time
 from enum import Enum
 from pathlib import Path
@@ -11,7 +12,7 @@ from typing import Any, Awaitable, Callable, Literal
 import numpy as np
 from scipy import signal
 
-from .onnx_runtime import SAMPLE_RATES, VadModelWrapper
+from .onnx_runtime import SAMPLE_RATES, VadModelWrapper, pre_download_model
 from videosdk.agents.vad import VAD as BaseVAD, VADData, VADEventType, VADResponse
 
 import logging
@@ -119,14 +120,14 @@ class SileroVAD(BaseVAD):
         self._mod_rate = model_sample_rate
         self._requires_resample = input_sample_rate != model_sample_rate
 
-        try:
-            self._onnx_sess = VadModelWrapper.create_inference_session(
-                force_cpu, onnx_file_path=onnx_model_path
-            )
-            self._silero = VadModelWrapper(session=self._onnx_sess, rate=model_sample_rate)
-        except Exception as e:
-            self.emit("error", f"Failed to init VAD model: {e}")
-            raise
+        # Model session is created lazily so __init__ doesn't block on download/ORT init.
+        # Populated by _ensure_model_loaded(), which is called from prewarm() and as a
+        # last-resort fallback inside process_audio() if prewarm() was never invoked.
+        self._force_cpu = force_cpu
+        self._onnx_model_path = onnx_model_path
+        self._onnx_sess: Any = None
+        self._silero: VadModelWrapper | None = None
+        self._model_load_lock = threading.Lock()
 
         if smoothing_strategy == "ema":
             self._smoother: _EMAFilter | _MovingAverageFilter | _PassthroughFilter = _EMAFilter(smoothing_factor)
@@ -194,18 +195,42 @@ class SileroVAD(BaseVAD):
         self._inference_count = 0
 
 
-    async def prewarm(self) -> None:
-        """Run one dummy inference to warm the ONNX kernel + allocator.
+    @classmethod
+    async def download_model(cls) -> None:
+        """Eagerly download the Silero ONNX into the local cache.
 
-        The model and session are already built in ``__init__``; this only
-        warms the inference path so the first real frame doesn't pay
-        kernel-JIT cost. Idempotent — failures are logged and swallowed.
+        Idempotent; the underlying :func:`pre_download_model` short-circuits
+        when the file is already on disk.
         """
+        await asyncio.to_thread(pre_download_model)
+
+    def _ensure_model_loaded(self) -> None:
+        """Create the ORT session + VadModelWrapper if not already built.
+        Idempotent; thread-safe; cheap when already loaded (single attr check)."""
+        if self._silero is not None:
+            return
+        with self._model_load_lock:
+            if self._silero is not None:
+                return
+            try:
+                self._onnx_sess = VadModelWrapper.create_inference_session(
+                    self._force_cpu, onnx_file_path=self._onnx_model_path
+                )
+                self._silero = VadModelWrapper(session=self._onnx_sess, rate=self._mod_rate)
+            except Exception as e:
+                self.emit("error", f"Failed to init VAD model: {e}")
+                raise
+
+    async def prewarm(self) -> None:
+        """Load the ONNX session (downloading if needed) and run one dummy
+        inference so the first real frame doesn't pay download or kernel-JIT
+        cost. Idempotent — failures are logged and swallowed."""
         try:
+            await asyncio.to_thread(self._ensure_model_loaded)
             frame_size = self._silero.frame_size
             dummy = np.zeros(frame_size, dtype=np.float32)
             await asyncio.to_thread(self._silero.process, dummy)
-            self._silero.reset_state() 
+            self._silero.reset_state()
         except Exception as e:
             logger.debug(f"SileroVAD prewarm skipped (non-fatal): {e}")
 
@@ -457,6 +482,8 @@ class SileroVAD(BaseVAD):
         try:
             if not audio_frames:
                 return
+            if self._silero is None:
+                await asyncio.to_thread(self._ensure_model_loaded)
             incoming = np.frombuffer(audio_frames, dtype=np.int16)
             if len(incoming) == 0:
                 return

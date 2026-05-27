@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import threading
@@ -73,8 +74,33 @@ class NamoTurnDetectorV1(EOU):
         self.language = language
         self.session = None
         self.tokenizer = None
-        self._initialize_model()
-    
+        self.max_length = 8192 if language is None else 512
+
+    @classmethod
+    async def download_model(cls, language: Optional[str] = None) -> None:
+        """Eagerly download the tokenizer + ONNX for ``language`` into the HF cache.
+
+        Idempotent; safe to call concurrently from multiple processes (HF Hub
+        uses atomic renames). Skips network entirely when the cache file
+        already exists.
+        """
+        await asyncio.to_thread(pre_download_namo_turn_v1_model, language=language)
+
+    async def prewarm(self) -> None:
+        """Populate this instance's session + tokenizer from the module cache.
+
+        Triggers the download if the cache is cold (the underlying
+        :func:`pre_download_namo_turn_v1_model` short-circuits when the
+        file is already on disk). Then runs the base EOU dummy inference to
+        warm the ONNX kernel.
+        """
+        try:
+            await asyncio.to_thread(self._initialize_model)
+        except Exception as e:
+            logger.debug(f"NamoTurnDetectorV1 prewarm download failed (non-fatal): {e}")
+            return
+        await super().prewarm()
+
     def _initialize_model(self):
         """Initialize (or reuse) the ONNX model and tokenizer.
 
@@ -85,7 +111,6 @@ class NamoTurnDetectorV1(EOU):
         try:
             import onnxruntime as ort
 
-            self.max_length = 8192 if self.language is None else 512
             cache_key = self.language
 
             cached_tokenizer = _tokenizer_cache.get(cache_key)
@@ -163,6 +188,8 @@ class NamoTurnDetectorV1(EOU):
         Detect turn probability for the given sentence.
         """
         try:
+            if self.session is None or self.tokenizer is None:
+                self._initialize_model()
             inputs = self.tokenizer(sentence.strip(), truncation=True, max_length=self.max_length, return_tensors="np")
             
             input_dict = {

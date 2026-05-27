@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import threading
@@ -47,8 +48,26 @@ class VideoSDKTurnDetector(EOU):
         super().__init__(threshold=threshold, **kwargs)
         self.session = None
         self.tokenizer = None
-        self._initialize_model()
-    
+
+    @classmethod
+    async def download_model(cls) -> None:
+        """Eagerly download the CDN model files into MODEL_DIR.
+
+        Idempotent; the underlying :func:`pre_download_videosdk_model`
+        short-circuits when the file is already on disk.
+        """
+        await asyncio.to_thread(pre_download_videosdk_model)
+
+    async def prewarm(self) -> None:
+        """Populate this instance's session + tokenizer (downloads if cache is cold),
+        then run a base EOU dummy inference to warm the ONNX kernel."""
+        try:
+            await asyncio.to_thread(self._initialize_model)
+        except Exception as e:
+            logger.debug(f"VideoSDKTurnDetector prewarm download failed (non-fatal): {e}")
+            return
+        await super().prewarm()
+
     def _initialize_model(self):
         """Initialize (or reuse) the ONNX model and tokenizer.
 
@@ -142,6 +161,8 @@ class VideoSDKTurnDetector(EOU):
             str: "True" if turn detected, "False" otherwise
         """
         try:
+            if self.session is None or self.tokenizer is None:
+                self._initialize_model()
             inputs = self.tokenizer(sentence.strip(), truncation=True, max_length=512, return_tensors="np")
             outputs = self.session.run(None, {
                 "input_ids": inputs["input_ids"],

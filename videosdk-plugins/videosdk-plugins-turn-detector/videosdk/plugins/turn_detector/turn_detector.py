@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import threading
 import numpy as np
@@ -81,7 +82,25 @@ class TurnDetector(EOU):
         super().__init__(threshold=threshold, **kwargs)
         self.session = None
         self.tokenizer = None
-        self._initialize_model()
+
+    @classmethod
+    async def download_model(cls) -> None:
+        """Eagerly download the tokenizer + ONNX into the HF cache.
+
+        Idempotent; the underlying :func:`pre_download_model` short-circuits
+        when the file is already on disk.
+        """
+        await asyncio.to_thread(pre_download_model)
+
+    async def prewarm(self) -> None:
+        """Populate this instance's session + tokenizer (downloads if cache is cold),
+        then run a base EOU dummy inference to warm the ONNX kernel."""
+        try:
+            await asyncio.to_thread(self._initialize_model)
+        except Exception as e:
+            logger.debug(f"TurnDetector prewarm download failed (non-fatal): {e}")
+            return
+        await super().prewarm()
 
     def _initialize_model(self):
         """Initialize (or reuse) the ONNX model and tokenizer.
@@ -183,8 +202,7 @@ class TurnDetector(EOU):
             float: Probability score (0.0 to 1.0)
         """
         if not self.session or not self.tokenizer:
-            self.emit("error", "TurnSense model not initialized")
-            raise RuntimeError("Model not initialized")
+            self._initialize_model()
 
         try:
             formatted_text = self._chat_context_to_text(chat_context)
