@@ -92,6 +92,9 @@ class ResourceConfig:
     inference_process_timeout: float = 30.0  # Longer timeout for AI model loading
     inference_memory_warn_mb: float = 1000.0  # Higher threshold for AI models
 
+    auto_prewarm: bool = True
+    prewarm_components: list = field(default_factory=list)
+    initialize_process_fnc: Optional[Callable[[], Coroutine[Any, Any, None]]] = None
 
 @dataclass
 class TaskConfig:

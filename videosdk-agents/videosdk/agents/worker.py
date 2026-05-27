@@ -177,6 +177,13 @@ class WorkerOptions:
     log_level: str = "INFO"
     """Log level for SDK logging. Options: DEBUG, INFO, WARNING, ERROR. Defaults to INFO."""
 
+    auto_prewarm: bool = True
+    """Auto-download installed plugin models at worker-process startup."""
+
+    prewarm_components: list = field(default_factory=list)
+    """Optional explicit list of component classes whose ``download_model()`` to
+    run at worker-process startup. Overrides auto-discovery when non-empty."""
+
     def __post_init__(self):
         """Post-initialization setup."""
         from .utils import resolve_videosdk_auth_token
@@ -354,11 +361,23 @@ class Worker:
             else ResourceType.PROCESS
         )
 
+        effective_initialize_timeout = self.options.initialize_timeout
+        if (
+            self.options.auto_prewarm
+            or self.options.prewarm_components
+            or self.options.initialize_process_fnc
+        ) and effective_initialize_timeout < 120.0:
+            logger.info(
+                f"Extending initialize_timeout {effective_initialize_timeout}s -> 120s "
+                "to accommodate auto-prewarm model download"
+            )
+            effective_initialize_timeout = 120.0
+
         config = ResourceConfig(
             resource_type=resource_type,
             num_idle_resources=self.options.num_idle_processes,
             max_resources=self.options.max_processes,
-            initialize_timeout=self.options.initialize_timeout,
+            initialize_timeout=effective_initialize_timeout,
             close_timeout=self.options.close_timeout,
             memory_warn_mb=self.options.memory_warn_mb,
             memory_limit_mb=self.options.memory_limit_mb,
@@ -370,6 +389,10 @@ class Worker:
             use_dedicated_inference_process=False,  # Disable dedicated inference process for now
             inference_process_timeout=30.0,  # Longer timeout for AI model loading
             inference_memory_warn_mb=1000.0,  # Higher threshold for AI models
+            # Pre-warm passthrough to per-process config dict.
+            auto_prewarm=self.options.auto_prewarm,
+            prewarm_components=self.options.prewarm_components,
+            initialize_process_fnc=self.options.initialize_process_fnc,
         )
 
         self.process_manager = TaskExecutor(config)

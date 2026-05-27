@@ -1,5 +1,5 @@
 import logging
-from typing import Callable, Coroutine, Optional, Any, TYPE_CHECKING, Dict, Union
+from typing import Awaitable, Callable, Coroutine, List, Optional, Any, TYPE_CHECKING, Dict, Type, Union
 import os
 import asyncio
 from contextvars import ContextVar
@@ -419,6 +419,23 @@ class Options:
     log_level: str = "INFO"
     """Log level for SDK logging. Options: DEBUG, INFO, WARNING, ERROR. Defaults to INFO."""
 
+    auto_prewarm: bool = True
+    """Auto-download plugin models (turn detector, VAD) at worker-process startup
+    so the first job doesn't block on a network fetch. Set False to disable for
+    offline/CI environments. Default True."""
+
+    prewarm_components: List[Type] = field(default_factory=list)
+    """Optional explicit list of component classes whose ``download_model()`` to
+    run at worker-process startup. Overrides auto-discovery when non-empty.
+    Example: ``[NamoTurnDetectorV1, SileroVAD]``. Classes must be picklable
+    (module-level symbols)."""
+
+    initialize_process_fnc: Optional[Callable[[], Awaitable[None]]] = None
+    """Optional async callback to run inside each worker process before the
+    ``"ready"`` signal. When set, this *replaces* prewarm_components and the
+    auto-discovery registry — use for fine-grained control (e.g. download
+    only the language variant you actually need). Must be picklable."""
+
     def __post_init__(self):
         """Post-initialization setup."""
         # Import here to avoid circular imports
@@ -473,6 +490,9 @@ class WorkerJob:
             host=self.options.host,
             port=self.options.port,
             log_level=self.options.log_level,
+            auto_prewarm=self.options.auto_prewarm,
+            prewarm_components=self.options.prewarm_components,
+            initialize_process_fnc=self.options.initialize_process_fnc,
         )
 
         # If register=True, run the worker in backend mode (don't execute entrypoint immediately)
@@ -496,6 +516,18 @@ class WorkerJob:
                 else:
                     job_context = self.jobctx
 
+                # Direct-mode prewarm: download installed plugin models before the
+                # entrypoint runs, so Pipeline construction doesn't block on a
+                # cold cache. Mirrors what _process_worker does for register=True.
+                if self.options.auto_prewarm or self.options.initialize_process_fnc or self.options.prewarm_components:
+                    try:
+                        asyncio.run(_run_prewarm(
+                            self.options.initialize_process_fnc,
+                            self.options.prewarm_components,
+                        ))
+                    except Exception as e:
+                        logger.warning(f"Direct-mode prewarm failed (non-fatal): {e}")
+
                 # Set the current job context and run the entrypoint
                 token = _set_current_job_context(job_context)
                 try:
@@ -505,6 +537,24 @@ class WorkerJob:
             else:
                 # No job context provided, run worker normally
                 Worker.run_worker(worker_options)
+
+
+async def _run_prewarm(
+    fnc: Optional[Callable[[], "Awaitable[None]"]],
+    components: list,
+) -> None:
+    """Resolve and run the configured prewarm path. Used by both direct mode
+    (here) and the worker process (execution/resources.py). Precedence:
+    explicit fnc > explicit components > auto-discovery registry."""
+    if fnc is not None:
+        await fnc()
+        return
+    if components:
+        from .prewarm_registry import prewarm_classes
+        await prewarm_classes(components)
+        return
+    from .prewarm_registry import auto_prewarm_installed_models
+    await auto_prewarm_installed_models()
 
 
 class JobContext:

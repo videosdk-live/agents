@@ -18,6 +18,24 @@ from .types import ResourceType, TaskResult
 logger = logging.getLogger(__name__)
 
 
+async def _run_process_prewarm(
+    fnc: Optional[Callable],
+    components: list,
+) -> None:
+    """Resolve and run the per-process prewarm path. Precedence:
+    explicit fnc > explicit components > auto-discovery registry.
+    Module-level so it's picklable across the spawn boundary."""
+    if fnc is not None:
+        await fnc()
+        return
+    if components:
+        from videosdk.agents.prewarm_registry import prewarm_classes
+        await prewarm_classes(components)
+        return
+    from videosdk.agents.prewarm_registry import auto_prewarm_installed_models
+    await auto_prewarm_installed_models()
+
+
 class ProcessResource(BaseResource):
     """
     Process-based resource for task execution.
@@ -177,6 +195,28 @@ class ProcessResource(BaseResource):
         """Worker function that runs in the process."""
         try:
             logger.info(f"Process worker {resource_id} started")
+
+            # Auto-prewarm: download installed plugin models before signalling ready.
+            # Runs once per spawned process; each download_model() short-circuits on cache hit.
+            if (
+                config.get("auto_prewarm", True)
+                or config.get("prewarm_components")
+                or config.get("initialize_process_fnc")
+            ):
+                try:
+                    t0 = time.perf_counter()
+                    asyncio.run(_run_process_prewarm(
+                        config.get("initialize_process_fnc"),
+                        config.get("prewarm_components") or [],
+                    ))
+                    logger.info(
+                        f"Process {resource_id} prewarm done in "
+                        f"{(time.perf_counter() - t0) * 1000:.0f} ms"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Process {resource_id} prewarm failed (non-fatal): {e}"
+                    )
 
             # Signal ready
             control_queue.put({"type": "ready"})
@@ -355,6 +395,26 @@ class ThreadResource(BaseResource):
             asyncio.set_event_loop(loop)
 
             logger.info(f"Thread worker {resource_id} started")
+
+            if (
+                config.get("auto_prewarm", True)
+                or config.get("prewarm_components")
+                or config.get("initialize_process_fnc")
+            ):
+                try:
+                    t0 = time.perf_counter()
+                    loop.run_until_complete(_run_process_prewarm(
+                        config.get("initialize_process_fnc"),
+                        config.get("prewarm_components") or [],
+                    ))
+                    logger.info(
+                        f"Thread {resource_id} prewarm done in "
+                        f"{(time.perf_counter() - t0) * 1000:.0f} ms"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Thread {resource_id} prewarm failed (non-fatal): {e}"
+                    )
 
             async def worker_main():
                 # Main task processing loop

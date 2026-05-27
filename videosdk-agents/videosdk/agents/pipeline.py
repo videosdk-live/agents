@@ -1,6 +1,7 @@
 from typing import Any, AsyncIterator, Iterable, Literal, Optional, Callable, Dict, List, Tuple, Union
 import asyncio
 import gc
+import inspect
 import logging
 import av
 from dataclasses import dataclass, field, asdict
@@ -40,6 +41,17 @@ from .tokenize import (
 logger = logging.getLogger(__name__)
 
 _GC_FROZEN = False
+
+
+async def _safe_pipeline_download(cls: type, kwargs: Dict[str, Any]) -> None:
+    """Best-effort ``download_model()`` for a component class. Logs and swallows
+    failures so a model-server outage doesn't crash the pipeline."""
+    try:
+        await cls.download_model(**kwargs)
+    except Exception as e:
+        logger.warning(
+            f"Pipeline prewarm of {cls.__name__} failed (non-fatal): {e}"
+        )
 
 from .pipeline_utils import (
     NO_CHANGE, 
@@ -223,6 +235,14 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         self._auto_register()
         self._setup_global_listeners()
 
+        self._prewarm_task: Optional[asyncio.Task] = None
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                self._prewarm_task = loop.create_task(self._auto_prewarm_components())
+        except RuntimeError:
+            pass
+
     @staticmethod
     def _resolve_chunking_language(
         chunking_language: str,
@@ -273,6 +293,31 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         if not text_filtering:
             return None
         return text_filter or BasicTextFilter.for_language(language)
+
+    async def _auto_prewarm_components(self) -> None:
+        """Call ``download_model()`` on each component instance wired into this
+        Pipeline. Passes through per-instance args (e.g. ``language`` from
+        ``NamoTurnDetectorV1(language="en")``) by inspecting the classmethod
+        signature.
+        """
+        tasks = []
+        for comp in (self.turn_detector, self.vad):
+            if comp is None:
+                continue
+            cls = type(comp)
+            download = getattr(cls, "download_model", None)
+            if download is None:
+                continue
+            kwargs: Dict[str, Any] = {}
+            try:
+                sig_params = inspect.signature(download).parameters
+                if "language" in sig_params and hasattr(comp, "language"):
+                    kwargs["language"] = comp.language
+            except (TypeError, ValueError):
+                pass
+            tasks.append(_safe_pipeline_download(cls, kwargs))
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     def _setup_global_listeners(self) -> None:
         from .event_bus import global_event_emitter
@@ -966,6 +1011,14 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         else:
             if self.orchestrator:
                 await self.orchestrator.start()
+
+        if self._prewarm_task is not None:
+            try:
+                await asyncio.wait_for(self._prewarm_task, timeout=60.0)
+            except asyncio.TimeoutError:
+                logger.warning("Pipeline background prewarm exceeded 60s; continuing")
+            except Exception as e:
+                logger.debug(f"Pipeline background prewarm error (non-fatal): {e}")
 
         prewarm_t0 = time.perf_counter()
         warmed = []

@@ -131,6 +131,9 @@ class ResourceManager:
             "initialize_timeout": self.config.initialize_timeout,
             "close_timeout": self.config.close_timeout,
             "health_check_interval": self.config.health_check_interval,
+            "auto_prewarm": self.config.auto_prewarm,
+            "prewarm_components": self.config.prewarm_components,
+            "initialize_process_fnc": self.config.initialize_process_fnc,
         }
 
         if resource_type == ResourceType.PROCESS:
