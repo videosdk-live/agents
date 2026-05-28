@@ -740,7 +740,7 @@ class JobContext:
             and self.room_options.transport_mode == TransportMode.VIDEOSDK
         ):
             if self.videosdk_auth:
-                playground_url = f"https://playground.videosdk.live?token={self.videosdk_auth}&meetingId={self.room_options.room_id}"
+                playground_url = f"https://playground.videosdk.live/cli?token={self.videosdk_auth}&meetingId={self.room_options.room_id}"
                 print(f"\033[1;36m" + "Agent started in playground mode" + "\033[0m")
                 print("\033[1;75m" + "Interact with agent here at:" + "\033[0m")
                 print("\033[1;4;94m" + playground_url + "\033[0m")
