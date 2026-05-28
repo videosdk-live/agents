@@ -132,7 +132,8 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
                 audio_data = await self.denoise.denoise(audio_data)
 
             tasks = []
-            if self.stt:
+            
+            if self.stt and not getattr(self.stt, "batch_via_vad", False):
                 async def _stt_process():
                     async with self.stt_lock:
                         await self.stt.process_audio(audio_data)
@@ -216,6 +217,12 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
 
             try:
                 if self.stt:
+                    if (
+                        getattr(self.stt, "batch_via_vad", False)
+                        and vad_data.audio_frames
+                    ):
+                        async with self.stt_lock:
+                            await self.stt.process_audio(vad_data.audio_frames)
                     await self.stt.flush()
             except Exception as e:
                 logger.error(f"Error flushing STT: {e}")

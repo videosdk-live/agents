@@ -56,11 +56,13 @@ class STT(EventEmitter[Literal["error"]]):
     def __init__(
         self,
         forward_interim_transcripts: bool = False,
+        batch_via_vad: bool = False,
     ) -> None:
         super().__init__()
         self._label = f"{type(self).__module__}.{type(self).__name__}"
         self._transcript_callback: Optional[Callable[[STTResponse], Awaitable[None]]] = None
         self.forward_interim_transcripts = forward_interim_transcripts
+        self.batch_via_vad = batch_via_vad
         
     @property
     def label(self) -> str:

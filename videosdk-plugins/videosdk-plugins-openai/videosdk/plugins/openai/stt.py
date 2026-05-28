@@ -40,7 +40,7 @@ class OpenAISTT(BaseSTT):
             language (str): The language to use for the STT plugin. Defaults to "en".
             turn_detection (dict | None): The turn detection for the STT plugin. Defaults to None.
         """
-        super().__init__()
+        super().__init__(batch_via_vad=not enable_streaming)
         
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         if not self.api_key:
