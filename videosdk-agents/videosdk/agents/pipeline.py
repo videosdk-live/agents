@@ -56,7 +56,7 @@ from .pipeline_utils import (
 class EOUConfig:
     """Configuration for end-of-utterance detection behavior and speech wait timeouts."""
     mode: Literal["ADAPTIVE", "DEFAULT"] = "DEFAULT"
-    min_max_speech_wait_timeout: List[float] | Tuple[float, float] = field(default_factory=lambda: [0.5, 0.8])
+    min_max_speech_wait_timeout: List[float] | Tuple[float, float] = field(default_factory=lambda: [0.3, 0.6])
 
     def __post_init__(self):
         if not (isinstance(self.min_max_speech_wait_timeout, (list, tuple)) and len(self.min_max_speech_wait_timeout) == 2):

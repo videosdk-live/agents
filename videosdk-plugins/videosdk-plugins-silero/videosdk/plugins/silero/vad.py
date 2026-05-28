@@ -78,8 +78,9 @@ class SileroVAD(BaseVAD):
         model_sample_rate: Literal[8000, 16000] = 16000,
         threshold: float = 0.5,
         start_threshold: float = 0.4,
+        
         end_threshold: float = 0.25,
-        min_speech_duration: float = 0.3,
+        min_speech_duration: float = 0.05,
         min_silence_duration: float = 0.4,
         padding_duration: float = 0.5,
         max_buffered_speech: float = 60.0,
