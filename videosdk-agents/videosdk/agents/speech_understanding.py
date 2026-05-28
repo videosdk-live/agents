@@ -379,21 +379,22 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
                     delay = self.min_speech_wait_timeout + (delay_range * wait_factor)
                     metrics_collector.on_wait_for_additional_speech(delay, eou_probability)
 
-            if eou_state == "Backchannel":
-                self._drop_accumulated_transcript_and_emit(
-                    event="backchannel_detected",
-                    eou_probability=eou_probability,
-                    log_label="Backchannel",
-                )
-                return
-
-            if eou_state == "Wait":
-                self._drop_accumulated_transcript_and_emit(
-                    event="wait_detected",
-                    eou_probability=eou_probability,
-                    log_label="Wait",
-                )
-                return
+            # Backchannel/Wait detection disabled
+            # if eou_state == "Backchannel":
+            #     self._drop_accumulated_transcript_and_emit(
+            #         event="backchannel_detected",
+            #         eou_probability=eou_probability,
+            #         log_label="Backchannel",
+            #     )
+            #     return
+            #
+            # if eou_state == "Wait":
+            #     self._drop_accumulated_transcript_and_emit(
+            #         event="wait_detected",
+            #         eou_probability=eou_probability,
+            #         log_label="Wait",
+            #     )
+            #     return
 
             logger.info(f"Using delay: {delay} seconds")
             await self._wait_for_additional_speech(delay)
@@ -444,22 +445,23 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
         eou_probability: float | None,
         log_label: str,
     ) -> None:
-        """Drop the in-progress transcript and emit a discard event."""
-        if self._wait_timer:
-            self._wait_timer.cancel()
-            self._wait_timer = None
-        self._record_wait_elapsed()
-        self._waiting_for_more_speech = False
-        dropped_text = self._accumulated_transcript
-        self._accumulated_transcript = ""
-        logger.info(
-            f"[speech_understanding] {log_label} detected — dropping transcript: '{dropped_text}'"
-        )
-        metrics_collector.emit_user_transcript_transport(dropped_text, type="final")
-        self.emit(event, {
-            "text": dropped_text,
-            "eou_probability": eou_probability,
-        })
+        """Backchannel/Wait transcript drop disabled."""
+        return
+        # if self._wait_timer:
+        #     self._wait_timer.cancel()
+        #     self._wait_timer = None
+        # self._record_wait_elapsed()
+        # self._waiting_for_more_speech = False
+        # dropped_text = self._accumulated_transcript
+        # self._accumulated_transcript = ""
+        # logger.info(
+        #     f"[speech_understanding] {log_label} detected — dropping transcript: '{dropped_text}'"
+        # )
+        # metrics_collector.emit_user_transcript_transport(dropped_text, type="final")
+        # self.emit(event, {
+        #     "text": dropped_text,
+        #     "eou_probability": eou_probability,
+        # })
 
     async def _finalize_transcript(self) -> None:
         """Finalize the accumulated transcript and emit event"""
