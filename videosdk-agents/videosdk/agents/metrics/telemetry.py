@@ -1,3 +1,4 @@
+import atexit
 import traceback
 from typing import Dict, Any, Optional
 import uuid
@@ -74,7 +75,9 @@ class VideoSDKTelemetry:
                 headers=headers
             )
             
-            batch_processor = BatchSpanProcessor(otlp_exporter)
+            # schedule_delay_millis=1000 keeps spans landing at the collector within ~1s
+            # in dev. Default is 5s, which makes the smoke-test loop unnecessarily slow.
+            batch_processor = BatchSpanProcessor(otlp_exporter, schedule_delay_millis=1000)
             self.tracer_provider = TracerProvider(resource=resource)
             self.tracer_provider.add_span_processor(batch_processor)
             
@@ -190,6 +193,7 @@ class VideoSDKTelemetry:
 
 
 _telemetry_instance: Optional[VideoSDKTelemetry] = None
+_atexit_registered = False
 
 
 def get_telemetry() -> Optional[VideoSDKTelemetry]:
@@ -197,8 +201,36 @@ def get_telemetry() -> Optional[VideoSDKTelemetry]:
     return _telemetry_instance
 
 
-def initialize_telemetry(room_id: str, peer_id: str, sdk_name: str = "agents", 
-                        observability_jwt: str = None, traces_config: Dict[str, Any] = None, 
+def _atexit_flush_telemetry() -> None:
+    """Force-flush + shutdown the OTel tracer provider on process exit.
+
+    Without this, the OTLP BatchSpanProcessor silently drops any pending spans
+    when the agent process dies (KeyboardInterrupt, SIGTERM, unhandled
+    exception). Long-lived parent spans (`Agent Session: ...`, `User & Agent
+    Turns`) are the worst case — their children land at the collector but the
+    parents never do, producing orphan traces in the backend DB.
+
+    Runs LAST in the atexit chain (registered first), so any
+    TracesFlowManager.atexit hooks that end open spans run BEFORE this flush.
+    Idempotent.
+    """
+    global _telemetry_instance
+    inst = _telemetry_instance
+    if inst is None or not inst.traces_enabled or inst.tracer_provider is None:
+        return
+    try:
+        inst.tracer_provider.force_flush(timeout_millis=5000)
+    except Exception as e:
+        print(f"[TELEMETRY ERROR] atexit force_flush failed: {e}")
+    try:
+        inst.tracer_provider.shutdown()
+    except Exception as e:
+        print(f"[TELEMETRY ERROR] atexit shutdown failed: {e}")
+    _telemetry_instance = None
+
+
+def initialize_telemetry(room_id: str, peer_id: str, sdk_name: str = "agents",
+                        observability_jwt: str = None, traces_config: Dict[str, Any] = None,
                         metadata: Dict[str, Any] = None, sdk_metadata: Dict[str, Any] = None):
     """
     Initialize global telemetry instance
@@ -211,23 +243,30 @@ def initialize_telemetry(room_id: str, peer_id: str, sdk_name: str = "agents",
         traces_config: Trace configuration with 'pbendPoint' and 'enabled' 
         metadata: Additional metadata
     """
-    global _telemetry_instance
-    
+    global _telemetry_instance, _atexit_registered
+
     if not observability_jwt:
         observability_jwt = ""
-    
+
     if not traces_config:
         traces_config = {"enabled": False, "endPoint": ""}
-    
+
     if not metadata:
         metadata = {}
-    
+
     _telemetry_instance = VideoSDKTelemetry(
         room_id=room_id,
-        peer_id=peer_id, 
+        peer_id=peer_id,
         sdk_name=sdk_name,
         observability_jwt=observability_jwt,
         traces_config=traces_config,
         metadata=metadata,
         sdk_metadata=sdk_metadata
     )
+
+    # Register once per process. TracesFlowManager registers its own atexit
+    # hook later (per-room), and atexit runs LIFO — so manager hooks end any
+    # still-open long-lived spans before this hook force-flushes them.
+    if not _atexit_registered:
+        atexit.register(_atexit_flush_telemetry)
+        _atexit_registered = True

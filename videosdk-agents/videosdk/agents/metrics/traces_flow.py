@@ -1,22 +1,695 @@
-from typing import Any, Dict, Optional, List
+import atexit
+from typing import Any, Dict, Optional, List, NamedTuple
 from opentelemetry.trace import Span, StatusCode
 from opentelemetry import trace
 from .integration import create_span, complete_span
 from .metrics_schema import (
-    TurnMetrics, 
-    SttMetrics, LlmMetrics, TtsMetrics, 
-    EouMetrics, VadMetrics, 
-    InterruptionMetrics, FallbackEvent, KbMetrics, 
-    RealtimeMetrics, 
+    TurnMetrics,
+    SttMetrics, LlmMetrics, TtsMetrics,
+    EouMetrics, VadMetrics,
+    InterruptionMetrics, FallbackEvent, KbMetrics,
+    RealtimeMetrics,
     SessionMetrics, ParticipantMetrics,
 )
 import asyncio
 from dataclasses import asdict
 import time
-import json
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+class TurnBounds(NamedTuple):
+    """Computed time bounds for the three new turn-level spans."""
+    user_start: Optional[float]
+    user_end: Optional[float]
+    agent_start: Optional[float]
+    agent_end: Optional[float]
+    parent_start: Optional[float]
+    parent_end: Optional[float]
+
+
+def _eou_end_with_wait(eou: Any) -> Optional[float]:
+    """EOU end time extended by any post-EOU wait period."""
+    if eou is None or eou.eou_end_time is None:
+        return None
+    wait_seconds = (eou.eou_wait_ms or 0) / 1000.0
+    return eou.eou_end_time + wait_seconds
+
+
+def _interrupt_end_time(turn: Any) -> Optional[float]:
+    """Resolve when the agent's audio actually stopped on a true interrupt."""
+    interrupt = getattr(turn, "interruption_metrics", None)
+    if interrupt is None:
+        return None
+    if interrupt.interrupt_end_time is not None:
+        return interrupt.interrupt_end_time
+    if interrupt.interrupt_start_time is not None and interrupt.interrupt_duration is not None:
+        return interrupt.interrupt_start_time + interrupt.interrupt_duration
+    if interrupt.interrupt_start_time is not None and interrupt.interrupt_min_duration is not None:
+        return interrupt.interrupt_start_time + interrupt.interrupt_min_duration
+    return None
+
+
+def _realtime_agent_start(turn: Any) -> Optional[float]:
+    """In realtime mode, agent-side processing begins when user speech ends."""
+    if not getattr(turn, "realtime_metrics", None):
+        return None
+    return turn.user_speech_end_time
+
+
+def _compute_turn_time_bounds(turn: Any) -> TurnBounds:
+    """Compute User Turn / Agent Turn / parent Turn time bounds from a TurnMetrics instance.
+
+    See spec §2 for the rule set. None values are excluded from min/max; if a
+    side has no usable timestamps, it falls back to perf_counter() so the span
+    still renders as a zero-width diagnostic marker.
+    """
+    def collect(values):
+        return [v for v in values if v is not None]
+
+    # --- User side ---
+    user_starts = collect([
+        turn.user_speech_start_time,
+        *(v.user_speech_start_time for v in turn.vad_metrics),
+        *(s.stt_start_time for s in turn.stt_metrics),
+        *(e.eou_start_time for e in turn.eou_metrics),
+        *(k.kb_start_time for k in turn.kb_metrics),
+    ])
+    user_ends = collect([
+        turn.user_speech_end_time,
+        *(v.user_speech_end_time for v in turn.vad_metrics),
+        *(s.stt_end_time for s in turn.stt_metrics),
+        *(_eou_end_with_wait(e) for e in turn.eou_metrics),
+        *(k.kb_end_time for k in turn.kb_metrics),
+    ])
+    for ev in turn.timeline_event_metrics:
+        if ev.event_type == "user_speech":
+            if ev.start_time:
+                user_starts.append(ev.start_time)
+                # Also use start_time as a floor for user_ends so the User Turn
+                # bounds always cover the timeline event. Without this, when a
+                # timeline event arrives with start_time > EOU end and no
+                # end_time set (interrupt-buffer artifacts), the User Input
+                # Speech span renders OUTSIDE its User Turn parent.
+                user_ends.append(ev.start_time)
+            if ev.end_time:
+                user_ends.append(ev.end_time)
+
+    # --- Agent side ---
+    agent_starts = collect([
+        *(l.llm_start_time for l in turn.llm_metrics),
+        *(t.tts_start_time for t in turn.tts_metrics),
+        turn.agent_speech_start_time,
+        _realtime_agent_start(turn),
+    ])
+    agent_ends = collect([
+        *(t.tts_end_time for t in turn.tts_metrics),
+        *(l.llm_end_time for l in turn.llm_metrics),
+        turn.agent_speech_end_time,
+        _interrupt_end_time(turn),
+    ])
+    for ev in turn.timeline_event_metrics:
+        if ev.event_type == "agent_speech":
+            if ev.start_time:
+                agent_starts.append(ev.start_time)
+                # See user-side comment above — symmetric guard.
+                agent_ends.append(ev.start_time)
+            if ev.end_time:
+                agent_ends.append(ev.end_time)
+
+    user_start = min(user_starts) if user_starts else None
+    user_end = max(user_ends) if user_ends else None
+    agent_start = min(agent_starts) if agent_starts else None
+    agent_end = max(agent_ends) if agent_ends else None
+
+    now = time.perf_counter()
+    if user_start is None and user_end is None:
+        user_start = user_end = now
+    elif user_start is None:
+        user_start = user_end
+    elif user_end is None:
+        user_end = user_start
+
+    if agent_start is None and agent_end is None:
+        agent_start = agent_end = now
+    elif agent_start is None:
+        agent_start = agent_end
+    elif agent_end is None:
+        agent_end = agent_start
+
+    parent_start = min(user_start, agent_start)
+    parent_end = max(user_end, agent_end)
+
+    return TurnBounds(
+        user_start=user_start,
+        user_end=user_end,
+        agent_start=agent_start,
+        agent_end=agent_end,
+        parent_start=parent_start,
+        parent_end=parent_end,
+    )
+
+
+_PIPELINE_MODE_CANONICAL = {
+    "realtime": "realtime",
+    "hybrid": "hybrid",
+    "full_cascading": "cascade",
+    "partial_cascading": "cascade",
+    "llm_tts_only": "cascade",
+    "stt_llm_only": "cascade",
+    "stt_tts_only": "cascade",
+    "llm_only": "cascade",
+    "stt_only": "cascade",
+    "tts_only": "cascade",
+}
+
+
+def _canonical_pipeline_mode(raw: Optional[str]) -> str:
+    """Reduce PipelineMode enum values to the 3-mode contract used on the wire.
+
+    Spec §3 commits to {"cascade", "realtime", "hybrid"} as the value of
+    `pipeline_mode` mirrored on User Turn / Agent Turn spans. The internal
+    PipelineMode enum has finer-grained variants (full_cascading,
+    partial_cascading, etc.) that we collapse to one of those three here.
+    """
+    if not raw:
+        return "cascade"
+    return _PIPELINE_MODE_CANONICAL.get(raw, "cascade")
+
+
+def _turn_level_attrs(turn_index: int, turn: Any, turn_side: str) -> Dict[str, Any]:
+    """Attributes mirrored onto BOTH User Turn and Agent Turn for a given turn.
+
+    With the parent Turn #N span removed, the renderer pairs the two halves
+    via the `turn_index` attribute. `is_interrupted` and `pipeline_mode` mirror
+    onto each half so consumers can filter/badge without joining sides.
+    """
+    pm_raw = getattr(turn.session_metrics, "pipeline_mode", None) if turn.session_metrics else None
+    return {
+        "turn_side": turn_side,
+        "turn_index": turn_index,
+        "turn_id": turn.turn_id or "",
+        "is_interrupted": turn.is_interrupted,
+        "pipeline_mode": _canonical_pipeline_mode(pm_raw),
+    }
+
+
+def _provider_attrs(turn: Any, component: str) -> Dict[str, str]:
+    """Extract provider_class / model_name from session_metrics for a component."""
+    sm = getattr(turn, "session_metrics", None)
+    if sm is None or not sm.provider_per_component:
+        return {}
+    entry = sm.provider_per_component.get(component) or {}
+    out: Dict[str, str] = {}
+    if entry.get("provider_class"):
+        out["provider_class"] = entry["provider_class"]
+    if entry.get("model_name"):
+        out["model_name"] = entry["model_name"]
+    return out
+
+
+def _create_vad_span(turn: Any, vad: Any, parent: Span) -> None:
+    pdata = _provider_attrs(turn, "vad")
+    provider_class = pdata.get("provider_class")
+    if not provider_class:
+        return  # no provider info → skip; matches current behavior
+    attrs = dict(pdata)
+    if vad.vad_min_silence_duration:
+        attrs["min_silence_duration"] = vad.vad_min_silence_duration
+    if vad.vad_min_speech_duration:
+        attrs["min_speech_duration"] = vad.vad_min_speech_duration
+    if vad.vad_threshold:
+        attrs["threshold"] = vad.vad_threshold
+
+    if vad.user_speech_start_time is None and vad.user_speech_end_time is not None:
+        vad.user_speech_start_time = vad.user_speech_end_time - (vad.vad_min_silence_duration or 0)
+    elif vad.user_speech_start_time is not None and vad.user_speech_end_time is None:
+        vad.user_speech_end_time = vad.user_speech_start_time + (vad.vad_min_silence_duration or 0)
+
+    span = create_span(
+        f"{provider_class}: VAD Processing",
+        attrs,
+        parent_span=parent,
+        start_time=vad.user_speech_start_time,
+    )
+    complete_span(span, StatusCode.OK, end_time=vad.user_speech_end_time)
+
+
+def _create_stt_span(turn: Any, stt: Any, parent: Span) -> None:
+    pdata = _provider_attrs(turn, "stt")
+    provider_class = pdata.get("provider_class", "STT")
+    attrs = dict(pdata)
+    attrs["input"] = "N/A"
+    if stt.stt_latency is not None:
+        attrs["duration_ms"] = stt.stt_latency
+    if stt.stt_start_time:
+        attrs["start_timestamp"] = stt.stt_start_time
+    if stt.stt_end_time:
+        attrs["end_timestamp"] = stt.stt_end_time
+    if stt.stt_transcript:
+        attrs["output"] = stt.stt_transcript
+    if provider_class == "DeepgramSTTV2" and turn.preemtive_generation_enabled:
+        attrs["stt_preemptive_generation_enabled"] = turn.preemtive_generation_enabled
+
+    span = create_span(
+        f"{provider_class}: Speech to Text Processing",
+        attrs,
+        parent_span=parent,
+        start_time=stt.stt_start_time,
+    )
+
+    if span and stt.stt_preemptive_generation_enabled:
+        preflight_attrs = {
+            "preemptive_generation_occurred": stt.stt_preemptive_generation_occurred,
+            "partial_text": stt.stt_preflight_transcript,
+            "final_text": stt.stt_transcript,
+        }
+        if stt.stt_preemptive_generation_occurred:
+            preflight_attrs["preemptive_generation_latency"] = stt.stt_preflight_latency
+        preflight_span = create_span(
+            "Preemptive Generation",
+            preflight_attrs,
+            parent_span=span,
+            start_time=stt.stt_start_time,
+        )
+        complete_span(preflight_span, StatusCode.OK, end_time=stt.stt_preflight_end_time or stt.stt_end_time)
+
+    complete_span(span, StatusCode.OK, end_time=stt.stt_end_time)
+
+
+def _create_eou_span(turn: Any, eou: Any, parent: Span) -> None:
+    pdata = _provider_attrs(turn, "eou")
+    provider_class = pdata.get("provider_class", "EOU")
+    attrs = dict(pdata)
+    if turn.user_speech:
+        attrs["input"] = turn.user_speech
+    if eou.eou_latency is not None:
+        attrs["duration_ms"] = eou.eou_latency
+    if eou.eou_start_time:
+        attrs["start_timestamp"] = eou.eou_start_time
+    if eou.eou_end_time:
+        attrs["end_timestamp"] = eou.eou_end_time
+    if eou.waited_for_additional_speech:
+        attrs["waited_for_additional_speech"] = eou.waited_for_additional_speech
+    if eou.eou_probability:
+        attrs["eou_probability"] = round(eou.eou_probability, 4)
+    eou_cfg = (turn.session_metrics.eou_config or {}) if turn.session_metrics else {}
+    if eou_cfg.get("min_speech_wait_timeout"):
+        attrs["min_speech_wait_timeout"] = eou_cfg["min_speech_wait_timeout"]
+    if eou_cfg.get("max_speech_wait_timeout"):
+        attrs["max_speech_wait_timeout"] = eou_cfg["max_speech_wait_timeout"]
+
+    span = create_span(
+        f"{provider_class}: End-Of-Utterance Detection",
+        attrs,
+        parent_span=parent,
+        start_time=eou.eou_start_time,
+    )
+
+    if span and eou.waited_for_additional_speech and eou.eou_wait_ms is not None and eou.eou_end_time is not None:
+        wait_ms = round(eou.eou_wait_ms, 4)
+        wait_span = create_span(
+            "EOU Wait",
+            {"eou_wait_ms": wait_ms, "eou_probability": round(eou.eou_probability or 0, 4)},
+            parent_span=span,
+            start_time=eou.eou_end_time,
+        )
+        complete_span(wait_span, StatusCode.OK, end_time=eou.eou_end_time + wait_ms / 1000.0)
+
+    complete_span(span, StatusCode.OK, end_time=eou.eou_end_time)
+
+
+def _create_kb_span(turn: Any, kb: Any, parent: Span) -> None:
+    attrs: Dict[str, Any] = {}
+    if turn.user_speech:
+        attrs["input"] = turn.user_speech
+    if kb.kb_retrieval_latency:
+        attrs["retrieval_latency_ms"] = kb.kb_retrieval_latency
+    if kb.kb_start_time:
+        attrs["start_timestamp"] = kb.kb_start_time
+    if kb.kb_end_time:
+        attrs["end_timestamp"] = kb.kb_end_time
+    if kb.kb_documents:
+        if len(kb.kb_documents) <= 5:
+            attrs["documents"] = ", ".join(kb.kb_documents)
+        else:
+            attrs["documents"] = f"{len(kb.kb_documents)} documents"
+        attrs["document_count"] = len(kb.kb_documents)
+    if kb.kb_scores:
+        attrs["scores"] = ", ".join(str(round(s, 4)) for s in kb.kb_scores[:5])
+
+    span = create_span(
+        "Knowledge Base: Retrieval",
+        attrs,
+        parent_span=parent,
+        start_time=kb.kb_start_time,
+    )
+    complete_span(span, StatusCode.OK, end_time=kb.kb_end_time)
+
+
+def _create_user_input_speech_span(ev: Any, parent: Span, fallback_end: Optional[float]) -> None:
+    attrs = {"Transcript": ev.text, "duration_ms": ev.duration_ms}
+    span = create_span(
+        "User Input Speech",
+        attrs,
+        parent_span=parent,
+        start_time=ev.start_time,
+    )
+    end = ev.end_time if ev.end_time else fallback_end
+    # Defensive: perf_counter skew between the user_speech timeline event and
+    # EOU end can put fallback_end ~1 ms *before* ev.start_time, which would
+    # produce a negative-duration span. Clamp to start so the span is at least
+    # zero-width rather than malformed.
+    if ev.start_time is not None and end is not None and end < ev.start_time:
+        end = ev.start_time
+    complete_span(span, StatusCode.OK, end_time=end)
+
+
+def _create_llm_span(turn: Any, llm: Any, parent: Span) -> Optional[Span]:
+    pdata = _provider_attrs(turn, "llm")
+    provider_class = pdata.get("provider_class", "LLM")
+    attrs = dict(pdata)
+    if llm.llm_input:
+        attrs["input"] = llm.llm_input
+    if llm.llm_duration:
+        attrs["duration_ms"] = llm.llm_duration
+    if llm.llm_start_time:
+        attrs["start_timestamp"] = llm.llm_start_time
+    if llm.llm_end_time:
+        attrs["end_timestamp"] = llm.llm_end_time
+    if turn.agent_speech:
+        attrs["output"] = turn.agent_speech
+    if llm.prompt_tokens:
+        attrs["input_tokens"] = llm.prompt_tokens
+    if llm.completion_tokens:
+        attrs["output_tokens"] = llm.completion_tokens
+    if llm.prompt_cached_tokens:
+        attrs["cached_input_tokens"] = llm.prompt_cached_tokens
+    if llm.total_tokens:
+        attrs["total_tokens"] = llm.total_tokens
+
+    span = create_span(
+        f"{provider_class}: LLM Processing",
+        attrs,
+        parent_span=parent,
+        start_time=llm.llm_start_time,
+    )
+
+    if span:
+        for tool_data in turn.function_tool_timestamps or []:
+            tool_span = create_span(
+                f"Invoked Tool: {tool_data.get('tool_name', 'unknown')}",
+                parent_span=span,
+                start_time=tool_data.get("timestamp"),
+            )
+            complete_span(tool_span, StatusCode.OK, end_time=tool_data.get("timestamp"))
+
+        if llm.llm_ttft is not None and llm.llm_start_time is not None:
+            ttft_span = create_span(
+                "Time to First Token",
+                {"llm_ttft": llm.llm_ttft},
+                parent_span=span,
+                start_time=llm.llm_start_time,
+            )
+            complete_span(ttft_span, StatusCode.OK, end_time=llm.llm_start_time + (llm.llm_ttft / 1000.0))
+
+    complete_span(span, StatusCode.OK, end_time=llm.llm_end_time)
+    return span
+
+
+def _create_tts_span(turn: Any, tts: Any, parent: Span) -> Optional[Span]:
+    pdata = _provider_attrs(turn, "tts")
+    provider_class = pdata.get("provider_class", "TTS")
+    attrs = dict(pdata)
+    if turn.agent_speech:
+        attrs["input"] = turn.agent_speech
+    if tts.tts_duration:
+        attrs["duration_ms"] = tts.tts_duration
+    if tts.tts_start_time:
+        attrs["start_timestamp"] = tts.tts_start_time
+    if tts.tts_end_time:
+        attrs["end_timestamp"] = tts.tts_end_time
+    if tts.tts_characters:
+        attrs["characters"] = tts.tts_characters
+    if turn.agent_speech_duration:
+        attrs["audio_duration_ms"] = turn.agent_speech_duration
+    attrs["output"] = "N/A"
+
+    span = create_span(
+        f"{provider_class}: Text to Speech Processing",
+        attrs,
+        parent_span=parent,
+        start_time=tts.tts_start_time,
+    )
+
+    if span and tts.tts_first_byte_time is not None:
+        ttfb_span = create_span(
+            "Time to First Byte",
+            parent_span=span,
+            start_time=tts.tts_start_time,
+        )
+        complete_span(ttfb_span, StatusCode.OK, end_time=tts.tts_first_byte_time)
+
+    complete_span(span, StatusCode.OK, end_time=tts.tts_end_time)
+    return span
+
+
+def _create_rt_span(turn: Any, rt: Any, parent: Span) -> Optional[Span]:
+    pdata = _provider_attrs(turn, "realtime")
+    provider_class = pdata.get("provider_class", "Realtime")
+    attrs = dict(pdata)
+
+    rt_start = turn.user_speech_end_time if turn.user_speech_end_time else turn.agent_speech_start_time
+    rt_end = turn.agent_speech_start_time
+
+    span = create_span(
+        f"{provider_class}: Realtime Processing",
+        attrs,
+        parent_span=parent,
+        start_time=rt_start,
+    )
+
+    if span:
+        for tool_name in turn.function_tools_called or []:
+            now = time.perf_counter()
+            tool_span = create_span(
+                f"Invoked Tool: {tool_name}",
+                parent_span=span,
+                start_time=now,
+            )
+            complete_span(tool_span, StatusCode.OK, end_time=now)
+
+        if turn.e2e_latency is not None and rt_start is not None and rt_end is not None:
+            ttfw_span = create_span(
+                "Time to First Word",
+                {"duration_ms": turn.e2e_latency},
+                parent_span=span,
+                start_time=rt_start,
+            )
+            complete_span(ttfw_span, StatusCode.OK, end_time=rt_end)
+
+    complete_span(span, StatusCode.OK, end_time=rt_end)
+    return span
+
+
+def _create_agent_output_speech_span(ev: Any, parent: Span, fallback_end: Optional[float]) -> Optional[Span]:
+    attrs = {"Transcript": ev.text, "duration_ms": ev.duration_ms}
+    span = create_span(
+        "Agent Output Speech",
+        attrs,
+        parent_span=parent,
+        start_time=ev.start_time,
+    )
+    # NOTE: span is intentionally NOT completed here. Task 7's _create_user_interjection_span
+    # writes its children into this span before we end it. The caller of this helper is
+    # responsible for ending it via end_span() at the agent_turn populator boundary.
+    return span
+
+
+def _create_thinking_audio_span(turn: Any, ev: Any, parent: Span, fallback_end: Optional[float]) -> None:
+    attrs: Dict[str, Any] = {}
+    if turn.thinking_audio_file_path:
+        attrs["file_path"] = turn.thinking_audio_file_path
+    if turn.thinking_audio_looping is not None:
+        attrs["looping"] = turn.thinking_audio_looping
+    if turn.thinking_audio_override_thinking is not None:
+        attrs["override_thinking"] = turn.thinking_audio_override_thinking
+    if ev.duration_ms is not None:
+        attrs["duration_ms"] = ev.duration_ms
+
+    span = create_span(
+        "Thinking Audio",
+        attrs,
+        parent_span=parent,
+        start_time=ev.start_time,
+    )
+    end = ev.end_time if ev.end_time else fallback_end
+    if ev.start_time is not None and end is not None and end < ev.start_time:
+        end = ev.start_time
+    complete_span(span, StatusCode.OK, end_time=end)
+
+
+def _create_user_interjection_span(interruption: Any, agent_speech_span: Optional[Span], agent_turn_span: Span) -> None:
+    """User Interjection (Resumed | Escalated) — replaces the old False Interruption span.
+
+    Parents to the Agent Output Speech span when present (so the overlap is visible).
+    Falls back to Agent Turn directly if agent speech timeline event was lost.
+    """
+    if interruption.false_interrupt_start_time is None:
+        return
+
+    parent = agent_speech_span if agent_speech_span is not None else agent_turn_span
+
+    attrs: Dict[str, Any] = {}
+    if interruption.interrupt_mode:
+        attrs["interrupt_mode"] = interruption.interrupt_mode
+    if interruption.false_interrupt_pause_duration:
+        attrs["pause_duration_config"] = interruption.false_interrupt_pause_duration
+    if interruption.false_interrupt_duration:
+        attrs["false_interrupt_duration"] = interruption.false_interrupt_duration
+    if interruption.resumed_after_false_interrupt:
+        attrs["resumed_after_false_interrupt"] = True
+        attrs["actual_duration"] = interruption.false_interrupt_duration
+
+    end = interruption.false_interrupt_end_time
+    if end is None:
+        end = interruption.interrupt_start_time  # escalated path
+
+    name = (
+        "User Interjection (Resumed)"
+        if interruption.resumed_after_false_interrupt
+        else "User Interjection (Escalated)"
+    )
+    span = create_span(name, attrs, parent_span=parent, start_time=interruption.false_interrupt_start_time)
+    complete_span(span, StatusCode.OK, message="User interjection detected", end_time=end)
+
+
+_USER_SIDE_COMPONENTS = {"stt", "eou", "vad", "kb", "turn_detector"}
+_AGENT_SIDE_COMPONENTS = {"llm", "tts", "realtime"}
+
+
+def _is_user_side_component(component_type: Optional[str]) -> bool:
+    if not component_type:
+        return False
+    return component_type.lower() in _USER_SIDE_COMPONENTS
+
+
+def _is_agent_side_component(component_type: Optional[str]) -> bool:
+    if not component_type:
+        return False
+    return component_type.lower() in _AGENT_SIDE_COMPONENTS
+
+
+def _create_fallback_span(fallback: Any, parent: Span) -> None:
+    if fallback.is_recovery:
+        name = f"Recovery: {fallback.component_type}"
+        attrs = {
+            "temporary_disable_sec": fallback.temporary_disable_sec,
+            "permanent_disable_after_attempts": fallback.permanent_disable_after_attempts,
+            "recovery_attempt": fallback.recovery_attempt,
+            "message": fallback.message,
+            "restored_provider": fallback.new_provider_label,
+            "previous_provider": fallback.original_provider_label,
+        }
+        span = create_span(name, attrs, parent_span=parent, start_time=fallback.start_time)
+        complete_span(span, StatusCode.OK, message="Recovery completed", end_time=fallback.end_time)
+        return
+
+    name = f"Fallback: {fallback.component_type}"
+    attrs = {
+        "temporary_disable_sec": fallback.temporary_disable_sec,
+        "permanent_disable_after_attempts": fallback.permanent_disable_after_attempts,
+        "recovery_attempt": fallback.recovery_attempt,
+        "message": fallback.message,
+    }
+    span = create_span(name, attrs, parent_span=parent, start_time=fallback.start_time)
+    if not span:
+        return
+
+    if fallback.original_provider_label:
+        orig_span = create_span(
+            f"Connection: {fallback.original_provider_label}",
+            {"provider": fallback.original_provider_label, "status": "failed"},
+            parent_span=span,
+            start_time=fallback.start_time,
+        )
+        complete_span(orig_span, StatusCode.ERROR, end_time=fallback.start_time)
+
+    if fallback.new_provider_label:
+        new_span = create_span(
+            f"Connection: {fallback.new_provider_label}",
+            {"provider": fallback.new_provider_label, "status": "success"},
+            parent_span=span,
+            start_time=fallback.start_time,
+        )
+        complete_span(new_span, StatusCode.OK, end_time=fallback.start_time)
+
+    status = StatusCode.OK if fallback.new_provider_label else StatusCode.ERROR
+    complete_span(span, status, end_time=fallback.start_time)
+
+
+_USER_SIDE_ERROR_SOURCES = {"STT", "TURN-D", "VAD", "KB"}
+_AGENT_SIDE_ERROR_SOURCES = {"LLM", "TTS", "REALTIME", "REALTIME_MODEL"}
+
+
+def _route_error_to_side(error: Dict[str, Any]) -> str:
+    """Return 'user', 'agent', or 'agent' (default) for unknown sources."""
+    src = (error.get("source") or "").upper()
+    if src in _USER_SIDE_ERROR_SOURCES:
+        return "user"
+    if src in _AGENT_SIDE_ERROR_SOURCES:
+        return "agent"
+    logger.debug(f"Unrecognized error source {src!r}; routing to agent side by default")
+    return "agent"
+
+
+def _create_error_catchall_span(error: Dict[str, Any], parent: Span) -> None:
+    src = error.get("source", "Unknown")
+    attrs = {}
+    if error.get("message"):
+        attrs["error message"] = error["message"]
+    start = error.get("timestamp_perf")
+    span = create_span(f"{src} Error span", attrs, parent_span=parent, start_time=start)
+    complete_span(span, StatusCode.ERROR, end_time=(start + 0.001) if start is not None else None)
+
+
+def _create_turn_interrupted_span(interruption: Any, agent_turn_span: Span) -> None:
+    if interruption.interrupt_start_time is None:
+        return
+
+    attrs: Dict[str, Any] = {}
+    if interruption.interrupt_mode:
+        attrs["interrupt_mode"] = interruption.interrupt_mode
+    if interruption.interrupt_min_duration is not None:
+        attrs["interrupt_min_duration"] = interruption.interrupt_min_duration
+    if interruption.interrupt_min_words is not None:
+        attrs["interrupt_min_words"] = interruption.interrupt_min_words
+    if interruption.false_interrupt_pause_duration is not None:
+        attrs["false_interrupt_pause_duration"] = interruption.false_interrupt_pause_duration
+    if interruption.resume_on_false_interrupt is not None:
+        attrs["resume_on_false_interrupt"] = interruption.resume_on_false_interrupt
+    if interruption.interrupt_reason:
+        attrs["interrupt_reason"] = interruption.interrupt_reason
+    if interruption.interrupt_words is not None:
+        attrs["interrupt_words"] = interruption.interrupt_words
+    if interruption.interrupt_duration is not None:
+        attrs["interrupt_duration"] = interruption.interrupt_duration
+    if interruption.false_interrupt_start_time is not None:
+        attrs["preceded_by_false_interrupt"] = True
+
+    end = interruption.interrupt_end_time
+    if end is None:
+        if interruption.interrupt_duration is not None:
+            end = interruption.interrupt_start_time + interruption.interrupt_duration
+        elif interruption.interrupt_min_duration is not None:
+            end = interruption.interrupt_start_time + interruption.interrupt_min_duration
+        else:
+            end = interruption.interrupt_start_time
+
+    span = create_span("Turn Interrupted", attrs, parent_span=agent_turn_span, start_time=interruption.interrupt_start_time)
+    complete_span(span, StatusCode.OK, message="Agent was interrupted", end_time=end)
+
 
 class TracesFlowManager:
     """
@@ -38,6 +711,13 @@ class TracesFlowManager:
         self._a2a_turn_count = 0
         self.session_metrics: Optional[SessionMetrics] = None
         self.participant_metrics: Optional[List[ParticipantMetrics]] = []
+        self._atexit_done = False
+        # If the agent process dies before Room.disconnect runs (KeyboardInterrupt,
+        # crash, SIGTERM), the long-lived root + main_turn spans would never .end()
+        # — the OTLP BatchSpanProcessor would drop them, producing orphan traces
+        # at the collector. This hook ensures they're ended before the telemetry
+        # atexit force-flushes the BSP.
+        atexit.register(self._atexit_end_meeting)
 
     def set_session_metrics(self, session_metrics: SessionMetrics):
         """Set the session metrics for the trace manager."""
@@ -138,727 +818,161 @@ class TracesFlowManager:
         self.main_turn_span = create_span("User & Agent Turns", parent_span=self.agent_session_span, start_time=start_time)
     
     def create_unified_turn_trace(self, turn: TurnMetrics, session: Any = None) -> None:
-        """
-        Creates a full trace for a single turn from the unified TurnMetrics schema.
-        Handles both cascading and realtime component spans based on what data is present.
+        """Creates the per-turn span tree with User Turn / Agent Turn split.
+
+        See docs/superpowers/specs/2026-05-28-traces-user-agent-split-design.md
+        for the full structure. The legacy flat shape is gone, and the
+        intermediate Turn #N grouping span has also been dropped — User Turn
+        and Agent Turn now hang directly off `User & Agent Turns`. The renderer
+        pairs the two halves via the `turn_index` attribute.
         """
         if not self.main_turn_span:
             return
+
         self._turn_count += 1
-        turn_name = f"Turn #{self._turn_count}"
+        bounds = _compute_turn_time_bounds(turn)
 
-        # Determine turn start time dynamically to encompass all child spans
-        start_times = []
-        if turn.user_speech_start_time:
-            start_times.append(turn.user_speech_start_time)
-        if turn.stt_metrics and turn.stt_metrics[0].stt_start_time:
-            start_times.append(turn.stt_metrics[0].stt_start_time)
-        if turn.llm_metrics and turn.llm_metrics[0].llm_start_time:
-            start_times.append(turn.llm_metrics[0].llm_start_time)
-        if turn.tts_metrics and turn.tts_metrics[0].tts_start_time:
-            start_times.append(turn.tts_metrics[0].tts_start_time)
-        if turn.eou_metrics and turn.eou_metrics[0].eou_start_time:
-            start_times.append(turn.eou_metrics[0].eou_start_time)
-        if turn.timeline_event_metrics:
-            for ev in turn.timeline_event_metrics:
-                if ev.start_time:
-                    start_times.append(ev.start_time)
-                    
-        turn_span_start_time = min(start_times) if start_times else None
+        user_turn_span = self._populate_user_turn(turn, self.main_turn_span, bounds)
+        agent_turn_span = self._populate_agent_turn(turn, self.main_turn_span, bounds)
 
-        turn_span = create_span(turn_name, parent_span=self.main_turn_span, start_time=turn_span_start_time)
+        self.end_span(user_turn_span, end_time=bounds.user_end)
+        self.end_span(agent_turn_span, end_time=bounds.agent_end)
 
-        if not turn_span:
-            return
+    def _populate_user_turn(self, turn: TurnMetrics, parent: Span, bounds: TurnBounds) -> Optional[Span]:
+        attrs = _turn_level_attrs(self._turn_count, turn, "user")
+        user_turn_span = create_span(
+            f"User Turn #{self._turn_count}",
+            attrs,
+            parent_span=parent,
+            start_time=bounds.user_start,
+        )
+        if not user_turn_span:
+            return None
 
-        with trace.use_span(turn_span, end_on_exit=False):
+        for vad in turn.vad_metrics or []:
+            try:
+                _create_vad_span(turn, vad, user_turn_span)
+            except Exception as e:
+                logger.error(f"Error creating VAD span: {e}")
 
-            # --- VAD errors ---
-            def create_vad_span(vad: VadMetrics):
-                vad_errors = [e for e in turn.errors if e.get("source") == "VAD"]
-                if vad_errors or turn.vad_metrics:
-                    vad_class = turn.session_metrics.provider_per_component.get("vad", {}).get("provider_class")
-                    vad_model = turn.session_metrics.provider_per_component.get("vad", {}).get("model_name")
-                    vad_span_name = f"{vad_class}: VAD Processing"
-                    
-                    vad_attrs = {}
-                    if not vad_class:
-                        return
-                    if vad_class:
-                        vad_attrs["provider_class"] = vad_class
-                    if vad_model:
-                        vad_attrs["model_name"] = vad_model
-                    if vad.vad_min_silence_duration:
-                        vad_attrs["min_silence_duration"] = vad.vad_min_silence_duration
-                    if vad.vad_min_speech_duration:
-                        vad_attrs["min_speech_duration"] = vad.vad_min_speech_duration
-                    if vad.vad_threshold:
-                        vad_attrs["threshold"] = vad.vad_threshold
+        for stt in turn.stt_metrics or []:
+            try:
+                _create_stt_span(turn, stt, user_turn_span)
+            except Exception as e:
+                logger.error(f"Error creating STT span: {e}")
 
-                # Calculate span start time: end_of_speech_time - min_silence_duration
-                if vad.user_speech_start_time is None and vad.user_speech_end_time is not None:
-                    vad.user_speech_start_time = vad.user_speech_end_time - vad.vad_min_silence_duration
-                elif vad.user_speech_start_time is not None and vad.user_speech_end_time is None:
-                    vad.user_speech_end_time = vad.user_speech_start_time + vad.vad_min_silence_duration
+        for eou in turn.eou_metrics or []:
+            try:
+                _create_eou_span(turn, eou, user_turn_span)
+            except Exception as e:
+                logger.error(f"Error creating EOU span: {e}")
 
-                vad_start_time = vad.user_speech_start_time
-                vad_end_time = vad.user_speech_end_time
-                vad_span = create_span(vad_span_name, vad_attrs, parent_span=turn_span, start_time=vad_start_time)
-                
-                if vad_span:
-                    for error in vad_errors:
-                        vad_span.add_event("error", attributes={
-                            "message": error["message"],
-                            "timestamp": error["timestamp"],
-                            "source": error["source"]
-                        })
-                        with trace.use_span(vad_span):
-                            vad_error_span = create_span("VAD Error", {"message": error["message"]}, parent_span=vad_span, start_time=error["timestamp"])
-                            self.end_span(vad_error_span, end_time=error["timestamp"]+0.100)
-                            vad_errors.remove(error)
-                    
-                    vad_status = StatusCode.ERROR if vad_errors else StatusCode.OK
-                    self.end_span(vad_span, status_code=vad_status, end_time=vad_end_time)
+        for kb in turn.kb_metrics or []:
+            try:
+                _create_kb_span(turn, kb, user_turn_span)
+            except Exception as e:
+                logger.error(f"Error creating KB span: {e}")
 
-            vad_list = turn.vad_metrics if turn.vad_metrics else None
-            if vad_list:
-                for vad in vad_list:
-                    try:
-                        create_vad_span(vad)
-                    except Exception as e:
-                        logger.error(f"Error creating VAD span: {e}")
+        for ev in turn.timeline_event_metrics or []:
+            if ev.event_type == "user_speech":
+                _create_user_input_speech_span(ev, user_turn_span, bounds.user_end)
 
-            # --- Interruption span ---
-            def create_interruption_span(interruption: InterruptionMetrics):
-                if interruption.false_interrupt_start_time and interruption.false_interrupt_end_time:
-                    false_interrupt_attrs = {}
-                    if interruption.interrupt_mode:
-                        false_interrupt_attrs["interrupt_mode"] = interruption.interrupt_mode
-                    if interruption.false_interrupt_pause_duration:
-                        false_interrupt_attrs["pause_duration_config"] = interruption.false_interrupt_pause_duration
-                    if interruption.false_interrupt_duration:
-                        false_interrupt_attrs["false_interrupt_duration"] = interruption.false_interrupt_duration
-                    if interruption.resumed_after_false_interrupt:
-                        false_interrupt_attrs["resumed_after_false_interrupt"] = True
-                    if interruption.false_interrupt_duration:
-                        false_interrupt_attrs["actual_duration"] = interruption.false_interrupt_duration
-                    
-                    false_interrupt_end = interruption.false_interrupt_end_time
-                    if false_interrupt_end is None:
-                        # False interrupt was followed by true interrupt
-                        false_interrupt_end = interruption.interrupt_start_time
-                    
-                    false_interrupt_span_name = "False Interruption (Resumed)" if interruption.resumed_after_false_interrupt else "False Interruption (Escalated)"
-                    false_interrupt_span = create_span(false_interrupt_span_name, false_interrupt_attrs, parent_span=turn_span, start_time=interruption.false_interrupt_start_time)
-                    self.end_span(false_interrupt_span, message="False interruption detected", end_time=false_interrupt_end)
+        for event in turn.fallback_events or []:
+            if not _is_user_side_component(event.component_type):
+                continue
+            try:
+                _create_fallback_span(event, user_turn_span)
+            except Exception as e:
+                logger.error(f"Error creating Fallback span on user side: {e}")
 
-                if turn.is_interrupted:
-                    interrupted_attrs = {}
-                    if interruption.interrupt_mode:
-                        interrupted_attrs["interrupt_mode"] = interruption.interrupt_mode
-                    if interruption.interrupt_min_duration:
-                        interrupted_attrs["interrupt_min_duration"] = interruption.interrupt_min_duration
-                    if interruption.interrupt_min_words:
-                        interrupted_attrs["interrupt_min_words"] = interruption.interrupt_min_words
-                    if interruption.false_interrupt_pause_duration:
-                        interrupted_attrs["false_interrupt_pause_duration"] = interruption.false_interrupt_pause_duration
-                    if interruption.resume_on_false_interrupt:
-                        interrupted_attrs["resume_on_false_interrupt"] = interruption.resume_on_false_interrupt
-                    if interruption.interrupt_reason:
-                        interrupted_attrs["interrupt_reason"] = interruption.interrupt_reason
-                    if interruption.interrupt_words:
-                        interrupted_attrs["interrupt_words"] = interruption.interrupt_words
-                    if interruption.interrupt_duration:
-                        interrupted_attrs["interrupt_duration"] = interruption.interrupt_duration
-                    # Mark if this was preceded by a false interrupt
-                    if interruption.false_interrupt_start_time is not None:
-                        interrupted_attrs["preceded_by_false_interrupt"] = True
-                    
-                    interrupted_span = create_span("Turn Interrupted", interrupted_attrs, parent_span=turn_span, start_time=interruption.interrupt_start_time)
-            
-                # Calculate interrupt end time with proper None checks
-                if interruption.interrupt_start_time is not None:
-                    if interruption.interrupt_duration is not None:
-                        interruption.interrupt_end_time = interruption.interrupt_start_time + interruption.interrupt_duration
-                    elif interruption.interrupt_min_duration is not None:
-                        interruption.interrupt_end_time = interruption.interrupt_start_time + interruption.interrupt_min_duration
-                    else:
-                        interruption.interrupt_end_time = interruption.interrupt_start_time
-            
-                self.end_span(interrupted_span, message="Agent was interrupted", end_time=interruption.interrupt_end_time) 
+        for error in turn.errors or []:
+            if _route_error_to_side(error) != "user":
+                continue
+            try:
+                _create_error_catchall_span(error, user_turn_span)
+            except Exception as e:
+                logger.error(f"Error creating user-side error span: {e}")
 
-            
-            if turn.interruption_metrics:
-                try:
-                    create_interruption_span(turn.interruption_metrics)
-                except Exception as e:
-                    logger.error(f"Error creating interruption span: {e}")
-                
-            
-            # --- Fallback spans ---
-            def create_fallback_span(fallback: FallbackEvent):
-                is_recovery = fallback.is_recovery
-                if is_recovery:
-                    fallback_span_name = f"Recovery: {fallback.component_type}"
-                    fallback_attrs = {
-                        "temporary_disable_sec": fallback.temporary_disable_sec,
-                        "permanent_disable_after_attempts": fallback.permanent_disable_after_attempts,
-                        "recovery_attempt": fallback.recovery_attempt,
-                        "message": fallback.message,
-                        "restored_provider": fallback.new_provider_label,
-                        "previous_provider": fallback.original_provider_label,
-                    }
-                    span_time = fallback.start_time
-                    recovery_span = create_span(fallback_span_name, fallback_attrs, parent_span=turn_span, start_time=span_time)
-                    if recovery_span:
-                        self.end_span(recovery_span, message="Recovery completed", end_time=fallback.end_time)
-                        return
-                
-                fallback_span_name = f"Fallback: {fallback.component_type}"
-                
-                fallback_attrs = {
-                    "temporary_disable_sec": fallback.temporary_disable_sec,
-                    "permanent_disable_after_attempts": fallback.permanent_disable_after_attempts,
-                    "recovery_attempt": fallback.recovery_attempt,
-                    "message": fallback.message,
-                }
-                
-                # Use same start_time for all spans (instant spans)
-                span_time = fallback.start_time
-                fallback_span = create_span(fallback_span_name, fallback_attrs, parent_span=turn_span, start_time=span_time)
-                
-                if fallback_span:
-                    # Child trace for original connection attempt (if exists)
-                    if fallback.original_provider_label:
-                        original_conn_attrs = {
-                            "provider": fallback.original_provider_label,
-                            "status": "failed"
-                        }
-                        
-                        original_conn_span = create_span(
-                            f"Connection: {fallback.original_provider_label}",
-                            original_conn_attrs,
-                            parent_span=fallback_span,
-                            start_time=span_time
-                        )
-                        self.end_span(original_conn_span, status_code=StatusCode.ERROR, end_time=span_time)
-                    
-                    # Child trace for new connection attempt (if switched successfully)
-                    if fallback.new_provider_label:
-                        new_conn_attrs = {
-                            "provider": fallback.new_provider_label,
-                            "status": "success"
-                        }
-                        
-                        new_conn_span = create_span(
-                            f"Connection: {fallback.new_provider_label}",
-                            new_conn_attrs,
-                            parent_span=fallback_span,
-                            start_time=span_time
-                        )
-                        self.end_span(new_conn_span, status_code=StatusCode.OK, end_time=span_time)
-                    
-                    # End the fallback span - status depends on whether we successfully switched
-                    fallback_status = StatusCode.OK if fallback.new_provider_label else StatusCode.ERROR
-                    self.end_span(fallback_span, status_code=fallback_status, end_time=span_time)
+        return user_turn_span
 
-            if turn.fallback_events:
-                for fallback in turn.fallback_events:
-                    try:
-                        create_fallback_span(fallback)
-                    except Exception as e:
-                        logger.error(f"Error creating fallback span: {e}")
+    def _populate_agent_turn(self, turn: TurnMetrics, parent: Span, bounds: TurnBounds) -> Optional[Span]:
+        attrs = _turn_level_attrs(self._turn_count, turn, "agent")
+        agent_turn_span = create_span(
+            f"Agent Turn #{self._turn_count}",
+            attrs,
+            parent_span=parent,
+            start_time=bounds.agent_start,
+        )
+        if not agent_turn_span:
+            return None
 
-            # --- STT spans ---
-            def create_stt_span(stt: SttMetrics):
-                stt_errors = [e for e in turn.errors if e.get("source") == "STT"]
-                if stt or stt_errors:
+        for llm in turn.llm_metrics or []:
+            try:
+                _create_llm_span(turn, llm, agent_turn_span)
+            except Exception as e:
+                logger.error(f"Error creating LLM span: {e}")
 
-                    stt_attrs = {}
-                    if stt:
-                        stt_class = turn.session_metrics.provider_per_component.get("stt", {}).get("provider_class")
-                        if stt_class:
-                            stt_attrs["provider_class"] = stt_class
-                        
-                        stt_model = turn.session_metrics.provider_per_component.get("stt", {}).get("model_name")
-                        stt_attrs["input"] = "N/A"
-                        if stt_model:
-                            stt_attrs["model_name"] = stt_model
-                        if stt.stt_latency is not None:
-                            stt_attrs["duration_ms"] = stt.stt_latency
-                        if stt.stt_start_time:
-                            stt_attrs["start_timestamp"] = stt.stt_start_time
-                        if stt.stt_end_time:
-                            stt_attrs["end_timestamp"] = stt.stt_end_time
-                        if stt.stt_transcript:
-                            stt_attrs["output"] = stt.stt_transcript
-                        if stt_class =="DeepgramSTTV2" and turn.preemtive_generation_enabled:
-                            stt_attrs["stt_preemptive_generation_enabled"] = turn.preemtive_generation_enabled
-                    
-                    stt_span_name = f"{stt_class}: Speech to Text Processing"
-                    stt_span = create_span(
-                        stt_span_name, stt_attrs,
-                        parent_span=turn_span,
-                        start_time=stt.stt_start_time if stt else None,
-                    )
+        for tts in turn.tts_metrics or []:
+            try:
+                _create_tts_span(turn, tts, agent_turn_span)
+            except Exception as e:
+                logger.error(f"Error creating TTS span: {e}")
 
-                    if stt.stt_preemptive_generation_enabled:
-                        with trace.use_span(stt_span):
-                            preemptive_attributes = {
-                                "preemptive_generation_occurred": stt.stt_preemptive_generation_occurred,
-                                "partial_text": stt.stt_preflight_transcript,
-                                "final_text": stt.stt_transcript,
-                            }
-                        if stt.stt_preemptive_generation_occurred:
-                            preemptive_attributes["preemptive_generation_latency"] = stt.stt_preflight_latency
-                        preemptive_span = create_span("Preemptive Generation", preemptive_attributes, parent_span=stt_span, start_time=stt.stt_start_time)
-                        preemptive_end_time = stt.stt_preflight_end_time or stt.stt_end_time
-                        self.end_span(preemptive_span, end_time=preemptive_end_time)
+        for rt in turn.realtime_metrics or []:
+            try:
+                _create_rt_span(turn, rt, agent_turn_span)
+            except Exception as e:
+                logger.error(f"Error creating RT span: {e}")
 
+        agent_speech_span: Optional[Span] = None
+        for ev in turn.timeline_event_metrics or []:
+            if ev.event_type == "agent_speech":
+                agent_speech_span = _create_agent_output_speech_span(ev, agent_turn_span, bounds.agent_end)
+            elif ev.event_type == "thinking_audio":
+                _create_thinking_audio_span(turn, ev, agent_turn_span, bounds.agent_end)
 
-                    if stt_span:
-                        for error in stt_errors:
-                            stt_span.add_event("error", attributes={
-                                "message": error.get("message", ""),
-                                "timestamp": error.get("timestamp", ""),
-                            })
-                            if stt.stt_start_time <= error.get("timestamp") <= stt.stt_end_time:
-                                with trace.use_span(stt_span):
-                                    stt_error_span = create_span("STT Error", {"message": error.get("message", "")}, parent_span=stt_span, start_time=error.get("timestamp"))
-                                    self.end_span(stt_error_span, end_time=error.get("timestamp")+0.100)
-                                    stt_errors.remove(error)
-                        status = StatusCode.ERROR if stt_errors else StatusCode.OK
-                        self.end_span(stt_span, status_code=status, end_time=stt.stt_end_time if stt else None)
-            
-            stt_list = turn.stt_metrics if turn.stt_metrics else None
-            if stt_list:
-                for stt in stt_list:
-                    try:
-                        create_stt_span(stt)
-                    except Exception as e:
-                        logger.error(f"Error creating STT span: {e}")
+        if turn.interruption_metrics and turn.interruption_metrics.false_interrupt_start_time is not None:
+            try:
+                _create_user_interjection_span(turn.interruption_metrics, agent_speech_span, agent_turn_span)
+            except Exception as e:
+                logger.error(f"Error creating User Interjection span: {e}")
 
-            # --- EOU spans ---
-            def create_eou_span(eou: EouMetrics):
-                eou_errors = [e for e in turn.errors if e.get("source") == "TURN-D"]
+        if turn.is_interrupted and turn.interruption_metrics is not None:
+            try:
+                _create_turn_interrupted_span(turn.interruption_metrics, agent_turn_span)
+            except Exception as e:
+                logger.error(f"Error creating Turn Interrupted span: {e}")
 
-                eou_attrs = {}
-                if eou:
-                    eou_class = turn.session_metrics.provider_per_component.get("eou", {}).get("provider_class")
-                    eou_model = turn.session_metrics.provider_per_component.get("eou", {}).get("model_name")
-                    
-                    if eou_class:
-                        eou_attrs["provider_class"] = eou_class
-                    if eou_model:
-                        eou_attrs["model_name"] = eou_model
-                    if turn.user_speech:
-                        eou_attrs["input"] = turn.user_speech
-                    if eou.eou_latency is not None:
-                        eou_attrs["duration_ms"] = eou.eou_latency
-                    if eou.eou_start_time:
-                        eou_attrs["start_timestamp"] = eou.eou_start_time
-                    if eou.eou_end_time:
-                        eou_attrs["end_timestamp"] = eou.eou_end_time
-                    if eou.waited_for_additional_speech:
-                        eou_attrs["waited_for_additional_speech"] = eou.waited_for_additional_speech
-                    if eou.eou_probability:
-                        eou_attrs["eou_probability"] = round(eou.eou_probability, 4)
-                    if turn.session_metrics.eou_config.get("min_speech_wait_timeout"):
-                        eou_attrs["min_speech_wait_timeout"] = turn.session_metrics.eou_config.get("min_speech_wait_timeout")
-                    if turn.session_metrics.eou_config.get("max_speech_wait_timeout"):
-                        eou_attrs["max_speech_wait_timeout"] = turn.session_metrics.eou_config.get("max_speech_wait_timeout")
+        if agent_speech_span:
+            # Close the agent speech span at its own end_time (or fall back to agent_end).
+            agent_ev = next(
+                (e for e in turn.timeline_event_metrics or [] if e.event_type == "agent_speech"),
+                None,
+            )
+            agent_speech_end = (agent_ev.end_time if agent_ev and agent_ev.end_time else bounds.agent_end)
+            # Defensive: clamp end >= start so we never emit a negative-duration span
+            # (same perf_counter skew issue as User Input Speech).
+            if agent_ev and agent_ev.start_time is not None and agent_speech_end is not None and agent_speech_end < agent_ev.start_time:
+                agent_speech_end = agent_ev.start_time
+            self.end_span(agent_speech_span, end_time=agent_speech_end)
 
-                    eou_span_name = f"{eou_class}: End-Of-Utterance Detection"
+        for event in turn.fallback_events or []:
+            if not _is_agent_side_component(event.component_type):
+                continue
+            try:
+                _create_fallback_span(event, agent_turn_span)
+            except Exception as e:
+                logger.error(f"Error creating Fallback span on agent side: {e}")
 
-                eou_span = create_span(
-                    eou_span_name, eou_attrs,
-                    parent_span=turn_span,
-                    start_time=eou.eou_start_time if eou else None,
-                )
-                if eou.waited_for_additional_speech and eou.eou_wait_ms is not None and eou.eou_end_time is not None:
-                    delay_ms = round(eou.eou_wait_ms, 4)
-                    delay_sec = delay_ms / 1000.0
-                    with trace.use_span(eou_span):
-                        eou_wait_span = create_span(
-                            "EOU Wait",
-                            {
-                                "eou_wait_ms": delay_ms,
-                                "eou_probability": round(eou.eou_probability or 0, 4),
-                            },
-                            start_time=eou.eou_end_time,
-                        )
-                        self.end_span(eou_wait_span, status_code=StatusCode.OK, end_time=eou.eou_end_time + delay_sec)
-                
-                if eou_span:
-                    for error in eou_errors:
-                        eou_span.add_event("error", attributes={
-                            "message": error.get("message", ""),
-                            "timestamp": error.get("timestamp", ""),
-                        })
-                        with trace.use_span(eou_span):
-                            eou_error_span = create_span("EOU Error", {"message": error.get("message", "")}, parent_span=eou_span, start_time=error.get("timestamp"))
-                            self.end_span(eou_error_span, end_time=error.get("timestamp")+0.100)
-                            eou_errors.remove(error)
-                    eou_status = StatusCode.ERROR if eou_errors else StatusCode.OK
-                    self.end_span(eou_span, status_code=eou_status, end_time=eou.eou_end_time if eou else None)
+        for error in turn.errors or []:
+            if _route_error_to_side(error) != "agent":
+                continue
+            try:
+                _create_error_catchall_span(error, agent_turn_span)
+            except Exception as e:
+                logger.error(f"Error creating agent-side error span: {e}")
 
-            eou_list = turn.eou_metrics if turn.eou_metrics else None
-            if eou_list:
-                for eou in eou_list:
-                    try:
-                        create_eou_span(eou)
-                    except Exception as e:
-                        logger.error(f"Error creating EOU span: {e}")
-
-
-            # --- LLM spans ---
-            def create_llm_span(llm: LlmMetrics):
-                llm_errors = [e for e in turn.errors if e.get("source") == "LLM"]
-                llm_attrs = {}
-                if llm:
-                    llm_class = turn.session_metrics.provider_per_component.get("llm", {}).get("provider_class")
-                    if llm_class:
-                        llm_attrs["provider_class"] = llm_class
-                    llm_model = turn.session_metrics.provider_per_component.get("llm", {}).get("model_name")
-                    if llm_model:
-                        llm_attrs["model_name"] = llm_model
-                    if llm.llm_input:
-                        llm_attrs["input"] = llm.llm_input
-                    if llm.llm_duration:
-                        llm_attrs["duration_ms"] = llm.llm_duration
-                    if llm.llm_start_time:
-                        llm_attrs["start_timestamp"] = llm.llm_start_time
-                    if llm.llm_end_time:
-                        llm_attrs["end_timestamp"] = llm.llm_end_time
-                    if turn.agent_speech:
-                        llm_attrs["output"] = turn.agent_speech
-                    if llm.prompt_tokens:
-                        llm_attrs["input_tokens"] = llm.prompt_tokens
-                    if llm.completion_tokens:
-                        llm_attrs["output_tokens"] = llm.completion_tokens
-                    if llm.prompt_cached_tokens:
-                        llm_attrs["cached_input_tokens"] = llm.prompt_cached_tokens
-                    if llm.total_tokens:
-                        llm_attrs["total_tokens"] = llm.total_tokens
-
-                llm_span_name = f"{llm_class}: LLM Processing"
-                llm_span = create_span(
-                    llm_span_name, llm_attrs,
-                    parent_span=turn_span,
-                    start_time=llm.llm_start_time if llm else None,
-                )
-                if llm_span:
-                    # Tool call sub-spans
-                    if turn.function_tool_timestamps:
-                        for tool_data in turn.function_tool_timestamps:
-                            tool_timestamp = tool_data.get("timestamp")
-                            tool_span = create_span(
-                                f"Invoked Tool: {tool_data.get('tool_name', 'unknown')}",
-                                parent_span=llm_span,
-                                start_time=tool_timestamp,
-                            )
-                            self.end_span(tool_span, end_time=tool_timestamp)
-
-                    for error in llm_errors:
-                        llm_span.add_event("error", attributes={
-                            "message": error.get("message", ""),
-                            "timestamp": error.get("timestamp", ""),
-                        })
-                        with trace.use_span(llm_span):
-                            llm_error_span = create_span("LLM Error", {"message": error.get("message", "")}, parent_span=llm_span, start_time=error.get("timestamp"))
-                            self.end_span(llm_error_span, end_time=error.get("timestamp")+0.100)
-                            llm_errors.remove(error)
-
-                    # TTFT sub-span
-                    if llm and llm.llm_ttft is not None and llm.llm_start_time is not None:
-                        ttft_span = create_span(
-                            "Time to First Token",
-                            attributes={"llm_ttft": llm.llm_ttft},
-                            parent_span=llm_span,
-                            start_time=llm.llm_start_time,
-                        )
-                        ttft_end = llm.llm_start_time + (llm.llm_ttft / 1000)
-                        self.end_span(ttft_span, end_time=ttft_end)
-
-                    llm_status = StatusCode.ERROR if llm_errors else StatusCode.OK
-                    self.end_span(llm_span, status_code=llm_status, end_time=llm.llm_end_time if llm else None)
-
-            llm_list = turn.llm_metrics if turn.llm_metrics else None
-            if llm_list:
-                for llm in llm_list:
-                    try:
-                        create_llm_span(llm)
-                    except Exception as e:
-                        logger.error(f"Error creating LLM span: {e}")
-
-            # --- TTS spans ---
-            def create_tts_span(tts: TtsMetrics):
-                tts_errors = [e for e in turn.errors if e.get("source") == "TTS"]
-                tts_attrs = {}
-                if tts:
-                    tts_class = turn.session_metrics.provider_per_component.get("tts", {}).get("provider_class")
-                    tts_model = turn.session_metrics.provider_per_component.get("tts", {}).get("model_name")
-                    if tts_class:
-                        tts_attrs["provider_class"] = tts_class
-                    if tts_model:
-                        tts_attrs["model_name"] = tts_model
-                    if turn.agent_speech:
-                        tts_attrs["input"] = turn.agent_speech
-                    if tts.tts_duration:
-                        tts_attrs["duration_ms"] = tts.tts_duration
-                    if tts.tts_start_time:
-                        tts_attrs["start_timestamp"] = tts.tts_start_time
-                    if tts.tts_end_time:
-                        tts_attrs["end_timestamp"] = tts.tts_end_time
-                    if tts.tts_characters:
-                        tts_attrs["characters"] = tts.tts_characters
-                    if turn.agent_speech_duration:
-                        tts_attrs["audio_duration_ms"] = turn.agent_speech_duration
-                    tts_attrs["output"] = "N/A"
-
-                tts_span_name = f"{tts_class}: Text to Speech Processing"
-                tts_span = create_span(
-                    tts_span_name, tts_attrs,
-                    parent_span=turn_span,
-                    start_time=tts.tts_start_time if tts else None,
-                )
-
-                if tts_span:
-                    # TTFB sub-span
-                    if tts and tts.tts_first_byte_time is not None:
-                        ttfb_span = create_span(
-                            "Time to First Byte",
-                            parent_span=tts_span,
-                            start_time=tts.tts_start_time,
-                        )
-                        self.end_span(ttfb_span, end_time=tts.tts_first_byte_time)
-
-                    for error in tts_errors:
-                        tts_span.add_event("error", attributes={
-                            "message": error.get("message", ""),
-                            "timestamp": error.get("timestamp", ""),
-                        })
-                        with trace.use_span(tts_span):
-                            tts_error_span = create_span("TTS Error", {"message": error.get("message", "")}, parent_span=tts_span, start_time=error.get("timestamp"))
-                            self.end_span(tts_error_span, end_time=error.get("timestamp")+0.100)
-                            tts_errors.remove(error)
-
-                    tts_status = StatusCode.ERROR if tts_errors else StatusCode.OK
-                    self.end_span(tts_span, status_code=tts_status, end_time=tts.tts_end_time if tts else None)
-
-            tts_list = turn.tts_metrics if turn.tts_metrics else None
-            if tts_list:
-                for tts in tts_list:
-                    try:
-                        create_tts_span(tts)
-                    except Exception as e:
-                        logger.error(f"Error creating TTS span: {e}")
-
-            # --- KB spans ---
-            def create_kb_span(kb: KbMetrics):
-                kb_span_name = "Knowledge Base: Retrieval"
-                kb_attrs = {}
-                if turn.user_speech:
-                    kb_attrs["input"] = turn.user_speech
-                if kb.kb_retrieval_latency:
-                    kb_attrs["retrieval_latency_ms"] = kb.kb_retrieval_latency
-                if kb.kb_start_time:
-                    kb_attrs["start_timestamp"] = kb.kb_start_time
-                if kb.kb_end_time:
-                    kb_attrs["end_timestamp"] = kb.kb_end_time
-                if kb.kb_documents:
-                    # Join documents as comma-separated string for readability
-                    kb_attrs["documents"] = ", ".join(kb.kb_documents) if len(kb.kb_documents) <= 5 else f"{len(kb.kb_documents)} documents"
-                    kb_attrs["document_count"] = len(kb.kb_documents)
-                if kb.kb_scores:
-                    # Include scores as comma-separated string
-                    kb_attrs["scores"] = ", ".join([str(round(s, 4)) for s in kb.kb_scores[:5]])
-                
-                kb_span = create_span(kb_span_name, kb_attrs, parent_span=turn_span, start_time=kb.kb_start_time)
-                if kb_span:
-                    self.end_span(kb_span, status_code=StatusCode.OK, end_time=kb.kb_end_time)
-
-            if turn.kb_metrics:
-                for kb in turn.kb_metrics:
-                    try:
-                        create_kb_span(kb)
-                    except Exception as e:
-                        logger.error(f"Error creating KB span: {e}")
-
-            # --- Realtime spans (for S2S modes) ---
-            def create_rt_span(rt: RealtimeMetrics):
-                rt_errors = [e for e in turn.errors if e.get("source") == "REALTIME"]
-
-                rt_attrs = {}
-                if rt:
-                    rt_class = turn.session_metrics.provider_per_component.get("realtime", {}).get("provider_class")
-                    if rt_class:
-                        rt_attrs["provider_class"] = rt_class
-                    rt_model = turn.session_metrics.provider_per_component.get("realtime", {}).get("model_name")
-                    if rt_model:
-                        rt_attrs["model_name"] = rt_model
-
-                rt_start_time = turn.user_speech_end_time if turn.user_speech_end_time else turn.agent_speech_start_time
-                rt_end_time = turn.agent_speech_start_time
-                
-                # if turn.timeline_event_metrics:
-                #     for event in turn.timeline_event_metrics:
-                #         if event.event_type == "user_speech":
-                #             rt_start_time = event.end_time
-                #             break
-
-                #     for event in turn.timeline_event_metrics:
-                #         if event.event_type == "agent_speech":
-                #             rt_end_time = event.start_time
-                #             break
-                
-                
-                rt_span_name = f"{rt_class}: Realtime Processing"
-                rt_span = create_span(
-                    rt_span_name, rt_attrs,
-                    parent_span=turn_span,
-                    start_time=rt_start_time,
-                )
-                if rt_span:
-                    # Realtime tool calls
-                    if turn.function_tools_called:
-                        for tool_name in turn.function_tools_called:
-                            tool_span = create_span(
-                                f"Invoked Tool: {tool_name}",
-                                parent_span=turn_span,
-                                start_time=time.perf_counter(),
-                            )
-                            self.end_span(tool_span, end_time=time.perf_counter())
-
-                # TTFB span for realtime
-                if turn.e2e_latency is not None:
-                    ttfb_span = create_span(
-                        "Time to First Word",
-                        {"duration_ms": turn.e2e_latency},
-                        parent_span=rt_span,
-                        start_time=rt_start_time,
-                    )
-                    self.end_span(ttfb_span, end_time=rt_end_time)
-
-                # --- Realtime model errors ---
-                rt_errors = [e for e in turn.errors if e.get("source") == "REALTIME"]
-                if rt_errors:
-                    for error in rt_errors:
-                        turn_span.add_event("Errors", attributes={
-                            "message": error.get("message", "Unknown error"),
-                            "timestamp": error.get("timestamp", "N/A"),
-                        })
-                        with trace.use_span(turn_span):
-                            rt_error_span = create_span("Realtime Error", {"message": error.get("message", "")}, parent_span=turn_span, start_time=error.get("timestamp"))
-                            self.end_span(rt_error_span, end_time=error.get("timestamp")+0.100)
-                            rt_errors.remove(error)
-                self.end_span(rt_span, status_code=StatusCode.ERROR if rt_errors else StatusCode.OK, end_time=rt_end_time)
-            
-
-            rt_list = turn.realtime_metrics if turn.realtime_metrics else None
-            if rt_list: 
-                for rt in rt_list:
-                    try:
-                        create_rt_span(rt)
-                    except Exception as e:
-                        logger.error(f"Error creating RT span: {e}")
-
-            def create_error_spans(errors:Dict[str, Any]):
-                error_span_name = f"{errors.get('source', 'Unknown')} Error span"
-                attr={}
-                if errors.get('message'):
-                    attr['error message'] = errors.get('message')
-                span_start_time = errors.get('timestamp_perf')
-                error_span = create_span(error_span_name, attributes=attr, parent_span=turn_span, start_time=span_start_time)
-                self.end_span(error_span, status_code=StatusCode.ERROR, end_time=span_start_time + 0.001)
-            
-            for e in turn.errors:
-                try:
-                    create_error_spans(e)
-                except Exception as e:
-                    logger.error(f"Error creating error span: {e}")
-
-            # Determine turn end time first for unbounded children spans
-            end_times = []
-            if turn.tts_metrics and turn.tts_metrics[-1].tts_end_time:
-                end_times.append(turn.tts_metrics[-1].tts_end_time)
-            if turn.llm_metrics and turn.llm_metrics[-1].llm_end_time:
-                end_times.append(turn.llm_metrics[-1].llm_end_time)
-            if turn.agent_speech_end_time:
-                end_times.append(turn.agent_speech_end_time)
-            if turn.eou_metrics and turn.eou_metrics[-1].eou_end_time:
-                end_times.append(turn.eou_metrics[-1].eou_end_time)
-            if turn.stt_metrics and turn.stt_metrics[-1].stt_end_time:
-                end_times.append(turn.stt_metrics[-1].stt_end_time)
-            if turn.user_speech_end_time:
-                end_times.append(turn.user_speech_end_time)
-            if turn.interruption_metrics and turn.interruption_metrics.false_interrupt_end_time:
-                end_times.append(turn.interruption_metrics.false_interrupt_end_time)
-                
-            turn_end_time = max(end_times) if end_times else None
-
-            if turn.is_interrupted or turn_end_time is None:
-                turn_end_time = time.perf_counter()
-
-
-                
-                        
-
-            # --- Timeline events ---
-            if turn.timeline_event_metrics:
-                for event in turn.timeline_event_metrics:
-                    if event.event_type == "user_speech":
-                        user_speech_span = create_span(
-                            "User Input Speech",
-                            {"Transcript": event.text, "duration_ms": event.duration_ms},
-                            parent_span=turn_span,
-                            start_time=event.start_time,
-                        )
-                        self.end_span(user_speech_span, end_time=event.end_time if event.end_time else turn_end_time)
-                    elif event.event_type == "agent_speech":
-                        agent_speech_span = create_span(
-                            "Agent Output Speech",
-                            {"Transcript": event.text, "duration_ms": event.duration_ms},
-                            parent_span=turn_span,
-                            start_time=event.start_time,
-                        )
-                        self.end_span(agent_speech_span, end_time=event.end_time if event.end_time else turn_end_time)
-                    elif event.event_type == "thinking_audio":
-                        thinking_attrs = {}
-                        if turn.thinking_audio_file_path:
-                            thinking_attrs["file_path"] = turn.thinking_audio_file_path
-                        if turn.thinking_audio_looping is not None:
-                            thinking_attrs["looping"] = turn.thinking_audio_looping
-                        if turn.thinking_audio_override_thinking is not None:
-                            thinking_attrs["override_thinking"] = turn.thinking_audio_override_thinking
-                        if event.duration_ms is not None:
-                            thinking_attrs["duration_ms"] = event.duration_ms
-                        thinking_span = create_span(
-                            "Thinking Audio",
-                            thinking_attrs,
-                            parent_span=turn_span,
-                            start_time=event.start_time,
-                        )
-                        self.end_span(thinking_span, end_time=event.end_time if event.end_time else turn_end_time)
-                    elif event.event_type == "background_audio":
-                        bg_attrs = {}
-                        if turn.background_audio_file_path:
-                            bg_attrs["file_path"] = turn.background_audio_file_path
-                        if turn.background_audio_looping is not None:
-                            bg_attrs["looping"] = turn.background_audio_looping
-                        if event.duration_ms is not None:
-                            bg_attrs["duration_ms"] = event.duration_ms
-                        bg_span = create_span(
-                            "Background Audio",
-                            bg_attrs,
-                            parent_span=turn_span,
-                            start_time=event.start_time,
-                        )
-                        self.end_span(bg_span, end_time=event.end_time if event.end_time else turn_end_time)
-
-
-
-        self.end_span(turn_span, message="End of turn trace.", end_time=turn_end_time)
+        return agent_turn_span
 
     def end_main_turn(self):
         """Completes the main turn span."""
@@ -1073,7 +1187,34 @@ class TracesFlowManager:
             self.end_agent_session_closed()
         self.end_span(self.root_span, "Agent left meeting", end_time=time.perf_counter())
         self.root_span = None
-            
+        # Normal shutdown path: cleanup is done, let atexit drop the strong
+        # reference so the manager can be GC'd in long-running workers.
+        self._atexit_done = True
+        try:
+            atexit.unregister(self._atexit_end_meeting)
+        except Exception:
+            pass
+
+    def _atexit_end_meeting(self) -> None:
+        """Last-resort: end any still-open long-lived spans on process exit.
+
+        Runs only when `agent_meeting_end()` did NOT run on the normal shutdown
+        path (e.g., KeyboardInterrupt before Room.disconnect, uncaught
+        exception, SIGTERM). Idempotent — `agent_meeting_end()` sets
+        `_atexit_done` and unregisters this hook on success.
+        """
+        if self._atexit_done:
+            return
+        self._atexit_done = True
+        try:
+            if self.root_span is not None or self.agent_session_span is not None or self.main_turn_span is not None:
+                self.agent_meeting_end()
+        except Exception as e:
+            try:
+                print(f"[TRACES] atexit end-meeting failed: {e}")
+            except Exception:
+                pass
+
     def end_span(self, span: Optional[Span], message: str = "", status_code: StatusCode = StatusCode.OK, end_time: Optional[float] = None):
         """Completes a given span with a status."""
         if span:
