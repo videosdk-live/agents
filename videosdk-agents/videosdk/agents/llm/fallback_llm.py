@@ -1,18 +1,52 @@
 import asyncio
-from typing import List, AsyncIterator, Any
+from typing import List, AsyncIterator, Any, Optional
 from .llm import LLM, LLMResponse
 from .chat_context import ChatContext
 from ..fallback_base import FallbackBase
+from ..event_bus import global_event_emitter
 
 class FallbackLLM(LLM, FallbackBase):
-    """LLM wrapper that automatically fails over to backup providers on errors and attempts recovery of higher-priority ones."""
-    def __init__(self, providers: List[LLM], temporary_disable_sec: float = 60.0, permanent_disable_after_attempts: int = 3):
+    """LLM wrapper that automatically fails over to backup providers on errors, latency degradation, and attempts recovery of higher-priority ones."""
+    def __init__(
+        self,
+        providers: List[LLM],
+        temporary_disable_sec: float = 60.0,
+        permanent_disable_after_attempts: int = 3,
+        latency_threshold_ms: Optional[float] = None,
+        consecutive_latency_hits: int = 3,
+    ):
         LLM.__init__(self)
-        FallbackBase.__init__(self, providers, "LLM", temporary_disable_sec=temporary_disable_sec, permanent_disable_after_attempts=permanent_disable_after_attempts)
+        FallbackBase.__init__(
+            self,
+            providers,
+            "LLM",
+            temporary_disable_sec=temporary_disable_sec,
+            permanent_disable_after_attempts=permanent_disable_after_attempts,
+            latency_threshold_ms=latency_threshold_ms,
+            consecutive_latency_hits=consecutive_latency_hits,
+        )
         self._setup_event_listeners()
+        self._setup_latency_listener()
 
     def _setup_event_listeners(self):
         self.active_provider.on("error", self._on_provider_error)
+
+    def _setup_latency_listener(self):
+        if self.latency_threshold_ms is None:
+            return
+        global_event_emitter.on("TURN_METRICS_ADDED", self._on_turn_metrics)
+
+    def _on_turn_metrics(self, event: dict):
+        metrics = event.get("metrics") or {}
+        function_tools = metrics.get("functionToolsCalled") or []
+        mcp_tools = metrics.get("mcpToolMetrics") or []
+        if function_tools or mcp_tools:
+            return
+
+        ttft = metrics.get("ttft")
+        if ttft is None:
+            return
+        asyncio.create_task(self._record_latency(float(ttft)))
 
     def _on_provider_error(self, error_msg):
         failed_p = self.active_provider
@@ -62,6 +96,11 @@ class FallbackLLM(LLM, FallbackBase):
         await self.active_provider.cancel_current_generation()
 
     async def aclose(self) -> None:
+        if self.latency_threshold_ms is not None:
+            try:
+                global_event_emitter.off("TURN_METRICS_ADDED", self._on_turn_metrics)
+            except Exception:
+                pass
         for p in self.providers:
             await p.aclose()
         await super().aclose()
