@@ -353,9 +353,6 @@ class VideoSDKHandler(BaseTransportHandler):
         """
         logger.info(f"Meeting Left: {data}")
 
-        if hasattr(self, "participants_data") and self.participants_data:
-            self.participants_data.clear()
-
         asyncio.create_task(self._end_session("meeting_left"))
 
     def _is_agent_participant(self, participant: Participant) -> bool:
