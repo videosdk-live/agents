@@ -1,8 +1,4 @@
-"""Backward-compatibility shim. The implementation now lives in the
-``videosdk.agents.llm.context`` package. Import from there for new code.
-"""
-
-from .context import (
+from .items import (
     ChatRole,
     ImageContent,
     ChatContent,
@@ -12,9 +8,10 @@ from .context import (
     AgentHandoff,
     AgentConfigUpdate,
     ChatItem,
-    ChatContext,
-    ReadOnlyChatContext,
 )
+from .context import ChatContext
+from .readonly import ReadOnlyChatContext
+from .window import ContextWindow
 
 __all__ = [
     "ChatRole",
@@ -28,4 +25,5 @@ __all__ = [
     "ChatItem",
     "ChatContext",
     "ReadOnlyChatContext",
+    "ContextWindow",
 ]

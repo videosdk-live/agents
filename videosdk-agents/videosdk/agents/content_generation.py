@@ -8,7 +8,7 @@ import logging
 from .event_emitter import EventEmitter
 from .llm.llm import LLM, ResponseChunk
 from .llm.chat_context import ChatRole,FunctionCallOutput
-from .utils import is_function_tool, get_tool_info, UserState, AgentState
+from .utils import is_function_tool, get_tool_info, build_openai_schema, UserState, AgentState
 from .agent import Agent
 from .metrics import metrics_collector
 
@@ -49,6 +49,59 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
             return self.context_window.max_tool_calls_per_turn
         return 10
     
+    @staticmethod
+    def _function_call_metadata(func_call: dict) -> dict | None:
+        """Carry the provider's per-call thought signature onto the stored FunctionCall.
+
+        Providers (e.g. Gemini) return a per-call ``thought_signature`` that must be
+        echoed back with that exact call on later turns. Storing it on the
+        FunctionCall keeps it correct even for repeated calls to the same tool.
+        """
+        sig = func_call.get("thought_signature")
+        return {"thought_signature": sig} if sig else None
+
+    @staticmethod
+    def _tool_output_fallback_text(output_item: FunctionCallOutput) -> str:
+        """Last-resort spoken text when the LLM yields nothing after a tool runs.
+
+        Prefers the tool's own string result (tool authors commonly return a
+        user-facing confirmation); otherwise a generic acknowledgment — so the
+        agent is never left silent after a successful tool call.
+        """
+        if output_item.is_error:
+            return "Sorry, I ran into a problem completing that."
+        try:
+            decoded = json.loads(output_item.output)
+        except (ValueError, TypeError):
+            decoded = output_item.output
+        if isinstance(decoded, str) and decoded.strip():
+            return decoded.strip()
+        return "Okay, I've taken care of that."
+
+    @staticmethod
+    def _safe_tool_kwargs(tool, arguments: Any) -> dict:
+        """Filter model-supplied arguments to the tool's declared parameters.
+
+        LLMs — small ones especially — sometimes hallucinate or malform tool
+        arguments (extra keys, an empty-string key, a non-dict value). Dropping
+        what the tool doesn't declare keeps one bad call from crashing the turn.
+        """
+        if not isinstance(arguments, dict):
+            return {}
+        try:
+            allowed = set(
+                build_openai_schema(tool).get("parameters", {}).get("properties", {})
+            )
+        except Exception:
+            return arguments
+        dropped = [k for k in arguments if k not in allowed]
+        if dropped:
+            logger.warning(
+                "Dropping unrecognized argument(s) %s for tool '%s'",
+                dropped, get_tool_info(tool).name,
+            )
+        return {k: v for k, v in arguments.items() if k in allowed}
+
     async def start(self) -> None:
         """Start the content generation component"""
         logger.info("ContentGeneration started")
@@ -164,7 +217,8 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                     chat_context.add_function_call(
                         name=func_call["name"],
                         arguments=json.dumps(func_call["arguments"]),
-                        call_id=func_call_id
+                        call_id=func_call_id,
+                        metadata=self._function_call_metadata(func_call)
                     )
                     
                     try:
@@ -186,7 +240,7 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                             agent_session._is_executing_tool = True
 
                         try:
-                            result = await tool(**func_call["arguments"])
+                            result = await tool(**self._safe_tool_kwargs(tool, func_call["arguments"]))
 
                             if isinstance(result, Agent):
                                 new_agent = result
@@ -282,7 +336,8 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                                     chat_context.add_function_call(
                                         name=next_call["name"],
                                         arguments=json.dumps(next_call["arguments"]),
-                                        call_id=next_call_id
+                                        call_id=next_call_id,
+                                        metadata=self._function_call_metadata(next_call)
                                     )
 
                                 if len(pending_calls) == 1:
@@ -293,7 +348,7 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                                         None
                                     )
                                     if next_tool:
-                                        next_result = await next_tool(**next_call["arguments"])
+                                        next_result = await next_tool(**self._safe_tool_kwargs(next_tool, next_call["arguments"]))
                                         chat_context.add_function_output(
                                             name=next_call["name"],
                                             output=json.dumps(next_result),
@@ -317,7 +372,7 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                                             None
                                         )
                                         if t:
-                                            return nc, nc_id, await t(**nc["arguments"]), False
+                                            return nc, nc_id, await t(**self._safe_tool_kwargs(t, nc["arguments"])), False
                                         return nc, nc_id, {"error": f"Tool '{nc['name']}' not found"}, True
 
                                     results = await asyncio.gather(
@@ -340,6 +395,7 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                             last_item = chat_context.items[-1] if chat_context.items else None
                             if not self._is_interrupted and not _tool_loop_text_yielded and isinstance(last_item, FunctionCallOutput):
                                 logger.info("Tool loop exhausted, forcing final text response")
+                                _final_text_yielded = False
                                 async for final_resp in self.llm.chat(
                                     chat_context,
                                     tools=None,
@@ -348,11 +404,25 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                                     if self._is_interrupted or not final_resp:
                                         break
                                     if final_resp.content:
+                                        _final_text_yielded = True
                                         self.emit("generation_chunk", {
                                             "content": final_resp.content,
                                             "metadata": final_resp.metadata
                                         })
                                         yield ResponseChunk(final_resp.content, final_resp.metadata, final_resp.role)
+
+                                if not self._is_interrupted and not _final_text_yielded:
+                                    fallback_text = self._tool_output_fallback_text(last_item)
+                                    logger.warning(
+                                        "LLM produced no response after tool '%s'; "
+                                        "speaking fallback acknowledgment",
+                                        last_item.name,
+                                    )
+                                    self.emit("generation_chunk", {
+                                        "content": fallback_text,
+                                        "metadata": None
+                                    })
+                                    yield ResponseChunk(fallback_text, None, ChatRole.ASSISTANT)
 
                             if self._is_interrupted:
                                 last_item = chat_context.items[-1] if chat_context.items else None

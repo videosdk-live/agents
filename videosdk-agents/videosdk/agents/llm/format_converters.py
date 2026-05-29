@@ -5,15 +5,17 @@ import json
 from typing import List, Optional, Union, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .chat_context import ChatContext
+    from .context import ChatContext
 
-from .chat_context import (
+from .context import (
     ChatMessage,
     ChatRole,
     FunctionCall,
     FunctionCallOutput,
     ImageContent,
     ChatContent,
+    AgentHandoff,
+    AgentConfigUpdate,
 )
 
 def _format_content_openai(content: Union[str, List[ChatContent]]) -> Union[str, list]:
@@ -35,11 +37,11 @@ def _format_content_openai(content: Union[str, List[ChatContent]]) -> Union[str,
 
 
 def to_openai_messages(ctx: ChatContext, *, reasoning_model: bool = False) -> list[dict]:
-    """
-    Convert context to OpenAI chat completion messages format.
+    """Convert context to OpenAI chat completion messages format.
 
-    Handles ChatMessage, FunctionCall batching, FunctionCallOutput,
-    reasoning model role mapping, image content, and interrupted messages.
+    Skips structural items (AgentHandoff, AgentConfigUpdate). When the context
+    contains AgentConfigUpdate items, the system/developer message emits the
+    resolved active instructions instead of its literal content.
 
     Args:
         ctx: The ChatContext to convert.
@@ -48,19 +50,35 @@ def to_openai_messages(ctx: ChatContext, *, reasoning_model: bool = False) -> li
     Returns:
         list[dict]: OpenAI-formatted messages list.
     """
+    active_instructions, _ = ctx.active_config_at()
+    has_config_updates = any(isinstance(it, AgentConfigUpdate) for it in ctx.items)
+    instruction_emitted = False
+
     openai_messages = []
     i = 0
     items = ctx.items
     while i < len(items):
         msg = items[i]
-        if msg is None:
+        if msg is None or isinstance(msg, (AgentHandoff, AgentConfigUpdate)):
             i += 1
             continue
         if isinstance(msg, ChatMessage):
             role = msg.role.value
-            if reasoning_model and role == "system":
+            if role == "developer" and not reasoning_model:
+                role = "system"
+            elif reasoning_model and role == "system":
                 role = "developer"
-            content = _format_content_openai(msg.content)
+            if msg.role in (ChatRole.SYSTEM, ChatRole.DEVELOPER):
+                if instruction_emitted:
+                    i += 1
+                    continue
+                instruction_emitted = True
+                if has_config_updates and active_instructions is not None:
+                    content: object = active_instructions
+                else:
+                    content = _format_content_openai(msg.content)
+            else:
+                content = _format_content_openai(msg.content)
             openai_messages.append({
                 "role": role,
                 "content": content,
@@ -143,10 +161,17 @@ def to_anthropic_messages(ctx: ChatContext, *, caching: bool = False) -> tuple[l
     system_content: str | None = None
     pending_tool_results: dict[str, FunctionCallOutput] = {}
 
+    active_instructions, _ = ctx.active_config_at()
+    has_config_updates = any(isinstance(it, AgentConfigUpdate) for it in ctx.items)
+
     for item in ctx.items:
+        if isinstance(item, (AgentHandoff, AgentConfigUpdate)):
+            continue
         if isinstance(item, ChatMessage):
-            if item.role == ChatRole.SYSTEM:
-                if isinstance(item.content, list):
+            if item.role in (ChatRole.SYSTEM, ChatRole.DEVELOPER):
+                if has_config_updates and active_instructions is not None:
+                    system_content = active_instructions
+                elif isinstance(item.content, list):
                     system_content = next(
                         (str(p) for p in item.content if isinstance(p, str)), ""
                     )
@@ -246,10 +271,17 @@ async def to_google_contents(
     contents = []
     system_instruction = None
 
+    active_instructions, _ = ctx.active_config_at()
+    has_config_updates = any(isinstance(it, AgentConfigUpdate) for it in ctx.items)
+
     for item in ctx.items:
+        if isinstance(item, (AgentHandoff, AgentConfigUpdate)):
+            continue
         if isinstance(item, ChatMessage):
-            if item.role == ChatRole.SYSTEM:
-                if isinstance(item.content, list):
+            if item.role in (ChatRole.SYSTEM, ChatRole.DEVELOPER):
+                if has_config_updates and active_instructions is not None:
+                    system_instruction = active_instructions
+                elif isinstance(item.content, list):
                     system_instruction = next(
                         (str(p) for p in item.content if isinstance(p, str)), ""
                     )
@@ -305,3 +337,33 @@ async def to_google_contents(
             )
 
     return contents, system_instruction
+
+
+def render_context_as_text(ctx: ChatContext) -> str:
+    """Render a chat context as a compact plain-text transcript.
+
+    Used to seed realtime providers that accept no structured history and
+    only a system prompt (Ultravox). SYSTEM/DEVELOPER messages are skipped —
+    the live system prompt already covers them.
+    """
+    lines: list[str] = []
+    for item in ctx.items:
+        if isinstance(item, ChatMessage):
+            if item.role in (ChatRole.SYSTEM, ChatRole.DEVELOPER):
+                continue
+            if isinstance(item.content, str):
+                text = item.content
+            elif isinstance(item.content, list):
+                text = " ".join(str(p) for p in item.content if isinstance(p, str))
+            else:
+                text = ""
+            if not text.strip():
+                continue
+            speaker = "User" if item.role == ChatRole.USER else "Assistant"
+            lines.append(f"{speaker}: {text.strip()}")
+        elif isinstance(item, FunctionCall):
+            lines.append(f"[tool call] {item.name}({item.arguments})")
+        elif isinstance(item, FunctionCallOutput):
+            tag = "tool error" if item.is_error else "tool result"
+            lines.append(f"[{tag}] {item.name} -> {item.output}")
+    return "\n".join(lines)

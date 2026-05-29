@@ -8,6 +8,9 @@ from .chat_context import (
     FunctionCall,
     FunctionCallOutput,
     ImageContent,
+    AgentHandoff,
+    AgentConfigUpdate,
+    ReadOnlyChatContext,
 )
 
 __all__ = [
@@ -21,5 +24,8 @@ __all__ = [
     "FunctionCall",
     "FunctionCallOutput",
     "ImageContent",
+    "AgentHandoff",
+    "AgentConfigUpdate",
+    "ReadOnlyChatContext",
     "ResponseChunk",
 ]
