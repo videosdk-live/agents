@@ -26,9 +26,8 @@ class CallTransferAgent(Agent):
     @function_tool
     async def transfer_call(self) -> None:
         """Transfer the call to Provided number"""
-        token = os.getenv("VIDEOSDK_AUTH_TOKEN")
         transfer_to = os.getenv("CALL_TRANSFER_TO") 
-        return await self.session.call_transfer(token,transfer_to)
+        return await self.session.call_transfer(transfer_to)
 
 async def entrypoint(ctx: JobContext):
     
