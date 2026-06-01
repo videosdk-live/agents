@@ -119,6 +119,7 @@ class LlmMetrics(BaseComponentMetrics):
     total_tokens: Optional[int] = None
     prompt_cached_tokens: Optional[int] = None
     tokens_per_second: Optional[float] = None
+    produced_tool_calls: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -290,7 +291,7 @@ class TurnMetrics:
                 e2e_components.append(eou.eou_wait_ms)
 
         if self.llm_metrics:
-            llm = self.llm_metrics[-1]
+            llm = self.llm_metrics[0]
             if llm.llm_ttft is not None:
                 e2e_components.append(llm.llm_ttft)
 

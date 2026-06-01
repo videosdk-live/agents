@@ -730,6 +730,33 @@ class MetricsCollector:
 
             self._llm_start_time = None
 
+    def on_llm_round_start(self) -> None:
+        """Begin one LLM round-trip. Appends a fresh LlmMetrics so each
+        llm.chat() call in a tool turn gets its own timing/span (vs the old
+        single entry that collapsed the whole generate())."""
+        if self.current_turn:
+            self._llm_start_time = time.perf_counter()
+            self.current_turn.llm_metrics.append(LlmMetrics(llm_start_time=self._llm_start_time))
+
+    def on_llm_round_complete(self) -> None:
+        """Finalize the current LLM round-trip (duration + COMPONENT_METRIC emit)."""
+        if self._llm_start_time and self.current_turn and self.current_turn.llm_metrics:
+            llm_end_time = time.perf_counter()
+            llm = self.current_turn.llm_metrics[-1]
+            llm.llm_end_time = llm_end_time
+            llm.llm_duration = self._round_latency(llm_end_time - self._llm_start_time)
+            global_event_emitter.emit("COMPONENT_METRIC", {
+                "component": "llm",
+                "metrics": asdict(llm),
+            })
+            self._llm_start_time = None
+
+    def set_llm_produced_tool_calls(self, tool_names: List[str]) -> None:
+        """Record which tool(s) the current LLM round requested. Drives the
+        per-round span output and the conditional ' (k)' name suffix."""
+        if self.current_turn and self.current_turn.llm_metrics and tool_names:
+            self.current_turn.llm_metrics[-1].produced_tool_calls.extend(tool_names)
+
     def set_llm_input(self, text: str) -> None:
         """Record the actual text sent to LLM."""
         if self.current_turn:

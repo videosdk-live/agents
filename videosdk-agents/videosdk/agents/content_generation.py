@@ -136,8 +136,9 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                 "context_size": len(self.agent.chat_context.items)
             })
 
-            metrics_collector.on_llm_start()
+            metrics_collector.on_llm_round_start()
             metrics_collector.set_llm_input(user_text)
+            _round_completed = False
 
             first_chunk_received = False
             _total_tool_calls = 0
@@ -190,6 +191,11 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                 if llm_chunk_resp.metadata and "function_call" in llm_chunk_resp.metadata:
                     func_call = llm_chunk_resp.metadata["function_call"]
 
+                    if not _round_completed:
+                        metrics_collector.set_llm_produced_tool_calls([func_call["name"]])
+                        metrics_collector.on_llm_round_complete()
+                        _round_completed = True
+
                     _total_tool_calls += 1
                     if _total_tool_calls > _max_total_tool_calls:
                         logger.warning(f"Tool call limit reached ({_max_total_tool_calls}), skipping")
@@ -197,10 +203,6 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
 
                     logger.info(f"Tool call: {func_call['name']} ({_total_tool_calls}/{_max_total_tool_calls})")
 
-                    metrics_collector.add_function_tool_call(
-                        tool_name=func_call["name"],
-                        tool_params=func_call["arguments"],
-                    )
                     self.emit("tool_called", {
                         "name": func_call["name"],
                         "arguments": func_call["arguments"]
@@ -240,7 +242,16 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                             agent_session._is_executing_tool = True
 
                         try:
+                            _tool_start = time.perf_counter()
                             result = await tool(**self._safe_tool_kwargs(tool, func_call["arguments"]))
+                            _tool_end = time.perf_counter()
+                            metrics_collector.add_function_tool_call(
+                                tool_name=func_call["name"],
+                                tool_params=func_call["arguments"],
+                                tool_response=result if isinstance(result, dict) else {"result": result},
+                                start_time=_tool_start,
+                                end_time=_tool_end,
+                            )
 
                             if isinstance(result, Agent):
                                 new_agent = result
@@ -298,6 +309,9 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                                 pending_calls = []
                                 buffered_text = []
 
+                                metrics_collector.on_llm_round_start()
+                                _pt_first_token = False
+
                                 async for new_resp in self.llm.chat(
                                     chat_context,
                                     tools=self.agent.tools,
@@ -307,6 +321,12 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                                         break
                                     if not new_resp:
                                         continue
+
+                                    if new_resp.metadata and "usage" in new_resp.metadata:
+                                        metrics_collector.set_llm_usage(new_resp.metadata["usage"])
+                                    if not _pt_first_token:
+                                        _pt_first_token = True
+                                        metrics_collector.on_llm_first_token()
 
                                     if new_resp.metadata and "function_call" in new_resp.metadata:
                                         _total_tool_calls += 1
@@ -320,6 +340,9 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                                         pending_calls.append((next_call, next_call_id))
                                     elif new_resp.content:
                                         buffered_text.append((new_resp.content, new_resp.metadata, new_resp.role))
+
+                                metrics_collector.set_llm_produced_tool_calls([c["name"] for c, _ in pending_calls])
+                                metrics_collector.on_llm_round_complete()
 
                                 if not pending_calls and buffered_text:
                                     _tool_loop_text_yielded = True
@@ -348,7 +371,16 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                                         None
                                     )
                                     if next_tool:
+                                        _ct_start = time.perf_counter()
                                         next_result = await next_tool(**self._safe_tool_kwargs(next_tool, next_call["arguments"]))
+                                        _ct_end = time.perf_counter()
+                                        metrics_collector.add_function_tool_call(
+                                            tool_name=next_call["name"],
+                                            tool_params=next_call["arguments"],
+                                            tool_response=next_result if isinstance(next_result, dict) else {"result": next_result},
+                                            start_time=_ct_start,
+                                            end_time=_ct_end,
+                                        )
                                         chat_context.add_function_output(
                                             name=next_call["name"],
                                             output=json.dumps(next_result),
@@ -371,9 +403,11 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                                              if is_function_tool(t) and get_tool_info(t).name == nc["name"]),
                                             None
                                         )
+                                        _s = time.perf_counter()
                                         if t:
-                                            return nc, nc_id, await t(**self._safe_tool_kwargs(t, nc["arguments"])), False
-                                        return nc, nc_id, {"error": f"Tool '{nc['name']}' not found"}, True
+                                            _out = await t(**self._safe_tool_kwargs(t, nc["arguments"]))
+                                            return nc, nc_id, _out, False, _s, time.perf_counter()
+                                        return nc, nc_id, {"error": f"Tool '{nc['name']}' not found"}, True, _s, time.perf_counter()
 
                                     results = await asyncio.gather(
                                         *[_exec_tool(pc) for pc in pending_calls],
@@ -384,7 +418,14 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                                         if isinstance(r, Exception):
                                             logger.error(f"Parallel tool error: {r}")
                                             continue
-                                        nc, nc_id, output, is_err = r
+                                        nc, nc_id, output, is_err, _s, _e = r
+                                        metrics_collector.add_function_tool_call(
+                                            tool_name=nc["name"],
+                                            tool_params=nc["arguments"],
+                                            tool_response=output if isinstance(output, dict) else {"result": output},
+                                            start_time=_s,
+                                            end_time=_e,
+                                        )
                                         chat_context.add_function_output(
                                             name=nc["name"],
                                             output=json.dumps(output),
@@ -396,6 +437,8 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                             if not self._is_interrupted and not _tool_loop_text_yielded and isinstance(last_item, FunctionCallOutput):
                                 logger.info("Tool loop exhausted, forcing final text response")
                                 _final_text_yielded = False
+                                metrics_collector.on_llm_round_start()
+                                _ff_first_token = False
                                 async for final_resp in self.llm.chat(
                                     chat_context,
                                     tools=None,
@@ -403,6 +446,11 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                                 ):
                                     if self._is_interrupted or not final_resp:
                                         break
+                                    if final_resp.metadata and "usage" in final_resp.metadata:
+                                        metrics_collector.set_llm_usage(final_resp.metadata["usage"])
+                                    if not _ff_first_token:
+                                        _ff_first_token = True
+                                        metrics_collector.on_llm_first_token()
                                     if final_resp.content:
                                         _final_text_yielded = True
                                         self.emit("generation_chunk", {
@@ -423,6 +471,8 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                                         "metadata": None
                                     })
                                     yield ResponseChunk(fallback_text, None, ChatRole.ASSISTANT)
+
+                                metrics_collector.on_llm_round_complete()
 
                             if self._is_interrupted:
                                 last_item = chat_context.items[-1] if chat_context.items else None
@@ -462,7 +512,8 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                 _prefix_target_msg.content = _prefix_original_content
 
             if not self._is_interrupted:
-                metrics_collector.on_llm_complete()
+                if not _round_completed:
+                    metrics_collector.on_llm_round_complete()
                 self.emit("generation_complete", {})
     
     def interrupt(self) -> None:

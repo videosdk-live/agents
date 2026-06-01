@@ -366,7 +366,13 @@ def _create_user_input_speech_span(ev: Any, parent: Span, fallback_end: Optional
     complete_span(span, StatusCode.OK, end_time=end)
 
 
-def _create_llm_span(turn: Any, llm: Any, parent: Span) -> Optional[Span]:
+def _create_llm_span(
+    turn: Any,
+    llm: Any,
+    parent: Span,
+    round_index: int = 1,
+    total_rounds: int = 1,
+) -> Optional[Span]:
     pdata = _provider_attrs(turn, "llm")
     provider_class = pdata.get("provider_class", "LLM")
     attrs = dict(pdata)
@@ -378,7 +384,11 @@ def _create_llm_span(turn: Any, llm: Any, parent: Span) -> Optional[Span]:
         attrs["start_timestamp"] = llm.llm_start_time
     if llm.llm_end_time:
         attrs["end_timestamp"] = llm.llm_end_time
-    if turn.agent_speech:
+    # Per-round output: tool-call summary for tool-producing rounds, the spoken
+    # answer for the final round. Avoids the old single-entry concatenation.
+    if getattr(llm, "produced_tool_calls", None):
+        attrs["output"] = "→ tool call: " + ", ".join(llm.produced_tool_calls)
+    elif turn.agent_speech:
         attrs["output"] = turn.agent_speech
     if llm.prompt_tokens:
         attrs["input_tokens"] = llm.prompt_tokens
@@ -388,34 +398,66 @@ def _create_llm_span(turn: Any, llm: Any, parent: Span) -> Optional[Span]:
         attrs["cached_input_tokens"] = llm.prompt_cached_tokens
     if llm.total_tokens:
         attrs["total_tokens"] = llm.total_tokens
+    if total_rounds > 1:
+        attrs["llm_round"] = round_index
 
-    span = create_span(
-        f"{provider_class}: LLM Processing",
-        attrs,
-        parent_span=parent,
-        start_time=llm.llm_start_time,
-    )
+    name = f"{provider_class}: LLM Processing"
+    if total_rounds > 1:
+        name = f"{name} ({round_index})"
 
-    if span:
-        for tool_data in turn.function_tool_timestamps or []:
-            tool_span = create_span(
-                f"Invoked Tool: {tool_data.get('tool_name', 'unknown')}",
-                parent_span=span,
-                start_time=tool_data.get("timestamp"),
-            )
-            complete_span(tool_span, StatusCode.OK, end_time=tool_data.get("timestamp"))
+    span = create_span(name, attrs, parent_span=parent, start_time=llm.llm_start_time)
 
-        if llm.llm_ttft is not None and llm.llm_start_time is not None:
-            ttft_span = create_span(
-                "Time to First Token",
-                {"llm_ttft": llm.llm_ttft},
-                parent_span=span,
-                start_time=llm.llm_start_time,
-            )
-            complete_span(ttft_span, StatusCode.OK, end_time=llm.llm_start_time + (llm.llm_ttft / 1000.0))
+    if span and llm.llm_ttft is not None and llm.llm_start_time is not None:
+        ttft_span = create_span(
+            "Time to First Token",
+            {"llm_ttft": llm.llm_ttft},
+            parent_span=span,
+            start_time=llm.llm_start_time,
+        )
+        complete_span(ttft_span, StatusCode.OK, end_time=llm.llm_start_time + (llm.llm_ttft / 1000.0))
 
     complete_span(span, StatusCode.OK, end_time=llm.llm_end_time)
     return span
+
+
+def _is_llm_round_husk(llm: Any) -> bool:
+    """A follow-up LLM round that was started but produced nothing and never
+    completed — e.g. the post-tool round after a terminal tool (end_call) tore the
+    session down before any token arrived. Rendering it adds a content-less span
+    whose duration is a meaningless render-time fallback. Drop it.
+
+    A round that did ANY work is never a husk: it completed (has end_time), streamed
+    a token (has ttft), reported usage (has tokens), or requested a tool.
+    """
+    return (
+        llm.llm_end_time is None
+        and llm.llm_ttft is None
+        and not getattr(llm, "produced_tool_calls", None)
+        and not (llm.prompt_tokens or llm.completion_tokens or llm.total_tokens)
+    )
+
+
+def _create_invoked_tool_span(tool: Any, parent: Span) -> None:
+    """A function-tool execution as a sibling under Agent Turn, with real
+    duration plus the call's args (tool_params) and result (tool_response)."""
+    attrs: Dict[str, Any] = {}
+    if tool.tool_params:
+        attrs["args"] = tool.tool_params
+    if tool.tool_response:
+        attrs["output"] = tool.tool_response
+    if tool.latency is not None:
+        attrs["duration_ms"] = tool.latency
+    start = tool.start_time
+    span = create_span(
+        f"Invoked Tool: {tool.tool_name or 'unknown'}",
+        attrs,
+        parent_span=parent,
+        start_time=start,
+    )
+    end = tool.end_time if tool.end_time is not None else start
+    if start is not None and end is not None and end < start:
+        end = start  # defensive clamp — never emit negative duration
+    complete_span(span, StatusCode.OK, end_time=end)
 
 
 def _create_tts_span(turn: Any, tts: Any, parent: Span) -> Optional[Span]:
@@ -471,14 +513,15 @@ def _create_rt_span(turn: Any, rt: Any, parent: Span) -> Optional[Span]:
     )
 
     if span:
-        for tool_name in turn.function_tools_called or []:
-            now = time.perf_counter()
-            tool_span = create_span(
-                f"Invoked Tool: {tool_name}",
-                parent_span=span,
-                start_time=now,
-            )
-            complete_span(tool_span, StatusCode.OK, end_time=now)
+        if turn.function_tool_metrics:
+            for tool in turn.function_tool_metrics:
+                _create_invoked_tool_span(tool, span)
+        else:
+            # Fallback for older data with names but no FunctionToolMetrics.
+            for tool_name in turn.function_tools_called or []:
+                now = time.perf_counter()
+                tool_span = create_span(f"Invoked Tool: {tool_name}", parent_span=span, start_time=now)
+                complete_span(tool_span, StatusCode.OK, end_time=now)
 
         if turn.e2e_latency is not None and rt_start is not None and rt_end is not None:
             ttfw_span = create_span(
@@ -906,11 +949,32 @@ class TracesFlowManager:
         if not agent_turn_span:
             return None
 
-        for llm in turn.llm_metrics or []:
+        # LLM rounds + tool executions render as time-ordered siblings under
+        # Agent Turn, so the request → tool → follow-up sequence (and its
+        # latency) is visible. See spec §2/§3.
+        # In realtime mode, tools are owned by _create_rt_span (nested under
+        # Realtime Processing). Skip them here to avoid double-emission.
+        is_realtime = bool(turn.realtime_metrics)
+        # Drop content-less husk rounds (started but cut off by a terminal tool like
+        # end_call: never completed, no token, no usage, no tool call). Their bar
+        # length is a meaningless render-time artifact. A round that did ANY work is kept.
+        llm_rounds = [llm for llm in (turn.llm_metrics or []) if not _is_llm_round_husk(llm)]
+        total_rounds = len(llm_rounds)
+        agent_primary: list = []
+        for idx, llm in enumerate(llm_rounds, start=1):
+            agent_primary.append((llm.llm_start_time, idx, "llm", llm))
+        if not is_realtime:
+            for tool in turn.function_tool_metrics or []:
+                agent_primary.append((tool.start_time, 0, "tool", tool))
+        agent_primary.sort(key=lambda x: (x[0] if x[0] is not None else 0))
+        for _start, idx, kind, payload in agent_primary:
             try:
-                _create_llm_span(turn, llm, agent_turn_span)
+                if kind == "llm":
+                    _create_llm_span(turn, payload, agent_turn_span, round_index=idx, total_rounds=total_rounds)
+                else:
+                    _create_invoked_tool_span(payload, agent_turn_span)
             except Exception as e:
-                logger.error(f"Error creating LLM span: {e}")
+                logger.error(f"Error creating {kind} span: {e}")
 
         for tts in turn.tts_metrics or []:
             try:
@@ -984,12 +1048,15 @@ class TracesFlowManager:
         if not self.agent_session_span:
             return
 
-        current_span = trace.get_current_span()
-
+        # Parent directly to the session span. trace.get_current_span() can't be used
+        # here: this SDK parents spans manually and never activates them in the OTel
+        # context, so get_current_span() always returns INVALID_SPAN (truthy,
+        # trace_id=0). Passing that as the parent makes the SDK mint a fresh trace_id,
+        # orphaning Agent Say into its own "session".
         agent_say_span = create_span(
             "Agent Say",
             {"Agent Say Message": message},
-            parent_span=current_span if current_span else self.agent_session_span,
+            parent_span=self.agent_session_span,
             start_time=time.perf_counter()
         )
 
@@ -1000,12 +1067,12 @@ class TracesFlowManager:
         if not self.agent_session_span:
             return
 
-        current_span = trace.get_current_span()
-
+        # See agent_say_called: get_current_span() returns INVALID_SPAN here and would
+        # orphan the span into a new trace. Parent directly to the session span.
         agent_reply_span = create_span(
             "Agent Reply",
             {"Agent Reply Instructions": instructions},
-            parent_span=current_span if current_span else self.agent_session_span,
+            parent_span=self.agent_session_span,
             start_time=time.perf_counter()
         )
 
