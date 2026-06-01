@@ -17,8 +17,12 @@ from typing import Any, Dict, Optional, Callable
 from multiprocessing import Process, Pipe
 from multiprocessing.connection import Connection
 
+from ._mp_context import get_mp_context
 from .base_resource import BaseResource
 from .types import ResourceType, TaskResult, TaskStatus, ResourceStatus
+
+# Inner chunk timeout for blocking Pipe waits. See note in resources.py.
+_IPC_POLL_CHUNK_SECONDS = 1.0
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +43,12 @@ class DedicatedInferenceResource(BaseResource):
         self._process_ready = False
         self._models_cache: Dict[str, Any] = {}
 
+        # Serializes IO on ``parent_conn`` so a concurrent health_check ping
+        # cannot consume an in-flight task's result (or vice versa). Both
+        # paths use the same Pipe; without this lock either side can win the
+        # recv() race and drop the other side's message on the floor.
+        self._conn_lock = asyncio.Lock()
+
         # Inference-specific configuration
         self.initialize_timeout = config.get("inference_process_timeout", 30.0)
         self.memory_warn_mb = config.get("inference_memory_warn_mb", 1000.0)
@@ -52,37 +62,50 @@ class DedicatedInferenceResource(BaseResource):
         """Initialize the dedicated inference process."""
         logger.info(f"Initializing dedicated inference process: {self.resource_id}")
 
-        # Create pipe for communication
-        self.parent_conn, self.child_conn = Pipe()
+        mp_ctx = get_mp_context()
 
-        # Start the inference process
-        self.process = Process(
+        # Pipe + Process both bound to the chosen context (spawn/forkserver)
+        # so the child does not inherit parent thread locks.
+        self.parent_conn, self.child_conn = mp_ctx.Pipe()
+        self.process = mp_ctx.Process(
             target=self._run_inference_process,
             args=(self.resource_id, self.child_conn, self.config),
             daemon=True,
         )
         self.process.start()
 
-        # Wait for process to be ready
-        start_time = time.time()
-        while (
-            not self._process_ready
-            and (time.time() - start_time) < self.initialize_timeout
-        ):
-            try:
-                if self.parent_conn.poll():
-                    message = self.parent_conn.recv()
-                    if message.get("type") == "ready":
-                        self._process_ready = True
-                        break
-                    elif message.get("type") == "error":
-                        raise Exception(
-                            f"Inference process error: {message.get('error')}"
-                        )
+        # Blocks an executor thread on Pipe.poll() rather than the asyncio
+        # loop. Wakes immediately when the child posts "ready" instead of
+        # within the 100ms poll cadence the old code used.
+        deadline = time.time() + self.initialize_timeout
+        loop = asyncio.get_running_loop()
 
-                await asyncio.sleep(0.1)
-            except Exception as e:
-                logger.warning(f"Error checking inference process readiness: {e}")
+        while time.time() < deadline:
+            if not self.process.is_alive():
+                raise RuntimeError(
+                    f"Inference process {self.resource_id} exited during init "
+                    f"(pid={self.process.pid}, exitcode={self.process.exitcode})"
+                )
+
+            chunk = min(_IPC_POLL_CHUNK_SECONDS, max(0.05, deadline - time.time()))
+            got = await loop.run_in_executor(None, self.parent_conn.poll, chunk)
+            if not got:
+                continue
+
+            try:
+                message = self.parent_conn.recv()
+            except (EOFError, BrokenPipeError) as e:
+                raise RuntimeError(
+                    f"Inference process {self.resource_id} pipe closed during init: {e}"
+                )
+
+            if message.get("type") == "ready":
+                self._process_ready = True
+                break
+            elif message.get("type") == "error":
+                raise RuntimeError(
+                    f"Inference process error: {message.get('error')}"
+                )
 
         if not self._process_ready:
             raise TimeoutError(
@@ -109,37 +132,69 @@ class DedicatedInferenceResource(BaseResource):
             "timeout": config.timeout,
         }
 
-        # Send inference request to process
-        self.parent_conn.send({"type": "inference", "data": inference_data})
+        # Hold the lock across the full send/receive cycle so the matching
+        # response cannot be consumed by a concurrent health_check or another
+        # task. With ``max_concurrent_tasks=1`` (the default), this is the
+        # only viable concurrency for this resource, so the lock is not a
+        # serialization bottleneck — it just closes the recv() race.
+        async with self._conn_lock:
+            self.parent_conn.send({"type": "inference", "data": inference_data})
 
-        # Wait for result
-        start_time = time.time()
-        while (time.time() - start_time) < config.timeout:
-            try:
-                if self.parent_conn.poll():
+            deadline = time.time() + config.timeout
+            loop = asyncio.get_running_loop()
+
+            while time.time() < deadline:
+                if not self.process.is_alive():
+                    raise RuntimeError(
+                        f"Inference process {self.resource_id} died during task {task_id}"
+                    )
+
+                chunk = min(_IPC_POLL_CHUNK_SECONDS, max(0.05, deadline - time.time()))
+                got = await loop.run_in_executor(None, self.parent_conn.poll, chunk)
+                if not got:
+                    continue
+
+                try:
                     message = self.parent_conn.recv()
-                    if (
-                        message.get("type") == "result"
-                        and message.get("task_id") == task_id
-                    ):
-                        if message.get("status") == "success":
-                            return message.get("result")
-                        else:
-                            raise RuntimeError(
-                                message.get("error", "Unknown inference error")
-                            )
-                    elif message.get("type") == "error":
-                        raise RuntimeError(
-                            message.get("error", "Inference process error")
-                        )
+                except (EOFError, BrokenPipeError) as e:
+                    raise RuntimeError(
+                        f"Inference pipe closed mid-task: {e}"
+                    )
 
-                await asyncio.sleep(0.1)
-            except Exception as e:
-                logger.warning(f"Error checking inference result: {e}")
+                if (
+                    message.get("type") == "result"
+                    and message.get("task_id") == task_id
+                ):
+                    if message.get("status") == "success":
+                        return message.get("result")
+                    raise RuntimeError(
+                        message.get("error", "Unknown inference error")
+                    )
+                if message.get("type") == "error":
+                    raise RuntimeError(
+                        message.get("error", "Inference process error")
+                    )
+                # Otherwise: unrelated message (e.g. a stale ping_response if
+                # the lock was acquired right after a health_check returned).
+                logger.warning(
+                    "Inference resource %s: discarding unrelated message of type %r",
+                    self.resource_id,
+                    message.get("type"),
+                )
 
-        raise TimeoutError(
-            f"Inference task {task_id} timed out after {config.timeout}s"
-        )
+            # Timeout: best-effort cancel notification to the child. We do
+            # NOT terminate the inference process — it is shared across
+            # tasks and killing it would lose unrelated state. The child
+            # ignores ``cancel`` today (see audit finding #9 for cooperative
+            # cancellation as a follow-up); the signal exists so the child
+            # can be made to honor it later without changing this caller.
+            try:
+                self.parent_conn.send({"type": "cancel", "task_id": task_id})
+            except Exception:
+                pass
+            raise TimeoutError(
+                f"Inference task {task_id} timed out after {config.timeout}s"
+            )
 
     async def _shutdown_impl(self) -> None:
         """Shutdown the dedicated inference process."""
@@ -171,34 +226,59 @@ class DedicatedInferenceResource(BaseResource):
             if self._shutdown or not self.process or not self.process.is_alive():
                 return False
 
-            # Send ping to inference process
-            self.parent_conn.send({"type": "ping"})
+            # If a task is holding the pipe, that in-flight work is itself a
+            # liveness signal — skip the ping rather than block the
+            # health-check loop or race the task on the shared Pipe.
+            try:
+                await asyncio.wait_for(self._conn_lock.acquire(), timeout=1.0)
+            except asyncio.TimeoutError:
+                logger.debug(
+                    "Inference resource %s busy with task; deferring active ping",
+                    self.resource_id,
+                )
+                self.last_heartbeat = time.time()
+                return True
 
-            # Wait for ping response
-            start_time = time.time()
-            timeout = 5.0  # 5 second timeout for health check
+            try:
+                self.parent_conn.send({"type": "ping"})
 
-            while (time.time() - start_time) < timeout:
-                try:
-                    if self.parent_conn.poll():
+                ping_timeout = 5.0  # ping itself
+                deadline = time.time() + ping_timeout
+                loop = asyncio.get_running_loop()
+
+                while time.time() < deadline:
+                    chunk = min(
+                        _IPC_POLL_CHUNK_SECONDS, max(0.05, deadline - time.time())
+                    )
+                    got = await loop.run_in_executor(
+                        None, self.parent_conn.poll, chunk
+                    )
+                    if not got:
+                        continue
+
+                    try:
                         message = self.parent_conn.recv()
-                        if message.get("type") == "ping_response":
-                            # Update last heartbeat
-                            self.last_heartbeat = time.time()
-                            return True
-                        elif message.get("type") == "error":
-                            logger.error(
-                                f"Inference process error: {message.get('error')}"
-                            )
-                            return False
+                    except (EOFError, BrokenPipeError) as e:
+                        logger.warning(
+                            "Inference pipe closed during health check: %s", e
+                        )
+                        return False
 
-                    await asyncio.sleep(0.1)
-                except Exception as e:
-                    logger.warning(f"Error checking inference process health: {e}")
+                    if message.get("type") == "ping_response":
+                        self.last_heartbeat = time.time()
+                        return True
+                    if message.get("type") == "error":
+                        logger.error(
+                            f"Inference process error: {message.get('error')}"
+                        )
+                        return False
 
-            # Timeout - process is unresponsive
-            logger.warning(f"Inference process {self.resource_id} health check timeout")
-            return False
+                logger.warning(
+                    f"Inference process {self.resource_id} health check timeout"
+                )
+                return False
+            finally:
+                self._conn_lock.release()
 
         except Exception as e:
             logger.error(

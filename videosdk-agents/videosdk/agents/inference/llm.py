@@ -39,6 +39,7 @@ from videosdk.agents import (
     FunctionTool,
     is_function_tool,
     build_openai_schema,
+    build_gemini_schema,
     ChatContent,
     ImageContent,
 )
@@ -530,7 +531,9 @@ class LLM(BaseLLM):
             except json.JSONDecodeError:
                 logger.error(
                     "[InferenceLLM] Failed to parse tool-call arguments for "
-                    "'%s': %r", tc["name"], raw_args
+                    "'%s': %r",
+                    tc["name"],
+                    raw_args,
                 )
                 args = {}
             if not isinstance(args, dict):
@@ -666,14 +669,21 @@ class LLM(BaseLLM):
                 continue
 
             try:
-                openai_schema = build_openai_schema(tool)
+                # build_gemini_schema returns a types.FunctionDeclaration
+                # whose ``parameters`` field is itself a types.Schema
+                # (both Pydantic-v2 objects). Use model_dump to flatten
+                # the entire thing to plain dicts in one pass; the
+                # gateway request body is JSON-serialized by aiohttp and
+                # chokes on typed objects otherwise.
+                gemini_schema = build_gemini_schema(tool)
+                schema_dict = gemini_schema.model_dump(exclude_none=True)
                 formatted_tools.append(
                     {
                         "type": "function",
                         "function": {
-                            "name": openai_schema.get("name", ""),
-                            "description": openai_schema.get("description", ""),
-                            "parameters": openai_schema.get("parameters", {}),
+                            "name": schema_dict.get("name", ""),
+                            "description": schema_dict.get("description", ""),
+                            "parameters": schema_dict.get("parameters", {}),
                         },
                     }
                 )

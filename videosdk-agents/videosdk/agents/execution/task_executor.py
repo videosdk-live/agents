@@ -58,7 +58,7 @@ class TaskExecutor:
         entrypoint: Callable,
         task_type: TaskType = TaskType.JOB,
         timeout: float = 300.0,
-        retry_count: int = 3,
+        retry_count: int = 0,
         priority: int = 0,
         *args,
         **kwargs,
@@ -70,7 +70,10 @@ class TaskExecutor:
             entrypoint: Function to execute
             task_type: Type of task (inference, meeting, job)
             timeout: Task timeout in seconds
-            retry_count: Number of retries on failure
+            retry_count: Number of retries on failure. Defaults to 0 because
+                most entrypoints in this SDK have user-visible side effects
+                (joining a room, billing, etc.) and silent retry would
+                double-execute them. Opt in explicitly for idempotent tasks.
             priority: Task priority (higher = higher priority)
             *args, **kwargs: Arguments to pass to entrypoint
 
