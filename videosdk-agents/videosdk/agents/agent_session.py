@@ -648,7 +648,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             return []
 
         context_copy = self.agent.chat_context.copy(
-            exclude_function_calls=not include_function_calls,
+            tools=None if include_function_calls else [],
             exclude_system_messages=not include_system_messages,
         )
         return context_copy.to_dict()["items"]

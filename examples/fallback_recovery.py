@@ -28,10 +28,34 @@ async def entrypoint(ctx: JobContext):
     # 1. Define a list of providers (in priority order).
     # 2. temporary_disable_sec: Time to wait before retrying a failed primary provider.
     # 3. permanent_disable_after_attempts: Disable a provider permanently after N failed recovery attempts.
+    # 4. latency_threshold_ms: Per-component latency budget in ms (STT stt_latency / LLM llm_ttft / TTS ttfb).
+    #    Off by default — pass a value to enable latency-based fallback.
+    # 5. consecutive_latency_hits: Switch only after this many consecutive turns above the threshold (default 3).
+    #    Recovery/cooldown use the same temporary_disable_sec / permanent_disable_after_attempts as the error path.
 
-    stt_provider = FallbackSTT([OpenAISTT(),DeepgramSTT()],temporary_disable_sec=30.0, permanent_disable_after_attempts=3)
-    llm_provider = FallbackLLM([OpenAILLM(model="gpt-4o-mini"),CerebrasLLM()],temporary_disable_sec=30.0, permanent_disable_after_attempts=3)
-    tts_provider = FallbackTTS([OpenAITTS(voice="alloy"),CartesiaTTS()],temporary_disable_sec=30.0, permanent_disable_after_attempts=3)
+    stt_provider = FallbackSTT(
+        [OpenAISTT(), DeepgramSTT()],
+        temporary_disable_sec=30.0,
+        permanent_disable_after_attempts=3,
+        latency_threshold_ms=350,
+        consecutive_latency_hits=3,
+    )
+
+    llm_provider = FallbackLLM(
+        [OpenAILLM(model="gpt-4o-mini"), CerebrasLLM()],
+        temporary_disable_sec=30.0,
+        permanent_disable_after_attempts=3,
+        latency_threshold_ms=800,
+        consecutive_latency_hits=3,
+    )
+
+    tts_provider = FallbackTTS(
+        [OpenAITTS(voice="alloy"), CartesiaTTS()],
+        temporary_disable_sec=30.0,
+        permanent_disable_after_attempts=3,
+        latency_threshold_ms=250,
+        consecutive_latency_hits=3,
+    )
 
 
     pipeline = Pipeline(

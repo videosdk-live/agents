@@ -10,7 +10,15 @@ logger = logging.getLogger(__name__)
 
 class FallbackBase:
     """Base class providing provider failover, recovery, and metrics emission for fallback-capable components."""
-    def __init__(self, providers: List[Any], component_name: str, temporary_disable_sec: float = 60.0, permanent_disable_after_attempts: int = 3):
+    def __init__(
+        self,
+        providers: List[Any],
+        component_name: str,
+        temporary_disable_sec: float = 60.0,
+        permanent_disable_after_attempts: int = 3,
+        latency_threshold_ms: Optional[float] = None,
+        consecutive_latency_hits: int = 3,
+    ):
         if not providers:
             raise ValueError(f"{component_name} requires at least one provider")
         self.providers = providers
@@ -19,7 +27,11 @@ class FallbackBase:
         self._switch_lock = asyncio.Lock()
         self.temporary_disable_sec = temporary_disable_sec
         self.permanent_disable_after_attempts = permanent_disable_after_attempts
-        self._failed_providers: dict[int, float] = {} 
+        self.latency_threshold_ms = latency_threshold_ms
+        self.consecutive_latency_hits = max(1, consecutive_latency_hits)
+        self._consecutive_latency_hits: int = 0
+        self._last_latency_ms: Optional[float] = None
+        self._failed_providers: dict[int, float] = {}
         self._recovery_attempts: dict[int, int] = {}
         self._metrics_collector = metrics_collector
 
@@ -46,6 +58,38 @@ class FallbackBase:
                 new_provider_model = getattr(self.active_provider, 'model', getattr(self.active_provider, 'model_id', getattr(self.active_provider, 'speech_model', getattr(self.active_provider, 'voice_id', getattr(self.active_provider, 'voice', '')))))
                 self._metrics_collector.update_provider_class(self._component_name, new_provider_class, str(new_provider_model))
             self._metrics_collector.on_fallback_event(event_data)
+
+    async def _record_latency(self, latency_ms: Optional[float]) -> None:
+        """
+        Record an observed per-turn latency value for the active provider.
+        When latency exceeds latency_threshold_ms for consecutive_latency_hits consecutive
+        turns, trigger a fallback switch via the same path used for errors.
+        """
+        if self.latency_threshold_ms is None or latency_ms is None:
+            return
+
+        self._last_latency_ms = latency_ms
+
+        if latency_ms <= self.latency_threshold_ms:
+            if self._consecutive_latency_hits:
+                logger.info(
+                    f"[{self._component_name}] Latency recovered: {latency_ms:.1f}ms <= {self.latency_threshold_ms}ms"
+                )
+            self._consecutive_latency_hits = 0
+            return
+
+        self._consecutive_latency_hits += 1
+        logger.info(
+            f"[{self._component_name}] Latency hit {self._consecutive_latency_hits}/{self.consecutive_latency_hits}: "
+            f"{latency_ms:.1f}ms > {self.latency_threshold_ms}ms (provider={self.active_provider.label})"
+        )
+
+        if self._consecutive_latency_hits >= self.consecutive_latency_hits:
+            reason = (
+                f"Latency degraded: {latency_ms:.1f}ms > {self.latency_threshold_ms}ms "
+                f"for {self.consecutive_latency_hits} consecutive turns"
+            )
+            await self._switch_provider(reason, failed_provider=self.active_provider)
 
     async def _switch_provider(self, reason: str, failed_provider: Any = None):
         """
@@ -79,12 +123,6 @@ class FallbackBase:
             except Exception as e:
                 logger.warning(f"[{self._component_name}] Error recording failure timestamp: {e}")
 
-            try:
-                if hasattr(self.active_provider, "aclose"):
-                    await self.active_provider.aclose()
-            except Exception as e:
-                logger.warning(f"[{self._component_name}] Error closing failed provider: {e}")
-
             if self._current_index >= len(self.providers) - 1:
                 logger.error(f"[{self._component_name}] All providers failed. No fallback available.")
                 # Emit fallback event even when no fallback available
@@ -110,13 +148,14 @@ class FallbackBase:
                 return False
 
             self._current_index += 1
+            self._consecutive_latency_hits = 0
             new_connection_start = time.perf_counter()
             new_provider_label = self.active_provider.label
             logger.info(f"[{self._component_name}] Switched to backup: {new_provider_label}")
             new_connection_end = time.perf_counter()
-            
+
             fallback_end_time = time.perf_counter()
-            
+
             # Emit fallback event with timing data
             self._emit_fallback_event({
                 "component_type": self._component_name,
@@ -135,8 +174,10 @@ class FallbackBase:
                 "new_connection_start": new_connection_start,
                 "new_connection_end": new_connection_end,
                 "new_connection_duration_ms": (new_connection_end - new_connection_start) * 1000,
+                "observed_latency_ms": self._last_latency_ms,
+                "latency_threshold_ms": self.latency_threshold_ms,
             })
-            
+
             return True
 
     def check_recovery(self):
@@ -169,6 +210,7 @@ class FallbackBase:
             new_provider_label = self.providers[best_ready_index].label
             logger.info(f"[{self._component_name}] Restoring primary/higher priority provider: {new_provider_label}")
             self._current_index = best_ready_index
+            self._consecutive_latency_hits = 0
             
             # Emit recovery event - mark as recovery so it doesn't create child spans
             self._emit_fallback_event({

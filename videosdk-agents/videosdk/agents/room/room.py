@@ -237,7 +237,7 @@ class VideoSDKHandler(BaseTransportHandler):
         self._left: bool = False
         self.sdk_metadata = {
             "sdk": "agents",
-            "sdk_version": "1.0.15"
+            "sdk_version": "1.0.16"
         }
         self.videosdk_meeting_meta_data= {
             "agent_id": self.agent_id,
@@ -352,9 +352,6 @@ class VideoSDKHandler(BaseTransportHandler):
             data: Meeting leave event data from VideoSDK.
         """
         logger.info(f"Meeting Left: {data}")
-
-        if hasattr(self, "participants_data") and self.participants_data:
-            self.participants_data.clear()
 
         asyncio.create_task(self._end_session("meeting_left"))
 

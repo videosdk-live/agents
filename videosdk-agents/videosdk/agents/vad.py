@@ -44,7 +44,7 @@ class VAD(EventEmitter[Literal["error", "info"]]):
         self,
         sample_rate: int = 16000,
         threshold: float = 0.5,
-        min_speech_duration: float = 0.5,
+        min_speech_duration: float = 0.05,
         min_silence_duration: float = 0.5
     ) -> None:
         super().__init__()
