@@ -25,6 +25,8 @@ from .types import (
 
 logger = logging.getLogger(__name__)
 
+_INITIAL_RESOURCE_MAX_ATTEMPTS = 3
+
 
 class ResourceManager:
     """
@@ -44,6 +46,12 @@ class ResourceManager:
         self._shutdown = False
         self._health_check_task: Optional[asyncio.Task] = None
         self._resource_creation_task: Optional[asyncio.Task] = None
+
+        # Counts on-demand spawns that have started but not yet finished
+        # appending to ``self.resources``. Combined with ``len(self.resources)``
+        # this gates concurrent ``_acquire_resource`` callers from racing past
+        # ``max_resources`` while a spawn is in flight.
+        self._pending_resource_creations = 0
 
         # Dedicated inference resource (legacy IPC compatibility)
         self.dedicated_inference_resource: Optional[DedicatedInferenceResource] = None
@@ -113,14 +121,39 @@ class ResourceManager:
         logger.info("Dedicated inference resource created")
 
     async def _create_initial_resources(self):
-        """Create initial resources based on configuration."""
+        """Create initial resources based on configuration.
+
+        Each slot is retried up to ``_INITIAL_RESOURCE_MAX_ATTEMPTS`` times so
+        a single transient init failure (e.g. lock-inheritance deadlock, slow
+        cold start, ephemeral plugin import error) does not kill the worker
+        before it accepts any job.
+        """
         initial_count = self.config.num_idle_resources
         logger.info(
             f"Creating {initial_count} initial {self.config.resource_type.value} resources"
         )
 
-        for i in range(initial_count):
-            await self._create_resource(self.config.resource_type)
+        for _ in range(initial_count):
+            last_err: Optional[BaseException] = None
+            for attempt in range(1, _INITIAL_RESOURCE_MAX_ATTEMPTS + 1):
+                try:
+                    await self._create_resource(self.config.resource_type)
+                    break
+                except Exception as e:
+                    last_err = e
+                    logger.warning(
+                        "Initial resource creation attempt %d/%d failed: %s",
+                        attempt,
+                        _INITIAL_RESOURCE_MAX_ATTEMPTS,
+                        e,
+                    )
+            else:
+                logger.error(
+                    "Initial resource creation gave up after %d attempts",
+                    _INITIAL_RESOURCE_MAX_ATTEMPTS,
+                )
+                assert last_err is not None
+                raise last_err
 
     async def _create_resource(self, resource_type: ResourceType) -> BaseResource:
         """Create a new resource of the specified type."""
@@ -274,8 +307,11 @@ class ResourceManager:
                 task_id, task_config, entrypoint, args, kwargs
             )
 
-        # Route other tasks to job resources
-        resource = await self._get_available_resource(task_config.task_type)
+        # Route other tasks to job resources. ``_acquire_resource`` scales the
+        # pool on demand if there is headroom under ``max_resources`` — without
+        # this, bursts arriving faster than the 5s lifecycle tick get rejected
+        # even when the configured pool would allow another resource.
+        resource = await self._acquire_resource(task_config.task_type)
         if not resource:
             raise RuntimeError("No available resources for task execution")
 
@@ -287,18 +323,51 @@ class ResourceManager:
     async def _get_available_resource(
         self, task_type: TaskType
     ) -> Optional[BaseResource]:
-        """Get an available resource for task execution."""
-        # For now, use simple round-robin selection
-        # In the future, this could be enhanced with load balancing, priority, etc.
-
+        """Return an idle resource if one exists, else None. Does not scale."""
         available_resources = [r for r in self.resources if r.is_available]
-
         if available_resources:
-            # Simple round-robin selection
-            # In a real implementation, you might want more sophisticated load balancing
             return available_resources[0]
-
         return None
+
+    async def _acquire_resource(
+        self, task_type: TaskType
+    ) -> Optional[BaseResource]:
+        """Acquire a resource for the task, scaling the pool on demand.
+
+        Burst-load path: when no idle resource exists but the pool is below
+        ``max_resources``, spawn a new resource inline rather than rejecting
+        the task and waiting for the 5s lifecycle loop tick. Returns ``None``
+        only when the pool is already at its configured ceiling and nothing
+        is idle.
+        """
+        resource = await self._get_available_resource(task_type)
+        if resource is not None:
+            return resource
+
+        in_flight = len(self.resources) + self._pending_resource_creations
+        if in_flight >= self.config.max_resources:
+            return None
+
+        self._pending_resource_creations += 1
+        try:
+            logger.info(
+                "On-demand scale-up: spawning a new %s resource for burst task "
+                "(pool=%d, pending=%d, max=%d)",
+                self.config.resource_type.value,
+                len(self.resources),
+                self._pending_resource_creations - 1,
+                self.config.max_resources,
+            )
+            return await self._create_resource(self.config.resource_type)
+        except Exception as e:
+            logger.error(
+                "On-demand scale-up failed for %s: %s",
+                task_type.value,
+                e,
+            )
+            return None
+        finally:
+            self._pending_resource_creations -= 1
 
     def get_stats(self) -> Dict[str, Any]:
         """Get resource manager statistics."""
