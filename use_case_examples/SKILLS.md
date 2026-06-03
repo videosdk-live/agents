@@ -66,7 +66,7 @@ Contains production-oriented agent examples for specific business domains and us
 
 **Telecom customer care with live-agent handoff** for ConnectTel. Demonstrates:
 
-- `session.call_transfer(token, transfer_to)` — transfers the call to a live human agent's phone number
+- `session.call_transfer(transfer_to)` — transfers the call to a live human agent's phone number (auth token resolved internally)
 - `Options(agent_id=..., register=True, host="localhost", port=8081)` — registered worker deployment mode
 - `@function_tool` methods: `get_bill_details(account_id)` for billing lookup, `transfer_to_human_agent()` for escalation
 - Emotion-aware instructions — agent immediately transfers frustrated customers without asking
