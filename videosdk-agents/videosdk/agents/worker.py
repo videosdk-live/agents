@@ -716,6 +716,10 @@ class Worker:
         self, assignment: JobAssignment, args: JobAcceptArguments
     ):
         """Launch a job from backend assignment."""
+        # Bound here so the outer finally can shut it down on any failure path,
+        # not just the success path. Previously the Manager process leaked
+        # whenever an exception escaped the inner try to the outer except.
+        manager = None
         try:
             # Use assignment token if available, otherwise fall back to worker's auth token
             auth_token = (
@@ -837,14 +841,14 @@ class Worker:
 
             # If wait=True, create a cross-process event to wait for meeting join
             # before sending the "running" status to registry
-            import multiprocessing
+            from .execution._mp_context import get_mp_context
 
             mp_meeting_joined_event = None
             logger.info(
                 f"Job {assignment.job_id}: assignment.wait={assignment.wait} (type={type(assignment.wait).__name__})"
             )
             if assignment.wait:
-                manager = multiprocessing.Manager()
+                manager = get_mp_context().Manager()
                 mp_meeting_joined_event = manager.Event()
                 logger.info(
                     f"Job {assignment.job_id}: wait=True, deferring 'running' status until meeting joined"
@@ -962,13 +966,6 @@ class Worker:
             self._current_jobs.pop(assignment.job_id, None)
             logger.info(f"Removed job {assignment.job_id} from current jobs")
 
-            # Clean up the multiprocessing manager if we created one
-            if mp_meeting_joined_event is not None:
-                try:
-                    manager.shutdown()
-                except Exception:
-                    pass
-
             await self._send_immediate_status_update()
 
         except Exception as e:
@@ -986,6 +983,15 @@ class Worker:
 
             # Send immediate status update to reflect reduced job count
             await self._send_immediate_status_update()
+
+        finally:
+            if manager is not None:
+                try:
+                    manager.shutdown()
+                except Exception as shutdown_err:
+                    logger.warning(
+                        f"Manager shutdown failed for job {assignment.job_id}: {shutdown_err}"
+                    )
 
     def setup_session_end_callback(self, job_context, job_id: str):
         """Set up session end callback for automatic session ending."""
