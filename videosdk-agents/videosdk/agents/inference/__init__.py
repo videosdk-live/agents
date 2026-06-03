@@ -32,6 +32,7 @@ GoogleSTT = STT.google
 SarvamAISTT = STT.sarvam
 DeepgramSTT = STT.deepgram
 AssemblyAISTT = STT.assemblyai
+CartesiaSTT = STT.cartesia
 
 # LLM
 GoogleLLM = LLM.google
