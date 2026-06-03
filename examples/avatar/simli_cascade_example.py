@@ -2,12 +2,7 @@ import aiohttp
 import os
 
 from videosdk.agents import Agent, AgentSession, Pipeline, function_tool, JobContext, RoomOptions, WorkerJob
-from videosdk.plugins.silero import SileroVAD
-from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
-from videosdk.plugins.simli import SimliAvatar, SimliConfig
-from videosdk.plugins.openai import OpenAILLM
-from videosdk.plugins.deepgram import DeepgramSTT
-from videosdk.plugins.elevenlabs import ElevenLabsTTS
+from videosdk.agents.plugins import SileroVAD, TurnDetector, pre_download_model, SimliAvatar, SimliConfig, OpenAILLM, DeepgramSTT, ElevenLabsTTS
 import logging 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 

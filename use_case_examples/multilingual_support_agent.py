@@ -9,9 +9,7 @@ import os
 import logging
 from sarvamai import SarvamAI
 from videosdk.agents import Agent, AgentSession, Pipeline, WorkerJob, JobContext, RoomOptions
-from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig
-from videosdk.plugins.sarvamai import SarvamAISTT, SarvamAITTS
-from videosdk.plugins.silero import SileroVAD
+from videosdk.agents.plugins import GeminiRealtime, GeminiLiveConfig, SarvamAISTT, SarvamAITTS, SileroVAD
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 logger = logging.getLogger(__name__)

@@ -7,11 +7,7 @@ Env Vars: VIDEOSDK_AUTH_TOKEN, DEEPGRAM_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_K
 
 import logging
 from videosdk.agents import Agent, AgentSession, Pipeline, function_tool, WorkerJob, JobContext, RoomOptions
-from videosdk.plugins.deepgram import DeepgramSTT
-from videosdk.plugins.anthropic import AnthropicLLM
-from videosdk.plugins.google import GoogleTTS
-from videosdk.plugins.silero import SileroVAD
-from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
+from videosdk.agents.plugins import DeepgramSTT, AnthropicLLM, GoogleTTS, SileroVAD, TurnDetector, pre_download_model
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 pre_download_model()

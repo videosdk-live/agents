@@ -33,17 +33,9 @@ from videosdk.agents import (
     RoomOptions,
     WorkerJob,
 )
-from videosdk.plugins.deepgram import DeepgramSTT
-from videosdk.plugins.google import GoogleLLM  # cascade LLM — always used
-from videosdk.plugins.cartesia import CartesiaTTS
-from videosdk.plugins.silero import SileroVAD
-from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
+from videosdk.agents.plugins import DeepgramSTT, GoogleLLM, CartesiaTTS, SileroVAD, TurnDetector, pre_download_model, GeminiRealtime, GeminiLiveConfig, OpenAIRealtime, OpenAIRealtimeConfig, OpenAILLM, XAIRealtime, XAIRealtimeConfig, UltravoxRealtime, UltravoxLiveConfig
 
 # --- Realtime provider imports (the one used in make_realtime_model() picks the provider) ---
-from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig
-from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig, OpenAILLM
-from videosdk.plugins.xai import XAIRealtime, XAIRealtimeConfig
-from videosdk.plugins.ultravox import UltravoxRealtime, UltravoxLiveConfig
 
 logging.basicConfig(
     level=logging.INFO,

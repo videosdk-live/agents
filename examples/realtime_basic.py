@@ -1,5 +1,5 @@
 from videosdk.agents import Agent, AgentSession, Pipeline, JobContext, RoomOptions, WorkerJob
-from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig
+from videosdk.agents.plugins import GeminiRealtime, GeminiLiveConfig
 import logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 
