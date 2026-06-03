@@ -51,6 +51,10 @@ TurnDetector = Turn.turnsense
 VideoSDKTurnDetector = Turn.videosdk
 NamoTurnDetectorV1 = Turn.namo
 
+# Denoise
+AICousticsDenoise = Denoise.aicoustics
+SanasDenoise = Denoise.sanas
+
 
 __all__ = [
     # Prefixed component namespaces
@@ -74,6 +78,8 @@ __all__ = [
     "NamoTurnDetectorV1",
     "VideoSDKTurnDetector",
     "TurnDetector",
+    "AICousticsDenoise",
+    "SanasDenoise",
     "SileroVAD",
 ]
 
