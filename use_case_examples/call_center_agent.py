@@ -59,11 +59,10 @@ class ConnectTelAgent(Agent):
     @function_tool
     async def transfer_to_human_agent(self) -> dict:
         """Transfer the call to a live human agent for complex or escalated issues."""
-        token = os.getenv("VIDEOSDK_AUTH_TOKEN")
         transfer_to = os.getenv("VIDEOSDK_CALL_TRANSFER_TO")
         if not transfer_to:
             return {"status": "error", "message": "No transfer destination configured."}
-        result = await self.session.call_transfer(token, transfer_to)
+        result = await self.session.call_transfer(transfer_to)
         return {"status": "transferred", "result": result}
 
 

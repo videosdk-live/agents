@@ -1,6 +1,5 @@
 from __future__ import annotations
 import asyncio
-import queue
 from typing import Any, Optional, Callable
 try:
     import aec_audio_processing as apm
@@ -17,189 +16,166 @@ except Exception:
     _SD_AVAILABLE = False
 
 import numpy as np
-from .room.output_stream import TeeCustomAudioStreamTrack
-from .transports.base import BaseTransportHandler
+from fractions import Fraction
+from av import AudioResampler
+from .room.output_stream import CustomAudioStreamTrack, AUDIO_PTIME
 import logging
 
 logger = logging.getLogger(__name__)
 
-class LocalAudioPlayer:
-    """Plays audio through a local output device using sounddevice, with optional AEC reverse-stream support."""
 
-    def __init__(self, samplerate: int = 24000, channels: int = 1, output_device: Optional[int] = None,
+def _setup_metrics_console_logging():
+    """Attach a colored console handler to the metrics logger so the latency/
+    metrics logs are visible in the terminal during a console session."""
+    logger_metrics = logging.getLogger('videosdk.agents.metrics.metrics_collector')
+
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+
+    class ColoredFormatter(logging.Formatter):
+        def format(self, record):
+            levelname = record.levelname
+            message = record.getMessage()
+            asctime = self.formatTime(record, self.datefmt)
+
+            if levelname == 'INFO':
+                levelname = f'\033[32m{levelname}\033[0m'
+                message = f'\033[36m{message}\033[0m'
+            elif levelname == 'ERROR':
+                levelname = f'\033[31m{levelname}\033[0m'
+                message = f'\033[91m{message}\033[0m'
+            elif levelname == 'WARNING':
+                levelname = f'\033[33m{levelname}\033[0m'
+                message = f'\033[93m{message}\033[0m'
+
+            asctime = f'\033[90m{asctime}\033[0m'
+            return f'{asctime} - {levelname} - {message}'
+
+    console_handler.setFormatter(ColoredFormatter())
+
+    logger_metrics.addHandler(console_handler)
+    logger_metrics.setLevel(logging.INFO)
+    logger_metrics.propagate = False
+
+
+class DuplexAudioIO:
+    """Full-duplex sounddevice stream: plays the agent's audio and captures the
+    mic in one callback, running echo cancellation on the aligned render/capture
+    pair. Cleaned mic audio goes to ``consume_to`` (for publishing); agent audio
+    is queued via ``enqueue_playback``.
+    """
+
+    def __init__(self, *, samplerate: int = 48000, channels: int = 1, block_ms: int = 10,
+                 input_device: Optional[int] = None, output_device: Optional[int] = None,
                  apm_processor: Optional[apm.AudioProcessor] = None,
-                 reverse_stream_queue: Optional[queue.Queue] = None):
+                 meter: bool = True, idle_dbfs: float = -42.0):
         if not _SD_AVAILABLE:
-            raise RuntimeError("sounddevice is required for voice console. Install with: pip install sounddevice numpy")
+            raise RuntimeError(
+                "sounddevice is required for voice console. Install with: pip install sounddevice numpy "
+                "(on Linux also run: sudo apt-get install libasound2-dev)"
+            )
         import threading
         self.samplerate = samplerate
         self.channels = channels
-        self._buffer = bytearray()
-        self._lock = threading.Lock()
+        self.blocksize = int(samplerate * block_ms / 1000)
         self.apm = apm_processor
-        self.reverse_queue = reverse_stream_queue
-        self.apm_frame_size = 480
 
-        def _callback(outdata, frames, time_info, status):
-            try:
-                bytes_needed = frames * self.channels * 2
-                with self._lock:
-                    if len(self._buffer) >= bytes_needed:
-                        chunk = self._buffer[:bytes_needed]
-                        del self._buffer[:bytes_needed]
-                    else:
-                        chunk = bytes(self._buffer)
-                        self._buffer.clear()
-
-                if chunk:
-                    arr = np.frombuffer(chunk, dtype=np.int16)
-                    if arr.size % self.channels != 0:
-                        trim = arr.size - (arr.size // self.channels) * self.channels
-                        if trim > 0: arr = arr[:-trim]
-                    if arr.size == 0:
-                        outdata.fill(0)
-                        return
-                    arr = arr.reshape(-1, self.channels)
-                    if arr.shape[0] < frames:
-                        padded = np.zeros((frames, self.channels), dtype=np.int16)
-                        padded[:arr.shape[0], :] = arr
-                        outdata[:] = padded
-                    else:
-                        outdata[:] = arr[:frames, :]
-                else:
-                    outdata.fill(0)
-            except Exception:
-                outdata.fill(0)
-
-        self.stream = sd.OutputStream(
-            samplerate=self.samplerate,
-            channels=self.channels,
-            dtype='int16',
-            blocksize=int(0.02 * self.samplerate),
-            callback=_callback,
-            device=output_device or sd.default.device[1],
-        )
-        self.stream.start()
-
-    async def handle_audio_input(self, audio_bytes: bytes):
-        if self.reverse_queue:
-            try:
-                samples_24k = np.frombuffer(audio_bytes, dtype=np.int16)
-
-                samples_48k = np.repeat(samples_24k, 2)
-                
-                for i in range(0, len(samples_48k), self.apm_frame_size):
-                    chunk = samples_48k[i:i + self.apm_frame_size]
-                    if len(chunk) < self.apm_frame_size:
-                        padded_chunk = np.zeros(self.apm_frame_size, dtype=np.int16)
-                        padded_chunk[:len(chunk)] = chunk
-                        self.reverse_queue.put(padded_chunk)
-                    else:
-                        self.reverse_queue.put(chunk)
-            except Exception as e:
-                logger.error(f"[AEC Error] Failed to queue reverse stream audio: {e}")
-
-        with self._lock:
-            self._buffer.extend(audio_bytes)
-
-    def close(self):
-        try:
-            self.stream.stop()
-        finally:
-            self.stream.close()
-
-
-class MicrophoneStreamer:
-    """Captures audio from a local microphone input device and streams it as raw bytes with optional AEC processing and a live dBFS meter."""
-
-    def __init__(self, samplerate: int = 48000, channels: int = 1, block_ms: int = 20, input_device: Optional[int] = None,
-                 meter: bool = True, idle_dbfs: float = -42.0,
-                 apm_processor: Optional[apm.AudioProcessor] = None,
-                 reverse_stream_queue: Optional[queue.Queue] = None):
-
-        if not _SD_AVAILABLE:
-            raise RuntimeError("sounddevice is required for voice console. Install with: pip install sounddevice numpy and if your linux the make sure you do 'sudo apt-get install libasound2-dev'")
-        self.samplerate = samplerate
-        self.channels = channels
-        self.blocksize = int(self.samplerate * block_ms / 1000) 
+        self._play_buf = bytearray()
+        self._lock = threading.Lock()
         self.queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=50)
-        self._in_stream = None
+
+        self._input_device = input_device
+        self._output_device = output_device
+        self._stream = None
         self._running = False
+
+        self._meter = meter
+        self._idle_threshold = idle_dbfs
         self._micro_db: float = -60.0
         self._meter_task: asyncio.Task | None = None
-        self._input_device_name: str = "Mic"
         self._meter_visible: bool = False
         self._last_bar: int = -1
         self._last_db: float = -60.0
-        self._meter = meter
-        self._idle_threshold = idle_dbfs
-        self._input_device = input_device
+        self._input_device_name: str = "Mic"
 
-        self.apm = apm_processor
-        self.reverse_queue = reverse_stream_queue
-        self.frame_size = self.blocksize // 2 
+    def enqueue_playback(self, audio_bytes: bytes) -> None:
+        """Queue agent audio (mono int16 at this stream's samplerate) for playback."""
+        with self._lock:
+            self._play_buf.extend(audio_bytes)
 
-    def _callback(self, indata, frames, time_info, status):
+    def _callback(self, indata, outdata, frames, time_info, status):
         try:
-            if self.apm and self.reverse_queue:
-                mic_chunk_1 = indata[0:self.frame_size]
-                mic_chunk_2 = indata[self.frame_size:self.blocksize]
-                
-                cleaned_bytes = bytearray()
+            bytes_needed = frames * self.channels * 2
+            with self._lock:
+                if len(self._play_buf) >= bytes_needed:
+                    chunk = self._play_buf[:bytes_needed]
+                    del self._play_buf[:bytes_needed]
+                else:
+                    chunk = bytes(self._play_buf)
+                    self._play_buf.clear()
 
-                try:
-                    rev_frame = self.reverse_queue.get_nowait()
-                    self.apm.process_reverse_stream(rev_frame.tobytes())
-                    cleaned_chunk_1 = self.apm.process_stream(mic_chunk_1.tobytes())
-                    cleaned_bytes.extend(cleaned_chunk_1)
-                except queue.Empty:
-                    cleaned_bytes.extend(self.apm.process_stream(mic_chunk_1.tobytes()))
-
-                try:
-                    rev_frame = self.reverse_queue.get_nowait()
-                    self.apm.process_reverse_stream(rev_frame.tobytes())
-                    cleaned_chunk_2 = self.apm.process_stream(mic_chunk_2.tobytes())
-                    cleaned_bytes.extend(cleaned_chunk_2)
-                except queue.Empty:
-                    cleaned_bytes.extend(self.apm.process_stream(mic_chunk_2.tobytes()))
-                
-                data_bytes = bytes(cleaned_bytes)
-
+            if chunk:
+                arr = np.frombuffer(chunk, dtype=np.int16)
+                need = frames * self.channels
+                if arr.size < need:
+                    padded = np.zeros(need, dtype=np.int16)
+                    padded[:arr.size] = arr
+                    arr = padded
+                outdata[:] = arr[:need].reshape(frames, self.channels)
             else:
-                data_bytes = bytes(indata)
-            
-            self.queue.put_nowait(data_bytes)
-            
+                outdata.fill(0)
+
+            if self.apm is not None:
+                self.apm.process_reverse_stream(outdata.tobytes())
+                mic_bytes = self.apm.process_stream(indata.tobytes())
+            else:
+                mic_bytes = bytes(indata)
+
+            try:
+                self.queue.put_nowait(bytes(mic_bytes))
+            except asyncio.QueueFull:
+                pass
+
             samples = np.frombuffer(indata, dtype=np.int16)
             if samples.size:
                 rms = float(np.sqrt(np.mean(samples.astype(np.float32) ** 2) + 1e-12))
                 dbfs = 20.0 * np.log10(rms / 32768.0 + 1e-12)
-                if dbfs < -120.0: dbfs = -120.0
-                if dbfs > 0.0: dbfs = 0.0
-                self._micro_db = dbfs
-        except asyncio.QueueFull:
-            pass
+                self._micro_db = min(0.0, max(-120.0, dbfs))
         except Exception as e:
-            logger.error(f"Error in mic callback: {e}")
-
+            logger.error(f"Error in duplex audio callback: {e}")
+            try:
+                outdata.fill(0)
+            except Exception:
+                pass
 
     def start(self):
         self._running = True
-        self._in_stream = sd.InputStream(
+        in_dev = self._input_device if self._input_device is not None else sd.default.device[0]
+        out_dev = self._output_device if self._output_device is not None else sd.default.device[1]
+        self._stream = sd.Stream(
             samplerate=self.samplerate,
             channels=self.channels,
             dtype='int16',
             blocksize=self.blocksize,
             callback=self._callback,
-            device=self._input_device or sd.default.device[0],
+            device=(in_dev, out_dev),
         )
-        self._in_stream.start()
+        self._stream.start()
         try:
-            dev_index = self._in_stream.device
-            dev_info = sd.query_devices(dev_index)
-            self._input_device_name = dev_info.get('name', 'Mic')
+            self._input_device_name = sd.query_devices(self._stream.device[0]).get('name', 'Mic')
         except Exception:
             self._input_device_name = 'Mic'
+
+        if self.apm is not None:
+            try:
+                lat = self._stream.latency
+                lat_s = (float(lat[0]) + float(lat[1])) if isinstance(lat, (tuple, list)) else float(lat)
+                self.apm.set_stream_delay(max(0, int(lat_s * 1000)))
+            except Exception:
+                try:
+                    self.apm.set_stream_delay(40)
+                except Exception:
+                    pass
         if self._meter:
             self._meter_task = asyncio.create_task(self._meter_loop())
 
@@ -219,10 +195,12 @@ class MicrophoneStreamer:
                 await self._meter_task
             except asyncio.CancelledError:
                 pass
-        if self._in_stream is not None:
-            self._in_stream.stop()
-            self._in_stream.close()
-            self._in_stream = None
+        if self._stream is not None:
+            try:
+                self._stream.stop()
+            finally:
+                self._stream.close()
+            self._stream = None
 
     async def _meter_loop(self):
         MAX_AUDIO_BAR = 40
@@ -265,74 +243,7 @@ class MicrophoneStreamer:
             except Exception: pass
 
 
-class ConsoleMode(BaseTransportHandler):
-    """A local transport handler that replaces a real room connection, routing audio through local devices for console-based testing."""
-
-    def __init__(self, *, audio_track: TeeCustomAudioStreamTrack, loop: asyncio.AbstractEventLoop) -> None:
-        super().__init__(loop, None)
-        self.audio_track = audio_track
-        self.agent_audio_track = None
-        self.loop = loop
-        self.vision = False
-        self._pubsub_subs: dict[str, list[Callable[[Any], None]]] = {}
-        self._setup_logging()
-    
-    def _setup_logging(self):
-        """Set up logging handlers to display metrics logs in console with colored log levels and shortened names."""
-        logger_metrics = logging.getLogger('videosdk.agents.metrics.metrics_collector')
-        
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(logging.INFO)
-        
-        class ColoredFormatter(logging.Formatter):
-            def format(self, record):
-                levelname = record.levelname
-                message = record.getMessage()
-                asctime = self.formatTime(record, self.datefmt)
-
-                if levelname == 'INFO':
-                    levelname = f'\033[32m{levelname}\033[0m' 
-                    message = f'\033[36m{message}\033[0m'      
-                elif levelname == 'ERROR':
-                    levelname = f'\033[31m{levelname}\033[0m'  
-                    message = f'\033[91m{message}\033[0m'     
-                elif levelname == 'WARNING':
-                    levelname = f'\033[33m{levelname}\033[0m'  
-                    message = f'\033[93m{message}\033[0m'      
-
-                asctime = f'\033[90m{asctime}\033[0m'
-                return f'{asctime} - {levelname} - {message}'
-        
-        formatter = ColoredFormatter()
-        console_handler.setFormatter(formatter)
-        
-        logger_metrics.addHandler(console_handler)
-        logger_metrics.setLevel(logging.INFO)
-        logger_metrics.propagate = False
-
-    def init_meeting(self) -> None: return
-    async def join(self) -> None: return
-    async def connect(self) -> None: return
-    async def disconnect(self) -> None: return
-    def leave(self) -> None: return
-    async def cleanup(self) -> None: return
-    async def wait_for_participant(self, participant_id: str | None = None) -> str: return participant_id or "console-user"
-    async def subscribe_to_pubsub(self, pubsub_config: Any):
-        topic = getattr(pubsub_config, 'topic', None)
-        cb = getattr(pubsub_config, 'cb', None)
-        if not topic or not cb: return []
-        self._pubsub_subs.setdefault(topic, []).append(cb)
-        return []
-    async def publish_to_pubsub(self, pubsub_config: Any):
-        topic = getattr(pubsub_config, 'topic', None)
-        message = getattr(pubsub_config, 'message', None)
-        if not topic: return
-        for cb in self._pubsub_subs.get(topic, []):
-            try: cb(message)
-            except Exception: pass
-
-
-async def setup_console_voice_for_ctx(
+async def setup_console_room_client_for_ctx(
     ctx: Any,
     *,
     input_device: Optional[int] = None,
@@ -341,20 +252,43 @@ async def setup_console_voice_for_ctx(
     idle_dbfs: float = -42.0,
 ) -> Callable[[], Any]:
     """
-    Sets up a console voice environment, automatically detecting if the STT
-    plugin requires stereo audio and adapting the stream accordingly.
+    Join the agent's VideoSDK room from the terminal as a second, *real* human
+    participant: publish the local microphone as a room track and play the
+    agent's audio on local speakers — no browser/ sdk client or playground
+    URL needed.
     """
-    
+    from videosdk import VideoSDK
+    from .room.meeting_event_handler import MeetingHandler
+    from .room.participant_event_handler import ParticipantHandler
+
+    loop = ctx._loop
+    room_id = ctx.room_options.room_id
+    if not room_id:
+        raise RuntimeError("console mode requires a room_id (agent must be connected first)")
+
     print(f"\033[90m{'='*100}\033[0m")
     print(f"\033[96m                             Videosdk's AI Agent Console Mode\033[0m")
     print(f"\033[90m{'='*100}\033[0m")
 
-    loop = ctx._loop
-    if ctx._pipeline is None:
-        raise RuntimeError("Pipeline must be constructed before ctx.connect() in console mode")
+    _setup_metrics_console_logging()
+
+    try:
+        vad = getattr(ctx._pipeline, "vad", None)
+        if (
+            vad is not None
+            and type(vad).__name__ == "SileroVAD"
+            and getattr(vad, "_executor", None) is None
+        ):
+            import concurrent.futures
+            vad._executor = concurrent.futures.ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="vad-inference"
+            )
+            logger.info("[console] Offloaded SileroVAD inference to keep the audio loop real-time")
+    except Exception as e:
+        logger.warning(f"[console] could not enable VAD inference offload: {e}")
 
     SAMPLE_RATE = 48000
-    NUM_CHANNELS = 1 
+    NUM_CHANNELS = 1
 
     try:
         processor = apm.AudioProcessor(
@@ -366,63 +300,150 @@ async def setup_console_voice_for_ctx(
 
     processor.set_stream_format(SAMPLE_RATE, NUM_CHANNELS)
     processor.set_reverse_stream_format(SAMPLE_RATE, NUM_CHANNELS)
-    processor.set_stream_delay(30)
-    system_audio_queue = queue.Queue()
 
-    speaker = LocalAudioPlayer(samplerate=24000, channels=1, output_device=output_device,
-                             apm_processor=processor, reverse_stream_queue=system_audio_queue)
-
-    audio_track = TeeCustomAudioStreamTrack(loop=loop, sinks=[speaker])
-
-    ctx.room = ConsoleMode(audio_track=audio_track, loop=loop)
-
-    if hasattr(ctx._pipeline, '_set_loop_and_audio_track'):
-        ctx._pipeline._set_loop_and_audio_track(loop, audio_track)
-
-    mic = MicrophoneStreamer(
-        samplerate=SAMPLE_RATE,
-        channels=NUM_CHANNELS,
-        block_ms=20,
-        input_device=input_device,
-        meter=meter,
-        idle_dbfs=idle_dbfs,
-        apm_processor=processor,
-        reverse_stream_queue=system_audio_queue
+    audio_io = DuplexAudioIO(
+        samplerate=SAMPLE_RATE, channels=NUM_CHANNELS, block_ms=10,
+        input_device=input_device, output_device=output_device,
+        apm_processor=processor, meter=meter, idle_dbfs=idle_dbfs,
     )
-    mic.start()
 
-    logger.info(f"Using microphone: {mic._input_device_name}")
+    mic_track = CustomAudioStreamTrack(loop=loop)
+    mic_track.sample_rate = SAMPLE_RATE
+    mic_track.channels = NUM_CHANNELS
+    mic_track.samples = int(AUDIO_PTIME * SAMPLE_RATE)
+    mic_track.chunk_size = mic_track.samples * mic_track.channels * mic_track.sample_width
+    mic_track.time_base_fraction = Fraction(1, SAMPLE_RATE)
 
-    stt_agent = getattr(ctx._pipeline, 'stt', None)
-    needs_stereo = False
+    agent_audio_tasks: list[asyncio.Task] = []
+    subscribed_streams: set[str] = set()
 
-    if stt_agent and type(stt_agent).__name__ == 'GoogleSTT' or type(stt_agent).__name__ == 'DeepgramSTT' or type(stt_agent).__name__ == 'SarvamAISTT' or type(stt_agent).__name__ == 'AssemblyAISTT' or type(stt_agent).__name__ == 'AzureSTT':
-        needs_stereo = True
-    
-    if needs_stereo:
-        async def mono_to_stereo_adapter(mono_bytes: bytes):
-            """
-            Receives 1-channel audio, converts to 2-channel, and forwards to the pipeline.
-            """
-            mono_samples = np.frombuffer(mono_bytes, dtype=np.int16)
-            stereo_samples = np.repeat(mono_samples, 2)
-            stereo_bytes = stereo_samples.tobytes()
-            await ctx._pipeline.on_audio_delta(stereo_bytes)
+    def _start_agent_audio_listener(stream: Any):
+        if stream is None or getattr(stream, "kind", None) != "audio":
+            return
+        stream_id = getattr(stream, "id", id(stream))
+        if stream_id in subscribed_streams:
+            return
+        subscribed_streams.add(stream_id)
 
-        consumer_task = asyncio.create_task(mic.consume_to(mono_to_stereo_adapter))
-    else:
-        consumer_task = asyncio.create_task(mic.consume_to(ctx._pipeline.on_audio_delta))
+        async def _agent_audio_loop():
 
+            resampler = AudioResampler(format="s16", layout="mono", rate=SAMPLE_RATE)
+            while True:
+                try:
+                    frame = await stream.track.recv()
+                except asyncio.CancelledError:
+                    break
+                except Exception as e:
+                    logger.error(f"[console] agent audio recv error: {e}")
+                    break
+                try:
+                    out = resampler.resample(frame)
+                    frames = out if isinstance(out, list) else [out]
+                    for rf in frames:
+                        if rf is None:
+                            continue
+                        pcm = rf.to_ndarray().flatten().astype(np.int16).tobytes()
+                        audio_io.enqueue_playback(pcm)
+                except Exception as e:
+                    logger.error(f"[console] error playing agent audio: {e}")
+
+        agent_audio_tasks.append(asyncio.create_task(_agent_audio_loop()))
+
+    def _attach_to_agent(participant: Any):
+        """Subscribe to a remote agent participant's audio (existing + future streams)."""
+        try:
+            streams = getattr(participant, "streams", None)
+            if streams:
+                for stream in list(streams.values()):
+                    _start_agent_audio_listener(stream)
+        except Exception as e:
+            logger.error(f"[console] error scanning agent streams: {e}")
+
+        def on_stream_enabled(stream: Any):
+            _start_agent_audio_listener(stream)
+
+        def on_stream_disabled(stream: Any):
+            return
+
+        try:
+            participant.add_event_listener(
+                ParticipantHandler(
+                    participant_id=participant.id,
+                    on_stream_enabled=on_stream_enabled,
+                    on_stream_disabled=on_stream_disabled,
+                )
+            )
+        except Exception as e:
+            logger.error(f"[console] error attaching to agent participant: {e}")
+
+    meeting_config = {
+        "name": "Terminal User",
+        "meeting_id": room_id,
+        "token": ctx.videosdk_auth,
+        "mic_enabled": True,
+        "webcam_enabled": False,
+        "custom_microphone_audio_track": mic_track,
+        "peer_type": "normal",
+        "meta_data": {"terminal_client": True},
+        "loop": loop,
+    }
+    if ctx.room_options.signaling_base_url is not None:
+        meeting_config["signaling_base_url"] = ctx.room_options.signaling_base_url
+
+    meeting = VideoSDK.init_meeting(**meeting_config)
+    meeting.add_event_listener(
+        MeetingHandler(
+            on_meeting_joined=lambda data: logger.info(f"[console] Terminal joined room {room_id}"),
+            on_meeting_left=lambda data: logger.info("[console] Terminal left room"),
+            on_participant_joined=_attach_to_agent,
+            on_participant_left=lambda p: None,
+            on_error=lambda data: logger.error(f"[console] room error: {data}"),
+            on_agent_joined=_attach_to_agent,
+            on_agent_left=lambda a: None,
+        )
+    )
+
+    audio_io.start()
+    logger.info(f"Using microphone: {audio_io._input_device_name}")
+
+    MAX_BUFFERED_MIC_FRAMES = 5 
+
+    async def _feed_mic(mono_bytes: bytes):
+        await mic_track.add_new_bytes(mono_bytes)
+        fb = mic_track.frame_buffer
+        if len(fb) > MAX_BUFFERED_MIC_FRAMES:
+            del fb[:-MAX_BUFFERED_MIC_FRAMES]
+
+    consumer_task = asyncio.create_task(audio_io.consume_to(_feed_mic))
+
+    await meeting.async_join()
+
+    print(f"\033[1;36mTerminal participant connected to room {room_id}\033[0m")
+    print("\033[1;75mSpeak into your microphone — the agent is in the room. Press Ctrl+C to exit.\033[0m")
 
     async def _cleanup() -> None:
+        import contextlib
+        for task in agent_audio_tasks:
+            if not task.done():
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
         try:
-            await mic.stop()
+            await audio_io.stop()
         finally:
-            speaker.close()
             if not consumer_task.done():
                 consumer_task.cancel()
-                import contextlib
                 with contextlib.suppress(asyncio.CancelledError):
                     await consumer_task
+
+            try:
+                rc = getattr(meeting, "_Meeting__room_client", None)
+                if rc is not None and hasattr(rc, "async_leave"):
+                    await asyncio.wait_for(rc.async_leave(), timeout=5.0)
+                else:
+                    meeting.leave()
+                    await asyncio.sleep(1.5)
+            except Exception as e:
+                logger.error(f"[console] error leaving terminal meeting: {e}")
 
     return _cleanup
