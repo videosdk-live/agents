@@ -1,11 +1,6 @@
 import logging
 from videosdk.agents import Agent, AgentSession,Pipeline,WorkerJob, JobContext, RoomOptions,FallbackSTT,FallbackLLM,FallbackTTS
-from videosdk.plugins.openai import OpenAISTT,OpenAILLM,OpenAITTS
-from videosdk.plugins.silero import SileroVAD
-from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
-from videosdk.plugins.deepgram import DeepgramSTT
-from videosdk.plugins.cartesia import CartesiaTTS
-from videosdk.plugins.cerebras import CerebrasLLM
+from videosdk.agents.plugins import OpenAISTT, OpenAILLM, OpenAITTS, SileroVAD, TurnDetector, pre_download_model, DeepgramSTT, CartesiaTTS, CerebrasLLM
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 pre_download_model()

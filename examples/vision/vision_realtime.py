@@ -2,7 +2,7 @@ import asyncio
 from videosdk import PubSubSubscribeConfig
 from typing import Optional
 from videosdk.agents import Agent, AgentSession, WorkerJob,JobContext, RoomOptions, Pipeline
-from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig
+from videosdk.agents.plugins import OpenAIRealtime, OpenAIRealtimeConfig
 from openai.types.beta.realtime.session import InputAudioTranscription, TurnDetection
 
 

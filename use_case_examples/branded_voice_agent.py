@@ -7,8 +7,7 @@ Env Vars: VIDEOSDK_AUTH_TOKEN, XAI_API_KEY, CARTESIA_API_KEY
 
 import logging
 from videosdk.agents import Agent, AgentSession, Pipeline, WorkerJob, JobContext, RoomOptions
-from videosdk.plugins.xai import XAIRealtime, XAIRealtimeConfig, XAITurnDetection
-from videosdk.plugins.cartesia import CartesiaTTS
+from videosdk.agents.plugins import XAIRealtime, XAIRealtimeConfig, XAITurnDetection, CartesiaTTS
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 

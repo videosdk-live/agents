@@ -71,9 +71,7 @@ from videosdk.conversational_graph import (
 )
 
 from videosdk.agents import Agent, Pipeline, AgentSession, JobContext, WorkerJob, RoomOptions
-from videosdk.plugins.google import GoogleLLM
-from videosdk.plugins.deepgram import DeepgramSTT
-from videosdk.plugins.cartesia import CartesiaTTS
+from videosdk.agents.plugins import GoogleLLM, DeepgramSTT, CartesiaTTS
 
 from pydantic import Field, field_validator
 from typing import Optional

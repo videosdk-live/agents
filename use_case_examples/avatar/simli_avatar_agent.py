@@ -11,8 +11,7 @@ Alternative (Standard voice pipeline):
 import os
 import logging
 from videosdk.agents import Agent, AgentSession, Pipeline, function_tool, WorkerJob, JobContext, RoomOptions
-from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig
-from videosdk.plugins.simli import SimliAvatar, SimliConfig
+from videosdk.agents.plugins import GeminiRealtime, GeminiLiveConfig, SimliAvatar, SimliConfig
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 

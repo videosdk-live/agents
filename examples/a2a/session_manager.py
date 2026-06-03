@@ -1,8 +1,7 @@
 # Realtime for customer agent, cascade LLM-only for specialist
 
 from videosdk.agents import AgentSession, Pipeline
-from videosdk.plugins.openai import OpenAILLM
-from videosdk.plugins.google import GeminiRealtime, GeminiLiveConfig
+from videosdk.agents.plugins import OpenAILLM, GeminiRealtime, GeminiLiveConfig
 import os
 import logging 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
