@@ -920,6 +920,9 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
             else:
                 self._realtime_model.audio_track = audio_track
 
+                if self._realtime_model.audio_track and hasattr(self._realtime_model.audio_track, "interrupt_fade_duration"):
+                    self._realtime_model.audio_track.interrupt_fade_duration = self.interrupt_config.interrupt_fade_duration
+                    
                 if self._realtime_model.audio_track and hasattr(self._realtime_model.audio_track, 'set_pipeline_hooks'):
                     self._realtime_model.audio_track.set_pipeline_hooks(self.hooks)
                 # A realtime model streams audio continuously — ensure the
@@ -1196,6 +1199,11 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
 
         if self.config.realtime_mode == RealtimeMode.HYBRID_TTS and self.speech_generation:
             asyncio.create_task(self.speech_generation.interrupt())
+
+        if self.config.realtime_mode == RealtimeMode.FULL_S2S and self._realtime_model:
+            audio_track = getattr(self._realtime_model, "audio_track", None)
+            if audio_track:
+                audio_track.interrupt()
 
         if self.avatar and hasattr(self.avatar, 'interrupt'):
             asyncio.create_task(self.avatar.interrupt())
