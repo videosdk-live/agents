@@ -25,7 +25,7 @@ from .tts import TTS
 from .realtime import Realtime
 from .llm import LLM
 from .denoise import Denoise
-from .turn import Turn, TurnV2
+from .turn import Turn
 
 # STT
 GoogleSTT = STT.google
@@ -51,7 +51,6 @@ GeminiRealtime = Realtime.gemini
 TurnDetector = Turn.turnsense
 VideoSDKTurnDetector = Turn.videosdk
 NamoTurnDetectorV1 = Turn.namo
-TurnV2 = TurnV2
 
 # Denoise
 AICousticsDenoise = Denoise.aicoustics
@@ -83,7 +82,6 @@ __all__ = [
     "AICousticsDenoise",
     "SanasDenoise",
     "SileroVAD",
-    "TurnV2",
 ]
 
 _LOCAL_REEXPORTS = {

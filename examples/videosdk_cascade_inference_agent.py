@@ -7,11 +7,6 @@ from videosdk.agents import (
     RoomOptions,
     WorkerJob,
 )
-
-# You can also use TurnV2 for improved turn detection performance
-# from videosdk.agents.inference import TurnV2
-
-from videosdk.plugins.silero import SileroVAD
 from videosdk.agents.inference import SarvamAISTT, GoogleLLM, SarvamAITTS, SileroVAD, NamoTurnDetectorV1
 from dotenv import load_dotenv
 

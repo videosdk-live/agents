@@ -195,14 +195,16 @@ class TracesFlowManager:
                     if vad.vad_threshold:
                         vad_attrs["threshold"] = vad.vad_threshold
 
-                silence_fallback = vad.vad_min_silence_duration or 0.0
+                # Estimate the missing edge of the VAD interval using
+                # min_silence_duration. ``vad_min_silence_duration`` can be
+                # None when the VAD config doesn't expose the attribute or
+                # the metric is recorded mid-interruption before the field
+                # is populated; default to 0.0 to avoid ``float + None``.
+                silence_dur = vad.vad_min_silence_duration or 0.0
                 if vad.user_speech_start_time is None and vad.user_speech_end_time is not None:
-                    vad.user_speech_start_time = vad.user_speech_end_time - silence_fallback
+                    vad.user_speech_start_time = vad.user_speech_end_time - silence_dur
                 elif vad.user_speech_start_time is not None and vad.user_speech_end_time is None:
-                    vad.user_speech_end_time = vad.user_speech_start_time + silence_fallback
-
-                if vad.user_speech_start_time is None or vad.user_speech_end_time is None:
-                    return
+                    vad.user_speech_end_time = vad.user_speech_start_time + silence_dur
 
                 vad_start_time = vad.user_speech_start_time
                 vad_end_time = vad.user_speech_end_time
