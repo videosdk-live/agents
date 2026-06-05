@@ -648,7 +648,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             return []
 
         context_copy = self.agent.chat_context.copy(
-            exclude_function_calls=not include_function_calls,
+            tools=None if include_function_calls else [],
             exclude_system_messages=not include_system_messages,
         )
         return context_copy.to_dict()["items"]
@@ -729,11 +729,12 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
 
         await self.close()
      
-    async def call_transfer(self,token: str, transfer_to: str) -> None:
+    async def call_transfer(self, transfer_to: str) -> None:
         """ Transfer the call to a provided Phone number or SIP endpoint.
         Args:
-            token: VideoSDK auth token.
             transfer_to: Phone number or SIP endpoint to transfer the call to.
+
+        The VideoSDK auth token is resolved internally.
         """
         job_ctx = self._job_context
         if not job_ctx:
@@ -745,7 +746,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         room = getattr(job_ctx, "room", None) if job_ctx else None
         if room and hasattr(room, "call_transfer"):
             try:
-                await room.call_transfer(token, transfer_to)
+                await room.call_transfer(transfer_to)
                 return
             except Exception as exc:
                 logger.error(f"Error calling call_transfer: {exc}")

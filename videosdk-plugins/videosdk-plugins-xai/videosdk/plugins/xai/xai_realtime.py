@@ -110,6 +110,7 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
         self._generated_text_in_current_response = False
 
     def set_agent(self, agent: Agent) -> None:
+        self._agent = agent
         if agent.instructions:
             self._instructions = agent.instructions
         self._tools = agent.tools
@@ -125,12 +126,7 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
         self._session = await self._create_session(self.base_url, headers)
         await self._handle_websocket(self._session)
         
-        if self.audio_track:
-            from fractions import Fraction
-            self.audio_track.sample_rate = self.target_sample_rate
-            self.audio_track.time_base_fraction = Fraction(1, self.target_sample_rate)
-            self.audio_track.samples = int(0.02 * self.target_sample_rate)
-            self.audio_track.chunk_size = int(self.audio_track.samples * getattr(self.audio_track, "channels", 1) * getattr(self.audio_track, "sample_width", 2))
+        self.reframe_audio_track(self.target_sample_rate)
         
         try:
             await asyncio.wait_for(self._session_ready.wait(), timeout=10.0)
@@ -190,7 +186,7 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
         session_update = {
             "type": "session.update",
             "session": {
-                "instructions": self._instructions,
+                "instructions": self.instructions_with_context(self._instructions),
                 "voice": self.config.voice,
                 "audio": {
                     "input": {
@@ -494,6 +490,17 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
                 logger.warning(f"Tool {name} not found")
                 result = {"error": "Tool not found"}
 
+            self.emit(
+                "realtime_model_function_executed",
+                {
+                    "name": name,
+                    "arguments": args_str,
+                    "call_id": call_id,
+                    "output": result if isinstance(result, str) else json.dumps(result),
+                    "is_error": not found,
+                },
+            )
+
             await self.send_event({
                 "type": "conversation.item.create",
                 "item": {
@@ -507,6 +514,16 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
                 self._has_unprocessed_tool_outputs = True
 
         except Exception as e:
+            self.emit(
+                "realtime_model_function_executed",
+                {
+                    "name": name,
+                    "arguments": args_str,
+                    "call_id": call_id,
+                    "output": str(e),
+                    "is_error": True,
+                },
+            )
             logger.error(f"Error executing function {name}: {e}")
 
     async def send_event(self, event: Dict[str, Any]) -> None:

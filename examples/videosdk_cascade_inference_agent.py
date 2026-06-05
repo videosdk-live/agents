@@ -7,12 +7,12 @@ from videosdk.agents import (
     RoomOptions,
     WorkerJob,
 )
-from videosdk.agents.inference import STT, TTS, LLM, Turn
 
 # You can also use TurnV2 for improved turn detection performance
 # from videosdk.agents.inference import TurnV2
 
 from videosdk.plugins.silero import SileroVAD
+from videosdk.agents.inference import SarvamAISTT, GoogleLLM, SarvamAITTS, SileroVAD, NamoTurnDetectorV1
 from dotenv import load_dotenv
 
 load_dotenv(override=True)
@@ -60,18 +60,15 @@ async def entrypoint(ctx: JobContext):
     agent = VideoSDKCascadeInferenceAgent()
 
     pipeline = Pipeline(
-        stt=STT.sarvam(
+        stt=SarvamAISTT(
             language="en-IN",
         ),
-        llm=LLM.google(
-            model_id="gemini-2.5-flash",
+        llm=GoogleLLM(
+            model_id="gemini-3-flash-preview",
         ),
-        tts=TTS.sarvam(model_id="bulbul:v3", speaker="shubh", language="en-IN"),
+        tts=SarvamAITTS(model_id="bulbul:v3", speaker="shubh", language="en-IN"),
         vad=SileroVAD(),
-        turn_detector=Turn.namo(language="en"),
-
-        # turn_detector=TurnV2.echo_large()
-        # turn_detector=TurnV2.echo_small()
+        turn_detector=NamoTurnDetectorV1(language="en"),
     )
 
     session = AgentSession(

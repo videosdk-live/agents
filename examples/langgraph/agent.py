@@ -34,11 +34,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import BaseModel, Field
 
 from videosdk.agents import Agent, AgentSession, Pipeline, WorkerJob, JobContext, RoomOptions
-from videosdk.plugins.deepgram import DeepgramSTT
-from videosdk.plugins.cartesia import CartesiaTTS
-from videosdk.plugins.silero import SileroVAD
-from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
-from videosdk.plugins.langchain import LangGraphLLM
+from videosdk.agents.plugins import DeepgramSTT, CartesiaTTS, SileroVAD, TurnDetector, pre_download_model, LangGraphLLM
 
 from dotenv import load_dotenv
 load_dotenv(override=True)

@@ -34,11 +34,7 @@ from videosdk.agents import (
     function_tool,
     pre_warm_tokenizer, 
 )
-from videosdk.plugins.cartesia import CartesiaTTS
-from videosdk.plugins.deepgram import DeepgramSTT
-from videosdk.plugins.google import GoogleLLM
-from videosdk.plugins.silero import SileroVAD
-from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
+from videosdk.agents.plugins import CartesiaTTS, DeepgramSTT, GoogleLLM, SileroVAD, TurnDetector, pre_download_model
 
 
 _arg = sys.argv[1].strip().lower() if len(sys.argv) > 1 else "hi"

@@ -206,6 +206,10 @@ class TracesFlowManager:
 
                 vad_start_time = vad.user_speech_start_time
                 vad_end_time = vad.user_speech_end_time
+                # Without timestamps the span has nothing to anchor to —
+                # skip cleanly rather than passing None into create_span.
+                if vad_start_time is None or vad_end_time is None:
+                    return
                 vad_span = create_span(vad_span_name, vad_attrs, parent_span=turn_span, start_time=vad_start_time)
                 
                 if vad_span:

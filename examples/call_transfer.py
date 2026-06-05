@@ -1,10 +1,6 @@
 import logging
 from videosdk.agents import Agent, AgentSession, Pipeline, function_tool, WorkerJob, JobContext, RoomOptions, Options
-from videosdk.plugins.deepgram import DeepgramSTT
-from videosdk.plugins.google import GoogleLLM
-from videosdk.plugins.cartesia import CartesiaTTS
-from videosdk.plugins.silero import SileroVAD
-from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
+from videosdk.agents.plugins import DeepgramSTT, GoogleLLM, CartesiaTTS, SileroVAD, TurnDetector, pre_download_model
 import os
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
@@ -26,9 +22,8 @@ class CallTransferAgent(Agent):
     @function_tool
     async def transfer_call(self) -> None:
         """Transfer the call to Provided number"""
-        token = os.getenv("VIDEOSDK_AUTH_TOKEN")
         transfer_to = os.getenv("CALL_TRANSFER_TO") 
-        return await self.session.call_transfer(token,transfer_to)
+        return await self.session.call_transfer(transfer_to)
 
 async def entrypoint(ctx: JobContext):
     

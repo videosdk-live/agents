@@ -11,11 +11,7 @@ from videosdk.agents import (
     Agent, AgentSession, Pipeline, function_tool, WorkerJob, JobContext, RoomOptions,
     EOUConfig, InterruptConfig,
 )
-from videosdk.plugins.deepgram import DeepgramSTT
-from videosdk.plugins.openai import OpenAILLM
-from videosdk.plugins.cartesia import CartesiaTTS,GenerationConfig
-from videosdk.plugins.silero import SileroVAD
-from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
+from videosdk.agents.plugins import DeepgramSTT, OpenAILLM, CartesiaTTS, GenerationConfig, SileroVAD, TurnDetector, pre_download_model
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 pre_download_model()

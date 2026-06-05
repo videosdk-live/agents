@@ -7,10 +7,8 @@ Env Vars: VIDEOSDK_AUTH_TOKEN (all STT/TTS routed through VideoSDK inference; on
 
 import logging
 from videosdk.agents import Agent, AgentSession, Pipeline, WorkerJob, JobContext, RoomOptions
-from videosdk.agents.inference import STT, TTS
-from videosdk.plugins.google import GoogleLLM
-from videosdk.plugins.silero import SileroVAD
-from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
+from videosdk.agents.inference import SarvamAISTT, SarvamAITTS
+from videosdk.agents.plugins import GoogleLLM, SileroVAD, TurnDetector, pre_download_model
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 pre_download_model()
@@ -49,9 +47,9 @@ async def entrypoint(ctx: JobContext):
 
     # STT and TTS routed through the VideoSDK Inference Gateway — no third-party STT/TTS API keys needed.
     pipeline = Pipeline(
-        stt=STT.sarvam(model_id="saarika:v2.5", language="en-IN"),
+        stt=SarvamAISTT(model_id="saarika:v2.5", language="en-IN"),
         llm=GoogleLLM(model="gemini-3.1-flash-lite-preview"),
-        tts=TTS.sarvam(model_id="bulbul:v2", speaker="anushka", language="en-IN"),
+        tts=SarvamAITTS(model_id="bulbul:v2", speaker="anushka", language="en-IN"),
         vad=SileroVAD(),
         turn_detector=TurnDetector(),
     )

@@ -15,12 +15,8 @@ import os
 from slack_sdk.web.async_client import AsyncWebClient
 
 from videosdk.agents import Agent, AgentSession, Pipeline, WorkerJob, JobContext, RoomOptions, function_tool
-from videosdk.plugins.deepgram import DeepgramSTT
-from videosdk.plugins.cartesia import CartesiaTTS
-from videosdk.plugins.silero import SileroVAD
-from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
+from videosdk.agents.plugins import DeepgramSTT, CartesiaTTS, SileroVAD, TurnDetector, pre_download_model, LangChainLLM
 from langchain_openai import ChatOpenAI
-from videosdk.plugins.langchain import LangChainLLM
 
 from dotenv import load_dotenv
 load_dotenv(override=True)

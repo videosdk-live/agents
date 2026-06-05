@@ -2,11 +2,7 @@ import asyncio
 import logging
 
 from videosdk.agents import Agent, AgentSession, JobContext, Pipeline, RoomOptions, WorkerJob,  function_tool, TTSAudioCache,InterruptConfig
-from videosdk.plugins.cartesia import CartesiaTTS
-from videosdk.plugins.deepgram import DeepgramSTT
-from videosdk.plugins.google import GoogleLLM
-from videosdk.plugins.silero import SileroVAD
-from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
+from videosdk.agents.plugins import CartesiaTTS, DeepgramSTT, GoogleLLM, SileroVAD, TurnDetector, pre_download_model
 
 logging.basicConfig(
     level=logging.INFO,

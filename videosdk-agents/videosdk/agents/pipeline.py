@@ -17,7 +17,7 @@ from .realtime_base_model import RealtimeBaseModel
 from .speech_generation import SpeechGeneration
 from .stt.stt import STT
 from .llm.llm import LLM
-from .llm.chat_context import ChatRole, ChatMessage
+from .llm.chat_context import ChatRole, ChatMessage, FunctionCall, FunctionCallOutput
 from .tts.tts import TTS
 from .vad import VAD
 from .eou import EOU
@@ -919,9 +919,16 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                     self.tts.audio_track.set_pipeline_hooks(self.hooks)
             else:
                 self._realtime_model.audio_track = audio_track
-                
+
                 if self._realtime_model.audio_track and hasattr(self._realtime_model.audio_track, 'set_pipeline_hooks'):
                     self._realtime_model.audio_track.set_pipeline_hooks(self.hooks)
+                # A realtime model streams audio continuously — ensure the
+                # track is accepting input. After a cascade→realtime switch the
+                # track may have been left non-accepting by a prior interrupt
+                # (output_stream drops add_new_bytes when _accepting_audio is
+                # False), which silently swallows all realtime audio.
+                if self._realtime_model.audio_track and hasattr(self._realtime_model.audio_track, 'enable_audio_input'):
+                    self._realtime_model.audio_track.enable_audio_input()
                 async def _audio_track_callback():
                     self._realtime_model.emit("agent_speech_ended", {})
                     self._on_agent_speech_ended_realtime({})
@@ -959,6 +966,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                     self.llm.on_agent_speech_started(lambda data: asyncio.create_task(self._on_agent_speech_started_realtime(data)))
                     # self.llm.on_agent_speech_ended(lambda data: self._on_agent_speech_ended_realtime(data))
                     self.llm.on_transcription(self._on_realtime_transcription)
+                    self.llm.on_function_executed(self._on_realtime_function_executed)
                     self.llm.on("llm_text_output", lambda data: asyncio.create_task(self._on_realtime_llm_text_output(data)))
             if self.config.realtime_mode == RealtimeMode.HYBRID_STT and self.orchestrator:
                 await self.orchestrator.start()
@@ -1261,6 +1269,15 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         except Exception as e:
             logger.error(f"Error in realtime LLM hook: {e}", exc_info=True)
 
+    @staticmethod
+    def _normalize_realtime_role(role: str | None) -> "ChatRole | None":
+        """Map a provider transcript role to a ChatRole, or None if unknown."""
+        if role == "user":
+            return ChatRole.USER
+        if role in ("agent", "assistant", "model"):
+            return ChatRole.ASSISTANT
+        return None
+
     def _on_realtime_transcription(self, data: dict) -> None:
         """Handle realtime model transcription"""
         self.emit("realtime_model_transcription", data)
@@ -1269,11 +1286,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
             text = data.get("text")
             role = data.get("role")
             if text:
-                target_role = None
-                if role == "user":
-                    target_role = ChatRole.USER
-                elif role in ("agent", "assistant", "model"):
-                    target_role = ChatRole.ASSISTANT
+                target_role = self._normalize_realtime_role(role)
 
                 if target_role is not None and not self._matches_last_chat_message(target_role, text):
                     self.agent.chat_context.add_message(
@@ -1290,9 +1303,14 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         """Return True if the last chat_context item already has the same role+text.
         """
         items = self.agent.chat_context.items
-        if not items:
+        last = None
+        for item in reversed(items):
+            if isinstance(item, (FunctionCall, FunctionCallOutput)):
+                continue
+            last = item
+            break
+        if last is None:
             return False
-        last = items[-1]
         if not isinstance(last, ChatMessage) or last.role != role:
             return False
         if isinstance(last.content, str):
@@ -1302,7 +1320,41 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         else:
             return False
         return last_text.strip() == text.strip()
-    
+
+    def _function_call_already_recorded(self, call_id: str) -> bool:
+        """Return True if a FunctionCall with this call_id is already recorded."""
+        for item in self.agent.chat_context.items:
+            if isinstance(item, FunctionCall) and item.call_id == call_id:
+                return True
+        return False
+
+    def _on_realtime_function_executed(self, data: dict) -> None:
+        """Record a realtime model tool call into the agent's chat context."""
+        self.emit("realtime_model_function_executed", data)
+
+        if not self.agent:
+            return
+
+        name = data.get("name")
+        call_id = data.get("call_id")
+        if not name or not call_id:
+            return
+
+        if self._function_call_already_recorded(call_id):
+            return
+
+        self.agent.chat_context.add_function_call(
+            name=name,
+            arguments=data.get("arguments", "{}"),
+            call_id=call_id,
+        )
+        self.agent.chat_context.add_function_output(
+            name=name,
+            output=data.get("output", ""),
+            call_id=call_id,
+            is_error=bool(data.get("is_error", False)),
+        )
+
     def set_voice_mail_detector(self, detector: VoiceMailDetector | None) -> None:
         """Set or replace the voicemail detector on the pipeline and its orchestrator."""
         self.voice_mail_detector = detector

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import logging
 import traceback
@@ -223,6 +224,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         self._session_handle: str | None = None
 
     def set_agent(self, agent: Agent) -> None:
+        self._agent = agent
         self._instructions = agent.instructions
         self.tools = agent.tools
         self.tools_formatted = self._convert_tools_to_gemini_format(self.tools)
@@ -271,6 +273,8 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
 
             if not self.audio_track and "AUDIO" in self.config.response_modalities:
                 logger.warning("audio_track not set — it should be assigned externally by the pipeline before connect().")
+            elif "AUDIO" in self.config.response_modalities:
+                self.reframe_audio_track(self.target_sample_rate)
 
             try:
                 initial_session = await self._create_session()
@@ -306,6 +310,12 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
 
         logger.info(f"Creating Gemini Session with modalities: {self.config.response_modalities}, has_audio_output: {has_audio_output}")
 
+        # Seed prior conversation history (e.g. after a cascade→realtime
+        # pipeline switch) into the system instruction. Gemini Live rejects
+        # post-connect history injection via send_client_content (server
+        # closes the socket with WS 1007), so history rides along in setup.
+        system_instruction = self.instructions_with_context(self._instructions)
+
         config = LiveConnectConfig(
             response_modalities=self.config.response_modalities,
             generation_config=GenerationConfig(
@@ -337,7 +347,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                     else None
                 ),
             ),
-            system_instruction=self._instructions,
+            system_instruction=system_instruction,
             speech_config=speech_config_obj,
             tools=self.formatted_tools or None,
             input_audio_transcription=self.config.input_audio_transcription if has_audio_output else None,
@@ -445,16 +455,42 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
                                 tool_name=tool_info.name
                             )
                             result = await tool(**tool_call.args)
+                            self.emit(
+                                "realtime_model_function_executed",
+                                {
+                                    "name": tool_call.name,
+                                    "arguments": json.dumps(dict(tool_call.args or {})),
+                                    "call_id": tool_call.id,
+                                    "output": result if isinstance(result, str) else json.dumps(result),
+                                    "is_error": False,
+                                },
+                            )
                             await self.send_tool_response(
                                 [
                                     FunctionResponse(
                                         id=tool_call.id,
                                         name=tool_call.name,
-                                        response=result,
+                                        # FunctionResponse.response must be a
+                                        # dict; wrap non-dict tool returns.
+                                        response=(
+                                            result
+                                            if isinstance(result, dict)
+                                            else {"result": result}
+                                        ),
                                     )
                                 ]
                             )
                         except Exception as e:
+                            self.emit(
+                                "realtime_model_function_executed",
+                                {
+                                    "name": tool_call.name,
+                                    "arguments": json.dumps(dict(tool_call.args or {})),
+                                    "call_id": tool_call.id,
+                                    "output": str(e),
+                                    "is_error": True,
+                                },
+                            )
                             self.emit(
                                 "error",
                                 f"Error executing function {tool_call.name}: {e}",
@@ -960,13 +996,39 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
             self._session_should_close.set()
 
     async def _cleanup_session(self, session: GeminiSession) -> None:
-        """Clean up a session's resources"""
+        """Clean up a session's resources.
+
+        The websockets close handshake waits up to ``close_timeout`` (default
+        10s) for the server's close frame. When a session is torn down
+        mid-conversation (e.g. a pipeline switch) the server often never
+        replies, so the handshake stalls the full 10s. We shorten the
+        handshake timeout, bound the close with ``wait_for``, and — if it
+        still stalls — abort the underlying transport so the socket is closed
+        immediately rather than abandoned half-open.
+        """
         for task in session.tasks:
             if not task.done():
                 task.cancel()
 
+        ws = getattr(getattr(session, "session", None), "_ws", None)
+        if ws is not None:
+            try:
+                ws.close_timeout = 1.0
+            except Exception:
+                pass
+
         try:
-            await session.session_cm.__aexit__(None, None, None)
+            await asyncio.wait_for(
+                session.session_cm.__aexit__(None, None, None), timeout=2.0
+            )
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            logger.warning("Gemini realtime: session close stalled — aborting socket")
+            try:
+                transport = getattr(ws, "transport", None)
+                if transport is not None:
+                    transport.abort()
+            except Exception:
+                pass
         except Exception as e:
             if "1011" not in str(e) and "closed" not in str(e).lower():
                 self.emit("error", f"Error closing session: {e}")

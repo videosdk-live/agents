@@ -2,11 +2,7 @@ import asyncio
 import logging
 import aiohttp
 from videosdk.agents import Agent, AgentSession, Pipeline, function_tool, WorkerJob, JobContext, RoomOptions, UtteranceHandle
-from videosdk.plugins.openai import OpenAILLM
-from videosdk.plugins.deepgram import DeepgramSTT
-from videosdk.plugins.silero import SileroVAD
-from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
-from videosdk.plugins.elevenlabs import ElevenLabsTTS
+from videosdk.agents.plugins import OpenAILLM, DeepgramSTT, SileroVAD, TurnDetector, pre_download_model, ElevenLabsTTS
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])

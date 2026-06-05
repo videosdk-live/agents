@@ -4341,7 +4341,7 @@ requires-dist = [{ name = "videosdk-agents", editable = "videosdk-agents" }]
 
 [[package]]
 name = "vsaiortc"
-version = "0.0.10"
+version = "0.0.12"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aioice" },
@@ -4352,8 +4352,9 @@ dependencies = [
     { name = "pylibsrtp" },
     { name = "pyopenssl" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/2b/c0/e8f2e02af62f9f40eb278e2a348d13fa7fd32a5c15827b26a5e7e0ee7e9f/vsaiortc-0.0.12.tar.gz", hash = "sha256:5bb7036b70124c2793b4d99d33de0273ccb9167cd0fb563491f30540c206b343", size = 1180647, upload-time = "2026-05-20T16:17:03.79Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/2e/d2/455e09a566811b207696666e8940c87f7d85bfd7d82dde7adf4fa8a4ed2f/vsaiortc-0.0.10-py3-none-any.whl", hash = "sha256:bc6d2dff500cf3adad51716fecd7248f2cf2c6cdf10c176ced486bf279f9abb3", size = 93463, upload-time = "2026-01-16T05:55:00.574Z" },
+    { url = "https://files.pythonhosted.org/packages/e4/38/23c08614dffe6b5b3896dad5ae5351cd5a696e3815b78ea980200a3ef8c2/vsaiortc-0.0.12-py3-none-any.whl", hash = "sha256:eb686493261eb798c4a27ac5fe361d256b2c0e047364a72b1070df50ecd2e78d", size = 93632, upload-time = "2026-05-20T16:17:02.627Z" },
 ]
 
 [[package]]

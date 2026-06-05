@@ -1,10 +1,6 @@
 import os
 from videosdk.agents import Agent, AgentSession, Pipeline, WorkerJob, JobContext, RoomOptions
-from videosdk.plugins.deepgram import DeepgramSTT
-from videosdk.plugins.silero import SileroVAD
-from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
-from videosdk.plugins.anthropic import AnthropicLLM
-from videosdk.plugins.google import GoogleTTS
+from videosdk.agents.plugins import DeepgramSTT, SileroVAD, TurnDetector, pre_download_model, AnthropicLLM, GoogleTTS
 import logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 

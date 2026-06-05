@@ -5,10 +5,7 @@ import asyncio
 import logging
 from videosdk import PubSubPublishConfig
 from videosdk.agents import Agent, AgentSession, Pipeline, WorkerJob, JobContext, RoomOptions
-from videosdk.plugins.google import GoogleLLM
-from videosdk.plugins.deepgram import DeepgramSTT
-from videosdk.plugins.silero import SileroVAD
-from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
+from videosdk.agents.plugins import GoogleLLM, DeepgramSTT, SileroVAD, TurnDetector, pre_download_model
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 pre_download_model()
