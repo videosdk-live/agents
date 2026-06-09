@@ -1087,11 +1087,6 @@ class TracesFlowManager:
     def create_components_change_trace(self, components_change_status: Dict[str, Any], components_change_data: Dict[str, Any], time_data: Dict[str, Any], turn_id: Optional[str] = None) -> None:
         """
         Creates a span for the agent's components change.
-
-        Non-turn event span: parented to `User & Agent Turns` (the unified
-        turns-container level). When `turn_id` is set (the change happened during a
-        turn) the renderer slots it below that turn; absent → turn-sibling level.
-
         Args:
             components_change_status: Status of the components change.
             components_change_data: Data of the components change.
@@ -1133,11 +1128,6 @@ class TracesFlowManager:
     def create_pipeline_change_trace(self, time_data: Dict[str, Any], original_pipeline_config: Dict[str, Any], new_pipeline_config: Dict[str, Any], turn_id: Optional[str] = None) -> None:
         """
         Creates a span for the agent's pipeline change.
-
-        Non-turn event span: parented to `User & Agent Turns` (the unified
-        turns-container level). When `turn_id` is set (the change happened during a
-        turn) the renderer slots it below that turn; absent → turn-sibling level.
-
         Args:
             time_data: Time data of the pipeline change.
             original_pipeline_config: Original pipeline configuration.
@@ -1163,13 +1153,7 @@ class TracesFlowManager:
         self.end_span(pipeline_change_span, "Pipeline change span created", end_time=time_data.get("end_time", time.perf_counter()))
 
     def create_a2a_trace(self, name: str, attributes: Dict[str, Any], turn_id: Optional[str] = None) -> Optional[Span]:
-        """Creates an A2A trace under the main turn span.
-
-        `turn_id` (the turn active when A2A communication began) tags the
-        `Agent-to-Agent Communications` parent so the renderer can slot the A2A
-        block below that turn; absent → turn-sibling level. Approximate when the
-        A2A exchange spans several turns — the first turn's id wins.
-        """
+        """Creates an A2A trace under the main turn span. `turn_id` (turn active when A2A began, or None) tags the parent for renderer placement."""
         if not self.main_turn_span:
             return None
 
@@ -1237,12 +1221,7 @@ class TracesFlowManager:
         return span
 
     def create_background_audio_start_span(self, file_path: str = None, looping: bool = False, start_time: float = None, turn_id: Optional[str] = None):
-        """Creates a 'Playing Background Audio' span at session level (same level as turn spans).
-
-        `turn_id`, when set, is the id of the turn that was active when playback
-        started. The renderer uses it to nest the span below that turn; absent →
-        the span stays at the turn-sibling level (it occurred between turns).
-        """
+        """Creates a 'Playing Background Audio' span. `turn_id` (turn active at start, or None) lets the renderer place it below that turn."""
         if not self.main_turn_span:
             return None
 
@@ -1260,11 +1239,7 @@ class TracesFlowManager:
         return start_span
 
     def create_background_audio_stop_span(self, file_path: str = None, looping: bool = False, end_time: float = None, turn_id: Optional[str] = None):
-        """Creates a 'Stopped Background Audio' span at session level (same level as turn spans).
-
-        `turn_id` follows the same contract as the start span — see
-        `create_background_audio_start_span`.
-        """
+        """Creates a 'Stopped Background Audio' span. `turn_id` (turn active at stop, or None) lets the renderer place it below that turn."""
         if not self.main_turn_span:
             return None
 
