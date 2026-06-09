@@ -1153,7 +1153,8 @@ class MetricsCollector:
             self._start_timeline_event("background_audio", now)
         if self.traces_flow_manager:
             self.traces_flow_manager.create_background_audio_start_span(
-                file_path=file_name, looping=looping, start_time=now
+                file_path=file_name, looping=looping, start_time=now,
+                turn_id=self.current_turn.turn_id if self.current_turn else None,
             )
         logger.info(f"[metrics] background audio started | file={file_name} | looping={looping}")
 
@@ -1164,7 +1165,10 @@ class MetricsCollector:
         if self.current_turn:
             self._end_timeline_event("background_audio", now)
         if self.traces_flow_manager:
-            self.traces_flow_manager.create_background_audio_stop_span(end_time=now)
+            self.traces_flow_manager.create_background_audio_stop_span(
+                end_time=now,
+                turn_id=self.current_turn.turn_id if self.current_turn else None,
+            )
         logger.info("[metrics] background audio stopped")
 
     # ──────────────────────────────────────────────

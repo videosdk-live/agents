@@ -454,7 +454,10 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
 
         traces_flow_manager = metrics_collector.traces_flow_manager
         if traces_flow_manager:
-            traces_flow_manager.agent_say_called(message)
+            traces_flow_manager.agent_say_called(
+                message,
+                turn_id=metrics_collector.current_turn.turn_id if metrics_collector.current_turn else None,
+            )
 
         if add_to_chat_context:
             self.agent.chat_context.add_message(role=ChatRole.ASSISTANT, content=message)
@@ -604,7 +607,14 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             return
         self._reply_in_progress = True
         self._pause_wake_up_timer()
-        
+
+        traces_flow_manager = metrics_collector.traces_flow_manager
+        if traces_flow_manager:
+            traces_flow_manager.agent_reply_called(
+                instructions,
+                turn_id=metrics_collector.current_turn.turn_id if metrics_collector.current_turn else None,
+            )
+
         try:
             # Call pipeline's reply_with_context
             if hasattr(self.pipeline, 'reply_with_context'):

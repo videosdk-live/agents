@@ -110,7 +110,8 @@ class AgentRegistry:
                 try:
                     reg_span = traces_flow_manager.create_a2a_trace(
                         "Agent Registration",
-                        attributes
+                        attributes,
+                        turn_id=metrics_collector.current_turn.turn_id if metrics_collector and metrics_collector.current_turn else None,
                     )
                     if reg_span:
                         traces_flow_manager.end_a2a_trace(
@@ -398,7 +399,8 @@ class A2AProtocol:
                 }
                 sender_span = traces_flow_manager.create_a2a_trace(
                     "Message Sent",
-                    attributes
+                    attributes,
+                    turn_id=metrics_collector.current_turn.turn_id if metrics_collector and metrics_collector.current_turn else None,
                 )
             except Exception as e:
                 print(f"Failed to create sender A2A trace: {e}")
@@ -438,7 +440,8 @@ class A2AProtocol:
                 }
                 receiver_span = traces_flow_manager.create_a2a_trace(
                     "Message Received",
-                    attributes
+                    attributes,
+                    turn_id=metrics_collector.current_turn.turn_id if metrics_collector and metrics_collector.current_turn else None,
                 )
             except Exception as e:
                 print(f"Failed to create receiver A2A trace: {e}")

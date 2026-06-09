@@ -1043,7 +1043,7 @@ class TracesFlowManager:
         self.end_span(self.main_turn_span, "All turns processed", end_time=time.perf_counter())
         self.main_turn_span = None
 
-    def agent_say_called(self, message: str):
+    def agent_say_called(self, message: str, turn_id: Optional[str] = None):
         """Creates a span for the agent's say method."""
         if not self.agent_session_span:
             return
@@ -1053,42 +1053,54 @@ class TracesFlowManager:
         # context, so get_current_span() always returns INVALID_SPAN (truthy,
         # trace_id=0). Passing that as the parent makes the SDK mint a fresh trace_id,
         # orphaning Agent Say into its own "session".
+        attrs: Dict[str, Any] = {"Agent Say Message": message}
+        if turn_id:
+            attrs["turn_id"] = turn_id
         agent_say_span = create_span(
             "Agent Say",
-            {"Agent Say Message": message},
+            attrs,
             parent_span=self.agent_session_span,
             start_time=time.perf_counter()
         )
 
-        self.end_span(agent_say_span, "Agent say span created", end_time=time.perf_counter())    
+        self.end_span(agent_say_span, "Agent say span created", end_time=time.perf_counter())
 
-    def agent_reply_called(self, instructions: str):
+    def agent_reply_called(self, instructions: str, turn_id: Optional[str] = None):
         """Creates a span for an agent reply invocation."""
         if not self.agent_session_span:
             return
 
         # See agent_say_called: get_current_span() returns INVALID_SPAN here and would
         # orphan the span into a new trace. Parent directly to the session span.
+        attrs: Dict[str, Any] = {"Agent Reply Instructions": instructions}
+        if turn_id:
+            attrs["turn_id"] = turn_id
         agent_reply_span = create_span(
             "Agent Reply",
-            {"Agent Reply Instructions": instructions},
+            attrs,
             parent_span=self.agent_session_span,
             start_time=time.perf_counter()
         )
 
         self.end_span(agent_reply_span, "Agent reply span created", end_time=time.perf_counter())
 
-    def create_components_change_trace(self, components_change_status: Dict[str, Any], components_change_data: Dict[str, Any], time_data: Dict[str, Any]) -> None:
+    def create_components_change_trace(self, components_change_status: Dict[str, Any], components_change_data: Dict[str, Any], time_data: Dict[str, Any], turn_id: Optional[str] = None) -> None:
         """
         Creates a span for the agent's components change.
+
+        Non-turn event span: parented to `User & Agent Turns` (the unified
+        turns-container level). When `turn_id` is set (the change happened during a
+        turn) the renderer slots it below that turn; absent → turn-sibling level.
+
         Args:
             components_change_status: Status of the components change.
             components_change_data: Data of the components change.
             time_data: Time data of the components change.
+            turn_id: Id of the turn active when the change happened, or None.
         """
         if not self.main_turn_span:
             return
-        
+
         attr = {}
 
         if components_change_data.get("new_stt") is not None:
@@ -1105,6 +1117,8 @@ class TracesFlowManager:
             attr["new_denoise"] = components_change_data["new_denoise"]
         if components_change_status:
             attr["components_change_status"] = components_change_status
+        if turn_id:
+            attr["turn_id"] = turn_id
 
         self.components_change_span = create_span(
             "Components Change",
@@ -1116,21 +1130,29 @@ class TracesFlowManager:
         self.end_span(self.components_change_span, "Components change span created", end_time=time_data.get("end_time", time.perf_counter()))
         self.components_change_span = None
 
-    def create_pipeline_change_trace(self, time_data: Dict[str, Any], original_pipeline_config: Dict[str, Any], new_pipeline_config: Dict[str, Any]) -> None:
+    def create_pipeline_change_trace(self, time_data: Dict[str, Any], original_pipeline_config: Dict[str, Any], new_pipeline_config: Dict[str, Any], turn_id: Optional[str] = None) -> None:
         """
         Creates a span for the agent's pipeline change.
+
+        Non-turn event span: parented to `User & Agent Turns` (the unified
+        turns-container level). When `turn_id` is set (the change happened during a
+        turn) the renderer slots it below that turn; absent → turn-sibling level.
+
         Args:
             time_data: Time data of the pipeline change.
             original_pipeline_config: Original pipeline configuration.
             new_pipeline_config: New pipeline configuration.
+            turn_id: Id of the turn active when the change happened, or None.
         """
         if not self.main_turn_span:
             return
-        
-        attr = {
+
+        attr: Dict[str, Any] = {
             "original_pipeline_config": original_pipeline_config,
             "new_pipeline_config": new_pipeline_config
         }
+        if turn_id:
+            attr["turn_id"] = turn_id
         pipeline_change_span = create_span(
             "Pipeline Change",
             attr,
@@ -1140,15 +1162,24 @@ class TracesFlowManager:
 
         self.end_span(pipeline_change_span, "Pipeline change span created", end_time=time_data.get("end_time", time.perf_counter()))
 
-    def create_a2a_trace(self, name: str, attributes: Dict[str, Any]) -> Optional[Span]:
-        """Creates an A2A trace under the main turn span."""
+    def create_a2a_trace(self, name: str, attributes: Dict[str, Any], turn_id: Optional[str] = None) -> Optional[Span]:
+        """Creates an A2A trace under the main turn span.
+
+        `turn_id` (the turn active when A2A communication began) tags the
+        `Agent-to-Agent Communications` parent so the renderer can slot the A2A
+        block below that turn; absent → turn-sibling level. Approximate when the
+        A2A exchange spans several turns — the first turn's id wins.
+        """
         if not self.main_turn_span:
             return None
 
         if not self.a2a_span:
+            a2a_attrs: Dict[str, Any] = {"total_a2a_turns": self._a2a_turn_count}
+            if turn_id:
+                a2a_attrs["turn_id"] = turn_id
             self.a2a_span = create_span(
                 "Agent-to-Agent Communications",
-                {"total_a2a_turns": self._a2a_turn_count},
+                a2a_attrs,
                 parent_span=self.main_turn_span
             )
 
@@ -1205,33 +1236,46 @@ class TracesFlowManager:
         self.end_span(span, message="Thinking audio stopped", end_time=t)
         return span
 
-    def create_background_audio_start_span(self, file_path: str = None, looping: bool = False, start_time: float = None):
-        """Creates a 'Playing Background Audio' span at session level (same level as turn spans)."""
+    def create_background_audio_start_span(self, file_path: str = None, looping: bool = False, start_time: float = None, turn_id: Optional[str] = None):
+        """Creates a 'Playing Background Audio' span at session level (same level as turn spans).
+
+        `turn_id`, when set, is the id of the turn that was active when playback
+        started. The renderer uses it to nest the span below that turn; absent →
+        the span stays at the turn-sibling level (it occurred between turns).
+        """
         if not self.main_turn_span:
             return None
-        
+
         bg_audio_attrs = {}
         if file_path:
             bg_audio_attrs["file_path"] = file_path
         bg_audio_attrs["looping"] = looping
         bg_audio_attrs["event"] = "start"
-        
+        if turn_id:
+            bg_audio_attrs["turn_id"] = turn_id
+
         start_span = create_span("Playing Background Audio", bg_audio_attrs, parent_span=self.main_turn_span, start_time=start_time or time.perf_counter())
         # End immediately as a point-in-time event
         self.end_span(start_span, message="Background audio started", end_time=start_time or time.perf_counter())
         return start_span
 
-    def create_background_audio_stop_span(self, file_path: str = None, looping: bool = False, end_time: float = None):
-        """Creates a 'Stopped Background Audio' span at session level (same level as turn spans)."""
+    def create_background_audio_stop_span(self, file_path: str = None, looping: bool = False, end_time: float = None, turn_id: Optional[str] = None):
+        """Creates a 'Stopped Background Audio' span at session level (same level as turn spans).
+
+        `turn_id` follows the same contract as the start span — see
+        `create_background_audio_start_span`.
+        """
         if not self.main_turn_span:
             return None
-        
+
         bg_audio_attrs = {}
         if file_path:
             bg_audio_attrs["file_path"] = file_path
         bg_audio_attrs["looping"] = looping
         bg_audio_attrs["event"] = "stop"
-        
+        if turn_id:
+            bg_audio_attrs["turn_id"] = turn_id
+
         stop_span = create_span("Stopped Background Audio", bg_audio_attrs, parent_span=self.main_turn_span, start_time=end_time or time.perf_counter())
         # End immediately as a point-in-time event
         self.end_span(stop_span, message="Background audio stopped", end_time=end_time or time.perf_counter())

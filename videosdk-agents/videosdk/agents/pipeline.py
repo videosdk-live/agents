@@ -725,7 +725,10 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         new_pipeline_config["context_window"] = self.context_window
         new_pipeline_config["context_window"] = self.context_window
 
-        metrics_collector.traces_flow_manager.create_pipeline_change_trace(time_data, original_pipeline_config, new_pipeline_config)
+        metrics_collector.traces_flow_manager.create_pipeline_change_trace(
+            time_data, original_pipeline_config, new_pipeline_config,
+            turn_id=metrics_collector.current_turn.turn_id if metrics_collector.current_turn else None,
+        )
         self._setup_error_handlers()
         await self.start()
 
@@ -860,7 +863,10 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
             self._setup_error_handlers()
             await self.start()
 
-        metrics_collector.traces_flow_manager.create_components_change_trace(components_change_status, components_change_data, time_data)
+        metrics_collector.traces_flow_manager.create_components_change_trace(
+            components_change_status, components_change_data, time_data,
+            turn_id=metrics_collector.current_turn.turn_id if metrics_collector.current_turn else None,
+        )
         new_mode = self.config.pipeline_mode.value
         logger.info(f"New pipeline mode: {new_mode}")
 
