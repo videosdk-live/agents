@@ -1,10 +1,10 @@
-import asyncio
 import aiohttp
 from videosdk.agents import Agent, AgentSession, Pipeline, function_tool, JobContext, RoomOptions, WorkerJob
-from videosdk.agents.plugins import GoogleLLM, DeepgramSTT, CartesiaTTS, SileroVAD
-from videosdk.agents.inference import TurnV2
+from videosdk.agents.plugins import GoogleLLM, DeepgramSTT, CartesiaTTS, SileroVAD, TurnDetector, pre_download_model
 import logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
+# Pre-downloading the Turn Detector model
+pre_download_model()
 
 @function_tool
 async def get_weather(
@@ -79,9 +79,9 @@ async def start_session(context: JobContext):
         llm=GoogleLLM(),
         tts=CartesiaTTS(),
         vad=SileroVAD(),
-        # TurnV2 (VideoSDK Inference Gateway) 
-        turn_detector=TurnV2.echo_large(),   # or TurnV2.echo_small() for lower latency
+        turn_detector=TurnDetector()
     )
+
     session = AgentSession(
         agent=agent,
         pipeline=pipeline,
