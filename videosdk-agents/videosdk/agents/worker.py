@@ -60,10 +60,6 @@ async def _execute_job_entrypoint(
 ):
     """Execute job entrypoint in a separate process/thread."""
 
-    # In backend-registration mode this runs in a spawned child process with a
-    # fresh AnalyticsClient singleton (agent_id=None), so Options.__post_init__
-    # never set it here. Propagate the worker's agent_id so analytics payloads
-    # include "agentId" just like in direct (register=False) mode.
     if agent_id:
         from .metrics import metrics_collector
         metrics_collector.analytics_client.set_agent_id(agent_id)
