@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import numpy as np
+from scipy import signal
 from videosdk import Stream
 from ..event_bus import global_event_emitter
 from typing import Optional
@@ -8,6 +9,7 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
+PIPELINE_INPUT_SAMPLE_RATE = 48000
 class InputStreamManager:
     """
     Manages incoming audio and video streams from participants.
@@ -16,6 +18,7 @@ class InputStreamManager:
         self.pipeline = pipeline
         self.audio_listener_tasks = {}
         self.video_listener_tasks = {}
+        self._logged_input_rate = False
 
     async def add_audio_listener(self, stream: Stream):
         """
@@ -32,10 +35,21 @@ class InputStreamManager:
                     logger.info(f"Processed {frame_count} audio frames  timestamp :: {datetime.now()}")
 
                 global_event_emitter.emit("ON_SPEECH_IN", {"frame": frame, "stream": stream})
-                
+
                 audio_data = frame.to_ndarray()[0]
+
+                src_rate = getattr(frame, "sample_rate", None) or PIPELINE_INPUT_SAMPLE_RATE
+                if not self._logged_input_rate:
+                    logger.info(f"Incoming participant audio sample_rate={src_rate} Hz")
+                    self._logged_input_rate = True
+                if src_rate != PIPELINE_INPUT_SAMPLE_RATE:
+                    samples = audio_data.astype(np.float32)
+                    target_len = int(round(len(samples) * PIPELINE_INPUT_SAMPLE_RATE / src_rate))
+                    if target_len > 0:
+                        audio_data = signal.resample(samples, target_len)
+
                 pcm_frame = audio_data.flatten().astype(np.int16).tobytes()
-                
+
                 if self.pipeline:
                     await self.pipeline.on_audio_delta(pcm_frame)
                 else:

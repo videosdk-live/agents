@@ -58,6 +58,7 @@ class VideoSDKHandler(BaseTransportHandler):
         record_screen_share: bool = True,
         custom_camera_video_track=None,
         custom_microphone_audio_track=None,
+        audio_codec: Optional[str] = "opus",
         audio_sinks=None,
         background_audio: bool = False,
         on_room_error: Optional[Callable[[Any], None]] = None,
@@ -118,6 +119,7 @@ class VideoSDKHandler(BaseTransportHandler):
         self.vision = vision
         self.custom_camera_video_track = custom_camera_video_track
         self.custom_microphone_audio_track = custom_microphone_audio_track
+        self.audio_codec = audio_codec
         self.audio_sinks = audio_sinks or []
         self.background_audio = background_audio
         self._avatar_participant_id = avatar_participant_id
@@ -171,30 +173,44 @@ class VideoSDKHandler(BaseTransportHandler):
         self.traces_flow_manager = TracesFlowManager(room_id=self.meeting_id)
         metrics_collector.set_traces_flow_manager(
             self.traces_flow_manager)
+        
+        self.audio_sample_rate = 24000
+        _codec = str(self.audio_codec).lower() if self.audio_codec else ""
+        if _codec in ("pcmu", "pcma"):
+            self.audio_sample_rate = 8000
+        elif _codec == "g722":
+            self.audio_sample_rate = 16000
 
         if custom_microphone_audio_track:
             self.audio_track = custom_microphone_audio_track
             if audio_sinks:
                 if self.background_audio:
                     self.agent_audio_track = TeeMixingCustomAudioStreamTrack(
-                        loop=self.loop, sinks=audio_sinks, pipeline=pipeline
+                        loop=self.loop, sinks=audio_sinks, pipeline=pipeline, sample_rate=self.audio_sample_rate
                     )
                 else:
                     self.agent_audio_track = TeeCustomAudioStreamTrack(
-                        loop=self.loop, sinks=audio_sinks, pipeline=pipeline
+                        loop=self.loop, sinks=audio_sinks, pipeline=pipeline, sample_rate=self.audio_sample_rate
                     )
             else:
                 self.agent_audio_track = None
         else:
             if self.background_audio:
                 self.audio_track = TeeMixingCustomAudioStreamTrack(
-                    loop=self.loop, sinks=audio_sinks, pipeline=pipeline
+                    loop=self.loop, sinks=audio_sinks, pipeline=pipeline, sample_rate=self.audio_sample_rate
                 )
             else:
                 self.audio_track = TeeCustomAudioStreamTrack(
-                    loop=self.loop, sinks=audio_sinks, pipeline=pipeline
+                    loop=self.loop, sinks=audio_sinks, pipeline=pipeline, sample_rate=self.audio_sample_rate
                 )
             self.agent_audio_track = None
+
+        logger.info(
+            "Agent output audio track: codec=%s derived_sample_rate=%s actual_track_sample_rate=%s",
+            self.audio_codec,
+            self.audio_sample_rate,
+            getattr(self.audio_track, "sample_rate", "?"),
+        )
 
         # Create meeting config
         self.meeting_config = {
@@ -206,6 +222,7 @@ class VideoSDKHandler(BaseTransportHandler):
             "webcam_enabled": custom_camera_video_track is not None,
             "custom_microphone_audio_track": self.audio_track,
             "custom_camera_video_track": custom_camera_video_track,
+            "audio_codec": self.audio_codec,
             "peer_type": "agent",
         }
         if self.signaling_base_url is not None:

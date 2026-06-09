@@ -57,6 +57,7 @@ class CartesiaTTS(TTS):
         voice_id: Union[str, List[float]] = DEFAULT_VOICE_ID,
         language: str = "en",
         base_url: str = "https://api.cartesia.ai",
+        sample_rate: int = CARTESIA_SAMPLE_RATE,
         generation_config: GenerationConfig | None = None,
         pronunciation_dict_id: str | None = None,
         max_buffer_delay_ms: int | None = None,
@@ -82,7 +83,7 @@ class CartesiaTTS(TTS):
                 avoid hitting Cartesia's idle/session limits.
         """
         super().__init__(
-            sample_rate=CARTESIA_SAMPLE_RATE,
+            sample_rate=sample_rate,
             num_channels=CARTESIA_CHANNELS,
             word_timestamps=word_timestamps,
         )

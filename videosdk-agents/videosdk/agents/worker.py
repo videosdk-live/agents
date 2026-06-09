@@ -737,6 +737,7 @@ class Worker:
                     self.default_room_options, "recording_options", None
                 ),
                 background_audio=self.default_room_options.background_audio,
+                audio_codec=self.default_room_options.audio_codec,
                 agent_participant_id=self.default_room_options.agent_participant_id,
                 join_meeting=self.default_room_options.join_meeting,
                 auto_end_session=self.default_room_options.auto_end_session,

@@ -226,6 +226,7 @@ class RoomOptions:
     # VideoSDK connection options
     signaling_base_url: Optional[str] = "api.videosdk.live"
     background_audio: bool = False
+    audio_codec: Optional[str] = "pcmu"
 
     send_logs_to_dashboard: bool = False
     dashboard_log_level: str = "INFO"
@@ -658,6 +659,7 @@ class JobContext:
                             record_screen_share=record_screen_share,
                             custom_camera_video_track=custom_camera_video_track,
                             custom_microphone_audio_track=custom_microphone_audio_track,
+                            audio_codec=self.room_options.audio_codec,
                             audio_sinks=sinks,
                             background_audio=self.room_options.background_audio,
                             on_room_error=self.room_options.on_room_error,

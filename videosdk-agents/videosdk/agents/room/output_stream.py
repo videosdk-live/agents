@@ -27,7 +27,7 @@ class CustomAudioStreamTrack(CustomAudioTrack):
     Supports optional pause/resume for false-interrupt detection while maintaining
     compatibility with avatar plugins that need simple audio flow.
     """
-    def __init__(self, loop):
+    def __init__(self, loop, sample_rate: int = 24000):
         super().__init__()
         self.loop = loop
         self._start = None
@@ -35,7 +35,7 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         self.frame_buffer = []
         self.audio_data_buffer = bytearray()
         self.frame_time = 0
-        self.sample_rate = 24000
+        self.sample_rate = sample_rate
         self.channels = 1
         self.sample_width = 2
         self.time_base_fraction = Fraction(1, self.sample_rate)
@@ -403,8 +403,8 @@ class CustomAudioStreamTrack(CustomAudioTrack):
 
 class MixingCustomAudioStreamTrack(CustomAudioStreamTrack):
     """Audio track that mixes primary TTS audio with a background audio buffer, creating frames just-in-time during recv."""
-    def __init__(self, loop):
-        super().__init__(loop)
+    def __init__(self, loop, sample_rate: int = 24000):
+        super().__init__(loop, sample_rate)
         self.background_audio_buffer = bytearray()
 
     def interrupt(self):
@@ -550,8 +550,8 @@ class MixingCustomAudioStreamTrack(CustomAudioStreamTrack):
 class TeeCustomAudioStreamTrack(CustomAudioStreamTrack):
     """Audio track that duplicates outgoing audio bytes to registered sinks such as avatar plugins or local speakers."""
 
-    def __init__(self, loop, sinks=None, pipeline=None):
-        super().__init__(loop)
+    def __init__(self, loop, sinks=None, pipeline=None, sample_rate: int = 24000):
+        super().__init__(loop, sample_rate)
         self.sinks = sinks if sinks is not None else []
         self.pipeline = pipeline
 
@@ -603,8 +603,8 @@ class TeeCustomAudioStreamTrack(CustomAudioStreamTrack):
 class TeeMixingCustomAudioStreamTrack(MixingCustomAudioStreamTrack):
     """Combines mixing and tee functionality, mixing background audio while also forwarding audio bytes to registered sinks."""
 
-    def __init__(self, loop, sinks=None, pipeline=None):
-        super().__init__(loop)
+    def __init__(self, loop, sinks=None, pipeline=None, sample_rate: int = 24000):
+        super().__init__(loop, sample_rate)
         self.sinks = sinks if sinks is not None else []
         self.pipeline = pipeline
 
