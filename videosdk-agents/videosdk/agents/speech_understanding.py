@@ -8,7 +8,8 @@ from .event_emitter import EventEmitter
 from .stt.stt import STT, STTResponse, SpeechEventType
 from .vad import VAD, VADResponse, VADEventType
 from .eou import EOU
-from .llm.chat_context import ChatRole
+from .llm.chat_context import ChatContext, ChatRole
+from .utils import TurnResult
 from .denoise import Denoise
 from .metrics import metrics_collector
 from .utils import UserState, AgentState
@@ -90,6 +91,9 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
         self._current_vad_probability: float = 0.0
         self._current_vad_energy: float = 0.0
         self._current_vad_speaking: bool = False
+        
+        # Turn result from the most recent EOU call this turn.
+        self._last_turn_result: TurnResult | None = None
 
         # Setup event handlers
         if self.stt:
@@ -295,7 +299,8 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
                     "text": text,
                     "is_preemptive": True,
                     "confidence": confidence,
-                    "metadata": stt_response.metadata
+                    "metadata": stt_response.metadata,
+                    "turn_state": None,
                 })
             else:
                 await self._process_transcript_with_eou(text)
@@ -337,29 +342,30 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
                 self._accumulated_transcript += " " + new_transcript
             else:
                 self._accumulated_transcript = new_transcript
-            
+
             delay = self.min_speech_wait_timeout
-            
-            if self.mode == 'DEFAULT':
-                if self.turn_detector and self.agent:
-                    metrics_collector.on_eou_start()
-                    eou_probability = await asyncio.to_thread(
-                        self.turn_detector.get_eou_probability, self.agent.chat_context
-                    )
-                    metrics_collector.on_eou_complete()
-                    logger.info(f"EOU probability: {eou_probability}")
+            self._last_turn_result = None
+
+            if self.turn_detector and self.agent:
+                eou_context = ChatContext(items=list(self.agent.chat_context.items))
+                eou_context.add_message(
+                    role=ChatRole.USER, content=self._accumulated_transcript
+                )
+
+                metrics_collector.on_eou_start()
+                result = await asyncio.to_thread(
+                    self.turn_detector.get_turn_result, eou_context
+                )
+                metrics_collector.on_eou_complete()
+                self._last_turn_result = result
+                eou_probability = result.eou_probability
+                logger.info(f"EOU probability: {eou_probability} (state={result.state})")
+
+                if self.mode == 'DEFAULT':
                     if eou_probability < self.eou_certainty_threshold:
                         delay = self.max_speech_wait_timeout
                     metrics_collector.on_wait_for_additional_speech(delay, eou_probability)
-
-            elif self.mode == 'ADAPTIVE':
-                if self.turn_detector and self.agent:
-                    metrics_collector.on_eou_start()
-                    eou_probability = await asyncio.to_thread(
-                        self.turn_detector.get_eou_probability, self.agent.chat_context
-                    )
-                    metrics_collector.on_eou_complete()
-                    logger.info(f"EOU probability: {eou_probability}")
+                elif self.mode == 'ADAPTIVE':
                     delay_range = self.max_speech_wait_timeout - self.min_speech_wait_timeout
                     wait_factor = 1.0 - eou_probability
                     delay = self.min_speech_wait_timeout + (delay_range * wait_factor)
@@ -414,13 +420,18 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
         
         final_transcript = self._accumulated_transcript.strip()
         logger.info(f"Finalizing transcript: '{final_transcript}'")
-        
+
+        result = self._last_turn_result
+        turn_state = result.state.value if result and result.state else None
+
         self._accumulated_transcript = ""
-        
+        self._last_turn_result = None
+
         self.emit("transcript_final", {
             "text": final_transcript,
             "is_preemptive": False,
-            "eou_detected": True
+            "eou_detected": True,
+            "turn_state": turn_state,
         })
         
         self.emit("eou_detected", {
@@ -435,7 +446,8 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
 
         self._record_wait_elapsed()
         self._waiting_for_more_speech = False
-    
+        self._last_turn_result = None
+
     async def _handle_turn_resumed(self, resumed_text: str) -> None:
         """Handle TurnResumed event (user continued speaking)"""
         if self._accumulated_transcript:
@@ -495,6 +507,7 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
             self._wait_timer = None
 
         self._accumulated_transcript = ""
+        self._last_turn_result = None
         self._waiting_for_more_speech = False
         self._wait_started_at = None
         self._preemptive_transcript = None
