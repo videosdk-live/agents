@@ -352,6 +352,50 @@ class STT(BaseSTT):
             base_url=base_url,
         )
 
+    @staticmethod
+    def cartesia(
+        *,
+        model_id: str = "ink-2",
+        language: str = "en",
+        input_sample_rate: int = 48000,
+        output_sample_rate: int = 16000,
+        enable_streaming: bool = True,
+        base_url: str | None = None,
+        config: Optional[Dict] = None,
+    ) -> "STT":
+        """
+        Create an STT instance configured for Cartesia (Ink) realtime STT.
+
+        Uses Cartesia's "turns" endpoint, which performs native turn detection
+        and emits START_SPEECH / TRANSCRIPT / END_SPEECH events.
+
+        Args:
+            model_id: Cartesia model (default: "ink-2"). Options: "ink-2", "ink-whisper"
+            language: Language code in ISO-639-1 format (default: "en")
+            input_sample_rate: Input audio sample rate (default: 48000)
+            output_sample_rate: Sample rate sent to the provider (default: 16000)
+            enable_streaming: Enable streaming mode (default: True)
+            base_url: Custom inference gateway URL
+
+        Returns:
+            Configured STT instance for Cartesia
+        """
+        resolved_config = {
+            "model": model_id,
+            "language": language,
+            "input_sample_rate": input_sample_rate,
+            "output_sample_rate": output_sample_rate,
+            **(config or {}),
+        }
+        return STT(
+            provider="cartesia",
+            model_id=model_id,
+            language=language,
+            enable_streaming=enable_streaming,
+            config=resolved_config,
+            base_url=base_url,
+        )
+
     # ==================== Core Methods ====================
 
     async def flush(self) -> None:

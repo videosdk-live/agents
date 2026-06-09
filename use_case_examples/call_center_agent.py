@@ -8,11 +8,7 @@ Env Vars: VIDEOSDK_AUTH_TOKEN, VIDEOSDK_CALL_TRANSFER_TO, DEEPGRAM_API_KEY, GOOG
 import os
 import logging
 from videosdk.agents import Agent, AgentSession, Pipeline, function_tool, WorkerJob, JobContext, RoomOptions, Options
-from videosdk.plugins.deepgram import DeepgramSTT
-from videosdk.plugins.google import GoogleLLM
-from videosdk.plugins.cartesia import CartesiaTTS
-from videosdk.plugins.silero import SileroVAD
-from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
+from videosdk.agents.plugins import DeepgramSTT, GoogleLLM, CartesiaTTS, SileroVAD, TurnDetector, pre_download_model
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 pre_download_model()
@@ -63,11 +59,10 @@ class ConnectTelAgent(Agent):
     @function_tool
     async def transfer_to_human_agent(self) -> dict:
         """Transfer the call to a live human agent for complex or escalated issues."""
-        token = os.getenv("VIDEOSDK_AUTH_TOKEN")
         transfer_to = os.getenv("VIDEOSDK_CALL_TRANSFER_TO")
         if not transfer_to:
             return {"status": "error", "message": "No transfer destination configured."}
-        result = await self.session.call_transfer(token, transfer_to)
+        result = await self.session.call_transfer(transfer_to)
         return {"status": "transferred", "result": result}
 
 

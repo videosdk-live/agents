@@ -10,12 +10,7 @@ from videosdk.agents import (
     Agent, AgentSession, Pipeline, WorkerJob, JobContext, RoomOptions, Options,
     DTMFHandler, VoiceMailDetector,
 )
-from videosdk.plugins.deepgram import DeepgramSTT
-from videosdk.plugins.google import GoogleLLM
-from videosdk.plugins.cartesia import CartesiaTTS
-from videosdk.plugins.openai import OpenAILLM
-from videosdk.plugins.silero import SileroVAD
-from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
+from videosdk.agents.plugins import DeepgramSTT, GoogleLLM, CartesiaTTS, OpenAILLM, SileroVAD, TurnDetector, pre_download_model
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 pre_download_model()

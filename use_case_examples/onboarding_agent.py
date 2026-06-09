@@ -8,10 +8,7 @@ Env Vars: VIDEOSDK_AUTH_TOKEN, DEEPGRAM_API_KEY, GOOGLE_API_KEY
 import logging
 from pydantic import Field
 from videosdk.agents import Agent, AgentSession, Pipeline, function_tool, WorkerJob, JobContext, RoomOptions
-from videosdk.plugins.deepgram import DeepgramSTT
-from videosdk.plugins.google import GoogleLLM, GoogleTTS
-from videosdk.plugins.silero import SileroVAD
-from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
+from videosdk.agents.plugins import DeepgramSTT, GoogleLLM, GoogleTTS, SileroVAD, TurnDetector, pre_download_model
 
 try:
     from conversational_graph import ConversationalGraph, ConversationalDataModel

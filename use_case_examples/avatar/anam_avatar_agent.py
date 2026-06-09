@@ -11,12 +11,7 @@ Alternative (Realtime mode):
 import os
 import logging
 from videosdk.agents import Agent, AgentSession, Pipeline, function_tool, WorkerJob, JobContext, RoomOptions
-from videosdk.plugins.deepgram import DeepgramSTT
-from videosdk.plugins.openai import OpenAILLM
-from videosdk.plugins.elevenlabs import ElevenLabsTTS
-from videosdk.plugins.silero import SileroVAD
-from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
-from videosdk.plugins.anam import AnamAvatar
+from videosdk.agents.plugins import DeepgramSTT, OpenAILLM, ElevenLabsTTS, SileroVAD, TurnDetector, pre_download_model, AnamAvatar
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 pre_download_model()

@@ -1,11 +1,6 @@
 
 from videosdk.agents import Agent,AgentSession, Pipeline, JobContext, RoomOptions, WorkerJob, ObservabilityOptions, RecordingOptions, LoggingOptions
-from videosdk.plugins.google import GoogleLLM
-from videosdk.plugins.deepgram import DeepgramSTT
-from videosdk.plugins.cartesia import CartesiaTTS
-from videosdk.plugins.silero import SileroVAD
-from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
-from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig
+from videosdk.agents.plugins import GoogleLLM, DeepgramSTT, CartesiaTTS, SileroVAD, TurnDetector, pre_download_model, OpenAIRealtime, OpenAIRealtimeConfig
 from openai.types.beta.realtime.session import InputAudioTranscription, TurnDetection
 
 pre_download_model()

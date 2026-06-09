@@ -2,11 +2,7 @@ import asyncio
 import os
 from typing import Optional
 from videosdk.agents import Agent, AgentSession, Pipeline, WorkerJob, MCPServerStdio, JobContext, RoomOptions
-from videosdk.plugins.google import GoogleTTS
-from videosdk.plugins.deepgram import DeepgramSTT
-from videosdk.plugins.silero import SileroVAD
-from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
-from videosdk.plugins.anthropic import AnthropicLLM
+from videosdk.agents.plugins import GoogleTTS, DeepgramSTT, SileroVAD, TurnDetector, pre_download_model, AnthropicLLM
 
 import logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])

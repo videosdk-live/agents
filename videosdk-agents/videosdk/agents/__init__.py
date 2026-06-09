@@ -252,3 +252,6 @@ __all__ = [
     "TTSAudioCache",
     "load_audio_file",
 ]
+
+from . import _plugins as _plugins_module
+sys.modules[__name__ + ".plugins"] = _plugins_module

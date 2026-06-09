@@ -3,11 +3,7 @@ import logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 from pydantic import Field
 from videosdk.agents import Agent, AgentSession, Pipeline, WorkerJob, JobContext, RoomOptions
-from videosdk.plugins.deepgram import DeepgramSTT
-from videosdk.plugins.google import GoogleTTS
-from videosdk.plugins.openai import OpenAILLM
-from videosdk.plugins.silero import SileroVAD
-from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
+from videosdk.agents.plugins import DeepgramSTT, GoogleTTS, OpenAILLM, SileroVAD, TurnDetector, pre_download_model
 
 try:
     from conversational_graph import ConversationalGraph, ConversationalDataModel
