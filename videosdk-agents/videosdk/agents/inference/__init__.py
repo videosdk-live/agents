@@ -25,7 +25,7 @@ from .tts import TTS
 from .realtime import Realtime
 from .llm import LLM
 from .denoise import Denoise
-from .turn import Turn
+from .turn import Turn, TurnV2
 
 # STT
 GoogleSTT = STT.google
@@ -51,6 +51,8 @@ GeminiRealtime = Realtime.gemini
 TurnDetector = Turn.turnsense
 VideoSDKTurnDetector = Turn.videosdk
 NamoTurnDetectorV1 = Turn.namo
+# TurnV2 (4-state: Complete / Incomplete / Backchannel / Wait) is exported
+# directly; choose a size via TurnV2.echo_small() or TurnV2.echo_large().
 
 # Denoise
 AICousticsDenoise = Denoise.aicoustics
@@ -79,6 +81,7 @@ __all__ = [
     "NamoTurnDetectorV1",
     "VideoSDKTurnDetector",
     "TurnDetector",
+    "TurnV2",
     "AICousticsDenoise",
     "SanasDenoise",
     "SileroVAD",
