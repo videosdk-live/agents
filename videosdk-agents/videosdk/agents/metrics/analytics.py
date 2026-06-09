@@ -27,6 +27,7 @@ class AnalyticsClient:
         self._initialized = True
         self.turn_count = 0
         self.metrics_options = None
+        self.agent_id = None
 
     def configure(self, metrics_options: Any, signaling_base_url: Optional[str] = None) -> None:
         """Configure analytics client with metrics options and signaling base URL"""
@@ -41,6 +42,10 @@ class AnalyticsClient:
     def set_session_id(self, session_id: str) -> None:
         """Set the session ID for analytics tracking"""
         self.session_id = session_id
+
+    def set_agent_id(self, agent_id: str) -> None:
+        """Set the agent ID for analytics tracking"""
+        self.agent_id = agent_id
 
     async def send_interaction_analytics(
         self, interaction_data: Dict[str, Any]
@@ -71,6 +76,10 @@ class AnalyticsClient:
         session_id_from_payload = interaction_data.get("sessionId")
         current_session_id = self.session_id or session_id_from_payload
         data =  {"data": [interaction_data]}
+
+        if self.agent_id:
+            data["agentId"] = self.agent_id
+
         if not current_session_id:
             logger.error("Failed sending session data : No session ID")
             return
@@ -90,6 +99,10 @@ class AnalyticsClient:
     ) -> None:
         """Send turn analytics to a custom endpoint"""
         data = {"data": [interaction_data]}
+
+        if self.agent_id:
+            data["agentId"] = self.agent_id
+
         headers = {"Content-Type": "application/json"}
         if custom_headers:
             headers.update(custom_headers)

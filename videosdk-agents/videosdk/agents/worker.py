@@ -56,8 +56,17 @@ async def _execute_job_entrypoint(
     metadata: Dict[str, Any],
     wait_for_meeting_join: bool = False,
     meeting_joined_event: Any = None,
+    agent_id: Optional[str] = None,
 ):
     """Execute job entrypoint in a separate process/thread."""
+
+    # In backend-registration mode this runs in a spawned child process with a
+    # fresh AnalyticsClient singleton (agent_id=None), so Options.__post_init__
+    # never set it here. Propagate the worker's agent_id so analytics payloads
+    # include "agentId" just like in direct (register=False) mode.
+    if agent_id:
+        from .metrics import metrics_collector
+        metrics_collector.analytics_client.set_agent_id(agent_id)
 
     # Create job context
     ctx = JobContext(room_options=room_options, metadata=metadata)
@@ -883,6 +892,7 @@ class Worker:
                         assignment.metadata,  # arg3
                         assignment.wait,  # arg4: wait_for_meeting_join
                         mp_meeting_joined_event,  # arg5: cross-process event
+                        self.options.agent_id,  # arg6: agent_id for analytics
                     )
                 )
 
