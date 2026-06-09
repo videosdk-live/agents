@@ -7,7 +7,7 @@ from videosdk.agents import (
     RoomOptions,
     WorkerJob,
 )
-from videosdk.agents.inference import SarvamAISTT, GoogleLLM, SarvamAITTS, SileroVAD, NamoTurnDetectorV1
+from videosdk.agents.inference import SarvamAISTT, GoogleLLM, SarvamAITTS, SileroVAD, TurnV2
 from dotenv import load_dotenv
 
 load_dotenv(override=True)
@@ -63,7 +63,11 @@ async def entrypoint(ctx: JobContext):
         ),
         tts=SarvamAITTS(model_id="bulbul:v3", speaker="shubh", language="en-IN"),
         vad=SileroVAD(),
-        turn_detector=NamoTurnDetectorV1(language="en"),
+        # TurnV2 (VideoSDK Inference Gateway) — 4-state turn detection:
+        # Complete / Incomplete / Backchannel / Wait. Backchannels are ignored
+        # while the agent speaks; an explicit "wait/stop" interrupts. Needs
+        # VIDEOSDK_AUTH_TOKEN.
+        turn_detector=TurnV2.echo_large(),   # or TurnV2.echo_small() for lower latency
     )
 
     session = AgentSession(
