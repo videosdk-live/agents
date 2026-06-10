@@ -1,7 +1,6 @@
 import logging
 from videosdk.agents import Agent, AgentSession, Pipeline, JobContext, RoomOptions, WorkerJob
-from videosdk.plugins.xai import XAIRealtime, XAIRealtimeConfig, XAITurnDetection
-from videosdk.plugins.cartesia import CartesiaTTS
+from videosdk.agents.plugins import XAIRealtime, XAIRealtimeConfig, XAITurnDetection, CartesiaTTS
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 logger = logging.getLogger(__name__)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal, TYPE_CHECKING, Any, AsyncIterator
+from typing import Iterable, Literal, TYPE_CHECKING, Any, AsyncIterator
 import asyncio
 import uuid
 import logging
@@ -17,7 +17,15 @@ from .eou import EOU
 from .denoise import Denoise
 from .llm.chat_context import ChatRole, ImageContent
 from .utterance_handle import UtteranceHandle
-from .utils import UserState, AgentState
+from .utils import (
+    UserState,
+    AgentState,
+    TurnState,
+    TurnAction,
+    TurnDecisionInput,
+    decide_turn_action,
+    is_backchannel_aware,
+)
 from .voice_mail_detector import VoiceMailDetector
 from .metrics import metrics_collector
 
@@ -79,10 +87,11 @@ async def _pipe_through_chunk_stream(
 
 
 class PipelineOrchestrator(EventEmitter[Literal[
-    "transcript_ready", 
-    "content_generated", 
+    "transcript_ready",
+    "content_generated",
     "synthesis_complete",
     "voicemail_result",
+    "backchannel_detected",
     "error"
 ]]):
     """
@@ -120,6 +129,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
         interrupt_min_confidence: float = 0.0,
         false_interrupt_pause_duration: float = 2.0,
         resume_on_false_interrupt: bool = False,
+        interrupt_fade_duration: float = 0.4,
         graph_adapter: Any | None = None,
         context_window: Any | None = None,
         voice_mail_detector: VoiceMailDetector | None = None,
@@ -127,10 +137,12 @@ class PipelineOrchestrator(EventEmitter[Literal[
         chunker: "SentenceChunker | None" = None,
         text_filter: "TextFilter | None" = None,
         chunking_language: str = "auto",
+        backchannel_classification: bool | None = None,
     ) -> None:
         super().__init__()
 
         self.agent = agent
+
         self.avatar = avatar
         self.graph_adapter = graph_adapter
         self.voice_mail_detector = voice_mail_detector
@@ -151,6 +163,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
         self.interrupt_min_confidence = interrupt_min_confidence
         self.false_interrupt_pause_duration = false_interrupt_pause_duration
         self.resume_on_false_interrupt = resume_on_false_interrupt
+        self.interrupt_fade_duration = interrupt_fade_duration
         
         # Interruption state
         self._generation_id = 0
@@ -221,6 +234,13 @@ class PipelineOrchestrator(EventEmitter[Literal[
         self._preemptive_generation_task: asyncio.Task | None = None
         self._preemptive_authorized = asyncio.Event()
         self._preemptive_cancelled = False
+        
+        # Backchannel classification only for TurnV2.
+        self._backchannel_aware = (
+            backchannel_classification
+            if backchannel_classification is not None
+            else is_backchannel_aware(turn_detector)
+        )
     
     def _wrap_async(self, async_func):
         """
@@ -240,6 +260,9 @@ class PipelineOrchestrator(EventEmitter[Literal[
         """Set audio track for TTS output"""
         if self.speech_generation:
             self.speech_generation.set_audio_track(audio_track)
+            
+        if audio_track is not None and hasattr(audio_track, "interrupt_fade_duration"):
+            audio_track.interrupt_fade_duration = self.interrupt_fade_duration
     
     def set_voice_mail_detector(self, detector: VoiceMailDetector | None) -> None:
         """Configure voicemail detection"""
@@ -374,6 +397,42 @@ class PipelineOrchestrator(EventEmitter[Literal[
         is_playing_audio = bool(self.speech_generation and self.speech_generation.is_speaking)
         playback_counts_for_turn = is_playing_audio and not (cu is not None and cu.done())
         is_agent_active = (agent_state in (AgentState.SPEAKING, AgentState.THINKING)) or playback_counts_for_turn
+
+        turn_state = TurnState.from_wire(data.get("turn_state"))
+        action = decide_turn_action(TurnDecisionInput(
+            turn_state=turn_state,
+            agent_active=is_agent_active,
+            word_count=len(text.strip().split()) if text.strip() else 0,
+            interrupt_min_words=self.interrupt_min_words,
+            backchannel_aware=self._backchannel_aware,
+        ))
+
+        if action == TurnAction.IGNORE_BACKCHANNEL:
+
+            logger.info(
+                f"[orchestrator] Dropping {text!r} (state={turn_state}, action=IGNORE_BACKCHANNEL)"
+            )
+            self.emit("backchannel_detected", {
+                "text": text,
+                "agent_state": agent_state.value if agent_state else None,
+            })
+
+            if self._is_in_false_interrupt_pause:
+                logger.info("[orchestrator] Backchannel confirms false interrupt — resuming agent speech")
+                self._cancel_false_interrupt_timer()
+                self._is_in_false_interrupt_pause = False
+                self._false_interrupt_paused_speech = False
+                self._is_interrupted = False
+                if self.speech_generation and self.speech_generation.can_pause():
+                    await self.speech_generation.resume()
+            return
+
+        if action == TurnAction.INTERRUPT_STOP:
+            logger.info(
+                f"[orchestrator] 'Wait' state for {text!r}; interrupting immediately (no reply)"
+            )
+            await self._interrupt_pipeline()
+            return
 
         if is_agent_active:
             word_count = len(text.strip().split()) if text.strip() else 0
@@ -826,13 +885,22 @@ class PipelineOrchestrator(EventEmitter[Literal[
             if self.agent and self.agent.session and self.agent.session.is_background_audio_enabled:
                 await self.agent.session.stop_thinking_audio()
     
-    async def say(self, message: str, handle: UtteranceHandle) -> None:
+    async def say(
+        self,
+        message: str,
+        handle: UtteranceHandle,
+        audio_data: bytes | bytearray | Iterable[bytes] | AsyncIterator[bytes] | None = None,
+    ) -> None:
         """
         Direct TTS synthesis (for initial messages).
 
         Args:
             message: Message to synthesize
             handle: Utterance handle to track
+            audio_data: Optional pre-synthesized PCM bytes. When provided,
+                bypasses TTS synthesis entirely and streams these bytes to
+                the agent audio track. Chunker and TTS text filter are
+                also skipped on this path.
         """
         if not self.speech_generation:
             handle._mark_done()
@@ -847,6 +915,14 @@ class PipelineOrchestrator(EventEmitter[Literal[
         self.speech_generation.on("synthesis_interrupted", _on_playback_done)
 
         try:
+            if audio_data is not None:
+                metrics_collector.set_agent_response(message, emit_transport=True)
+                await self.speech_generation.synthesize_audio_bytes(
+                    audio_data, message, handle=handle
+                )
+                await playback_done.wait()
+                return
+
             if not (self.hooks and self.hooks.has_tts_stream_hook()):
                 tts = self.speech_generation.tts
                 emit = not bool(getattr(tts, "supports_word_timestamps", False))
@@ -1024,7 +1100,12 @@ class PipelineOrchestrator(EventEmitter[Literal[
         else:
             logger.info(f"[orchestrator] handle_stt_event: word_count={word_count}, min_words={self.interrupt_min_words}, mode={self.interrupt_mode}, no current_utterance")
         
-        if self.resume_on_false_interrupt and self._is_in_false_interrupt_pause and word_count >= self.interrupt_min_words:
+        if (
+            not self._backchannel_aware
+            and self.resume_on_false_interrupt
+            and self._is_in_false_interrupt_pause
+            and word_count >= self.interrupt_min_words
+        ):
             logger.info(f"STT transcript received while in paused state, confirming real interruption")
             self._cancel_false_interrupt_timer()
             self._is_in_false_interrupt_pause = False
@@ -1057,9 +1138,13 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 return
         
         self._is_interrupted = True
-        
-        can_resume = self.resume_on_false_interrupt and self.speech_generation and self.speech_generation.can_pause()
-        
+
+        can_resume = (
+            (self.resume_on_false_interrupt or self._backchannel_aware)
+            and self.speech_generation
+            and self.speech_generation.can_pause()
+        )
+
         if can_resume:
             logger.info("Pausing TTS for potential resume")
             self._false_interrupt_paused_speech = True

@@ -2,10 +2,7 @@ import logging
 import os
 from typing import List
 from videosdk.agents import Agent,AgentSession,Pipeline,JobContext,RoomOptions,WorkerJob,KnowledgeBase,KnowledgeBaseConfig
-from videosdk.plugins.google import GoogleLLM, GoogleTTS
-from videosdk.plugins.sarvamai import SarvamAISTT
-from videosdk.plugins.silero import SileroVAD
-from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
+from videosdk.agents.plugins import GoogleLLM, GoogleTTS, SarvamAISTT, SileroVAD, TurnDetector, pre_download_model
 import logging
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])

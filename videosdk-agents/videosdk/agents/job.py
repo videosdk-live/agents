@@ -610,16 +610,12 @@ class JobContext:
                 if self._pipeline:
                     self._pipeline.avatar = audio_out
 
-            if self.want_console:
-                from .console_mode import setup_console_voice_for_ctx
+            if self.want_console and not self._pipeline:
+                raise RuntimeError(
+                    "Pipeline must be constructed before ctx.connect() in console mode"
+                )
 
-                if not self._pipeline:
-                    raise RuntimeError(
-                        "Pipeline must be constructed before ctx.connect() in console mode"
-                    )
-                cleanup_callback = await setup_console_voice_for_ctx(self)
-                self.add_shutdown_callback(cleanup_callback)
-            else:
+            if self.room_options:
                 resolved_obs = self.room_options._resolved_observability()
                 self.metrics_collector.transport_mode = self.room_options.transport_mode
                 self.metrics_collector.analytics_client.configure(
@@ -736,6 +732,11 @@ class JobContext:
                 if self.room.audio_track:
                     self._pipeline._set_loop_and_audio_track(self._loop, self.room.audio_track)
 
+            if self.want_console:
+                from .console_mode import setup_console_room_client_for_ctx
+                cleanup_callback = await setup_console_room_client_for_ctx(self)
+                self.add_shutdown_callback(cleanup_callback)
+
         if (
             self.room_options.playground
             and self.room_options.join_meeting
@@ -743,7 +744,7 @@ class JobContext:
             and self.room_options.transport_mode == TransportMode.VIDEOSDK
         ):
             if self.videosdk_auth:
-                playground_url = f"https://playground.videosdk.live?token={self.videosdk_auth}&meetingId={self.room_options.room_id}"
+                playground_url = f"https://playground.videosdk.live/cli?token={self.videosdk_auth}&meetingId={self.room_options.room_id}"
                 print(f"\033[1;36m" + "Agent started in playground mode" + "\033[0m")
                 print("\033[1;75m" + "Interact with agent here at:" + "\033[0m")
                 print("\033[1;4;94m" + playground_url + "\033[0m")
@@ -1000,9 +1001,6 @@ class JobContext:
             ValueError: If the VIDEOSDK_AUTH_TOKEN is missing.
             RuntimeError: If the API request fails or the response is invalid.
         """
-        if self.want_console:
-            return None
-
         if not self.videosdk_auth:
             raise ValueError(
                 "No VideoSDK auth available. Provide auth_token in RoomOptions, "

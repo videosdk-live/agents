@@ -3,10 +3,7 @@ import os
 from typing import AsyncIterator, Optional
 from sarvamai import SarvamAI
 from videosdk.agents import Agent, AgentSession, Pipeline, WorkerJob, JobContext, RoomOptions
-from videosdk.plugins.openai import OpenAILLM
-from videosdk.plugins.silero import SileroVAD
-from videosdk.plugins.sarvamai import SarvamAISTT, SarvamAITTS
-from videosdk.plugins.cartesia import CartesiaTTS
+from videosdk.agents.plugins import OpenAILLM, SileroVAD, SarvamAISTT, SarvamAITTS, CartesiaTTS
 
 import logging
 

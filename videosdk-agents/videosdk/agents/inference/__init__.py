@@ -25,7 +25,76 @@ from .tts import TTS
 from .realtime import Realtime
 from .llm import LLM
 from .denoise import Denoise
-from .turn import Turn
+from .turn import Turn, TurnV2
+
+# STT
+GoogleSTT = STT.google
+SarvamAISTT = STT.sarvam
+DeepgramSTT = STT.deepgram
+AssemblyAISTT = STT.assemblyai
+CartesiaSTT = STT.cartesia
+
+# LLM
+GoogleLLM = LLM.google
+SarvamAILLM = LLM.sarvam
+
+# TTS
+GoogleTTS = TTS.google
+SarvamAITTS = TTS.sarvam
+CartesiaTTS = TTS.cartesia
+DeepgramTTS = TTS.deepgram
+
+# Realtime
+GeminiRealtime = Realtime.gemini
+
+# Turn detection
+TurnDetector = Turn.turnsense
+VideoSDKTurnDetector = Turn.videosdk
+NamoTurnDetectorV1 = Turn.namo
+# TurnV2 (4-state: Complete / Incomplete / Backchannel / Wait) is exported
+# directly; choose a size via TurnV2.echo_small() or TurnV2.echo_large().
+
+# Denoise
+AICousticsDenoise = Denoise.aicoustics
+SanasDenoise = Denoise.sanas
 
 
-__all__ = ["STT", "TTS", "Realtime", "LLM", "Denoise", "Turn"]
+__all__ = [
+    # Prefixed component namespaces
+    "STT",
+    "TTS",
+    "Realtime",
+    "LLM",
+    "Denoise",
+    "Turn",
+    "GoogleSTT",
+    "SarvamAISTT",
+    "DeepgramSTT",
+    "AssemblyAISTT",
+    "GoogleLLM",
+    "SarvamAILLM",
+    "GoogleTTS",
+    "SarvamAITTS",
+    "CartesiaTTS",
+    "DeepgramTTS",
+    "GeminiRealtime",
+    "NamoTurnDetectorV1",
+    "VideoSDKTurnDetector",
+    "TurnDetector",
+    "TurnV2",
+    "AICousticsDenoise",
+    "SanasDenoise",
+    "SileroVAD",
+]
+
+_LOCAL_REEXPORTS = {
+    "SileroVAD": "videosdk.plugins.silero",
+}
+
+def __getattr__(name):
+    module_path = _LOCAL_REEXPORTS.get(name)
+    if module_path is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    import importlib
+
+    return getattr(importlib.import_module(module_path), name)

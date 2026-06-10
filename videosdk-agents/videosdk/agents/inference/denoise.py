@@ -60,6 +60,7 @@ class Denoise(BaseDenoise):
         chunk_ms: int = 10,
         config: Dict[str, Any] | None = None,
         base_url: str | None = None,
+        max_connection_attempts: int = 5,
     ) -> None:
         """
         Initialize the VideoSDK Inference Denoise plugin.
@@ -71,6 +72,11 @@ class Denoise(BaseDenoise):
             channels: Number of audio channels (default: 1 for mono)
             config: Provider-specific configuration dictionary
             base_url: Custom inference gateway URL (default: production gateway)
+            max_connection_attempts: After this many consecutive connection
+                attempts produce no denoised audio, the client stops trying
+                and passes raw audio through to the next pipeline stage for
+                the remainder of the session. The counter resets when a
+                denoised chunk is successfully received. Default: 5.
         """
         super().__init__()
 
@@ -85,6 +91,7 @@ class Denoise(BaseDenoise):
         self.chunk_ms = chunk_ms
         self.config = config or {}
         self.base_url = base_url or VIDEOSDK_INFERENCE_URL
+        self.max_connection_attempts: int = max(1, int(max_connection_attempts))
 
         # WebSocket state
         self._session: Optional[aiohttp.ClientSession] = None
@@ -93,6 +100,14 @@ class Denoise(BaseDenoise):
         self._config_sent: bool = False
         self.connected: bool = False
         self._shutting_down: bool = False
+
+        # Circuit breaker: consecutive connection attempts that produced no
+        # denoised audio. Reset on the first denoised chunk after a connect.
+        # When it reaches max_connection_attempts, denoise is disabled for
+        # the rest of this instance's lifetime and audio is passed through raw.
+        self._connection_failures: int = 0
+        self._got_denoised_since_connect: bool = False
+        self._denoise_disabled: bool = False
 
         # Audio
         self._send_buffer: bytearray = bytearray()
@@ -117,6 +132,8 @@ class Denoise(BaseDenoise):
             "errors": 0,
             "reconnections": 0,
             "buffer_drops": 0,
+            "connection_failures": 0,
+            "denoise_disabled": False,
             # Latency stats (ms)
             "latency_last_ms": 0.0,
             "latency_avg_ms": 0.0,
@@ -139,6 +156,7 @@ class Denoise(BaseDenoise):
         sample_rate: int = 48000,
         channels: int = 1,
         base_url: str | None = None,
+        max_connection_attempts: int = 5,
     ) -> "Denoise":
         """
         Create a Denoise instance configured for AI-Coustics.
@@ -186,6 +204,7 @@ class Denoise(BaseDenoise):
             chunk_ms=10,
             config={},
             base_url=base_url or VIDEOSDK_INFERENCE_URL,
+            max_connection_attempts=max_connection_attempts,
         )
 
     @staticmethod
@@ -195,6 +214,7 @@ class Denoise(BaseDenoise):
         sample_rate: int = 16000,
         channels: int = 1,
         base_url: str | None = None,
+        max_connection_attempts: int = 5,
     ) -> "Denoise":
         """
         Create a Denoise instance configured for Sanas.
@@ -232,6 +252,7 @@ class Denoise(BaseDenoise):
             chunk_ms=20,
             config={},
             base_url=base_url or VIDEOSDK_INFERENCE_URL,
+            max_connection_attempts=max_connection_attempts,
         )
 
     # ==================== Latency Helpers ====================
@@ -271,11 +292,68 @@ class Denoise(BaseDenoise):
         self._send_seq = 0
         self._recv_seq = 0
 
+    # ==================== Circuit Breaker ====================
+
+    def _record_connect_failure(self) -> None:
+        """
+        Mark one connection cycle as a failure (handshake raised, or the
+        connection died before producing any denoised audio). When the
+        consecutive count hits ``max_connection_attempts``, disable denoise
+        for the rest of this instance's lifetime so audio bypasses the WS
+        and flows straight to the next pipeline stage.
+        """
+        if self._denoise_disabled or self._shutting_down:
+            return
+
+        self._connection_failures += 1
+        self._stats["connection_failures"] = self._connection_failures
+        logger.warning(
+            f"[InferenceDenoise] Connection failure "
+            f"{self._connection_failures}/{self.max_connection_attempts} "
+            f"(provider={self.provider})"
+        )
+
+        if self._connection_failures >= self.max_connection_attempts:
+            self._denoise_disabled = True
+            self._stats["denoise_disabled"] = True
+            logger.error(
+                f"[InferenceDenoise] Disabled for session after "
+                f"{self._connection_failures} failed connection attempts — "
+                f"passing audio through without denoising "
+                f"(provider={self.provider}, model={self.model_id})"
+            )
+            # Drop any frames buffered for the dead connection
+            self._send_buffer.clear()
+            while not self._audio_buffer.empty():
+                try:
+                    self._audio_buffer.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+
+    def _record_connect_success(self) -> None:
+        """
+        Mark the current connection cycle as successful (first denoised
+        audio chunk arrived). Resets the consecutive-failure counter. No-op
+        on subsequent chunks of the same cycle.
+        """
+        if self._got_denoised_since_connect:
+            return
+        self._got_denoised_since_connect = True
+        if self._connection_failures > 0:
+            logger.info(
+                f"[InferenceDenoise] First denoised chunk received — "
+                f"resetting failure counter (was {self._connection_failures})"
+            )
+            self._connection_failures = 0
+            self._stats["connection_failures"] = 0
+
     # ==================== Core Denoise ====================
 
     async def denoise(self, audio_frames: bytes, **kwargs: Any) -> bytes:
         # logger.info(f"Using Sanas secret: {self._secret}")
         # print("enter in denoise")
+        if self._denoise_disabled:
+            return audio_frames
         try:
             if self._connect_lock is None:
                 self._connect_lock = asyncio.Lock()
@@ -320,6 +398,7 @@ class Denoise(BaseDenoise):
                             self._ws = None
                             self._config_sent = False
                             self._send_buffer.clear()
+                            self._record_connect_failure()
                             return audio_frames
 
             if not self._config_sent:
@@ -386,6 +465,10 @@ class Denoise(BaseDenoise):
         try:
             if self._shutting_down:
                 return
+
+            # New connection cycle — until we receive a denoised chunk on this
+            # WS, the cycle is provisionally a failure for breaker purposes.
+            self._got_denoised_since_connect = False
 
             if not self._session or self._session.closed:
                 self._session = aiohttp.ClientSession()
@@ -504,6 +587,7 @@ class Denoise(BaseDenoise):
                         self._audio_buffer.put_nowait(msg.data)
                     except asyncio.QueueFull:
                         pass
+                    self._record_connect_success()
                 elif msg.type == aiohttp.WSMsgType.ERROR:
                     logger.error(
                         f"[InferenceDenoise] WebSocket error: {self._ws.exception()}"
@@ -521,6 +605,10 @@ class Denoise(BaseDenoise):
             self._ws = None
             self._config_sent = False
             logger.info("[InferenceDenoise] Listener exited — connection marked dead")
+            # If the connection ended without ever producing a denoised chunk,
+            # count it as a failed cycle for the circuit breaker.
+            if not self._got_denoised_since_connect:
+                self._record_connect_failure()
 
     async def _handle_message(self, raw_message: str) -> None:
         """
@@ -555,6 +643,7 @@ class Denoise(BaseDenoise):
                             self._audio_buffer.put_nowait(denoised)
                         except asyncio.QueueFull:
                             pass
+                        self._record_connect_success()
                 # START_SPEECH, END_SPEECH, TRANSCRIPT silently ignored
 
             elif msg_type == "audio":
@@ -573,6 +662,7 @@ class Denoise(BaseDenoise):
                         self._audio_buffer.put_nowait(denoised)
                     except asyncio.QueueFull:
                         pass
+                    self._record_connect_success()
 
             elif msg_type == "error":
                 # logger.error(f"[InferenceDenoise] FULL ERROR MESSAGE: {raw_message}")

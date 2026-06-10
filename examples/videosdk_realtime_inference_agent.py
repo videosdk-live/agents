@@ -1,6 +1,6 @@
 import logging
 from videosdk.agents import Agent, AgentSession, Pipeline, JobContext, RoomOptions, WorkerJob
-from videosdk.agents.inference import Realtime
+from videosdk.agents.inference import GeminiRealtime
 from dotenv import load_dotenv
 load_dotenv(override=True)
 
@@ -42,7 +42,7 @@ async def entrypoint(ctx: JobContext):
     agent = VideoSDKRealtimeInferenceAgent()
 
     pipeline = Pipeline(
-        llm=Realtime.gemini(
+        llm=GeminiRealtime(
             model="gemini-2.5-flash-native-audio-preview-12-2025",
             voice="Puck",  # Options: Puck, Charon, Kore, Fenrir, Aoede
             language_code="en-US",

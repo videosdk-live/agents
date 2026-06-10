@@ -36,6 +36,7 @@ def setup_logging(level=logging.INFO):
 # based on the log_level field in WorkerOptions. No manual setup required.
 
 from .agent import Agent
+from .base_instructions import BASE_VOICE_INSTRUCTIONS
 from .agent_session import AgentSession
 from .utils import UserState, AgentState, PipelineMode, RealtimeMode, PipelineComponent, PipelineConfig
 from .pipeline import Pipeline, EOUConfig, InterruptConfig
@@ -60,6 +61,7 @@ from .event_emitter import EventEmitter
 from .job import WorkerJob, JobContext, RoomOptions, RecordingOptions, Options, WebSocketConfig, WebRTCConfig, TracesOptions, MetricsOptions, LoggingOptions, ObservabilityOptions
 from .worker import Worker, WorkerOptions, WorkerType
 from .utterance_handle import UtteranceHandle
+from .audio_cache import TTSAudioCache, load_audio_file
 
 # New execution module exports
 from .execution import (
@@ -89,8 +91,10 @@ from .llm.chat_context import (
     ChatContent,
     FunctionCall,
     FunctionCallOutput,
-    ImageContent
-
+    ImageContent,
+    AgentHandoff,
+    AgentConfigUpdate,
+    ReadOnlyChatContext,
 )
 from .stt.stt import STT, STTResponse, SpeechEventType, SpeechData
 from .tts.tts import TTS, FlushMarker
@@ -128,6 +132,7 @@ from .tokenize import (
 
 __all__ = [
     "Agent",
+    "BASE_VOICE_INSTRUCTIONS",
     "AgentSession",
     "UserState",
     "AgentState",
@@ -154,6 +159,9 @@ __all__ = [
     "WorkerJob",
     "LLM",
     "ChatContext",
+    "AgentHandoff",
+    "AgentConfigUpdate",
+    "ReadOnlyChatContext",
     "ChatRole",
     "ChatMessage",
     "ChatContent",
@@ -241,4 +249,9 @@ __all__ = [
     "normalize_lang_code",
     "INDIC_LANGS",
     "pre_warm_tokenizer",
+    "TTSAudioCache",
+    "load_audio_file",
 ]
+
+from . import _plugins as _plugins_module
+sys.modules[__name__ + ".plugins"] = _plugins_module

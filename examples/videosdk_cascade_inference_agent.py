@@ -7,14 +7,10 @@ from videosdk.agents import (
     RoomOptions,
     WorkerJob,
 )
-from videosdk.agents.inference import STT, TTS, LLM, Turn
-from videosdk.plugins.silero import SileroVAD
-from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
+from videosdk.agents.inference import SarvamAISTT, GoogleLLM, SarvamAITTS, SileroVAD, TurnV2
 from dotenv import load_dotenv
 
 load_dotenv(override=True)
-
-pre_download_model()
 
 logging.basicConfig(
     level=logging.INFO,
@@ -59,15 +55,19 @@ async def entrypoint(ctx: JobContext):
     agent = VideoSDKCascadeInferenceAgent()
 
     pipeline = Pipeline(
-        stt=STT.sarvam(
+        stt=SarvamAISTT(
             language="en-IN",
         ),
-        llm=LLM.google(
-            model_id="gemini-2.0-flash",
+        llm=GoogleLLM(
+            model_id="gemini-3-flash-preview",
         ),
-        tts=TTS.sarvam(model_id="bulbul:v2", speaker="anushka", language="en-IN"),
+        tts=SarvamAITTS(model_id="bulbul:v3", speaker="shubh", language="en-IN"),
         vad=SileroVAD(),
-        turn_detector=Turn.namo(language="en"),
+        # TurnV2 (VideoSDK Inference Gateway) — 4-state turn detection:
+        # Complete / Incomplete / Backchannel / Wait. Backchannels are ignored
+        # while the agent speaks; an explicit "wait/stop" interrupts. Needs
+        # VIDEOSDK_AUTH_TOKEN.
+        turn_detector=TurnV2.echo_large(),   # or TurnV2.echo_small() for lower latency
     )
 
     session = AgentSession(
@@ -85,7 +85,6 @@ def make_context() -> JobContext:
         # room_id="<room_id>",
         name="VideoSDK's Cascade Inference Agent",
         playground=True,
-        signallin_base_url="dev-api.videosdk.live",
     )
 
     return JobContext(room_options=room_options)

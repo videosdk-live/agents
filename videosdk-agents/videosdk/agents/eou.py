@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import asyncio
 from abc import abstractmethod
 from typing import Optional, Literal
-from .llm.chat_context import ChatContext
+from .llm.chat_context import ChatContext, ChatRole
 from .event_emitter import EventEmitter
+from .utils import TurnResult, TurnState
 import logging
 logger = logging.getLogger(__name__)
 
 class EOU(EventEmitter[Literal["error"]]):
     """Base class for End of Utterance Detection implementations"""
     
+    supports_backchannel_classification: bool = False
+
     def __init__(self, threshold: float = 0.7) -> None:
         super().__init__()
         self._label = f"{type(self).__module__}.{type(self).__name__}"
@@ -38,6 +42,20 @@ class EOU(EventEmitter[Literal["error"]]):
         """
         raise NotImplementedError
 
+    def get_turn_result(self, chat_context: ChatContext) -> TurnResult:
+        """Return a structured turn result.
+
+        The default derives the state from the scalar probability so binary
+        detectors keep working unchanged: ``>= threshold`` → ``COMPLETE``,
+        otherwise ``INCOMPLETE``. Detectors that classify the four turn states
+        (Backchannel / Wait) override this and set
+        ``supports_backchannel_classification = True``.
+        """
+        prob = self.get_eou_probability(chat_context)
+        finalizes = prob >= self._threshold
+        state = TurnState.COMPLETE if finalizes else TurnState.INCOMPLETE
+        return TurnResult(state=state, eou_probability=prob, finalizes_turn=finalizes)
+
     def detect_end_of_utterance(self, chat_context: ChatContext, threshold: Optional[float] = None) -> bool:
         """
         Detect if the given chat context represents an end of utterance.
@@ -58,7 +76,24 @@ class EOU(EventEmitter[Literal["error"]]):
     def set_threshold(self, threshold: float) -> None:
         """Update the EOU detection threshold"""
         self._threshold = threshold
-    
+
+    async def prewarm(self) -> None:
+        """Run one dummy inference so the first real ``get_eou_probability()``
+        call doesn't pay ONNX kernel-JIT / allocator cold-start cost.
+
+        The model is loaded by the subclass ``__init__``; this only warms the
+        inference path. Implemented once here so every EOU variant
+        (TurnDetector, VideoSDKTurnDetector, NamoTurnDetectorV1) is covered
+        without per-variant code. Idempotent — safe to call multiple times.
+        Failures are logged and swallowed.
+        """
+        try:
+            dummy = ChatContext()
+            dummy.add_message(role=ChatRole.USER, content="hello")
+            await asyncio.to_thread(self.get_eou_probability, dummy)
+        except Exception as e:
+            logger.debug(f"EOU prewarm skipped (non-fatal): {e}")
+
     async def aclose(self) -> None:
         """Cleanup resources - should be overridden by subclasses to cleanup models"""
         logger.info(f"Cleaning up EOU: {self._label}")

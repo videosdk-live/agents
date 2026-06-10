@@ -224,7 +224,7 @@ Agent with **background audio** capabilities — thinking audio and background m
 
 ### `call_transfer.py`
 
-**Call transfer** — transfers the ongoing call to a different phone number. Uses `self.session.call_transfer(token, transfer_to)`. Demonstrates `Options(agent_id=..., register=True)` for registered worker mode.
+**Call transfer** — transfers the ongoing call to a different phone number. Uses `self.session.call_transfer(transfer_to)` (auth token is resolved internally). Demonstrates `Options(agent_id=..., register=True)` for registered worker mode.
 
 **Plugins used:** `deepgram` (STT), `google` (LLM), `cartesia` (TTS), `silero` (VAD), `turn_detector` (EOU)
 

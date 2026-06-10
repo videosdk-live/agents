@@ -42,7 +42,7 @@ from videosdk.conversational_graph import (
 
 from videosdk import PubSubSubscribeConfig, PubSubPublishConfig
 from videosdk.agents import Agent, AgentSession, Pipeline, WorkerJob, JobContext, RoomOptions
-from videosdk.plugins.google import GoogleLLM
+from videosdk.agents.plugins import GoogleLLM
 
 from pydantic import Field, field_validator
 from typing import Optional

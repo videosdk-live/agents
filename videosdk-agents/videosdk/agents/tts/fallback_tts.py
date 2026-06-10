@@ -1,25 +1,84 @@
 import logging
 import asyncio
-from typing import List, Any
+from typing import List, Any, Optional
 from .tts import TTS
 from ..fallback_base import FallbackBase
+from ..event_bus import global_event_emitter
 
 logger = logging.getLogger(__name__)
 
 class FallbackTTS(TTS, FallbackBase):
-    """TTS wrapper that automatically fails over to backup providers on errors and attempts recovery of higher-priority ones."""
-    def __init__(self, providers: List[TTS], temporary_disable_sec: float = 60.0, permanent_disable_after_attempts: int = 3):
+    """TTS wrapper that automatically fails over to backup providers on errors, latency degradation, and attempts recovery of higher-priority ones."""
+    def __init__(
+        self,
+        providers: List[TTS],
+        temporary_disable_sec: float = 60.0,
+        permanent_disable_after_attempts: int = 3,
+        latency_threshold_ms: Optional[float] = None,
+        consecutive_latency_hits: int = 3,
+    ):
         TTS.__init__(
             self,
-            sample_rate=providers[0].sample_rate, 
+            sample_rate=providers[0].sample_rate,
             num_channels=providers[0].num_channels
         )
-        FallbackBase.__init__(self, providers, "TTS", temporary_disable_sec=temporary_disable_sec, permanent_disable_after_attempts=permanent_disable_after_attempts)
+        FallbackBase.__init__(
+            self,
+            providers,
+            "TTS",
+            temporary_disable_sec=temporary_disable_sec,
+            permanent_disable_after_attempts=permanent_disable_after_attempts,
+            latency_threshold_ms=latency_threshold_ms,
+            consecutive_latency_hits=consecutive_latency_hits,
+        )
         self._initializing = False
         self._setup_event_listeners()
+        self._setup_latency_listener()
 
     def _setup_event_listeners(self):
         self.active_provider.on("error", self._on_provider_error)
+
+    def on_first_audio_byte(self, callback) -> None:
+        """Capture the callback so we can re-apply it after switching providers.
+
+        Without this override, the callback would only be stored on the FallbackTTS
+        wrapper and the underlying active provider would never invoke it — which
+        breaks the metrics_collector.on_tts_first_byte() hook and any TTFB tracking
+        (including this class's own latency-based fallback path).
+        """
+        super().on_first_audio_byte(callback)
+        try:
+            self.active_provider.on_first_audio_byte(callback)
+        except Exception as e:
+            logger.warning(f"[TTS] Failed to set first_audio_byte callback on {self.active_provider.label}: {e}")
+
+    def reset_first_audio_tracking(self) -> None:
+        """Forward the per-turn reset to the active provider.
+
+        speech_generation calls this before every synthesize() to clear the
+        provider's "first chunk sent" flag. The base TTS implementation is a
+        no-op, so without this override the callback would fire only on the
+        very first turn (when the flag is still False from init) and never
+        again on the same provider.
+        """
+        try:
+            self.active_provider.reset_first_audio_tracking()
+        except Exception as e:
+            logger.warning(f"[TTS] Failed to reset first_audio_tracking on {self.active_provider.label}: {e}")
+
+    def _setup_latency_listener(self):
+        if self.latency_threshold_ms is None:
+            return
+        global_event_emitter.on("COMPONENT_METRIC", self._on_component_metric)
+
+    def _on_component_metric(self, event: dict):
+        if event.get("component") != "tts":
+            return
+        metrics = event.get("metrics") or {}
+        ttfb = metrics.get("ttfb")
+        if ttfb is None:
+            return
+        asyncio.create_task(self._record_latency(float(ttfb)))
 
     def _on_provider_error(self, error_msg):
         failed_p = self.active_provider
@@ -42,6 +101,11 @@ class FallbackTTS(TTS, FallbackBase):
         if switched:
             if active_before != active_after:
                 self.active_provider.on("error", self._on_provider_error)
+                if self._first_audio_callback is not None:
+                    try:
+                        self.active_provider.on_first_audio_byte(self._first_audio_callback)
+                    except Exception as e:
+                        logger.warning(f"[TTS] Failed to re-apply first_audio_byte callback after switch: {e}")
                 if hasattr(self, "loop") and self.loop and hasattr(self, "audio_track") and self.audio_track:
                     self._propagate_settings(self.active_provider)
             return True
@@ -100,6 +164,11 @@ class FallbackTTS(TTS, FallbackBase):
         Checks for recovery of primary providers before starting.
         """
         if self.check_recovery():
+             if self._first_audio_callback is not None:
+                 try:
+                     self.active_provider.on_first_audio_byte(self._first_audio_callback)
+                 except Exception as e:
+                     logger.warning(f"[TTS] Failed to re-apply first_audio_byte callback after recovery: {e}")
              if hasattr(self, "loop") and self.loop and hasattr(self, "audio_track") and self.audio_track:
                  self._propagate_settings(self.active_provider)
 
@@ -124,6 +193,11 @@ class FallbackTTS(TTS, FallbackBase):
             await self.active_provider.interrupt()
 
     async def aclose(self):
+        if self.latency_threshold_ms is not None:
+            try:
+                global_event_emitter.off("COMPONENT_METRIC", self._on_component_metric)
+            except Exception:
+                pass
         for p in self.providers:
             await p.aclose()
         await super().aclose()

@@ -1,20 +1,51 @@
 import asyncio
-from typing import List, Any
+from typing import List, Any, Optional
 from .stt import STT
 from ..fallback_base import FallbackBase
+from ..event_bus import global_event_emitter
 
 class FallbackSTT(STT, FallbackBase):
-    """STT wrapper that automatically fails over to backup providers on errors and attempts recovery of higher-priority ones."""
-    def __init__(self, providers: List[STT], temporary_disable_sec: float = 60.0, permanent_disable_after_attempts: int = 3):
+    """STT wrapper that automatically fails over to backup providers on errors, latency degradation, and attempts recovery of higher-priority ones."""
+    def __init__(
+        self,
+        providers: List[STT],
+        temporary_disable_sec: float = 60.0,
+        permanent_disable_after_attempts: int = 3,
+        latency_threshold_ms: Optional[float] = None,
+        consecutive_latency_hits: int = 3,
+    ):
         STT.__init__(self)
-        FallbackBase.__init__(self, providers, "STT", temporary_disable_sec=temporary_disable_sec, permanent_disable_after_attempts=permanent_disable_after_attempts)
-        
+        FallbackBase.__init__(
+            self,
+            providers,
+            "STT",
+            temporary_disable_sec=temporary_disable_sec,
+            permanent_disable_after_attempts=permanent_disable_after_attempts,
+            latency_threshold_ms=latency_threshold_ms,
+            consecutive_latency_hits=consecutive_latency_hits,
+        )
+
         self._transcript_callback = None
         self._setup_event_listeners()
+        self._setup_latency_listener()
 
     def _setup_event_listeners(self):
         """Attach error listener to the currently active provider."""
         self.active_provider.on("error", self._on_provider_error)
+
+    def _setup_latency_listener(self):
+        if self.latency_threshold_ms is None:
+            return
+        global_event_emitter.on("COMPONENT_METRIC", self._on_component_metric)
+
+    def _on_component_metric(self, event: dict):
+        if event.get("component") != "stt":
+            return
+        metrics = event.get("metrics") or {}
+        latency = metrics.get("stt_latency")
+        if latency is None:
+            return
+        asyncio.create_task(self._record_latency(float(latency)))
 
     def _on_provider_error(self, error_msg):
         """Handle async errors (e.g. WebSocket disconnects)"""
@@ -74,6 +105,11 @@ class FallbackSTT(STT, FallbackBase):
 
     async def aclose(self) -> None:
         """Close all providers."""
+        if self.latency_threshold_ms is not None:
+            try:
+                global_event_emitter.off("COMPONENT_METRIC", self._on_component_metric)
+            except Exception:
+                pass
         for p in self.providers:
             await p.aclose()
         await super().aclose()

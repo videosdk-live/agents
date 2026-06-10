@@ -26,10 +26,7 @@ from dotenv import load_dotenv
 
 from videosdk.agents import Agent, AgentSession, Pipeline, JobContext, RoomOptions, WorkerJob
 from videosdk.agents.avatar import AvatarAudioOut, generate_avatar_credentials
-from videosdk.plugins.deepgram import DeepgramSTT
-from videosdk.plugins.silero import SileroVAD
-from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
-from videosdk.plugins.google import GoogleLLM, GoogleTTS
+from videosdk.agents.plugins import DeepgramSTT, SileroVAD, TurnDetector, pre_download_model, GoogleLLM, GoogleTTS
 
 load_dotenv(override=True)
 pre_download_model()

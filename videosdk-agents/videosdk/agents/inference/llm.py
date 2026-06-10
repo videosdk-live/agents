@@ -38,6 +38,7 @@ from videosdk.agents import (
     ToolChoice,
     FunctionTool,
     is_function_tool,
+    build_openai_schema,
     build_gemini_schema,
     ChatContent,
     ImageContent,
@@ -338,6 +339,8 @@ class LLM(BaseLLM):
         url = f"{self.base_url}/v1/chat/completions?provider={self.provider}"
 
         current_content = ""
+        # Tool-call fragments accumulate here across SSE chunks, keyed by index.
+        pending_tool_calls: Dict[int, Dict[str, Any]] = {}
         streaming_state = {
             "in_response": False,
             "response_start_index": -1,
@@ -381,6 +384,7 @@ class LLM(BaseLLM):
                                 chunk,
                                 current_content,
                                 streaming_state,
+                                pending_tool_calls,
                                 conversational_graph,
                             ):
                                 if llm_response.content:
@@ -389,6 +393,13 @@ class LLM(BaseLLM):
                         except json.JSONDecodeError as e:
                             logger.warning(f"[InferenceLLM] Failed to parse chunk: {e}")
                             continue
+
+                # Stream ended without an explicit tool-call finish_reason —
+                # flush any tool calls still buffered.
+                if pending_tool_calls and not self._cancelled:
+                    for llm_response in self._finalize_tool_calls(pending_tool_calls):
+                        yield llm_response
+                    pending_tool_calls.clear()
 
             # Handle conversational graph final response
             if current_content and conversational_graph and not self._cancelled:
@@ -411,6 +422,7 @@ class LLM(BaseLLM):
         chunk: Dict[str, Any],
         current_content: str,
         streaming_state: Dict[str, Any],
+        pending_tool_calls: Dict[int, Dict[str, Any]],
         conversational_graph: Any,
     ) -> AsyncIterator[LLMResponse]:
         """
@@ -460,28 +472,30 @@ class LLM(BaseLLM):
         choice = choices[0]
         delta = choice.get("delta", {})
 
-        # Check for tool calls
-        if "tool_calls" in delta:
-            for tool_call in delta.get("tool_calls") or []:
-                function_data = tool_call.get("function", {})
-                function_name = function_data.get("name", "")
-                function_args = function_data.get("arguments", "")
+        # Accumulate streamed tool-call fragments, keyed by delta index. A
+        # single tool call arrives across many chunks (name in the first,
+        # arguments in fragments after) — JSON-parsing any one fragment alone
+        # yields invalid/partial arguments.
+        for tool_call in delta.get("tool_calls") or []:
+            idx = tool_call.get("index", 0)
+            function_data = tool_call.get("function") or {}
+            if idx not in pending_tool_calls:
+                pending_tool_calls[idx] = {
+                    "id": tool_call.get("id") or "",
+                    "name": function_data.get("name") or "",
+                    "arguments": function_data.get("arguments") or "",
+                }
+            else:
+                if function_data.get("name"):
+                    pending_tool_calls[idx]["name"] += function_data["name"]
+                if function_data.get("arguments"):
+                    pending_tool_calls[idx]["arguments"] += function_data["arguments"]
 
-                if function_name:
-                    try:
-                        args_dict = json.loads(function_args) if function_args else {}
-                    except json.JSONDecodeError:
-                        args_dict = function_args
-
-                    function_call = {
-                        "name": function_name,
-                        "arguments": args_dict,
-                    }
-                    yield LLMResponse(
-                        content="",
-                        role=ChatRole.ASSISTANT,
-                        metadata={"function_call": function_call},
-                    )
+        # Emit the accumulated tool calls once the model signals completion.
+        if choice.get("finish_reason") == "tool_calls" and pending_tool_calls:
+            for response in self._finalize_tool_calls(pending_tool_calls):
+                yield response
+            pending_tool_calls.clear()
 
         # Check for content
         content = delta.get("content", "")
@@ -496,6 +510,42 @@ class LLM(BaseLLM):
                     yield LLMResponse(content=content_chunk, role=ChatRole.ASSISTANT)
             else:
                 yield LLMResponse(content=content, role=ChatRole.ASSISTANT)
+
+    def _finalize_tool_calls(
+        self, pending_tool_calls: Dict[int, Dict[str, Any]]
+    ) -> List[LLMResponse]:
+        """Parse accumulated tool-call fragments into function_call responses.
+
+        Arguments are JSON-parsed exactly once, when the call is complete. On a
+        parse failure — or a value that isn't a JSON object — the arguments
+        default to ``{}`` rather than a raw/partial string, so the tool is
+        never invoked with a malformed argument mapping.
+        """
+        responses: List[LLMResponse] = []
+        for tc in sorted(pending_tool_calls.values(), key=lambda t: t["id"]):
+            if not tc["name"]:
+                continue
+            raw_args = tc["arguments"] or "{}"
+            try:
+                args = json.loads(raw_args)
+            except json.JSONDecodeError:
+                logger.error(
+                    "[InferenceLLM] Failed to parse tool-call arguments for "
+                    "'%s': %r",
+                    tc["name"],
+                    raw_args,
+                )
+                args = {}
+            if not isinstance(args, dict):
+                args = {}
+            responses.append(
+                LLMResponse(
+                    content="",
+                    role=ChatRole.ASSISTANT,
+                    metadata={"function_call": {"name": tc["name"], "arguments": args}},
+                )
+            )
+        return responses
 
     async def cancel_current_generation(self) -> None:
         """Cancel the current LLM generation."""
@@ -619,14 +669,21 @@ class LLM(BaseLLM):
                 continue
 
             try:
+                # build_gemini_schema returns a types.FunctionDeclaration
+                # whose ``parameters`` field is itself a types.Schema
+                # (both Pydantic-v2 objects). Use model_dump to flatten
+                # the entire thing to plain dicts in one pass; the
+                # gateway request body is JSON-serialized by aiohttp and
+                # chokes on typed objects otherwise.
                 gemini_schema = build_gemini_schema(tool)
+                schema_dict = gemini_schema.model_dump(exclude_none=True)
                 formatted_tools.append(
                     {
                         "type": "function",
                         "function": {
-                            "name": gemini_schema.get("name", ""),
-                            "description": gemini_schema.get("description", ""),
-                            "parameters": gemini_schema.get("parameters", {}),
+                            "name": schema_dict.get("name", ""),
+                            "description": schema_dict.get("description", ""),
+                            "parameters": schema_dict.get("parameters", {}),
                         },
                     }
                 )

@@ -166,8 +166,8 @@ class DeepgramSTT(BaseSTT):
             "filler_words": str(self.filler_words).lower(),
             "vad_events": "true",
             "no_delay": "true",
-            "profanity_filter":str(self.filler_words).lower(),
-            "numerals":str(self.filler_words).lower(),
+            "profanity_filter":str(self.profanity_filter).lower(),
+            "numerals":str(self.numerals).lower(),
             "diarize":str(self.enable_diarization).lower()
         }
         params_list = list(query_params.items())

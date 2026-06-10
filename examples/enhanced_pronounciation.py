@@ -2,11 +2,7 @@ import os
 import re
 from typing import Optional
 from videosdk.agents import Agent, AgentSession, Pipeline, WorkerJob, JobContext, RoomOptions, run_tts
-from videosdk.plugins.openai import OpenAILLM
-from videosdk.plugins.deepgram import DeepgramSTT
-from videosdk.plugins.silero import SileroVAD
-from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
-from videosdk.plugins.elevenlabs import ElevenLabsTTS
+from videosdk.agents.plugins import OpenAILLM, DeepgramSTT, SileroVAD, TurnDetector, pre_download_model, ElevenLabsTTS
 import logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 

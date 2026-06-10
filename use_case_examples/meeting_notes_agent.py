@@ -16,10 +16,7 @@ from google.genai import types
 
 from videosdk import PubSubPublishConfig
 from videosdk.agents import Agent, AgentSession, Pipeline, WorkerJob, JobContext, RoomOptions, run_stt
-from videosdk.plugins.deepgram import DeepgramSTT
-from videosdk.plugins.google import GoogleLLM
-from videosdk.plugins.silero import SileroVAD
-from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
+from videosdk.agents.plugins import DeepgramSTT, GoogleLLM, SileroVAD, TurnDetector, pre_download_model
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])

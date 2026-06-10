@@ -7,7 +7,7 @@ Env Vars: VIDEOSDK_AUTH_TOKEN, OPENAI_API_KEY
 
 import logging
 from videosdk.agents import Agent, AgentSession, Pipeline, WorkerJob, JobContext, RoomOptions
-from videosdk.plugins.openai import OpenAIRealtime, OpenAIRealtimeConfig
+from videosdk.agents.plugins import OpenAIRealtime, OpenAIRealtimeConfig
 from openai.types.beta.realtime.session import TurnDetection
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])

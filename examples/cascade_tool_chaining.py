@@ -1,10 +1,6 @@
 import aiohttp
 from videosdk.agents import Agent, AgentSession, Pipeline, function_tool, JobContext, RoomOptions, WorkerJob, ContextWindow
-from videosdk.plugins.deepgram import DeepgramSTT
-from videosdk.plugins.cartesia import CartesiaTTS
-from videosdk.plugins.openai import OpenAILLM
-from videosdk.plugins.silero import SileroVAD
-from videosdk.plugins.turn_detector import TurnDetector, pre_download_model
+from videosdk.agents.plugins import DeepgramSTT, CartesiaTTS, OpenAILLM, SileroVAD, TurnDetector, pre_download_model
 import logging
 
 logging.basicConfig(

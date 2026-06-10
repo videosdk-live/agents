@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Any, Callable, Optional, Literal, Awaitable,TYPE_CHECKING
+from typing import Any, AsyncIterator, Callable, Iterable, Optional, Literal, Awaitable, TYPE_CHECKING
 import asyncio
 import uuid
 
@@ -416,12 +416,34 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             model = getattr(component, 'model', getattr(component, 'model_id', getattr(component, 'speech_model', getattr(component, 'voice_id', getattr(component, 'voice', getattr(component, 'speaker', default_model))))))
         return provider_class, str(model)
 
-    async def say(self, message: str, interruptible: bool = True) -> UtteranceHandle:
+    async def say(
+        self,
+        message: str,
+        interruptible: bool = True,
+        audio_data: bytes | bytearray | Iterable[bytes] | AsyncIterator[bytes] | None = None,
+        add_to_chat_context: bool = True,
+    ) -> UtteranceHandle:
         """
         Send an initial message to the agent and return a handle to track it.
         When called from inside a function tool (_is_executing_tool), the current
         turn's utterance is not interrupted or replaced, so the LLM stream can
         continue after the tool returns.
+
+        Args:
+            message: The text being spoken. Always used for transcript/chat
+                context (unless ``add_to_chat_context=False``).
+            interruptible: If False, ``handle.interrupt()`` will raise unless
+                forced.
+            audio_data: Optional pre-synthesized PCM bytes (int16, matching
+                the agent audio track sample rate). When provided, the TTS
+                provider is bypassed and the bytes are streamed straight to
+                the audio track. Accepts a single ``bytes`` blob, an
+                iterable of ``bytes`` chunks, or an async iterator of
+                ``bytes`` chunks. Use ``load_audio_file`` for WAV files or
+                :class:`TTSAudioCache` to cache TTS output by text.
+            add_to_chat_context: When False, the message is spoken but NOT
+                added to the agent's chat history (useful for transient
+                hold messages inside function tools).
         """
         handle = UtteranceHandle(utterance_id=f"utt_{uuid.uuid4().hex[:8]}", interruptible=interruptible)
         self._accept_user_input = True
@@ -434,10 +456,11 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         if traces_flow_manager:
             traces_flow_manager.agent_say_called(message)
 
-        self.agent.chat_context.add_message(role=ChatRole.ASSISTANT, content=message)
+        if add_to_chat_context:
+            self.agent.chat_context.add_message(role=ChatRole.ASSISTANT, content=message)
 
         if hasattr(self.pipeline, 'send_message'):
-            await self.pipeline.send_message(message, handle=handle)
+            await self.pipeline.send_message(message, handle=handle, audio_data=audio_data)
 
         return handle
     
@@ -625,7 +648,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             return []
 
         context_copy = self.agent.chat_context.copy(
-            exclude_function_calls=not include_function_calls,
+            tools=None if include_function_calls else [],
             exclude_system_messages=not include_system_messages,
         )
         return context_copy.to_dict()["items"]
@@ -706,11 +729,12 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
 
         await self.close()
      
-    async def call_transfer(self,token: str, transfer_to: str) -> None:
+    async def call_transfer(self, transfer_to: str) -> None:
         """ Transfer the call to a provided Phone number or SIP endpoint.
         Args:
-            token: VideoSDK auth token.
             transfer_to: Phone number or SIP endpoint to transfer the call to.
+
+        The VideoSDK auth token is resolved internally.
         """
         job_ctx = self._job_context
         if not job_ctx:
@@ -722,7 +746,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         room = getattr(job_ctx, "room", None) if job_ctx else None
         if room and hasattr(room, "call_transfer"):
             try:
-                await room.call_transfer(token, transfer_to)
+                await room.call_transfer(transfer_to)
                 return
             except Exception as exc:
                 logger.error(f"Error calling call_transfer: {exc}")

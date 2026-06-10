@@ -1,5 +1,6 @@
 import logging
 import os
+import threading
 import numpy as np
 from typing import Optional
 from .model import VIDEOSDK_MODEL_URL, VIDEOSDK_MODEL_FILES, MODEL_DIR
@@ -9,6 +10,10 @@ from transformers import BertTokenizer
 logger = logging.getLogger(__name__)
 
 _videosdk_model_ready = False
+
+_tokenizer_cache = None
+_session_cache = None
+_init_lock = threading.Lock()
 
 
 def pre_download_videosdk_model(overwrite_existing: bool = False):
@@ -45,22 +50,36 @@ class VideoSDKTurnDetector(EOU):
         self._initialize_model()
     
     def _initialize_model(self):
-        """Initialize the ONNX model and tokenizer. Downloads model once; reuses from MODEL_DIR if already present."""
+        """Initialize (or reuse) the ONNX model and tokenizer.
+
+        Uses module-level caches so repeated VideoSDKTurnDetector()
+        constructions in the same process share a single tokenizer
+        and ORT session.
+        """
+        global _tokenizer_cache, _session_cache
         try:
             import onnxruntime as ort
 
             pre_download_videosdk_model(overwrite_existing=False)
 
-            self.tokenizer = BertTokenizer.from_pretrained(MODEL_DIR)
-            
-            model_path = os.path.join(MODEL_DIR, "model.onnx")
-            
-            if not os.path.exists(model_path):
-                raise FileNotFoundError(f"Model file not found at {model_path}")
-            
-            self.session = ort.InferenceSession(model_path)
-            print(f"Model loaded successfully.")
-            
+            if _tokenizer_cache is not None and _session_cache is not None:
+                self.tokenizer = _tokenizer_cache
+                self.session = _session_cache
+                return
+
+            with _init_lock:
+                if _tokenizer_cache is None:
+                    _tokenizer_cache = BertTokenizer.from_pretrained(MODEL_DIR)
+                if _session_cache is None:
+                    model_path = os.path.join(MODEL_DIR, "model.onnx")
+                    if not os.path.exists(model_path):
+                        raise FileNotFoundError(f"Model file not found at {model_path}")
+                    _session_cache = ort.InferenceSession(model_path)
+                    logger.info("VideoSDK turn-detector model loaded.")
+
+            self.tokenizer = _tokenizer_cache
+            self.session = _session_cache
+
         except Exception as e:
             print(f"Error loading model: {e}")
             logger.error(f"Failed to initialize TurnDetection model: {e}")

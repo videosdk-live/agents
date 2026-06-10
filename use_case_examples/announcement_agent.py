@@ -10,8 +10,7 @@ import asyncio
 import logging
 from videosdk import PubSubSubscribeConfig
 from videosdk.agents import Agent, AgentSession, Pipeline, WorkerJob, JobContext, RoomOptions, run_tts
-from videosdk.plugins.google import GoogleLLM
-from videosdk.plugins.cartesia import CartesiaTTS
+from videosdk.agents.plugins import GoogleLLM, CartesiaTTS
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 
