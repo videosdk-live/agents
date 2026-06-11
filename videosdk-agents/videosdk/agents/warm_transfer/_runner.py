@@ -156,12 +156,24 @@ class WarmTransferResult:
     summary: str
     error: Optional[str] = None
 
-def _mint_participant_token(role_prefix: str) -> tuple[str, str]:
-    """Return ``(participant_id, jwt)`` for an ad-hoc participant."""
+def _mint_participant_token(role_prefix: str, fallback_token: Optional[str] = None) -> tuple[str, str]:
+    """Return ``(participant_id, jwt)`` for an ad-hoc participant.
+
+    Prefers a freshly-minted JWT from ``VIDEOSDK_API_KEY`` / ``VIDEOSDK_SECRET_KEY``.
+    When those aren't set (the deployment authenticates with ``VIDEOSDK_AUTH_TOKEN``
+    instead), fall back to ``fallback_token`` — the session's already-resolved auth
+    token, which carries room-join permission — rather than failing the transfer.
+    """
     pid = f"{role_prefix}_{uuid.uuid4().hex[:8]}"
     try:
         token = generate_videosdk_token()
     except (ValueError, ImportError) as exc:
+        if fallback_token:
+            logger.info(
+                "WarmTransfer: VIDEOSDK_API_KEY/SECRET not set; using the session "
+                "auth token for the %s participant token", role_prefix
+            )
+            return pid, fallback_token
         raise WarmTransferError(str(exc)) from exc
     return pid, token
 
@@ -321,18 +333,21 @@ class WarmTransferRunner:
         self._briefing_session: Optional["AgentSession"] = None
         self._briefing_start_task: Optional[asyncio.Task] = None
         self._primary_input_was_enabled: Optional[bool] = None
+        self._primary_auto_end_was_enabled: Optional[bool] = None
         self._participant_left_handler: Optional[Any] = None
+        # Consultation-room participant ids captured *before* the switch is
+        # issued (agent + supervisor). Used to detect the switched-in caller as
+        # the first id that appears afterwards — see
+        # _wait_for_caller_in_consultation_room.
+        self._consultation_known_before_switch: Optional[set] = None
 
     # ── Public entry ───────────────────────────────────────────────────
 
     async def run(self) -> WarmTransferResult:
         await self._emit(WarmTransferPhase.STARTED, {"start_time": time.time()})
         try:
-            # Stop processing the caller's speech for the rest of the transfer,
-            # before anything that can await: the caller shouldn't be able to
-            # interrupt the agent's "I'm transferring you / please hold" lines or
-            # spin up new turns while we're handing the call off.
             self._mute_primary_input()
+            self._suspend_primary_auto_end()
             self._validate_caller_and_cache_callid()
             self._summary = await self._generate_summary()
             await self._place_caller_on_hold()
@@ -371,11 +386,19 @@ class WarmTransferRunner:
                     phase=WarmTransferPhase.TRANSFER_FAILED,
                 )
 
+            await self._wait_for_caller_in_consultation_room()
+
             await self._close_briefing()
             with suppress(Exception):
                 await self._session.leave()
 
             await self._emit(WarmTransferPhase.TRANSFER_COMPLETE, {})
+
+            ctx = getattr(self._session, "_job_context", None)
+            if ctx is not None and hasattr(ctx, "shutdown"):
+                with suppress(Exception):
+                    asyncio.create_task(ctx.shutdown())
+
             return WarmTransferResult(
                 success=True,
                 phase=WarmTransferPhase.TRANSFER_COMPLETE,
@@ -385,10 +408,8 @@ class WarmTransferRunner:
                 summary=self._summary,
             )
         except asyncio.CancelledError:
-            # The transfer task itself was cancelled (e.g. the session is
-            # shutting down). Don't leave the caller permanently muted, then
-            # propagate.
             self._restore_primary_input()
+            self._restore_primary_auto_end()
             raise
         except WarmTransferError as exc:
             await self._abort(str(exc), apology=_FAIL_APOLOGY, phase=WarmTransferPhase.TRANSFER_FAILED)
@@ -423,7 +444,19 @@ class WarmTransferRunner:
 
     async def _generate_summary(self) -> str:
         await self._emit(WarmTransferPhase.SUMMARY_GENERATING, {})
-        llm = self._config.summary_llm or getattr(self._session.pipeline, "llm", None)
+        llm = self._config.summary_llm
+        if llm is None:
+            pipeline = self._session.pipeline
+            if getattr(getattr(pipeline, "config", None), "is_realtime", False):
+                logger.warning(
+                    "WarmTransfer: primary pipeline is realtime and no summary_llm "
+                    "was provided; a realtime model cannot summarize text. Using the "
+                    "fallback summary — pass WarmTransferConfig.summary_llm=<a text LLM> "
+                    "(e.g. GoogleLLM) for a real briefing."
+                )
+                await self._emit(WarmTransferPhase.SUMMARY_READY, {"summary": _FALLBACK_SUMMARY})
+                return _FALLBACK_SUMMARY
+            llm = getattr(pipeline, "llm", None)
         if llm is None:
             logger.warning("WarmTransfer: no LLM available for summarization; using fallback text")
             await self._emit(WarmTransferPhase.SUMMARY_READY, {"summary": _FALLBACK_SUMMARY})
@@ -482,9 +515,10 @@ class WarmTransferRunner:
         to the primary room's audio track, and closing the briefing session would
         tear down the primary's components (the source of the runaway
         ``'NoneType' object has no attribute 'frame_size'`` VAD errors after a
-        transfer). Use the caller-supplied factory if any, otherwise re-build each
-        primary component from its class with no args (works for env-configured
-        providers).
+        transfer). Use the caller-supplied factory if any; otherwise auto-build:
+        for a realtime primary, rebuild a fresh realtime model; for a cascade
+        primary, re-build each component from its class with no args (works for
+        env-configured providers).
         """
         from ..pipeline import Pipeline
 
@@ -499,8 +533,19 @@ class WarmTransferRunner:
             logger.info("WarmTransfer: using briefing_pipeline_factory for the consultation pipeline")
             return pipeline
 
-        logger.info("WarmTransfer: auto-building the consultation pipeline from the primary component classes")
         primary = self._session.pipeline
+
+        if getattr(getattr(primary, "config", None), "is_realtime", False):
+            model = getattr(primary, "_realtime_model", None)
+            if model is None:
+                raise WarmTransferError(
+                    "Primary pipeline is realtime but exposes no realtime model to "
+                    "rebuild; pass WarmTransferConfig.briefing_pipeline_factory."
+                )
+            logger.info("WarmTransfer: auto-building a realtime consultation pipeline from the primary realtime model")
+            return Pipeline(llm=self._fresh_realtime_model(model))
+
+        logger.info("WarmTransfer: auto-building the consultation pipeline from the primary component classes")
 
         def _fresh(component: Any) -> Any:
             if component is None:
@@ -523,6 +568,36 @@ class WarmTransferRunner:
             turn_detector=_fresh(getattr(primary, "turn_detector", None)),
         )
 
+    @staticmethod
+    def _fresh_realtime_model(model: Any) -> Any:
+        """Build a fresh instance of the primary's realtime model for the briefing.
+
+        Reuses the model id and the (stateless) config object so the briefing
+        agent keeps the same voice/model, but gets its **own** live connection and
+        audio track — the briefing runs concurrently with the primary session, so
+        they must not share one realtime instance. Falls back to a bare
+        constructor (env-configured) and finally to a clear error pointing at
+        ``briefing_pipeline_factory``.
+        """
+        cls = type(model)
+        kwargs: dict[str, Any] = {}
+        if getattr(model, "model", None) is not None:
+            kwargs["model"] = model.model
+        if getattr(model, "config", None) is not None:
+            kwargs["config"] = model.config
+        try:
+            return cls(**kwargs)
+        except Exception as exc_with_args:
+            try:
+                return cls()
+            except Exception as exc_bare:
+                raise WarmTransferError(
+                    f"Could not auto-build a fresh {cls.__name__} for the briefing "
+                    f"pipeline (with args: {exc_with_args}; bare: {exc_bare}). Pass "
+                    f"WarmTransferConfig.briefing_pipeline_factory to construct the "
+                    f"consultation pipeline explicitly."
+                ) from exc_bare
+
     async def _spawn_briefing_session(self) -> None:
         """Spin up a second JobContext + AgentSession (WarmTransferAgent) for the consultation room."""
         from ..agent_session import AgentSession
@@ -544,7 +619,14 @@ class WarmTransferRunner:
         token = _set_current_job_context(briefing_ctx)
         try:
             briefing_pipeline = self._build_briefing_pipeline()
-            vmd_llm = self._config.summary_llm or getattr(briefing_pipeline, "llm", None)
+            # The voicemail detector needs a *text* LLM. A realtime briefing
+            # pipeline's .llm is a no-op RealtimeLLMAdapter, so only fall back to
+            # it when the briefing pipeline is cascade; otherwise require an
+            # explicit summary_llm or skip voicemail detection entirely.
+            briefing_is_realtime = getattr(getattr(briefing_pipeline, "config", None), "is_realtime", False)
+            vmd_llm = self._config.summary_llm or (
+                None if briefing_is_realtime else getattr(briefing_pipeline, "llm", None)
+            )
             vmd = VoiceMailDetector(llm=vmd_llm, callback=self._on_voicemail_detected) if vmd_llm else None
             briefing_session = AgentSession(
                 agent=WarmTransferAgent(summary=self._summary),
@@ -769,7 +851,14 @@ class WarmTransferRunner:
         if self._caller_call_id is None or sip_manager is None:
             logger.error("WarmTransfer: no caller SIP callId / SIP manager; cannot switch")
             return False
-        pid, tkn = _mint_participant_token("caller")
+        auth_token = getattr(self._session._job_context, "videosdk_auth", None)
+        pid, tkn = _mint_participant_token("caller", fallback_token=auth_token)
+        consult_room = self._briefing_ctx.room if self._briefing_ctx else None
+        self._consultation_known_before_switch = (
+            set(getattr(consult_room, "participants_data", {}).keys())
+            if consult_room is not None
+            else set()
+        )
         try:
             response = await sip_manager.async_switch_call_room(
                 call_id=self._caller_call_id,
@@ -791,6 +880,48 @@ class WarmTransferRunner:
         )
         return True
 
+    async def _wait_for_caller_in_consultation_room(self, timeout: float = 15.0) -> bool:
+        """Hold until the switched caller is *present* in the consultation room.
+
+        ``switch-room`` is asynchronous (the API returns "Processing switch room
+        request") and only completes while the **target room stays active**, so
+        we keep the briefing agent in place until the caller actually shows up —
+        otherwise we'd tear the room down mid-switch.
+
+        We wait on participant **presence** (the caller joining the room), NOT on
+        audio: SIP-to-SIP audio bridging is handled by VideoSDK's media layer and
+        may lag or never arrive, but that's independent of getting both humans
+        into the same room — which is all this gate cares about. Best-effort:
+        returns ``False`` on timeout and proceeds with teardown anyway.
+        """
+        room = self._briefing_ctx.room if self._briefing_ctx else None
+        if room is None:
+            return False
+        known = self._consultation_known_before_switch
+        if known is None:
+            known = set(getattr(room, "participants_data", {}).keys())
+        waited = 0.0
+        poll = 0.5
+        while waited < timeout:
+            for pid, p in list(getattr(room, "participants_data", {}).items()):
+                if pid not in known and not _is_agent_name(p):
+                    logger.info(f"WarmTransfer: caller present in consultation room (participant={pid})")
+                    return True
+            await asyncio.sleep(poll)
+            waited += poll
+        try:
+            present = [
+                f"{pid}({getattr(p, 'display_name', '') or '?'})"
+                for pid, p in getattr(room, "participants_data", {}).items()
+            ]
+        except Exception:
+            present = ["<unavailable>"]
+        logger.warning(
+            f"WarmTransfer: caller did not appear in the consultation room within "
+            f"{timeout}s; proceeding with teardown. Consultation room participants now: {present}"
+        )
+        return False
+
     def _mute_primary_input(self) -> None:
         """Stop the primary session from processing the caller's stray speech while on hold.
 
@@ -809,6 +940,40 @@ class WarmTransferRunner:
         with suppress(Exception):
             self._session._accept_user_input = self._primary_input_was_enabled
         self._primary_input_was_enabled = None
+
+    def _primary_room(self) -> Any:
+        return getattr(getattr(self._session, "_job_context", None), "room", None)
+
+    def _suspend_primary_auto_end(self) -> None:
+        """Disable the primary room's no-participant auto-end during the transfer.
+
+        Switching the caller out empties the primary room, which would otherwise
+        trip its ``no_participants`` timer and end the session (cancelling this
+        runner) before the hand-off settles. Capture the original flag once and
+        cancel any already-scheduled end task. Idempotent.
+        """
+        room = self._primary_room()
+        if room is None or self._primary_auto_end_was_enabled is not None:
+            return
+        self._primary_auto_end_was_enabled = bool(getattr(room, "auto_end_session", False))
+        with suppress(Exception):
+            room.auto_end_session = False
+        with suppress(Exception):
+            room._cancel_session_end_task()
+        with suppress(Exception):
+            task = getattr(room, "_no_participant_timeout_task", None)
+            if task is not None and not task.done():
+                task.cancel()
+                room._no_participant_timeout_task = None
+
+    def _restore_primary_auto_end(self) -> None:
+        if self._primary_auto_end_was_enabled is None:
+            return
+        room = self._primary_room()
+        if room is not None:
+            with suppress(Exception):
+                room.auto_end_session = self._primary_auto_end_was_enabled
+        self._primary_auto_end_was_enabled = None
 
     async def _close_briefing(self) -> None:
         if self._participant_left_handler is not None:
@@ -829,6 +994,7 @@ class WarmTransferRunner:
     async def _abort(self, reason: str, *, apology: str, phase: WarmTransferPhase) -> WarmTransferResult:
         """Restore the caller, apologize, tear down the briefing session, emit ``phase``."""
         self._restore_primary_input()
+        self._restore_primary_auto_end()
         with suppress(Exception):
             asyncio.create_task(self._session.say(apology, interruptible=True))
         await self._close_briefing()
