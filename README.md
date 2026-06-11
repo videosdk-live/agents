@@ -37,7 +37,7 @@ The **VideoSDK AI Agents framework** is a Python SDK for building AI agents that
     </td>
     <td width="50%" valign="top" style="padding-left: 20px;">
       <h3>⚡ <a href="examples/realtime_basic.py" target="_blank">Agent with Realtime Mode</a></h3>
-      <p>Build an AI Voice Agent using a unified Realtime model (e.g. Gemini Live).</p>
+      <p>Build an AI Voice Agent using a unified real-time model (e.g. Gemini Live).</p>
     </td>
   </tr>
   <tr>
