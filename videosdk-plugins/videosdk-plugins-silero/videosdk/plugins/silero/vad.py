@@ -156,9 +156,19 @@ class SileroVAD(BaseVAD):
         self._energy_silence_threshold = energy_silence_threshold
         self._noise_floor = 0.0
 
-        # Inference offloading
+        # Inference offloading. Prefer the SDK's shared bounded pool (one per
+        # process) so N concurrent sessions don't each hold a dedicated thread.
+        # Fall back to a per-instance pool only when the shared pool is absent
+        # (e.g. standalone plugin use against an older SDK).
+        self._shared_inference_run = None
+        try:
+            from videosdk.agents.inference import run_inference as _shared_run
+            self._shared_inference_run = _shared_run
+        except Exception:
+            self._shared_inference_run = None
+
         self._executor: concurrent.futures.ThreadPoolExecutor | None = None
-        if offload_inference:
+        if offload_inference and self._shared_inference_run is None:
             self._executor = concurrent.futures.ThreadPoolExecutor(
                 max_workers=1, thread_name_prefix="vad-inference"
             )
@@ -570,6 +580,8 @@ class SileroVAD(BaseVAD):
             self.emit("error", f"VAD processing failed: {e}")
 
     async def _run_inference(self, chunk: np.ndarray) -> float:
+        if self._shared_inference_run is not None:
+            return await self._shared_inference_run(self._silero.process, chunk)
         if self._executor is not None:
             loop = asyncio.get_running_loop()
             return await loop.run_in_executor(self._executor, self._silero.process, chunk)

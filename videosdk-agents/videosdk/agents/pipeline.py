@@ -276,8 +276,13 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         return text_filter or BasicTextFilter.for_language(language)
 
     def _setup_global_listeners(self) -> None:
-        from .event_bus import global_event_emitter
-        
+        from .event_bus import get_current_event_bus
+
+        # Pin the bus active at construction (the per-session bus, since the
+        # pipeline is built inside the session scope). cleanup() may run in a
+        # different task, so we must deregister from THIS exact instance.
+        self._event_bus = get_current_event_bus()
+
         def handle_metric(data):
             if hasattr(self, 'loop') and self.loop and self.loop.is_running():
                 import asyncio
@@ -289,10 +294,10 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                     loop.create_task(self.metrics.trigger(data.get("component"), data.get("metrics")))
                 except RuntimeError:
                     pass
-        
-        global_event_emitter.on("COMPONENT_METRIC", handle_metric)
-        global_event_emitter.on("PIPELINE_ERROR", lambda data: self.emit("error", data))
-        
+        self._on_component_metric = handle_metric
+
+        self._on_pipeline_error = lambda data: self.emit("error", data)
+
         def handle_recording(data):
             status = data.get("status")
             if status == "started":
@@ -301,7 +306,11 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                 self.emit("recording_stopped", data)
             elif status == "failed":
                 self.emit("recording_failed", data)
-        global_event_emitter.on("RECORDING_STATUS", handle_recording)
+        self._on_recording_status = handle_recording
+
+        self._event_bus.on("COMPONENT_METRIC", self._on_component_metric)
+        self._event_bus.on("PIPELINE_ERROR", self._on_pipeline_error)
+        self._event_bus.on("RECORDING_STATUS", self._on_recording_status)
 
     def _auto_register(self) -> None:
         """Automatically register this pipeline with the current job context"""
@@ -1407,7 +1416,20 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
     async def cleanup(self) -> None:
         """Release all pipeline resources, close components, and reset internal state."""
         logger.info("Cleaning up pipeline")
-        
+
+        # Deregister global-bus listeners from the per-session bus they were
+        # registered on — prevents handler/closure accumulation across sessions.
+        bus = getattr(self, "_event_bus", None)
+        if bus is not None:
+            for _evt, _cb in (
+                ("COMPONENT_METRIC", getattr(self, "_on_component_metric", None)),
+                ("PIPELINE_ERROR", getattr(self, "_on_pipeline_error", None)),
+                ("RECORDING_STATUS", getattr(self, "_on_recording_status", None)),
+            ):
+                if _cb is not None:
+                    bus.off(_evt, _cb)
+            self._event_bus = None
+
         if self.config.is_realtime:
             if self._realtime_model:
                 await self._realtime_model.aclose()

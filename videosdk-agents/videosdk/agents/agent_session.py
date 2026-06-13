@@ -57,6 +57,11 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         self.wake_up = wake_up
         self.on_wake_up: Optional[Callable[[], None] | Callable[[], Any]] = None
         self._wake_up_task: Optional[asyncio.Task] = None
+        # Pin the per-session collector at construction (AgentSession is built
+        # inside the session scope in the runtime). close() runs in a different
+        # task and must finalize the right instance even if start() never ran.
+        from .metrics import get_current_metrics_collector
+        self._session_metrics_collector = get_current_metrics_collector()
         self._wake_up_timer_active = False
         self._closed: bool = False
         self._reply_in_progress: bool = False
@@ -251,6 +256,11 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             )
             ```
         """
+        # Pin the per-session collector resolved in THIS task; close() runs in a
+        # different task and must finalize the right instance.
+        from .metrics import get_current_metrics_collector
+        self._session_metrics_collector = get_current_metrics_collector()
+
         if observability is not None:
             ctx = None
             try:
@@ -664,8 +674,9 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         self._closed = True
         self._emit_agent_state(AgentState.CLOSING)
 
-        metrics_collector.finalize_session()
-        traces_flow_manager = metrics_collector.traces_flow_manager
+        _collector = self._session_metrics_collector or metrics_collector
+        _collector.finalize_session()
+        traces_flow_manager = _collector.traces_flow_manager
         if traces_flow_manager:
             start_time = time.perf_counter()
             await traces_flow_manager.start_agent_session_closed({"start_time": start_time})
@@ -699,6 +710,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         self.pipeline = None
         self.on_wake_up = None
         self._wake_up_task = None
+        self._session_metrics_collector = None
         logger.info("Agent session cleaned up")
 
     async def leave(self) -> None:

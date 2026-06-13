@@ -353,7 +353,8 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
                 )
 
                 metrics_collector.on_eou_start()
-                result = await asyncio.to_thread(
+                from .inference import run_inference
+                result = await run_inference(
                     self.turn_detector.get_turn_result, eou_context
                 )
                 metrics_collector.on_eou_complete()

@@ -129,6 +129,7 @@ from .tokenize import (
     normalize_lang_code,
     pre_warm_tokenizer,
 )
+from .inference import run_inference, get_inference_executor, shutdown_inference_executor
 
 __all__ = [
     "Agent",
@@ -251,6 +252,9 @@ __all__ = [
     "pre_warm_tokenizer",
     "TTSAudioCache",
     "load_audio_file",
+    "run_inference",
+    "get_inference_executor",
+    "shutdown_inference_executor",
 ]
 
 from . import _plugins as _plugins_module
