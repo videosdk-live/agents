@@ -162,7 +162,7 @@ class SileroVAD(BaseVAD):
         # (e.g. standalone plugin use against an older SDK).
         self._shared_inference_run = None
         try:
-            from videosdk.agents.inference import run_inference as _shared_run
+            from videosdk.agents.inference_executor import run_inference as _shared_run
             self._shared_inference_run = _shared_run
         except Exception:
             self._shared_inference_run = None

@@ -129,7 +129,7 @@ from .tokenize import (
     normalize_lang_code,
     pre_warm_tokenizer,
 )
-from .inference import run_inference, get_inference_executor, shutdown_inference_executor
+from .inference_executor import run_inference, get_inference_executor, shutdown_inference_executor
 
 __all__ = [
     "Agent",
