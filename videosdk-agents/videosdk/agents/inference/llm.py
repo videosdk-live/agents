@@ -289,8 +289,12 @@ class LLM(BaseLLM):
             # Add conversational graph response format
             if conversational_graph:
                 payload["response_format"] = {
-                    "type": "json_object",
-                    "schema": conversational_graph.get_response_schema(),
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "conversational_graph_response",
+                        "strict": True,
+                        "schema": conversational_graph._get_graph_schema(),
+                    },
                 }
 
             # Add tools if provided
@@ -338,10 +342,10 @@ class LLM(BaseLLM):
 
         url = f"{self.base_url}/v1/chat/completions?provider={self.provider}"
 
-        current_content = ""
         # Tool-call fragments accumulate here across SSE chunks, keyed by index.
         pending_tool_calls: Dict[int, Dict[str, Any]] = {}
         streaming_state = {
+            "raw_content": "",
             "in_response": False,
             "response_start_index": -1,
             "yielded_content_length": 0,
@@ -382,13 +386,10 @@ class LLM(BaseLLM):
                             chunk = json.loads(data_str)
                             async for llm_response in self._process_chunk(
                                 chunk,
-                                current_content,
                                 streaming_state,
                                 pending_tool_calls,
                                 conversational_graph,
                             ):
-                                if llm_response.content:
-                                    current_content += llm_response.content
                                 yield llm_response
                         except json.JSONDecodeError as e:
                             logger.warning(f"[InferenceLLM] Failed to parse chunk: {e}")
@@ -402,16 +403,21 @@ class LLM(BaseLLM):
                     pending_tool_calls.clear()
 
             # Handle conversational graph final response
-            if current_content and conversational_graph and not self._cancelled:
-                try:
-                    parsed_json = json.loads(current_content.strip())
-                    yield LLMResponse(
-                        content="",
-                        role=ChatRole.ASSISTANT,
-                        metadata=parsed_json,
-                    )
-                except json.JSONDecodeError:
-                    pass
+            if conversational_graph and not self._cancelled:
+                raw_content = streaming_state.get("raw_content", "")
+                if raw_content:
+                    try:
+                        parsed_json = json.loads(raw_content.strip())
+                        yield LLMResponse(
+                            content="",
+                            role=ChatRole.ASSISTANT,
+                            metadata={"graph_response": parsed_json},
+                        )
+                    except json.JSONDecodeError:
+                        yield LLMResponse(
+                            content=raw_content,
+                            role=ChatRole.ASSISTANT,
+                        )
 
         except aiohttp.ClientError as e:
             logger.error(f"[InferenceLLM] HTTP request failed: {e}")
@@ -420,7 +426,6 @@ class LLM(BaseLLM):
     async def _process_chunk(
         self,
         chunk: Dict[str, Any],
-        current_content: str,
         streaming_state: Dict[str, Any],
         pending_tool_calls: Dict[int, Dict[str, Any]],
         conversational_graph: Any,
@@ -430,7 +435,6 @@ class LLM(BaseLLM):
 
         Args:
             chunk: Parsed JSON chunk
-            current_content: Accumulated content so far
             streaming_state: State for conversational graph streaming
             conversational_graph: Optional conversational graph
 
@@ -501,11 +505,13 @@ class LLM(BaseLLM):
         content = delta.get("content", "")
         if content:
             if conversational_graph:
-                full_content = current_content + content
+                streaming_state["raw_content"] = (
+                    streaming_state.get("raw_content", "") + content
+                )
                 for (
                     content_chunk
                 ) in conversational_graph.stream_conversational_graph_response(
-                    full_content, streaming_state
+                    streaming_state["raw_content"], streaming_state
                 ):
                     yield LLMResponse(content=content_chunk, role=ChatRole.ASSISTANT)
             else:
