@@ -13,10 +13,10 @@ from videosdk.agents import STT, STTResponse, SpeechData, SpeechEventType, globa
 import logging
 logger = logging.getLogger(__name__)
 try:
-    from scipy import signal
-    SCIPY_AVAILABLE = True
+    from videosdk.agents.resampling import resample_fft
+    RESAMPLE_AVAILABLE = True
 except ImportError:
-    SCIPY_AVAILABLE = False
+    RESAMPLE_AVAILABLE = False
 
 SARVAM_STT_STREAMING_URL = "wss://api.sarvam.ai/speech-to-text/ws"
 SARVAM_STT_TRANSLATE_URL = "wss://api.sarvam.ai/speech-to-text-translate/ws"
@@ -52,8 +52,8 @@ class SarvamAISTT(STT):
             prompt: Prompt to send to the model (default: None), only applicable when translation is True
         """
         super().__init__()
-        if not SCIPY_AVAILABLE:
-            raise ImportError("scipy is not installed. Please install it with 'pip install scipy'")
+        if not RESAMPLE_AVAILABLE:
+            raise ImportError("Audio resampling support is unavailable.")
 
         self.api_key = api_key or os.getenv("SARVAMAI_API_KEY")
         if not self.api_key:
@@ -238,7 +238,7 @@ class SarvamAISTT(STT):
 
             if self.input_sample_rate != self.output_sample_rate:
                 output_length = int(len(mono_audio) * self.output_sample_rate / self.input_sample_rate)
-                resampled_data = signal.resample(mono_audio, output_length)
+                resampled_data = resample_fft(mono_audio, output_length)
             else:
                 resampled_data = mono_audio
 

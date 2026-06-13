@@ -120,7 +120,8 @@ class Turn(EOU):
     ) -> None:
         super().__init__(threshold=threshold)
 
-        self._videosdk_token = os.getenv("VIDEOSDK_AUTH_TOKEN")
+        from ..utils import current_videosdk_auth_token
+        self._videosdk_token = current_videosdk_auth_token()
         if not self._videosdk_token:
             raise ValueError(
                 "VIDEOSDK_AUTH_TOKEN environment variable must be set for authentication"
@@ -474,7 +475,8 @@ class TurnV2(EOU):
         self.host = host or os.getenv("VIDEOSDK_TURN_GRPC_HOST") or DEFAULT_GRPC_HOST
         self.timeout = timeout
 
-        self._token = token or os.getenv("VIDEOSDK_AUTH_TOKEN")
+        from ..utils import current_videosdk_auth_token
+        self._token = token or current_videosdk_auth_token()
         self._metadata = (
             (("authorization", f"Bearer {self._token}"),) if self._token else None
         )

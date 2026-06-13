@@ -5,9 +5,10 @@ import numpy as np
 from typing import Optional
 from .model import VIDEOSDK_MODEL_URL, VIDEOSDK_MODEL_FILES, MODEL_DIR
 from videosdk.agents import EOU, ChatContext, ChatMessage, ChatRole
-from transformers import BertTokenizer
 
 logger = logging.getLogger(__name__)
+
+TOKENIZER_FILENAME = "tokenizer.json"
 
 _videosdk_model_ready = False
 
@@ -32,7 +33,6 @@ def pre_download_videosdk_model(overwrite_existing: bool = False):
         local_save_directory=MODEL_DIR,
         overwrite_existing=overwrite_existing,
     )
-    BertTokenizer.from_pretrained(MODEL_DIR)
     _videosdk_model_ready = True
 
 class VideoSDKTurnDetector(EOU):
@@ -47,8 +47,9 @@ class VideoSDKTurnDetector(EOU):
         super().__init__(threshold=threshold, **kwargs)
         self.session = None
         self.tokenizer = None
+        self._input_names: list[str] = []
         self._initialize_model()
-    
+
     def _initialize_model(self):
         """Initialize (or reuse) the ONNX model and tokenizer.
 
@@ -59,26 +60,36 @@ class VideoSDKTurnDetector(EOU):
         global _tokenizer_cache, _session_cache
         try:
             import onnxruntime as ort
+            from ._inference import load_tokenizer, make_session_options, model_input_names
 
             pre_download_videosdk_model(overwrite_existing=False)
 
             if _tokenizer_cache is not None and _session_cache is not None:
                 self.tokenizer = _tokenizer_cache
                 self.session = _session_cache
+                self._input_names = model_input_names(self.session)
                 return
 
             with _init_lock:
-                if _tokenizer_cache is None:
-                    _tokenizer_cache = BertTokenizer.from_pretrained(MODEL_DIR)
                 if _session_cache is None:
                     model_path = os.path.join(MODEL_DIR, "model.onnx")
                     if not os.path.exists(model_path):
                         raise FileNotFoundError(f"Model file not found at {model_path}")
-                    _session_cache = ort.InferenceSession(model_path)
+                    _session_cache = ort.InferenceSession(
+                        model_path,
+                        sess_options=make_session_options(),
+                        providers=["CPUExecutionProvider"],
+                    )
                     logger.info("VideoSDK turn-detector model loaded.")
+                if _tokenizer_cache is None:
+                    tokenizer_path = os.path.join(MODEL_DIR, TOKENIZER_FILENAME)
+                    if not os.path.exists(tokenizer_path):
+                        raise FileNotFoundError(f"Tokenizer file not found at {tokenizer_path}")
+                    _tokenizer_cache = load_tokenizer(tokenizer_path, max_length=512)
 
             self.tokenizer = _tokenizer_cache
             self.session = _session_cache
+            self._input_names = model_input_names(self.session)
 
         except Exception as e:
             print(f"Error loading model: {e}")
@@ -142,12 +153,10 @@ class VideoSDKTurnDetector(EOU):
             str: "True" if turn detected, "False" otherwise
         """
         try:
-            inputs = self.tokenizer(sentence.strip(), truncation=True, max_length=512, return_tensors="np")
-            outputs = self.session.run(None, {
-                "input_ids": inputs["input_ids"],
-                "attention_mask": inputs["attention_mask"],
-                "token_type_ids": inputs["token_type_ids"],
-            })
+            from ._inference import encode_for_model
+
+            ort_inputs = encode_for_model(self.tokenizer, sentence.strip(), self._input_names)
+            outputs = self.session.run(None, ort_inputs)
             pred = np.argmax(outputs)
             if pred == 0:
                 pred = "False"

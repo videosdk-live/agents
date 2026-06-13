@@ -63,7 +63,8 @@ class TTS(BaseTTS):
         """
         super().__init__(sample_rate=sample_rate, num_channels=DEFAULT_CHANNELS)
 
-        self._videosdk_token = os.getenv("VIDEOSDK_AUTH_TOKEN")
+        from ..utils import current_videosdk_auth_token
+        self._videosdk_token = current_videosdk_auth_token()
         if not self._videosdk_token:
             raise ValueError("VIDEOSDK_AUTH_TOKEN environment variable must be set")
 

@@ -27,7 +27,7 @@ _cached_ctx: Optional[BaseContext] = None
 
 
 def _default_start_method() -> str:
-    return "forkserver" if sys.platform.startswith("linux") else "spawn"
+    return "spawn" if sys.platform == "win32" else "forkserver"
 
 
 def get_mp_context() -> BaseContext:
@@ -62,6 +62,15 @@ def get_mp_context() -> BaseContext:
         method = fallback
 
     logger.info("VideoSDK multiprocessing start method: %s", method)
+
+    preload = os.environ.get("VIDEOSDK_PRELOAD_INFERENCE", "silero,turn_detector").strip()
+    if method == "forkserver" and preload and preload.lower() not in ("none", "off", "0", "false"):
+        try:
+            ctx.set_forkserver_preload(["videosdk.agents._preload_inference"])
+            logger.info("forkserver preload enabled for inference models: %s", preload)
+        except Exception as e:  # pragma: no cover - platform/version dependent
+            logger.warning("forkserver preload setup failed: %s", e)
+
     _cached_ctx = ctx
     return ctx
 

@@ -22,12 +22,12 @@ import logging
 logger = logging.getLogger(__name__)
 
 try:
-    from scipy import signal
+    from videosdk.agents.resampling import resample_fft
     import numpy as np
 
-    SCIPY_AVAILABLE = True
+    RESAMPLE_AVAILABLE = True
 except ImportError:
-    SCIPY_AVAILABLE = False
+    RESAMPLE_AVAILABLE = False
 
 
 @dataclass
@@ -66,9 +66,9 @@ class AzureSTT(BaseSTT):
         """
         super().__init__()
 
-        if not SCIPY_AVAILABLE:
+        if not RESAMPLE_AVAILABLE:
             raise ImportError(
-                "scipy and numpy are required for Azure STT. Please install with 'pip install scipy numpy'"
+                "numpy is required for Azure STT. Please install with 'pip install numpy'"
             )
 
         self.speech_key = speech_key or os.getenv("AZURE_SPEECH_KEY")
@@ -109,14 +109,14 @@ class AzureSTT(BaseSTT):
             if not self._speech_processor:
                 await self._setup_speech_processor(language)
 
-            if self._audio_stream and SCIPY_AVAILABLE:
+            if self._audio_stream and RESAMPLE_AVAILABLE:
                 audio_data = np.frombuffer(audio_frames, dtype=np.int16)
 
                 if len(audio_data) > 0:
                     stereo_data = audio_data.reshape(-1, 2)
                     mono_data = stereo_data.mean(axis=1)
 
-                    resampled_data = signal.resample(
+                    resampled_data = resample_fft(
                         mono_data,
                         int(
                             len(mono_data)

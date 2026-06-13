@@ -1094,6 +1094,14 @@ class Worker:
             else:
                 logger.info("No active jobs")
 
+            try:
+                from .execution.mem_stats import enabled as _mem_enabled, log_resource_memory
+                rm = getattr(self.process_manager, "resource_manager", None)
+                if _mem_enabled() and rm is not None:
+                    log_resource_memory(rm.resources, logger)
+            except Exception as e:
+                logger.debug(f"memory stats logging skipped: {e}")
+
             # Send status update
             status_msg = WorkerMessage(
                 type="status_update",

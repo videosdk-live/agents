@@ -14,7 +14,7 @@ import base64
 import aiohttp
 import logging
 import numpy as np
-from scipy import signal
+from videosdk.agents.resampling import resample_fft
 import traceback
 from videosdk.agents import (
     FunctionTool,
@@ -229,7 +229,7 @@ class OpenAIRealtime(RealtimeBaseModel[OpenAIEventTypes]):
                 mono = raw.reshape(-1, 2).astype(np.float32).mean(axis=1)
             else:
                 mono = raw.astype(np.float32)
-            resampled = signal.resample(
+            resampled = resample_fft(
                 mono,
                 int(len(mono) * self.target_sample_rate / self.input_sample_rate),
             )

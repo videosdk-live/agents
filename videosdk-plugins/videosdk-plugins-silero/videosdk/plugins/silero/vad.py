@@ -9,7 +9,8 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Literal
 
 import numpy as np
-from scipy import signal
+
+from videosdk.agents.resampling import resample_mono_f32
 
 from .onnx_runtime import SAMPLE_RATES, VadModelWrapper
 from videosdk.agents.vad import VAD as BaseVAD, VADData, VADEventType, VADResponse
@@ -464,11 +465,10 @@ class SileroVAD(BaseVAD):
 
             if self._requires_resample:
                 normalized = incoming.astype(np.float32) / 32768.0
-                target_len = int(len(normalized) * self._mod_rate / self._in_rate)
-                if target_len > 0:
-                    resampled = await asyncio.to_thread(signal.resample, normalized, target_len)
+                resampled = resample_mono_f32(normalized, self._in_rate, self._mod_rate)
+                if resampled.size > 0:
                     self._model_queue = np.concatenate(
-                        [self._model_queue, resampled.astype(np.float32)]
+                        [self._model_queue, resampled]
                     )
             else:
                 normalized = incoming.astype(np.float32) / 32768.0

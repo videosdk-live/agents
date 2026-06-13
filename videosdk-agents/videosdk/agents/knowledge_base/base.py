@@ -81,7 +81,8 @@ class KnowledgeBase(ABC):
             List[str]: Retrieved document texts.
         """
         api_base_url =  "https://api.videosdk.live/ai/v1"
-        auth_token = os.getenv("VIDEOSDK_AUTH_TOKEN")
+        from ..utils import current_videosdk_auth_token
+        auth_token = current_videosdk_auth_token()  # caller's token (JobContext) then env
 
         if not auth_token:
             logger.warning("VIDEOSDK_AUTH_TOKEN not set, skipping KB retrieval")

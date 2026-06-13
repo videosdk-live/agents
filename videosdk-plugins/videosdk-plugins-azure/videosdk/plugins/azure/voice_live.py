@@ -8,7 +8,7 @@ import base64
 from typing import Any, Optional, Literal, List, Union, Dict
 from dataclasses import dataclass, field
 import numpy as np
-from scipy import signal
+from videosdk.agents.resampling import resample_fft
 from dotenv import load_dotenv
 
 from videosdk.agents import (
@@ -406,7 +406,7 @@ class AzureVoiceLive(RealtimeBaseModel[AzureVoiceLiveEventTypes]):
             target_length = int(
                 len(audio_array) * self.target_sample_rate / self.input_sample_rate
             )
-            resampled_float = signal.resample(
+            resampled_float = resample_fft(
                 audio_array.astype(np.float32), target_length
             )
             resampled_int16 = np.clip(resampled_float, -32768, 32767).astype(np.int16)

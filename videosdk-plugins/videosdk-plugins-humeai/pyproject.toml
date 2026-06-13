@@ -32,7 +32,6 @@ classifiers = [
 dependencies = [
     "videosdk-agents>=1.0.18",
     "httpx>=0.24.0",
-    "scipy>=1.11.0",
     "numpy",
 ]
 

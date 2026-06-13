@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 
 import aiohttp
 import numpy as np
-from scipy import signal
+from videosdk.agents.resampling import resample_fft
 from dotenv import load_dotenv
 
 from videosdk.agents import (
@@ -231,7 +231,7 @@ class XAIRealtime(RealtimeBaseModel[XAIEventTypes]):
             if self.input_sample_rate != self.target_sample_rate:
                 num_samples = int(len(raw_audio) * self.target_sample_rate / self.input_sample_rate)
                 float_audio = raw_audio.astype(np.float32)
-                resampled_audio = signal.resample(float_audio, num_samples).astype(np.int16)
+                resampled_audio = resample_fft(float_audio, num_samples).astype(np.int16)
             else:
                 resampled_audio = raw_audio
 

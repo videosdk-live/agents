@@ -25,7 +25,6 @@ dependencies = [
     "google-genai >= 1.14.0",
     "google-cloud-texttospeech >= 2.29, < 3",
     "google-cloud-speech >= 2, < 3",
-    "scipy",
     "protobuf>=5.29,<6.0",
 ]
 

@@ -8,10 +8,10 @@ from videosdk.agents import STT as BaseSTT, STTResponse, SpeechData, SpeechEvent
 from bodhi import BodhiClient, TranscriptionConfig, TranscriptionResponse, LiveTranscriptionEvents
 
 try:
-    from scipy import signal
-    SCIPY_AVAILABLE = True
+    from videosdk.agents.resampling import resample_fft
+    RESAMPLE_AVAILABLE = True
 except ImportError:
-    SCIPY_AVAILABLE = False
+    RESAMPLE_AVAILABLE = False
 
 
 class NavanaSTT(BaseSTT):
@@ -42,9 +42,9 @@ class NavanaSTT(BaseSTT):
         """
         super().__init__()
 
-        if not SCIPY_AVAILABLE:
+        if not RESAMPLE_AVAILABLE:
             raise ImportError(
-                "The 'scipy' library is not installed. Please install it with 'pip install scipy' to use the NavanaSTT plugin for audio resampling.")
+                "Audio resampling support is unavailable for the NavanaSTT plugin.")
 
         self.customer_id = customer_id or os.getenv("NAVANA_CUSTOMER_ID")
         self.api_key = api_key or os.getenv("NAVANA_API_KEY")
@@ -133,7 +133,7 @@ class NavanaSTT(BaseSTT):
             raw_audio_data = np.frombuffer(audio_frames, dtype=np.int16)
             stereo_audio = raw_audio_data.reshape(-1, 2)
             mono_audio_float = stereo_audio.astype(np.float32).mean(axis=1)
-            resampled_data = signal.resample(
+            resampled_data = resample_fft(
                 mono_audio_float,
                 int(len(mono_audio_float) *
                     self.target_sample_rate / self.input_sample_rate)

@@ -8,7 +8,7 @@ from typing import Any, Optional, Dict, Tuple
 from urllib.parse import urlencode
 import io
 import wave
-from scipy import signal
+from videosdk.agents.resampling import resample_fft
 import aiohttp
 import httpx
 import openai
@@ -182,7 +182,7 @@ class OpenAISTT(BaseSTT):
             
         try:
             audio_data = np.frombuffer(audio_frames, dtype=np.int16)
-            audio_data = signal.resample(audio_data, int(len(audio_data) * self.target_sample_rate / self.input_sample_rate))
+            audio_data = resample_fft(audio_data, int(len(audio_data) * self.target_sample_rate / self.input_sample_rate))
             audio_data = audio_data.astype(np.int16).tobytes()
             audio_data = base64.b64encode(audio_data).decode("utf-8")
             message = {
@@ -277,7 +277,7 @@ class OpenAISTT(BaseSTT):
     def _audio_frames_to_wav_bytes(self, audio_frames: bytes) -> bytes:
         """Convert audio frames to WAV bytes"""
         pcm = np.frombuffer(audio_frames, dtype=np.int16)
-        resampled = signal.resample(pcm, int(len(pcm) * self.target_sample_rate / self.input_sample_rate))
+        resampled = resample_fft(pcm, int(len(pcm) * self.target_sample_rate / self.input_sample_rate))
         resampled = resampled.astype(np.int16)
         
         buf = io.BytesIO()

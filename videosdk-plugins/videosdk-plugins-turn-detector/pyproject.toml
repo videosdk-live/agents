@@ -22,10 +22,10 @@ classifiers = [
 ]
 dependencies = [
     "videosdk-agents>=1.0.18",
-    "transformers>=4.47.1",
+    "tokenizers>=0.20",
+    "huggingface-hub>=0.23",
     "numpy>=1.26",
     "onnxruntime>=1.18",
-    "jinja2",
 ]
 
 [tool.hatch.version]

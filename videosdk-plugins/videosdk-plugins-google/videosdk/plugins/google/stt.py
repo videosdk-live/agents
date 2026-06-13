@@ -19,10 +19,10 @@ try:
     from google.auth.exceptions import DefaultCredentialsError
     from google.api_core.client_options import ClientOptions
     try:
-        from scipy import signal
-        SCIPY_AVAILABLE = True
+        from videosdk.agents.resampling import resample_fft
+        RESAMPLE_AVAILABLE = True
     except ImportError:
-        SCIPY_AVAILABLE = False
+        RESAMPLE_AVAILABLE = False
     GOOGLE_V2_AVAILABLE = True
 except ImportError:
     GOOGLE_V2_AVAILABLE = False
@@ -121,10 +121,10 @@ class GoogleSTT(BaseSTT):
                 await self._start_stream()
             
             if self._stream:
-                if SCIPY_AVAILABLE:
+                if RESAMPLE_AVAILABLE:
                     try:
                         audio_data = np.frombuffer(audio_frames, dtype=np.int16)
-                        resampled_data = signal.resample(audio_data, int(len(audio_data) * self.target_sample_rate / self.input_sample_rate))
+                        resampled_data = resample_fft(audio_data, int(len(audio_data) * self.target_sample_rate / self.input_sample_rate))
                         resampled_bytes = resampled_data.astype(np.int16).tobytes()
                         await self._stream.push_audio(resampled_bytes)
                     except Exception as e:

@@ -10,7 +10,6 @@ import httpx
 import numpy as np
 
 from videosdk.agents import TTS, FlushMarker, segment_text
-from scipy import signal
 
 
 CAMB_AI_TTS_ENDPOINT = "https://client.camb.ai/apis/tts-stream"

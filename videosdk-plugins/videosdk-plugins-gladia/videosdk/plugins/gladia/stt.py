@@ -9,10 +9,10 @@ from videosdk.agents import STT, STTResponse, SpeechData, SpeechEventType, globa
 import logging
 logger = logging.getLogger(__name__)
 try:
-    from scipy import signal
-    SCIPY_AVAILABLE = True
+    from videosdk.agents.resampling import resample_fft
+    RESAMPLE_AVAILABLE = True
 except ImportError:
-    SCIPY_AVAILABLE = False
+    RESAMPLE_AVAILABLE = False
 GLADIA_API_URL = "https://api.gladia.io/v2/live"
 class GladiaSTT(STT):
     def __init__(
@@ -42,8 +42,8 @@ class GladiaSTT(STT):
             receive_partial_transcripts: Whether to receive partial transcripts (default: False)
         """
         super().__init__()
-        if not SCIPY_AVAILABLE:
-            raise ImportError("scipy is not installed. Please install it with 'pip install scipy'")
+        if not RESAMPLE_AVAILABLE:
+            raise ImportError("Audio resampling support is unavailable.")
         self.api_key = api_key or os.getenv("GLADIA_API_KEY")
         if not self.api_key:
             raise ValueError("Gladia API key must be provided either through api_key parameter or GLADIA_API_KEY environment variable")
@@ -221,7 +221,7 @@ class GladiaSTT(STT):
                 mono_audio = raw_audio.astype(np.float32)
             if self.input_sample_rate != self.output_sample_rate:
                 output_length = int(len(mono_audio) * self.output_sample_rate / self.input_sample_rate)
-                resampled_data = signal.resample(mono_audio, output_length)
+                resampled_data = resample_fft(mono_audio, output_length)
             else:
                 resampled_data = mono_audio
             resampled_data = np.clip(resampled_data, -32767, 32767)

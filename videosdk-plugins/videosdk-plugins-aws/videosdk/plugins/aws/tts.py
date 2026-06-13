@@ -18,11 +18,11 @@ except ImportError:
     BOTO3_AVAILABLE = False
 
 try:
-    from scipy import signal
+    from videosdk.agents.resampling import resample_fft
 
-    SCIPY_AVAILABLE = True
+    RESAMPLE_AVAILABLE = True
 except ImportError:
-    SCIPY_AVAILABLE = False
+    RESAMPLE_AVAILABLE = False
 
 
 VIDEOSDK_TTS_SAMPLE_RATE = 24000
@@ -197,10 +197,10 @@ class AWSPollyTTS(TTS):
             return
 
         try:
-            if SCIPY_AVAILABLE:
+            if RESAMPLE_AVAILABLE:
                 audio_array = np.frombuffer(audio_data, dtype=np.int16)
                 target_length = int(len(audio_array) * 24000 / 16000)
-                resampled_audio = signal.resample(audio_array, target_length)
+                resampled_audio = resample_fft(audio_array, target_length)
 
                 resampled_audio = np.clip(
                     resampled_audio, -32768, 32767).astype(np.int16)
@@ -210,7 +210,7 @@ class AWSPollyTTS(TTS):
                     f"Resampled audio from {len(audio_array)} to {len(resampled_audio)} samples")
             else:
                 logger.warning(
-                    "scipy not available, using original audio without resampling")
+                    "resampling unavailable, using original audio")
 
             chunk_size = int(self.sample_rate *
                              self.num_channels * 2 * 20 / 1000)

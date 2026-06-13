@@ -8,7 +8,7 @@ import uuid
 from typing import Optional, Literal, List, Dict, Any
 from dataclasses import dataclass
 import numpy as np
-from scipy import signal
+from videosdk.agents.resampling import resample_fft
 
 
 from aws_sdk_bedrock_runtime.client import (
@@ -324,7 +324,7 @@ class NovaSonicRealtime(RealtimeBaseModel[NovaSonicEventTypes]):
                 len(audio_array) * self.target_sample_rate /
                 self.input_sample_rate
             )
-            resampled_float = signal.resample(
+            resampled_float = resample_fft(
                 audio_array.astype(np.float32), target_length
             )
 

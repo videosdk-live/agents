@@ -98,7 +98,8 @@ class STT(BaseSTT):
         """
         super().__init__()
 
-        self._videosdk_token = os.getenv("VIDEOSDK_AUTH_TOKEN")
+        from ..utils import current_videosdk_auth_token
+        self._videosdk_token = current_videosdk_auth_token()
         if not self._videosdk_token:
             raise ValueError(
                 "VIDEOSDK_AUTH_TOKEN environment variable must be set for authentication"

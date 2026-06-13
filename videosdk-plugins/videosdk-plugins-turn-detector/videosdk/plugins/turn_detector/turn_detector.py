@@ -1,6 +1,5 @@
 import logging
 import threading
-import numpy as np
 from typing import Optional
 from .model import HG_MODEL, ONNX_FILENAME
 from tqdm import tqdm
@@ -10,6 +9,8 @@ import os
 from videosdk.agents import EOU, ChatContext, ChatMessage, ChatRole
 
 logger = logging.getLogger(__name__)
+
+TOKENIZER_FILENAME = "tokenizer.json"
 
 _tokenizer_cache = None
 _session_cache = None
@@ -55,14 +56,11 @@ def _download_from_hf_hub(repo_id, filename, cache_dir=None, **kwargs):
 def pre_download_model():
     cache_dir = os.path.expanduser("~/.cache/huggingface/hub")
     onnx_path = os.path.join(cache_dir, ONNX_FILENAME)
-    if os.path.exists(onnx_path):
+    tokenizer_path = os.path.join(cache_dir, TOKENIZER_FILENAME)
+    if os.path.exists(onnx_path) and os.path.exists(tokenizer_path):
         return
-    from transformers import AutoTokenizer
-    AutoTokenizer.from_pretrained(HG_MODEL)
-    _download_from_hf_hub(
-        repo_id=HG_MODEL,
-        filename=ONNX_FILENAME,
-    )
+    _download_from_hf_hub(repo_id=HG_MODEL, filename=ONNX_FILENAME)
+    _download_from_hf_hub(repo_id=HG_MODEL, filename=TOKENIZER_FILENAME)
 
 
 class TurnDetector(EOU):
@@ -81,6 +79,7 @@ class TurnDetector(EOU):
         super().__init__(threshold=threshold, **kwargs)
         self.session = None
         self.tokenizer = None
+        self._input_names: list[str] = []
         self._initialize_model()
 
     def _initialize_model(self):
@@ -93,16 +92,15 @@ class TurnDetector(EOU):
         global _tokenizer_cache, _session_cache
         try:
             import onnxruntime as ort
-            from transformers import AutoTokenizer
+            from ._inference import load_tokenizer, make_session_options, model_input_names
 
             if _tokenizer_cache is not None and _session_cache is not None:
                 self.tokenizer = _tokenizer_cache
                 self.session = _session_cache
+                self._input_names = model_input_names(self.session)
                 return
 
             with _init_lock:
-                if _tokenizer_cache is None:
-                    _tokenizer_cache = AutoTokenizer.from_pretrained(HG_MODEL)
                 if _session_cache is None:
                     model_path = _download_from_hf_hub(
                         repo_id=HG_MODEL,
@@ -110,11 +108,21 @@ class TurnDetector(EOU):
                     )
                     _session_cache = ort.InferenceSession(
                         model_path,
+                        sess_options=make_session_options(),
                         providers=["CPUExecutionProvider"],
+                    )
+                if _tokenizer_cache is None:
+                    tokenizer_path = _download_from_hf_hub(
+                        repo_id=HG_MODEL,
+                        filename=TOKENIZER_FILENAME,
+                    )
+                    _tokenizer_cache = load_tokenizer(
+                        tokenizer_path, max_length=256, pad_to_max=True
                     )
 
             self.tokenizer = _tokenizer_cache
             self.session = _session_cache
+            self._input_names = model_input_names(self.session)
 
         except Exception as e:
             logger.error(f"Failed to initialize TurnSense model: {e}")
@@ -187,20 +195,13 @@ class TurnDetector(EOU):
             raise RuntimeError("Model not initialized")
 
         try:
+            from ._inference import encode_for_model
+
             formatted_text = self._chat_context_to_text(chat_context)
 
-            inputs = self.tokenizer(
-                formatted_text,
-                padding="max_length",
-                max_length=256,
-                truncation=True,
-                return_tensors="np"
+            ort_inputs = encode_for_model(
+                self.tokenizer, formatted_text, self._input_names
             )
-
-            ort_inputs = {
-                'input_ids': inputs['input_ids'].astype(np.int64),
-                'attention_mask': inputs['attention_mask'].astype(np.int64)
-            }
 
             outputs = self.session.run(None, ort_inputs)
 

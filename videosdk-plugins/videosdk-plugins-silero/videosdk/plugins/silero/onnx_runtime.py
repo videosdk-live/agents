@@ -156,6 +156,8 @@ class VadModelWrapper:
             session_opts.execution_mode = onnxruntime.ExecutionMode.ORT_SEQUENTIAL
             session_opts.add_session_config_entry("session.intra_op.allow_spinning", "0")
             session_opts.add_session_config_entry("session.inter_op.allow_spinning", "0")
+            session_opts.enable_cpu_mem_arena = False
+            session_opts.enable_mem_pattern = False
 
             providers = (
                 ["CPUExecutionProvider"]

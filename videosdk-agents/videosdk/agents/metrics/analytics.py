@@ -75,7 +75,8 @@ class AnalyticsClient:
             logger.error("Failed sending session data : No session ID")
             return
 
-        auth_token = os.getenv("VIDEOSDK_AUTH_TOKEN")
+        from ..utils import current_videosdk_auth_token
+        auth_token = current_videosdk_auth_token()  # caller's token (JobContext) then env
         if not auth_token:
             logger.error("Failed sending session data : No auth token")
             return

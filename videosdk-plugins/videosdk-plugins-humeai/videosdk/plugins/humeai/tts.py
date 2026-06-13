@@ -10,13 +10,6 @@ import numpy as np
 
 from videosdk.agents import TTS, FlushMarker, segment_text
 
-try:
-    from scipy import signal
-
-    SCIPY_AVAILABLE = True
-except ImportError:
-    SCIPY_AVAILABLE = False
-
 API_BASE_URL = "https://api.hume.ai/v0"
 
 

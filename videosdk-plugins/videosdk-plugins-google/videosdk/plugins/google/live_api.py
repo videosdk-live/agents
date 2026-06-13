@@ -8,7 +8,7 @@ import traceback
 from typing import Any, Optional, Literal, List
 from dataclasses import dataclass, field
 import numpy as np
-from scipy import signal
+from videosdk.agents.resampling import resample_fft
 from dotenv import load_dotenv
 from videosdk.agents import (
     Agent,
@@ -820,7 +820,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
 
             if self.input_sample_rate != self.target_sample_rate:
                 output_length = int(len(mono_audio) * self.target_sample_rate / self.input_sample_rate)
-                resampled_data = signal.resample(mono_audio, output_length)
+                resampled_data = resample_fft(mono_audio, output_length)
             else:
                 resampled_data = mono_audio
 

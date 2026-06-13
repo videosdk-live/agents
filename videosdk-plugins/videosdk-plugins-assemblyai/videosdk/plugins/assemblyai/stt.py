@@ -11,10 +11,10 @@ import aiohttp
 from videosdk.agents import STT as BaseSTT, STTResponse, SpeechData, SpeechEventType, global_event_emitter
 
 try:
-    from scipy import signal
-    SCIPY_AVAILABLE = True
+    from videosdk.agents.resampling import resample_fft
+    RESAMPLE_AVAILABLE = True
 except ImportError:
-    SCIPY_AVAILABLE = False
+    RESAMPLE_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +52,8 @@ class AssemblyAISTT(BaseSTT):
         """
         super().__init__()
         
-        if not SCIPY_AVAILABLE:
-            raise ImportError("scipy is not installed. Please install it with 'pip install scipy'")
+        if not RESAMPLE_AVAILABLE:
+            raise ImportError("Audio resampling support is unavailable.")
 
         self.api_key = api_key or os.getenv("ASSEMBLYAI_API_KEY")
         if not self.api_key:
@@ -290,7 +290,7 @@ class AssemblyAISTT(BaseSTT):
 
             if self.input_sample_rate != self.target_sample_rate:
                 target_length = int(len(mono_audio) * self.target_sample_rate / self.input_sample_rate)
-                resampled_data = signal.resample(mono_audio, target_length)
+                resampled_data = resample_fft(mono_audio, target_length)
             else:
                 resampled_data = mono_audio
 

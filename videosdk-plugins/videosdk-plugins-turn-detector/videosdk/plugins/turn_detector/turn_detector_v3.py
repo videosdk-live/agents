@@ -4,12 +4,12 @@ import threading
 import numpy as np
 from typing import Optional
 from videosdk.agents import EOU, ChatContext, ChatMessage, ChatRole
-from transformers import AutoTokenizer, DistilBertTokenizer
 from huggingface_hub import hf_hub_download
 
 logger = logging.getLogger(__name__)
 
 NAMO_ONNX_FILENAME = "model_quant.onnx"
+TOKENIZER_FILENAME = "tokenizer.json"
 
 _tokenizer_cache: dict[Optional[str], object] = {}
 _session_cache: dict[Optional[str], object] = {}
@@ -58,10 +58,7 @@ def pre_download_namo_turn_v1_model(overwrite_existing: bool = False, language: 
     if not overwrite_existing and try_to_load_from_cache(repo_id=hf_repo, filename=NAMO_ONNX_FILENAME) is not None:
         return
 
-    if language is None:
-        AutoTokenizer.from_pretrained(hf_repo)
-    else:
-        DistilBertTokenizer.from_pretrained(hf_repo)
+    hf_hub_download(repo_id=hf_repo, filename=TOKENIZER_FILENAME)
 
 class NamoTurnDetectorV1(EOU):
     """
@@ -73,8 +70,9 @@ class NamoTurnDetectorV1(EOU):
         self.language = language
         self.session = None
         self.tokenizer = None
+        self._input_names: list[str] = []
         self._initialize_model()
-    
+
     def _initialize_model(self):
         """Initialize (or reuse) the ONNX model and tokenizer.
 
@@ -84,6 +82,7 @@ class NamoTurnDetectorV1(EOU):
         """
         try:
             import onnxruntime as ort
+            from ._inference import load_tokenizer, make_session_options, model_input_names
 
             self.max_length = 8192 if self.language is None else 512
             cache_key = self.language
@@ -93,6 +92,7 @@ class NamoTurnDetectorV1(EOU):
             if cached_tokenizer is not None and cached_session is not None:
                 self.tokenizer = cached_tokenizer
                 self.session = cached_session
+                self._input_names = model_input_names(self.session)
                 return
 
             with _init_lock:
@@ -101,21 +101,24 @@ class NamoTurnDetectorV1(EOU):
                 if cached_tokenizer is None or cached_session is None:
                     hf_repo = _get_hf_model_repo(self.language)
 
-                    if cached_tokenizer is None:
-                        if self.language is None:
-                            cached_tokenizer = AutoTokenizer.from_pretrained(hf_repo)
-                        else:
-                            cached_tokenizer = DistilBertTokenizer.from_pretrained(hf_repo)
-                        _tokenizer_cache[cache_key] = cached_tokenizer
-
                     if cached_session is None:
                         model_path = hf_hub_download(repo_id=hf_repo, filename=NAMO_ONNX_FILENAME)
-                        cached_session = ort.InferenceSession(model_path)
+                        cached_session = ort.InferenceSession(
+                            model_path,
+                            sess_options=make_session_options(),
+                            providers=["CPUExecutionProvider"],
+                        )
                         _session_cache[cache_key] = cached_session
                         logger.info(f"Namo model loaded from {hf_repo}.")
 
+                    if cached_tokenizer is None:
+                        tokenizer_path = hf_hub_download(repo_id=hf_repo, filename=TOKENIZER_FILENAME)
+                        cached_tokenizer = load_tokenizer(tokenizer_path, max_length=self.max_length)
+                        _tokenizer_cache[cache_key] = cached_tokenizer
+
             self.tokenizer = cached_tokenizer
             self.session = cached_session
+            self._input_names = model_input_names(self.session)
 
         except Exception as e:
             print(f"Error loading model: {e}")
@@ -163,16 +166,10 @@ class NamoTurnDetectorV1(EOU):
         Detect turn probability for the given sentence.
         """
         try:
-            inputs = self.tokenizer(sentence.strip(), truncation=True, max_length=self.max_length, return_tensors="np")
-            
-            input_dict = {
-                "input_ids": inputs["input_ids"],
-                "attention_mask": inputs["attention_mask"]
-            }
-            
-            if "token_type_ids" in inputs:
-                input_dict["token_type_ids"] = inputs["token_type_ids"]
-            
+            from ._inference import encode_for_model
+
+            input_dict = encode_for_model(self.tokenizer, sentence.strip(), self._input_names)
+
             outputs = self.session.run(None, input_dict)
             
             logits = outputs[0][0]

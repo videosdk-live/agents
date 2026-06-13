@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 
 import aiohttp
 import numpy as np
-from scipy import signal
+from videosdk.agents.resampling import resample_fft
 import av
 
 from videosdk.agents import (
@@ -121,7 +121,8 @@ class Realtime(RealtimeBaseModel[RealtimeEventTypes]):
         """
         super().__init__()
 
-        self._videosdk_token = os.getenv("VIDEOSDK_AUTH_TOKEN")
+        from ..utils import current_videosdk_auth_token
+        self._videosdk_token = current_videosdk_auth_token()
         if not self._videosdk_token:
             raise ValueError(
                 "VIDEOSDK_AUTH_TOKEN environment variable must be set for authentication"
@@ -361,7 +362,7 @@ class Realtime(RealtimeBaseModel[RealtimeEventTypes]):
 
             # Resample audio from 48kHz to 24kHz (expected by Gemini)
             audio_array = np.frombuffer(audio_data, dtype=np.int16)
-            audio_array = signal.resample(
+            audio_array = resample_fft(
                 audio_array,
                 int(
                     len(audio_array) * self.target_sample_rate / self.input_sample_rate
