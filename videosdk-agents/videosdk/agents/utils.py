@@ -892,6 +892,28 @@ def resolve_videosdk_auth_token(explicit: Optional[str] = None) -> Optional[str]
     return token
 
 
+def current_videosdk_auth_token() -> Optional[str]:
+    """The effective VideoSDK token for the RUNNING job.
+
+    Prefers the per-session token from the current :class:`JobContext` (i.e. the
+    token the caller passed via ``RoomOptions.auth_token``), then falls back to
+    :func:`resolve_videosdk_auth_token` (env var / generated from key+secret).
+
+    This lets the inference gateway, analytics and knowledge_base auth with the
+    CALLER's own token in a multi-tenant runtime — where each session carries a
+    different token — instead of a single shared ``VIDEOSDK_AUTH_TOKEN`` env var.
+    """
+    try:
+        from .job import get_current_job_context
+        ctx = get_current_job_context()
+        token = getattr(ctx, "videosdk_auth", None) if ctx is not None else None
+        if token:
+            return token
+    except Exception:
+        pass
+    return resolve_videosdk_auth_token()
+
+
 def generate_videosdk_token(
     api_key: str = "",
     secret: str = "",
