@@ -17,7 +17,14 @@ class CustomKnowledgeBase(KnowledgeBase):
     Custom knowledge base handler to demonstrate overriding retrieval logic.
     """
 
-    TRIGGER_PHRASES = ["Context Engineering", "context engineering", "contextengineerring" "Context Engineering is a technique", "context engineering is a technique", "Coding", "coding", "search for", "look up", "what do you know about"]
+    TRIGGER_PHRASES = [
+        "context engineering",
+        "context engineering is a technique",
+        "coding",
+        "search for",
+        "look up",
+        "what do you know about",
+    ]
 
     def allow_retrieval(self, transcript: str) -> bool:
         """
