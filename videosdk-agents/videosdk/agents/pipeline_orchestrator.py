@@ -688,6 +688,8 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 logger.warning("No speech generation available")
                 metrics_collector.on_agent_speech_start()
 
+            graph_user_msg = None
+            graph_user_orig = None
             if self.graph_adapter:
                 self.graph_adapter.set_agent(self.agent)
                 graph_prompt, skip_llm = await self.graph_adapter.handle_input(user_text)
@@ -698,6 +700,8 @@ class PipelineOrchestrator(EventEmitter[Literal[
                     msgs = self.agent.chat_context.messages()
                     for msg in reversed(msgs):
                         if msg.role == ChatRole.USER:
+                            graph_user_msg = msg
+                            graph_user_orig = msg.content
                             msg.content = user_text
                             break
 
@@ -706,10 +710,12 @@ class PipelineOrchestrator(EventEmitter[Literal[
             
             q = asyncio.Queue(maxsize=50)
             graph_response_text = None
+            graph_decision_skipped = False
+            graph_decision_done = asyncio.Event()
 
             async def collector():
                 """Collect LLM chunks and feed queue for TTS"""
-                nonlocal graph_response_text
+                nonlocal graph_response_text, graph_decision_skipped
                 response_parts = []
 
                 def _safe_set_agent_response(text: str) -> None:
@@ -733,14 +739,41 @@ class PipelineOrchestrator(EventEmitter[Literal[
 
                         if content:
                             response_parts.append(content)
-                            await q.put(content)
-                            logger.debug("[chunking] LLM delta → queue: %r", content)
+                            if not self.graph_adapter:
+                                await q.put(content)
+                                logger.debug("[chunking] LLM delta → queue: %r", content)
 
                         if self.graph_adapter and metadata and isinstance(metadata, dict):
                             if metadata.get("graph_response"):
                                 graph_response_text = metadata.get("graph_response")
 
                         self._partial_response = "".join(response_parts)
+
+                    if graph_user_msg is not None:
+                        graph_user_msg.content = graph_user_orig
+                    if self.graph_adapter and not handle.interrupted:
+                        full = "".join(response_parts)
+                        if graph_response_text is not None:
+                            new_response, skip = await self.graph_adapter.handle_decision(
+                                self.agent, graph_response_text
+                            )
+                            if skip:
+                                graph_decision_skipped = True
+                                await q.put(None)
+                                return ""
+                            if new_response is not None:
+                                full = new_response
+                        if full and graph_response_text is not None:
+                            await q.put(full)
+                        elif full:
+                            print(full)
+                            logger.warning(
+                                "[GRAPH] LLM produced no graph_response; suppressing "
+                                "raw buffer from TTS (len=%d)", len(full),
+                            )
+                        await q.put(None)
+                        _safe_set_agent_response(full)
+                        return full
 
                     if not handle.interrupted:
                         await q.put(None)
@@ -755,7 +788,10 @@ class PipelineOrchestrator(EventEmitter[Literal[
                     full = "".join(response_parts)
                     _safe_set_agent_response(full)
                     return full
-            
+                finally:
+                    if graph_user_msg is not None:
+                        graph_user_msg.content = graph_user_orig
+                    graph_decision_done.set()
             async def tts_consumer():
                 """Consume LLM chunks and send to TTS"""
                 if wait_for_authorization:
@@ -773,7 +809,10 @@ class PipelineOrchestrator(EventEmitter[Literal[
                         logger.error("Authorization timeout - cancelling preemptive generation")
                         self._preemptive_cancelled = True
                         return
-                
+
+                if self.graph_adapter:
+                    await graph_decision_done.wait()
+
                 async def tts_stream_gen():
                     """Generate TTS stream from queue"""
                     while True:
@@ -791,7 +830,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
                                 break
                             continue
 
-                if self.speech_generation:
+                if self.speech_generation and not graph_decision_skipped:
                     playback_done = asyncio.Event()
 
                     def _on_playback_done(_data: Any = None) -> None:
@@ -835,15 +874,6 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 full_response = collector_task.result()
             else:
                 full_response = self._partial_response
-
-            if self.graph_adapter and graph_response_text and not self._is_interrupted:
-                new_response, skip = await self.graph_adapter.handle_decision(
-                    self.agent, graph_response_text
-                )
-                if skip:
-                    return
-                if new_response is not None:
-                    full_response = new_response
 
             if self._is_interrupted or self._generation_id != my_generation_id:
                 logger.info(
@@ -980,6 +1010,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 original_handlers['stt'] = self.speech_understanding._on_stt_transcript
                 self.speech_understanding._on_stt_transcript = lambda x: None
         
+        instruction_msg = None
         try:
             context_prefix = None
             if self.agent.knowledge_base:
@@ -993,7 +1024,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
                     image_part = ImageContent(image=frame, inference_detail="auto")
                     content_parts.append(image_part)
 
-            self.agent.chat_context.add_message(
+            instruction_msg = self.agent.chat_context.add_message(
                 role=ChatRole.USER,
                 content=content_parts if len(content_parts) > 1 else instructions
             )
@@ -1001,6 +1032,9 @@ class PipelineOrchestrator(EventEmitter[Literal[
             await self._generate_and_synthesize(instructions, handle, context_prefix=context_prefix)
         
         finally:
+            if self.graph_adapter and instruction_msg is not None and not frames:
+                instruction_msg.role = ChatRole.ASSISTANT
+
             if wait_for_playback and self.speech_understanding:
                 if 'vad' in original_handlers:
                     self.speech_understanding._on_vad_event = original_handlers['vad']

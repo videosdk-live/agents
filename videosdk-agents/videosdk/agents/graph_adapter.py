@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
-from typing import Any, Dict, Iterator, List, Union
+from typing import Any, Dict, Iterator, List, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -50,6 +51,9 @@ class GraphPipelineAdapter:
         self._agent: Any = None
         self._callbacks_bound: bool = False
         self._conversational_graph_schema_cache = None
+        self._hangup_handler_registered: bool = False
+        self._hangup_fired: bool = False
+        self._hangup_timer_task: Optional[asyncio.Task] = None
 
     @property
     def has_agent(self) -> bool:
@@ -57,11 +61,13 @@ class GraphPipelineAdapter:
         return self._agent is not None
 
     def set_agent(self, agent: Any) -> None:
-        """Bind *agent* to the graph via callbacks"""
-        if self._callbacks_bound:
+        """Bind *agent* to the graph via callbacks. Rebinds if a different agent is provided."""
+        if self._callbacks_bound and self._agent is agent:
             return
         self._agent = agent
         self._callbacks_bound = True
+        self._hangup_handler_registered = False
+        self._hangup_fired = False
 
         async def _say_cb(message: str, interruptible: bool = True) -> None:
             if hasattr(agent, "session") and agent.session:
@@ -70,23 +76,38 @@ class GraphPipelineAdapter:
         async def _ask_cb(instruction: str, interruptible: bool = False) -> None:
             if hasattr(agent, "session") and agent.session:
                 await agent.session.reply(
-                    instruction, interruptible=interruptible, wait_for_playback=False,
+                    instruction, interruptible=interruptible, wait_for_playback=True,
                 )
 
-        def _hangup_cb() -> None:
-            self._schedule_hangup(agent)
+        def _hangup_cb(speech_done: bool = False) -> None:
+            self._schedule_hangup(agent, speech_done=speech_done)
 
         self._graph.set_callbacks(say=_say_cb, ask=_ask_cb, hangup=_hangup_cb)
+
+        try:
+            from .llm.chat_context import ChatRole
+            agent.chat_context.add_message(
+                role=ChatRole.SYSTEM,
+                content=agent.instructions,
+                replace=True,
+            )
+        except Exception as exc:
+            logger.warning("[GRAPH] could not inject graph system instructions: %s", exc)
+
         try:
             room = agent.session._job_context.room
             sid = getattr(room, "_session_id", None)
             if sid:
                 self._graph._session_id = sid
-        except Exception:
+        except AttributeError:
             pass
 
-    def _schedule_hangup(self, agent: Any) -> None:
+    def _schedule_hangup(self, agent: Any, speech_done: bool = False) -> None:
         """Hang up exactly when the final TTS stream ends."""
+        if speech_done:
+            self._start_hangup_timer(agent)
+            return
+
         pipeline = (
             agent.session.pipeline
             if hasattr(agent, "session") and agent.session and hasattr(agent.session, "pipeline")
@@ -94,13 +115,16 @@ class GraphPipelineAdapter:
         )
 
         if pipeline and hasattr(pipeline, "on"):
-            fired = False
+            if self._hangup_handler_registered:
+                return
+            self._hangup_handler_registered = True
 
             async def _on_tts_end():
-                nonlocal fired
-                if fired:
+                if self._hangup_fired:
                     return
-                fired = True
+                self._hangup_fired = True
+                if self._hangup_timer_task and not self._hangup_timer_task.done():
+                    self._hangup_timer_task.cancel()
                 if hasattr(agent, "hangup"):
                     try:
                         await agent.hangup()
@@ -108,12 +132,38 @@ class GraphPipelineAdapter:
                         logger.warning("[GRAPH] agent.hangup() failed: %s", exc)
 
             pipeline.on("agent_turn_end")(_on_tts_end)
+            self._start_hangup_timer(agent, delay=30.0, skip_if_speaking=True)
         else:
-            asyncio.ensure_future(self._hangup_after_timer(agent))
+            self._start_hangup_timer(agent)
 
-    async def _hangup_after_timer(self, agent: Any) -> None:
-        delay = getattr(self._graph.config, "hangup_delay", 4.0)
+    def _start_hangup_timer(
+        self, agent: Any, delay: float | None = None, skip_if_speaking: bool = False
+    ) -> None:
+        if self._hangup_timer_task and not self._hangup_timer_task.done():
+            self._hangup_timer_task.cancel()
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.warning("[GRAPH] no running event loop — cannot schedule hangup timer")
+            return
+        self._hangup_timer_task = loop.create_task(
+            self._hangup_after_timer(agent, delay=delay, skip_if_speaking=skip_if_speaking)
+        )
+
+    async def _hangup_after_timer(
+        self, agent: Any, delay: float | None = None, skip_if_speaking: bool = False
+    ) -> None:
+        if delay is None:
+            delay = getattr(self._graph.config, "hangup_delay", 4.0)
         await asyncio.sleep(delay)
+        if self._hangup_fired:
+            return
+        if skip_if_speaking:
+            session = getattr(agent, "session", None)
+            utterance = getattr(session, "current_utterance", None) if session else None
+            if utterance is not None and not utterance.done():
+                return
+        self._hangup_fired = True
         if hasattr(agent, "hangup"):
             try:
                 await agent.hangup()
@@ -132,7 +182,11 @@ class GraphPipelineAdapter:
             return None, True
         return result, False
 
-    async def handle_decision(self, agent: Any, graph_response: str) -> tuple[str | None, bool]:
+    async def handle_decision(
+        self,
+        agent: Any,
+        graph_response: Union[str, dict, ConversationalGraphResponse, Any],
+    ) -> tuple[str | None, bool]:
         """Post-process the LLM's structured response through the graph."""
         if not self._callbacks_bound and agent:
             self.set_agent(agent)
@@ -156,5 +210,7 @@ class GraphPipelineAdapter:
     def _get_graph_schema(self):
         """Get the prepared strict schema from the graph adapter, cached after first call."""
         if self._conversational_graph_schema_cache is None:
-            self._conversational_graph_schema_cache = prepare_strict_schema(self.get_response_schema())
+            self._conversational_graph_schema_cache = prepare_strict_schema(
+                copy.deepcopy(self.get_response_schema())
+            )
         return self._conversational_graph_schema_cache
