@@ -73,17 +73,6 @@ Contains production-oriented agent examples for specific business domains and us
 
 **Plugins used:** `deepgram` (STT), `google` (LLM), `cartesia` (TTS), `silero` (VAD), `turn_detector` (EOU)
 
-### `product_support_agent.py`
-
-**Documentation-backed support agent** for Novu platform. Demonstrates the **custom `KnowledgeBase` pattern**:
-
-- `NovuKnowledgeBase` subclass with `allow_retrieval(transcript)` — trigger-phrase gating (e.g., "how to", "what is", "configure")
-- `pre_process_query(transcript)` — strips trigger phrases to produce clean search queries
-- `format_context(documents)` — formats retrieved docs with bullet points for LLM context injection
-- `KnowledgeBaseConfig(id=kb_id, top_k=3)` — connects to a VideoSDK-hosted vector KB
-- Requires `KNOWLEDGE_BASE_ID` environment variable
-
-**Plugins used:** `sarvamai` (STT), `google` (LLM, TTS), `silero` (VAD), `turn_detector` (EOU)
 
 ### `helpdesk_chatbot.py`
 
