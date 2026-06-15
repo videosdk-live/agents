@@ -4,7 +4,7 @@ from .integration import (
     complete_span,
 )
 from .metrics_collector import MetricsCollector
-from .metrics_schema import TurnMetrics, SessionMetrics
+from .metrics_schema import TurnMetrics, SessionMetrics, TimelineEvent
 from .traces_flow import TracesFlowManager
 from .logger_handler import LogManager, JobLogger
 
@@ -70,8 +70,6 @@ __all__ = [
     'TurnMetrics',
     'SessionMetrics',
     'TimelineEvent',
-    'CascadingTurnData',
-    'CascadingMetricsData',
     'auto_initialize_telemetry_and_logs',
     'create_span',
     'complete_span',
