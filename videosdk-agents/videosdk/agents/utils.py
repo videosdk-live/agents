@@ -399,6 +399,21 @@ def simplify_gemini_schema(schema: dict[str, Any]) -> dict[str, Any] | None:
         return None
     return result
 
+
+def resolve_from_current_job_context(attr_name: str, fallback: Any) -> Any:
+    """Resolve ``attr_name`` from the currently-active ``JobContext``."""
+    try:
+        from .job import get_current_job_context
+    except Exception:
+        return fallback
+    ctx = get_current_job_context()
+    if ctx is None:
+        return fallback
+    val = getattr(ctx, attr_name, None)
+    if val is None:
+        return fallback
+    return val
+
 def build_gemini_schema(function_tool: FunctionTool) -> types.FunctionDeclaration:
     """Build Gemini-compatible schema from a function tool"""
     tool_info = get_tool_info(function_tool)

@@ -10,21 +10,9 @@ logger = logging.getLogger(__name__)
 class AnalyticsClient:
     """Client for sending analytics data to external endpoints"""
 
-    _instance: Optional["AnalyticsClient"] = None
-    _initialized: bool = False
-
-    def __new__(cls, *args, **kwargs) -> "AnalyticsClient":
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
-
     def __init__(self, session_id: Optional[str] = None):
-        if self._initialized:
-            return
-
         self.session_id = session_id
         self.base_url = "https://api.videosdk.live"
-        self._initialized = True
         self.turn_count = 0
         self.metrics_options = None
         self.agent_id = None

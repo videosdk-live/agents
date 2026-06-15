@@ -533,8 +533,11 @@ class JobContext:
         self._wait_for_meeting_join: bool = False
         self.want_console = len(sys.argv) > 1 and sys.argv[1].lower() == "console"
         
-        from .metrics import metrics_collector
-        self.metrics_collector = metrics_collector
+        from .metrics import MetricsCollector
+        from .event_bus import EventBus
+        self.metrics_collector = MetricsCollector()
+        self.event_bus = EventBus()
+        self._telemetry_instance = None
         
         self._log_manager = None
         self._job_logger = None
