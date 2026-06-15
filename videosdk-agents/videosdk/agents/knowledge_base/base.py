@@ -3,6 +3,7 @@ from __future__ import annotations
 from abc import ABC
 from typing import List, Optional
 import logging
+import warnings
 import aiohttp
 import os
 from ..metrics import metrics_collector
@@ -15,12 +16,17 @@ class KnowledgeBase(ABC):
     """
     Base class for handling knowledge-base retrieval operations.
 
+    .. deprecated::
+        ``KnowledgeBase`` is deprecated and no longer part of the public API.
+        It continues to function for now but will be removed in a future
+        release. Instantiating it emits a :class:`DeprecationWarning`.
+
     Provides hooks developers can override:
         - allow_retrieval: Decide if the knowledge base should be used.
         - pre_process_query: Preprocess the query before searching.
         - format_context: Format retrieved documents for the final prompt.
     """
-    
+
     def __init__(self, config: KnowledgeBaseConfig):
         """
         Initialize the knowledge base handler.
@@ -28,6 +34,13 @@ class KnowledgeBase(ABC):
         Args:
             config (KnowledgeBaseConfig): Configuration for retrieval settings.
         """
+        warnings.warn(
+            "KnowledgeBase is deprecated and will be removed in a future "
+            "release. It is no longer exported from the top-level "
+            "`videosdk.agents` package.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.config = config
 
     def allow_retrieval(self, transcript: str) -> bool:

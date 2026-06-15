@@ -7,7 +7,11 @@ from dataclasses import dataclass
 class KnowledgeBaseConfig:
     """
     Configuration for managed RAG (Retrieval-Augmented Generation).
-    
+
+    .. deprecated::
+        Part of the deprecated ``KnowledgeBase`` feature. No longer exported
+        from the top-level ``videosdk.agents`` package and slated for removal.
+
     Attributes:
         id: The ID of the knowledge base provided by your app dashboard
         top_k: Optional number of documents to retrieve (default: 3)
