@@ -862,16 +862,20 @@ def resolve_videosdk_auth_token(explicit: Optional[str] = None) -> Optional[str]
       2. VIDEOSDK_AUTH_TOKEN env var
       3. JWT generated from VIDEOSDK_API_KEY + VIDEOSDK_SECRET_KEY
 
-    When path 3 is taken, the generated token is written back to
+    Whenever a token is resolved (whether supplied explicitly or generated
+    from API_KEY + SECRET_KEY) it is written back to
     os.environ["VIDEOSDK_AUTH_TOKEN"] so sub-modules that read the env var
     directly (inference/, metrics/analytics.py, knowledge_base/base.py) pick
-    it up without needing a refactor.
+    it up even when the caller authenticated with an explicit token and never
+    set the env var (e.g. a token passed via RoomOptions/WorkerOptions or a
+    per-job token assigned by the backend).
 
     Returns None if nothing is available.
     """
     global _generated_token_cache
 
     if explicit:
+        os.environ["VIDEOSDK_AUTH_TOKEN"] = explicit
         return explicit
 
     env_token = os.getenv("VIDEOSDK_AUTH_TOKEN")
