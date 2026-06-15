@@ -777,6 +777,20 @@ class JobContext:
             except Exception as e:
                 logger.error(f"Error in shutdown callback: {e}")
 
+        # Graceful telemetry flush: the shutdown callbacks above include
+        # AgentSession.close(), which creates the final + "session closed" spans.
+        # Force-export them now (in a thread, bounded) so the BatchSpanProcessor's
+        # last batch isn't lost when this per-session telemetry is torn down.
+        tel = getattr(self, "telemetry", None)
+        if tel is not None:
+            try:
+                await asyncio.wait_for(asyncio.to_thread(tel.force_flush_spans), timeout=6.0)
+            except asyncio.TimeoutError:
+                logger.warning("[telemetry] force-flush on shutdown timed out")
+            except Exception as e:
+                logger.error(f"[telemetry] force-flush on shutdown failed: {e}")
+            self.telemetry = None
+
         if self._pipeline:
             try:
                 await self._pipeline.cleanup()

@@ -78,9 +78,12 @@ class VideoSDKTelemetry:
             self.tracer_provider = TracerProvider(resource=resource)
             self.tracer_provider.add_span_processor(batch_processor)
             
-            trace.set_tracer_provider(self.tracer_provider)
-            
-            self.tracer = trace.get_tracer(self.peer_id)
+            # Per-session: take the tracer from THIS instance's provider, not the
+            # global one. trace.set_tracer_provider() is process-global and only
+            # honored once, so with concurrent sessions later sessions' spans would
+            # otherwise route through the first session's provider/exporter (OTel
+            # logs "Overriding of current TracerProvider is not allowed").
+            self.tracer = self.tracer_provider.get_tracer(self.peer_id)
             
         except Exception as e:
             print(f"[TELEMETRY ERROR] Failed to initialize telemetry: {e}")
@@ -176,6 +179,21 @@ class VideoSDKTelemetry:
             print(f"[TELEMETRY ERROR] Failed to complete span: {e}")
             traceback.print_exc()
     
+    def force_flush_spans(self, timeout_millis: int = 5000) -> None:
+        """Force-export any buffered spans WITHOUT shutting the provider down.
+
+        Called on session end so spans created right before close (final turn,
+        the "session closed" span) are exported — the BatchSpanProcessor would
+        otherwise drop its last un-flushed batch when the session tears down.
+        Non-destructive (unlike flush()), so it stays safe if the OTel tracer
+        provider happens to be shared across sessions."""
+        if not self.traces_enabled or not self.tracer_provider:
+            return
+        try:
+            self.tracer_provider.force_flush(timeout_millis)
+        except Exception as e:
+            print(f"[TELEMETRY ERROR] force_flush failed: {e}")
+
     def flush(self):
         """Flush and shutdown the tracer provider"""
         if self.traces_enabled and self.tracer_provider:
@@ -247,8 +265,7 @@ def initialize_telemetry(room_id: str, peer_id: str, sdk_name: str = "agents",
     )
 
     # Store per-session on the active JobContext so concurrent sessions don't
-    # clobber each other. Fall back to the module global only when there's no
-    # active session (tests / pre-session usage).
+    # clobber each other's traces.
     try:
         from ..job import get_current_job_context
         ctx = get_current_job_context()
@@ -256,6 +273,10 @@ def initialize_telemetry(room_id: str, peer_id: str, sdk_name: str = "agents",
         ctx = None
     if ctx is not None:
         ctx.telemetry = instance
-    else:
-        _telemetry_instance = instance
+    # ALSO keep a module-level fallback populated so a span created/completed in a
+    # task that doesn't carry the JobContext still resolves a telemetry instance
+    # instead of being silently dropped. Properly-scoped tasks still get the
+    # per-session instance above; this is only the safety net (prevents the
+    # "missing spans" seen when get_telemetry() returned None off-context).
+    _telemetry_instance = instance
     return instance

@@ -62,10 +62,6 @@ async def _execute_job_entrypoint(
 ):
     """Execute job entrypoint in a separate process/thread."""
 
-    if agent_id:
-        from .metrics import metrics_collector
-        metrics_collector.analytics_client.set_agent_id(agent_id)
-
     # Create job context
     ctx = JobContext(room_options=room_options, metadata=metadata)
     ctx._wait_for_meeting_join = wait_for_meeting_join
@@ -85,6 +81,13 @@ async def _execute_job_entrypoint(
     # keeps their metrics collector + event bus isolated).
     token = _set_current_job_context(ctx)
     session_token = _enter_session_scope()
+    # Set agent_id AFTER entering the session scope so it lands on THIS session's
+    # analytics client. The scope above just created a fresh per-session metrics
+    # collector (+ AnalyticsClient); setting it before the scope would write to the
+    # process-default collector and be lost for the session.
+    if agent_id:
+        from .metrics import metrics_collector
+        metrics_collector.analytics_client.set_agent_id(agent_id)
     try:
         # Wrap in a task so the watchdog can cancel it
         entrypoint_task = asyncio.ensure_future(entrypoint(ctx))
