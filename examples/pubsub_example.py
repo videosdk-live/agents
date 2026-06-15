@@ -2,7 +2,7 @@ import asyncio
 from typing import AsyncIterator, Optional
 from videosdk import PubSubPublishConfig, PubSubSubscribeConfig
 from videosdk.agents import Agent, AgentSession, Pipeline, function_tool, WorkerJob,JobContext, RoomOptions
-from videosdk.agents.plugins import DeepgramSTT, ElevenLabsTTS, AnthropicLLM, SileroVAD, TurnDetector, pre_download_model
+from videosdk.agents.plugins import  AnthropicLLM, pre_download_model
 
 import logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
@@ -44,11 +44,7 @@ async def entrypoint(ctx: JobContext):
     agent = PubSubAgent(ctx)
 
     pipeline = Pipeline(
-        stt= DeepgramSTT(),
-        llm=AnthropicLLM(),
-        tts=ElevenLabsTTS(),
-        vad=SileroVAD(),
-        turn_detector=TurnDetector()
+        llm=AnthropicLLM()
     )
     session = AgentSession(
         agent=agent, 
@@ -68,6 +64,20 @@ async def entrypoint(ctx: JobContext):
         print(f"Session ended: {reason}")
         asyncio.create_task(ctx.shutdown())
 
+    # --- terminal chat interface---
+    def on_reply(data):
+        print(f"\n 🤖 Agent: {data['text']}\n")
+
+    pipeline.on("content_generated", on_reply)
+
+    async def chat_loop():
+        while not shutdown_event.is_set():
+            text = await asyncio.to_thread(input, "👤 You: ")
+            if text.strip().lower() in ("exit", "quit"):
+                await ctx.shutdown()
+                return
+            await pipeline.process_text(text)
+
     try:
         await ctx.connect()
         ctx.room.setup_session_end_callback(on_session_end)        
@@ -80,6 +90,7 @@ async def entrypoint(ctx: JobContext):
         )
         await ctx.room.subscribe_to_pubsub(subscribe_config)
         await session.start()
+        asyncio.create_task(chat_loop())
         await shutdown_event.wait()
     except KeyboardInterrupt:
         print("\nShutting down gracefully...")
