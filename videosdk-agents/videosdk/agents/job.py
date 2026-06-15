@@ -423,6 +423,9 @@ class Options:
         """Post-initialization setup."""
         # Import here to avoid circular imports
         from .worker import ExecutorType, WorkerPermissions, _default_executor_type
+        from .metrics import metrics_collector
+
+        metrics_collector.analytics_client.set_agent_id(self.agent_id)
 
         if self.executor_type is None:
             self.executor_type = _default_executor_type

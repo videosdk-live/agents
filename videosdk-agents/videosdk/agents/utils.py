@@ -986,10 +986,6 @@ class TurnResult:
 
     state: Optional[TurnState]
     eou_probability: float
-    finalizes_turn: bool
-    raw_state: Optional[str] = None
-    latency_ms: Optional[int] = None
-    model_id: Optional[str] = None
 
 
 def is_backchannel_aware(detector: object) -> bool:

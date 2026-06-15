@@ -21,32 +21,21 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "uvicorn",
     "videosdk>=0.3.2",
     "numpy",
     "httpx",
     "aiohttp",
-    "openai",
     "python-dotenv",
-    "pyee>=13.0.0",
     "grpcio",
-    "protobuf",
+    "protobuf>=5.29,<6.0",
     "docstring_parser",
     "google-genai",
     "pydantic>=2.0,<3",
     "requests>=2.25.0",
-    "rich>=10.0.0",
-    "click>=8.0.0",
     "scipy>=1.11.0",
     "mcp",
-    "PyYAML",
-    "urllib3",
     "opentelemetry-sdk>=1.34.1",
     "opentelemetry-exporter-otlp-proto-http>=1.34.1",
-    "requests",
-    "protobuf>=5.29,<6.0",
-    "aec-audio-processing>=1.0.1",
-    "sounddevice",
     "PyJWT",
     "indic-nlp-library>=0.92",
 ]
@@ -87,7 +76,9 @@ speechify = ["videosdk-plugins-speechify>=1.0.18"]
 turn-detector = ["videosdk-plugins-turn-detector>=1.0.18"]
 ultravox = ["videosdk-plugins-ultravox>=1.0.18"]
 xai = ["videosdk-plugins-xai>=1.0.18"]
+
 videosdk-conversational-graph = ["videosdk-conversational-graph>=1.0.0"]
+console = ["sounddevice", "aec-audio-processing>=1.0.1"]
 
 [tool.hatch.version]
 path = "videosdk/agents/version.py"

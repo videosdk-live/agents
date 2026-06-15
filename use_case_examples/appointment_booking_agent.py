@@ -68,7 +68,7 @@ class ClinicReceptionistAgent(Agent):
         confirmation_id = f"SC-{abs(hash(patient_name + date + time)) % 10000:04d}"
 
         # Announce each detail sequentially, checking for interruption between steps.
-        handle1 = self.session.say(
+        handle1 = await self.session.say(
             f"Perfect. I've booked your appointment, {patient_name.split()[0]}."
         )
         await handle1
@@ -76,7 +76,7 @@ class ClinicReceptionistAgent(Agent):
         if utterance and utterance.interrupted:
             return {"status": "interrupted", "confirmation_id": confirmation_id}
 
-        handle2 = self.session.say(
+        handle2 = await self.session.say(
             f"Your appointment is confirmed for {date} at {time}."
         )
         await handle2
@@ -84,7 +84,7 @@ class ClinicReceptionistAgent(Agent):
         if utterance and utterance.interrupted:
             return {"status": "interrupted", "confirmation_id": confirmation_id}
 
-        handle3 = self.session.say(
+        handle3 = await self.session.say(
             f"Your confirmation number is {confirmation_id}. "
             "Please arrive 10 minutes early. Is there anything else I can help you with?"
         )

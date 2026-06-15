@@ -52,9 +52,8 @@ class EOU(EventEmitter[Literal["error"]]):
         ``supports_backchannel_classification = True``.
         """
         prob = self.get_eou_probability(chat_context)
-        finalizes = prob >= self._threshold
-        state = TurnState.COMPLETE if finalizes else TurnState.INCOMPLETE
-        return TurnResult(state=state, eou_probability=prob, finalizes_turn=finalizes)
+        state = TurnState.COMPLETE if prob >= self._threshold else TurnState.INCOMPLETE
+        return TurnResult(state=state, eou_probability=prob)
 
     def detect_end_of_utterance(self, chat_context: ChatContext, threshold: Optional[float] = None) -> bool:
         """
