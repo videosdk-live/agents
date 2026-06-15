@@ -5,7 +5,6 @@ import base64
 from dataclasses import dataclass
 from enum import Enum
 import json
-import os
 import time
 import logging
 from typing import Any, Optional, Dict
@@ -21,6 +20,7 @@ from videosdk.agents import (
     SpeechEventType,
     global_event_emitter,
 )
+from videosdk.agents.utils import resolve_videosdk_auth_token
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +84,7 @@ class STT(BaseSTT):
         config: Dict[str, Any] | None = None,
         enable_streaming: bool = True,
         base_url: str | None = None,
+        auth_token: str | None = None,
     ) -> None:
         """
         Initialize the VideoSDK Inference STT plugin.
@@ -95,10 +96,13 @@ class STT(BaseSTT):
             config: Provider-specific configuration dictionary
             enable_streaming: Enable streaming transcription (default: True)
             base_url: Custom inference gateway URL (default: production gateway)
+            auth_token: VideoSDK auth token. Falls back to the resolved token
+                (RoomOptions/WorkerOptions, VIDEOSDK_AUTH_TOKEN, or
+                VIDEOSDK_API_KEY + VIDEOSDK_SECRET_KEY) when not provided.
         """
         super().__init__()
 
-        self._videosdk_token = os.getenv("VIDEOSDK_AUTH_TOKEN")
+        self._videosdk_token = resolve_videosdk_auth_token(auth_token)
         if not self._videosdk_token:
             raise ValueError(
                 "VIDEOSDK_AUTH_TOKEN environment variable must be set for authentication"

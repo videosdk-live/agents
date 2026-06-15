@@ -1,8 +1,9 @@
-import os
 import asyncio
 from typing import Dict, Any, Optional
 import aiohttp
 import logging
+
+from ..utils import resolve_videosdk_auth_token
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +76,8 @@ class AnalyticsClient:
             logger.error("Failed sending session data : No session ID")
             return
 
-        auth_token = os.getenv("VIDEOSDK_AUTH_TOKEN")
+        auth_token = resolve_videosdk_auth_token()
+
         if not auth_token:
             logger.error("Failed sending session data : No auth token")
             return
