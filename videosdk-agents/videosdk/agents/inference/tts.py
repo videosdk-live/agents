@@ -3,13 +3,13 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
-import os
 import re
 import logging
 from typing import Any, AsyncIterator, Optional, Dict
 
 import aiohttp
 from videosdk.agents import TTS as BaseTTS, FlushMarker
+from videosdk.agents.utils import resolve_videosdk_auth_token
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +47,7 @@ class TTS(BaseTTS):
         enable_streaming: bool = True,
         sample_rate: int = DEFAULT_SAMPLE_RATE,
         base_url: str | None = None,
+        auth_token: str | None = None,
     ) -> None:
         """
         Initialize the VideoSDK Inference TTS plugin.
@@ -60,10 +61,13 @@ class TTS(BaseTTS):
             enable_streaming: Enable streaming synthesis (default: True)
             sample_rate: Audio sample rate (default: 24000)
             base_url: Custom inference gateway URL (default: production gateway)
+            auth_token: VideoSDK auth token. Falls back to the resolved token
+                (RoomOptions/WorkerOptions, VIDEOSDK_AUTH_TOKEN, or
+                VIDEOSDK_API_KEY + VIDEOSDK_SECRET_KEY) when not provided.
         """
         super().__init__(sample_rate=sample_rate, num_channels=DEFAULT_CHANNELS)
 
-        self._videosdk_token = os.getenv("VIDEOSDK_AUTH_TOKEN")
+        self._videosdk_token = resolve_videosdk_auth_token(auth_token)
         if not self._videosdk_token:
             raise ValueError("VIDEOSDK_AUTH_TOKEN environment variable must be set")
 

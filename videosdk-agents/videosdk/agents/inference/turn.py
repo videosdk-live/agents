@@ -39,7 +39,7 @@ import grpc
 from ._grpc import turn_detection_pb2, turn_detection_pb2_grpc
 
 from videosdk.agents import EOU, ChatContext, ChatMessage, ChatRole
-from videosdk.agents.utils import TurnResult, TurnState
+from videosdk.agents.utils import TurnResult, TurnState, resolve_videosdk_auth_token
 
 logger = logging.getLogger(__name__)
 
@@ -106,10 +106,11 @@ class Turn(EOU):
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
         max_connection_attempts: int = 5,
         fallback_probability: float = 0.7,
+        auth_token: Optional[str] = None,
     ) -> None:
         super().__init__(threshold=threshold)
 
-        self._videosdk_token = os.getenv("VIDEOSDK_AUTH_TOKEN")
+        self._videosdk_token = resolve_videosdk_auth_token(auth_token)
         if not self._videosdk_token:
             raise ValueError(
                 "VIDEOSDK_AUTH_TOKEN environment variable must be set for authentication"
@@ -151,6 +152,7 @@ class Turn(EOU):
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
         max_connection_attempts: int = 5,
         fallback_probability: float = 0.7,
+        auth_token: Optional[str] = None,
     ) -> "Turn":
         """
         Create a Turn detector backed by the server-hosted Namo Turn Detector v1.
@@ -163,6 +165,9 @@ class Turn(EOU):
             timeout: Per-request timeout in seconds.
             max_connection_attempts: Failures before the breaker trips. Default: 5.
             fallback_probability: Probability emitted once disabled. Default: 0.7.
+            auth_token: VideoSDK auth token. Falls back to the resolved token
+                (RoomOptions/WorkerOptions, VIDEOSDK_AUTH_TOKEN, or
+                VIDEOSDK_API_KEY + VIDEOSDK_SECRET_KEY) when not provided.
         """
         return Turn(
             provider="videosdk",
@@ -173,6 +178,7 @@ class Turn(EOU):
             timeout=timeout,
             max_connection_attempts=max_connection_attempts,
             fallback_probability=fallback_probability,
+            auth_token=auth_token,
         )
 
     @staticmethod
@@ -183,6 +189,7 @@ class Turn(EOU):
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
         max_connection_attempts: int = 5,
         fallback_probability: float = 0.7,
+        auth_token: Optional[str] = None,
     ) -> "Turn":
         """
         Create a Turn detector backed by the server-hosted TurnSense model
@@ -194,6 +201,9 @@ class Turn(EOU):
             timeout: Per-request timeout in seconds.
             max_connection_attempts: Failures before the breaker trips. Default: 5.
             fallback_probability: Probability emitted once disabled. Default: 0.7.
+            auth_token: VideoSDK auth token. Falls back to the resolved token
+                (RoomOptions/WorkerOptions, VIDEOSDK_AUTH_TOKEN, or
+                VIDEOSDK_API_KEY + VIDEOSDK_SECRET_KEY) when not provided.
         """
         return Turn(
             provider="turnsense",
@@ -204,6 +214,7 @@ class Turn(EOU):
             timeout=timeout,
             max_connection_attempts=max_connection_attempts,
             fallback_probability=fallback_probability,
+            auth_token=auth_token,
         )
 
     @staticmethod
@@ -214,6 +225,7 @@ class Turn(EOU):
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
         max_connection_attempts: int = 5,
         fallback_probability: float = 0.7,
+        auth_token: Optional[str] = None,
     ) -> "Turn":
         """
         Create a Turn detector backed by the server-hosted VideoSDK BERT model
@@ -225,6 +237,9 @@ class Turn(EOU):
             timeout: Per-request timeout in seconds.
             max_connection_attempts: Failures before the breaker trips. Default: 5.
             fallback_probability: Probability emitted once disabled. Default: 0.7.
+            auth_token: VideoSDK auth token. Falls back to the resolved token
+                (RoomOptions/WorkerOptions, VIDEOSDK_AUTH_TOKEN, or
+                VIDEOSDK_API_KEY + VIDEOSDK_SECRET_KEY) when not provided.
         """
         return Turn(
             provider="videosdk",
@@ -235,6 +250,7 @@ class Turn(EOU):
             timeout=timeout,
             max_connection_attempts=max_connection_attempts,
             fallback_probability=fallback_probability,
+            auth_token=auth_token,
         )
 
     # ==================== Circuit Breaker ====================
@@ -461,7 +477,7 @@ class TurnV2(EOU):
         self.host = host or os.getenv("VIDEOSDK_TURN_GRPC_HOST") or DEFAULT_GRPC_HOST
         self.timeout = timeout
 
-        self._token = token or os.getenv("VIDEOSDK_AUTH_TOKEN")
+        self._token = resolve_videosdk_auth_token(token)
         self._metadata = (
             (("authorization", f"Bearer {self._token}"),) if self._token else None
         )

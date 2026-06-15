@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
-import os
 import logging
 import time
 from collections import deque
@@ -12,6 +11,7 @@ from typing import Any, Optional, Dict
 import aiohttp
 
 from videosdk.agents.denoise import Denoise as BaseDenoise
+from videosdk.agents.utils import resolve_videosdk_auth_token
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +61,7 @@ class Denoise(BaseDenoise):
         config: Dict[str, Any] | None = None,
         base_url: str | None = None,
         max_connection_attempts: int = 5,
+        auth_token: str | None = None,
     ) -> None:
         """
         Initialize the VideoSDK Inference Denoise plugin.
@@ -77,10 +78,13 @@ class Denoise(BaseDenoise):
                 and passes raw audio through to the next pipeline stage for
                 the remainder of the session. The counter resets when a
                 denoised chunk is successfully received. Default: 5.
+            auth_token: VideoSDK auth token. Falls back to the resolved token
+                (RoomOptions/WorkerOptions, VIDEOSDK_AUTH_TOKEN, or
+                VIDEOSDK_API_KEY + VIDEOSDK_SECRET_KEY) when not provided.
         """
         super().__init__()
 
-        self._videosdk_token = os.getenv("VIDEOSDK_AUTH_TOKEN")
+        self._videosdk_token = resolve_videosdk_auth_token(auth_token)
         if not self._videosdk_token:
             raise ValueError("VIDEOSDK_AUTH_TOKEN environment variable must be set")
 
