@@ -18,6 +18,8 @@ members = [
 [dependency-groups]
 dev = [
     "pdoc3",
+    "sounddevice",
+    "aec-audio-processing>=1.0.1",
 ]
 
 [tool.uv.sources]
