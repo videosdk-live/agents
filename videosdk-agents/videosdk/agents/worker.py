@@ -76,13 +76,9 @@ async def _execute_job_entrypoint(
 
         ctx.notify_meeting_joined = _notify_with_mp_event
 
-    # Set context var + per-session metrics/event scope (this executor slot runs
+    # Set context var + per-session metrics/event scope
     token = _set_current_job_context(ctx)
     session_token = _enter_session_scope()
-    # Set agent_id AFTER entering the session scope so it lands on THIS session's
-    # analytics client. The scope above just created a fresh per-session metrics
-    # collector (+ AnalyticsClient); setting it before the scope would write to the
-    # process-default collector and be lost for the session.
     if agent_id:
         from .metrics import metrics_collector
         metrics_collector.analytics_client.set_agent_id(agent_id)

@@ -536,9 +536,6 @@ class JobContext:
         
         from .metrics import metrics_collector
         self.metrics_collector = metrics_collector
-        # Per-session telemetry instance, set lazily at room-connect by
-        # initialize_telemetry(). Kept here (not a module global) so concurrent
-        # sessions in one process don't overwrite each other's telemetry.
         self.telemetry = None
 
         self._log_manager = None
@@ -775,10 +772,6 @@ class JobContext:
             except Exception as e:
                 logger.error(f"Error in shutdown callback: {e}")
 
-        # Graceful telemetry flush: the shutdown callbacks above include
-        # AgentSession.close(), which creates the final + "session closed" spans.
-        # Force-export them now (in a thread, bounded) so the BatchSpanProcessor's
-        # last batch isn't lost when this per-session telemetry is torn down.
         tel = getattr(self, "telemetry", None)
         if tel is not None:
             try:

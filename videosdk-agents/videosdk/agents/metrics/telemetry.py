@@ -77,12 +77,7 @@ class VideoSDKTelemetry:
             batch_processor = BatchSpanProcessor(otlp_exporter)
             self.tracer_provider = TracerProvider(resource=resource)
             self.tracer_provider.add_span_processor(batch_processor)
-            
-            # Per-session: take the tracer from THIS instance's provider, not the
-            # global one. trace.set_tracer_provider() is process-global and only
-            # honored once, so with concurrent sessions later sessions' spans would
-            # otherwise route through the first session's provider/exporter (OTel
-            # logs "Overriding of current TracerProvider is not allowed").
+
             self.tracer = self.tracer_provider.get_tracer(self.peer_id)
             
         except Exception as e:
@@ -264,8 +259,6 @@ def initialize_telemetry(room_id: str, peer_id: str, sdk_name: str = "agents",
         sdk_metadata=sdk_metadata
     )
 
-    # Store per-session on the active JobContext so concurrent sessions don't
-    # clobber each other's traces.
     try:
         from ..job import get_current_job_context
         ctx = get_current_job_context()
@@ -273,10 +266,5 @@ def initialize_telemetry(room_id: str, peer_id: str, sdk_name: str = "agents",
         ctx = None
     if ctx is not None:
         ctx.telemetry = instance
-    # ALSO keep a module-level fallback populated so a span created/completed in a
-    # task that doesn't carry the JobContext still resolves a telemetry instance
-    # instead of being silently dropped. Properly-scoped tasks still get the
-    # per-session instance above; this is only the safety net (prevents the
-    # "missing spans" seen when get_telemetry() returned None off-context).
     _telemetry_instance = instance
     return instance
