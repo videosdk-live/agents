@@ -772,16 +772,6 @@ class JobContext:
             except Exception as e:
                 logger.error(f"Error in shutdown callback: {e}")
 
-        tel = getattr(self, "telemetry", None)
-        if tel is not None:
-            try:
-                await asyncio.wait_for(asyncio.to_thread(tel.force_flush_spans), timeout=6.0)
-            except asyncio.TimeoutError:
-                logger.warning("[telemetry] force-flush on shutdown timed out")
-            except Exception as e:
-                logger.error(f"[telemetry] force-flush on shutdown failed: {e}")
-            self.telemetry = None
-
         if self._pipeline:
             try:
                 await self._pipeline.cleanup()
@@ -829,6 +819,16 @@ class JobContext:
             except Exception as e:
                 logger.error(f"Error during room cleanup: {e}")
             self.room = None
+
+        tel = getattr(self, "telemetry", None)
+        if tel is not None:
+            try:
+                await asyncio.wait_for(asyncio.to_thread(tel.force_flush_spans), timeout=6.0)
+            except asyncio.TimeoutError:
+                logger.warning("[telemetry] force-flush on shutdown timed out")
+            except Exception as e:
+                logger.error(f"[telemetry] force-flush on shutdown failed: {e}")
+            self.telemetry = None
 
         self.room_options = None
         self._loop = None
