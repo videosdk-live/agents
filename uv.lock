@@ -58,7 +58,11 @@ overrides = [
 ]
 
 [manifest.dependency-groups]
-dev = [{ name = "pdoc3" }]
+dev = [
+    { name = "aec-audio-processing", specifier = ">=1.0.1" },
+    { name = "pdoc3" },
+    { name = "sounddevice" },
+]
 
 [[package]]
 name = "aec-audio-processing"
@@ -3558,8 +3562,8 @@ name = "uvicorn"
 version = "0.41.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "click" },
-    { name = "h11" },
+    { name = "click", marker = "sys_platform != 'emscripten'" },
+    { name = "h11", marker = "sys_platform != 'emscripten'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/32/ce/eeb58ae4ac36fe09e3842eb02e0eb676bf2c53ae062b98f1b2531673efdd/uvicorn-0.41.0.tar.gz", hash = "sha256:09d11cf7008da33113824ee5a1c6422d89fbc2ff476540d69a34c87fab8b571a", size = 82633, upload-time = "2026-02-16T23:07:24.1Z" }
 wheels = [
@@ -3593,9 +3597,7 @@ wheels = [
 name = "videosdk-agents"
 source = { editable = "videosdk-agents" }
 dependencies = [
-    { name = "aec-audio-processing" },
     { name = "aiohttp" },
-    { name = "click" },
     { name = "docstring-parser" },
     { name = "google-genai" },
     { name = "grpcio" },
@@ -3603,21 +3605,14 @@ dependencies = [
     { name = "indic-nlp-library" },
     { name = "mcp" },
     { name = "numpy" },
-    { name = "openai" },
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "opentelemetry-sdk" },
     { name = "protobuf" },
     { name = "pydantic" },
-    { name = "pyee" },
     { name = "pyjwt" },
     { name = "python-dotenv" },
-    { name = "pyyaml" },
     { name = "requests" },
-    { name = "rich" },
     { name = "scipy" },
-    { name = "sounddevice" },
-    { name = "urllib3" },
-    { name = "uvicorn" },
     { name = "videosdk" },
 ]
 
@@ -3648,6 +3643,10 @@ cerebras = [
 ]
 cometapi = [
     { name = "videosdk-plugins-cometapi" },
+]
+console = [
+    { name = "aec-audio-processing" },
+    { name = "sounddevice" },
 ]
 deepgram = [
     { name = "videosdk-plugins-deepgram" },
@@ -3733,9 +3732,8 @@ xai = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aec-audio-processing", specifier = ">=1.0.1" },
+    { name = "aec-audio-processing", marker = "extra == 'console'", specifier = ">=1.0.1" },
     { name = "aiohttp" },
-    { name = "click", specifier = ">=8.0.0" },
     { name = "docstring-parser" },
     { name = "google-genai" },
     { name = "grpcio" },
@@ -3743,23 +3741,15 @@ requires-dist = [
     { name = "indic-nlp-library", specifier = ">=0.92" },
     { name = "mcp" },
     { name = "numpy" },
-    { name = "openai" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.34.1" },
     { name = "opentelemetry-sdk", specifier = ">=1.34.1" },
-    { name = "protobuf" },
     { name = "protobuf", specifier = ">=5.29,<6.0" },
     { name = "pydantic", specifier = ">=2.0,<3" },
-    { name = "pyee", specifier = ">=13.0.0" },
     { name = "pyjwt" },
     { name = "python-dotenv" },
-    { name = "pyyaml" },
-    { name = "requests" },
     { name = "requests", specifier = ">=2.25.0" },
-    { name = "rich", specifier = ">=10.0.0" },
     { name = "scipy", specifier = ">=1.11.0" },
-    { name = "sounddevice" },
-    { name = "urllib3" },
-    { name = "uvicorn" },
+    { name = "sounddevice", marker = "extra == 'console'" },
     { name = "videosdk", specifier = ">=0.3.2" },
     { name = "videosdk-conversational-graph", marker = "extra == 'videosdk-conversational-graph'", specifier = ">=1.0.0" },
     { name = "videosdk-plugins-anam", marker = "extra == 'anam'", editable = "videosdk-plugins/videosdk-plugins-anam" },
@@ -3798,7 +3788,7 @@ requires-dist = [
     { name = "videosdk-plugins-ultravox", marker = "extra == 'ultravox'", editable = "videosdk-plugins/videosdk-plugins-ultravox" },
     { name = "videosdk-plugins-xai", marker = "extra == 'xai'", editable = "videosdk-plugins/videosdk-plugins-xai" },
 ]
-provides-extras = ["anam", "anthropic", "assemblyai", "aws", "azure", "cambai", "cartesia", "cerebras", "cometapi", "deepgram", "elevenlabs", "gladia", "google", "groq", "humeai", "inworldai", "langchain", "lmnt", "murfai", "navana", "neuphonic", "nvidia", "openai", "papla", "resemble", "rime", "rnnoise", "sarvamai", "silero", "simli", "smallestai", "speechify", "turn-detector", "ultravox", "videosdk-conversational-graph", "xai"]
+provides-extras = ["anam", "anthropic", "assemblyai", "aws", "azure", "cambai", "cartesia", "cerebras", "cometapi", "console", "deepgram", "elevenlabs", "gladia", "google", "groq", "humeai", "inworldai", "langchain", "lmnt", "murfai", "navana", "neuphonic", "nvidia", "openai", "papla", "resemble", "rime", "rnnoise", "sarvamai", "silero", "simli", "smallestai", "speechify", "turn-detector", "ultravox", "videosdk-conversational-graph", "xai"]
 
 [[package]]
 name = "videosdk-conversational-graph"

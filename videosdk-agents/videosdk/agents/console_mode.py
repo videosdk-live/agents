@@ -3,17 +3,31 @@ import asyncio
 from typing import Any, Optional, Callable
 try:
     import aec_audio_processing as apm
+    _APM_AVAILABLE = True
 except ImportError:
-    raise ImportError(
-        "aec-audio-processing is required. "
-        "Install with: pip install aec-audio-processing"
-    )
+    apm = None
+    _APM_AVAILABLE = False
 
 try:
     import sounddevice as sd
     _SD_AVAILABLE = True
 except Exception:
     _SD_AVAILABLE = False
+
+
+def _require_console_deps() -> None:
+    """Raise a single, actionable error if the voice-console extras are missing."""
+    missing = []
+    if not _APM_AVAILABLE:
+        missing.append("aec-audio-processing")
+    if not _SD_AVAILABLE:
+        missing.append("sounddevice")
+    if missing:
+        raise ImportError(
+            f"Voice console mode requires {' and '.join(missing)}, which are optional. "
+            f"Install the console extra with: pip install \"videosdk-agents[console]\" "
+            f"(on Linux also run: sudo apt-get install libasound2-dev)"
+        )
 
 import numpy as np
 from fractions import Fraction
@@ -257,6 +271,8 @@ async def setup_console_room_client_for_ctx(
     agent's audio on local speakers — no browser/ sdk client or playground
     URL needed.
     """
+    _require_console_deps()
+
     from videosdk import VideoSDK
     from .room.meeting_event_handler import MeetingHandler
     from .room.participant_event_handler import ParticipantHandler
