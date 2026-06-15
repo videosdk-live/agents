@@ -499,8 +499,6 @@ class WorkerJob:
                 else:
                     job_context = self.jobctx
 
-                # Set the current job context + per-session metrics/event scope,
-                # then run the entrypoint.
                 token = _set_current_job_context(job_context)
                 session_token = _enter_session_scope()
                 try:

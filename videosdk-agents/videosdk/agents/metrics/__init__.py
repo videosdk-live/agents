@@ -11,8 +11,7 @@ from .logger_handler import LogManager, JobLogger
 from contextvars import ContextVar
 from typing import Optional
 
-# Process-wide default — used for single-session SDK usage and for any emit
-# that happens outside an active session scope (module load, pre-session tasks).
+
 _default_metrics_collector = MetricsCollector()
 
 _current_metrics_collector: ContextVar[Optional[MetricsCollector]] = ContextVar(

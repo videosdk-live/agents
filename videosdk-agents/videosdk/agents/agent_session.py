@@ -252,8 +252,6 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             )
             ```
         """
-        # Re-pin the per-session collector resolved in THIS task (covers the case
-        # where __init__ ran outside the session scope).
         self._session_metrics_collector = get_current_metrics_collector()
 
         if observability is not None:
@@ -421,6 +419,16 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             model = getattr(component, 'model', getattr(component, 'model_id', getattr(component, 'speech_model', getattr(component, 'voice_id', getattr(component, 'voice', getattr(component, 'speaker', default_model))))))
         return provider_class, str(model)
 
+    def _is_room_disconnected(self) -> bool:
+        """True once the room/meeting has left. say()/reply() use this to
+        short-circuit instead of blocking forever on audio playback that can
+        never complete — e.g. a goodbye spoken from on_exit() after the
+        participant/meeting already left. on_exit() itself still runs in full."""
+        room = getattr(self._job_context, "room", None) if self._job_context else None
+        return room is not None and (
+            getattr(room, "_left", False) or getattr(room, "_session_ended", False)
+        )
+
     async def say(
         self,
         message: str,
@@ -451,6 +459,10 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
                 hold messages inside function tools).
         """
         handle = UtteranceHandle(utterance_id=f"utt_{uuid.uuid4().hex[:8]}", interruptible=interruptible)
+        if self._is_room_disconnected():
+            logger.info("say(): room already disconnected — skipping playback, returning completed handle")
+            handle._mark_done()
+            return handle
         self._accept_user_input = True
         if not self._is_executing_tool:
             if self.current_utterance and not self.current_utterance.done():
@@ -580,6 +592,12 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             UtteranceHandle: A handle to track the utterance lifecycle
         """
         self._accept_user_input = True
+
+        if self._is_room_disconnected():
+            logger.info("reply(): room already disconnected — skipping playback, returning completed handle")
+            handle = UtteranceHandle(utterance_id=f"utt_{uuid.uuid4().hex[:8]}", interruptible=interruptible)
+            handle._mark_done()
+            return handle
 
         if self._reply_in_progress:
             if self.current_utterance:

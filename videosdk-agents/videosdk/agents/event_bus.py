@@ -41,8 +41,6 @@ class EventBus(EventEmitter[EventTypes]):
         """Return the singleton EventBus instance, creating it if necessary."""
         return cls()
     
-# Process-wide default bus (the original singleton) — fallback when no session
-# scope is active. Per-session buses are plain EventEmitter instances.
 _default_event_bus = EventBus()
 
 _current_event_bus: ContextVar[Optional[EventEmitter]] = ContextVar(
@@ -80,7 +78,6 @@ class _EventBusProxy:
         return getattr(get_current_event_bus(), name)
 
 
-# Public name preserved; now resolves per-session.
 global_event_emitter = _EventBusProxy()
 
 

@@ -11,9 +11,6 @@ logger = logging.getLogger(__name__)
 class AnalyticsClient:
     """Client for sending analytics data to external endpoints"""
 
-    # Per-session: each MetricsCollector (one per session) owns its own client,
-    # so concurrent sessions don't share session_id / turn_count. (Was a
-    # process-wide singleton via __new__; that collided across sessions.)
     def __init__(self, session_id: Optional[str] = None):
         self.session_id = session_id
         self.base_url = "https://api.videosdk.live"

@@ -279,9 +279,6 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
     def _setup_global_listeners(self) -> None:
         from .event_bus import get_current_event_bus
 
-        # Pin the bus active at construction (the per-session bus, since the
-        # pipeline is built inside the session scope). cleanup() may run in a
-        # different task, so we must deregister from THIS exact instance.
         self._event_bus = get_current_event_bus()
 
         def handle_metric(data):
@@ -1420,8 +1417,6 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         """Release all pipeline resources, close components, and reset internal state."""
         logger.info("Cleaning up pipeline")
 
-        # Deregister global-bus listeners from the per-session bus they were
-        # registered on — prevents handler/closure accumulation across sessions.
         bus = getattr(self, "_event_bus", None)
         if bus is not None:
             for _evt, _cb in (
