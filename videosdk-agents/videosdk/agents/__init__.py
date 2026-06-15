@@ -105,7 +105,6 @@ from .event_bus import global_event_emitter, EventTypes
 from .a2a.card import AgentCard
 from .a2a.protocol import A2AMessage
 from .images import EncodeOptions, ResizeOptions, encode
-from .knowledge_base import KnowledgeBaseConfig, KnowledgeBase
 from .dtmf_handler import DTMFHandler
 from .voice_mail_detector import VoiceMailDetector
 from .stt import FallbackSTT
@@ -225,8 +224,6 @@ __all__ = [
     "setup_logging",
     "BackgroundAudioHandlerConfig",
     "UtteranceHandle",
-    "KnowledgeBaseConfig",
-    "KnowledgeBase",
     "DTMFHandler",
     "VoiceMailDetector",
     "FallbackSTT",

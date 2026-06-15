@@ -1,4 +1,3 @@
-"""
 Use Case: SaaS product support agent backed by a documentation knowledge base (Novu platform).
 Pipeline: P1 — SarvamAISTT + GoogleLLM + GoogleTTS + SileroVAD + TurnDetector
 Demonstrates: Custom KnowledgeBase subclass with allow_retrieval, pre_process_query, format_context.
@@ -101,6 +100,3 @@ def make_context() -> JobContext:
     return JobContext(room_options=room_options)
 
 
-if __name__ == "__main__":
-    job = WorkerJob(entrypoint=entrypoint, jobctx=make_context)
-    job.start()
