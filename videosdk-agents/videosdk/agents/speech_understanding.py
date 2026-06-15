@@ -9,7 +9,7 @@ from .stt.stt import STT, STTResponse, SpeechEventType
 from .vad import VAD, VADResponse, VADEventType
 from .eou import EOU
 from .llm.chat_context import ChatContext, ChatRole
-from .utils import TurnResult
+from .utils import TurnResult, TurnState
 from .denoise import Denoise
 from .metrics import metrics_collector
 from .utils import UserState, AgentState
@@ -470,7 +470,10 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
                 eou_probability = result.eou_probability
                 logger.info(f"EOU probability: {eou_probability} (state={result.state})")
 
-                if self.mode == 'DEFAULT':
+                if result.state in (TurnState.WAIT, TurnState.BACKCHANNEL):
+                    delay = 0.0
+                    metrics_collector.on_wait_for_additional_speech(delay, eou_probability)
+                elif self.mode == 'DEFAULT':
                     if eou_probability < self.eou_certainty_threshold:
                         delay = self.max_speech_wait_timeout
                     metrics_collector.on_wait_for_additional_speech(delay, eou_probability)

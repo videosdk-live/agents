@@ -57,6 +57,7 @@ class EOUConfig:
     """Configuration for end-of-utterance detection behavior and speech wait timeouts."""
     mode: Literal["ADAPTIVE", "DEFAULT"] = "DEFAULT"
     min_max_speech_wait_timeout: List[float] | Tuple[float, float] = field(default_factory=lambda: [0.5, 0.8])
+    eou_certainty_threshold: float = 0.75
     backchannel_classification: bool | None = None
 
     def __post_init__(self):
@@ -486,6 +487,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                 avatar=None,
                 mode=self.eou_config.mode,
                 min_speech_wait_timeout=self.eou_config.min_max_speech_wait_timeout,
+                eou_certainty_threshold=self.eou_config.eou_certainty_threshold,
                 interrupt_mode=self.interrupt_config.mode,
                 interrupt_min_duration=self.interrupt_config.interrupt_min_duration,
                 interrupt_min_words=self.interrupt_config.interrupt_min_words,
@@ -549,6 +551,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                 avatar=self.avatar,
                 mode=self.eou_config.mode,
                 min_speech_wait_timeout=self.eou_config.min_max_speech_wait_timeout,
+                eou_certainty_threshold=self.eou_config.eou_certainty_threshold,
                 interrupt_mode=self.interrupt_config.mode,
                 interrupt_min_duration=self.interrupt_config.interrupt_min_duration,
                 interrupt_min_words=self.interrupt_config.interrupt_min_words,
