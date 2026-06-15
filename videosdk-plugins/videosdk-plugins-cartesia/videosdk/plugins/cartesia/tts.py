@@ -16,9 +16,9 @@ logger = logging.getLogger(__name__)
 
 CARTESIA_SAMPLE_RATE = 24000
 CARTESIA_CHANNELS = 1
-DEFAULT_MODEL = "sonic-2"
+DEFAULT_MODEL = "sonic-3.5"
 DEFAULT_VOICE_ID = "f8f5f1b2-f02d-4d8e-a40d-fd850a487b3d"
-API_VERSION = "2025-04-16"
+API_VERSION = "2026-03-01"
 DEFAULT_CONNECTION_MAX_AGE_SEC = 300.0
 SONIC_3_CONFIG_MIN_API_VERSION = "2024-12-15"
 CARTESIA_REQUEST_ID_HEADER = "x-cartesia-request-id"
@@ -26,15 +26,22 @@ CARTESIA_REQUEST_ID_HEADER = "x-cartesia-request-id"
 
 @dataclass
 class GenerationConfig:
-    """Voice generation parameters. Only sent to Cartesia for sonic-3+ models on
-    a sufficiently recent API version, and only for fields explicitly set."""
+    """Voice generation parameters. Only sent to Cartesia for sonic-3+ / sonic-latest
+    models on a sufficiently recent API version, and only for fields explicitly set.
+
+    Fields (see Cartesia "Volume, Speed, and Emotion" docs):
+        speed: 0.6–1.5 (1.0 = default speed).
+        volume: 0.5–2.0 (1.0 = default volume).
+        emotion: one of "neutral", "calm", "angry", "content", "sad".
+    """
     speed: float | None = None
     emotion: str | None = None
     volume: float | None = None
 
 
 def _supports_generation_config(model: str, api_version: str) -> bool:
-    return "sonic-3" in model and api_version >= SONIC_3_CONFIG_MIN_API_VERSION
+    supported_model = "sonic-3" in model or model.startswith("sonic-latest")
+    return supported_model and api_version >= SONIC_3_CONFIG_MIN_API_VERSION
 
 
 def _build_generation_config_payload(cfg: GenerationConfig) -> dict[str, Any]:
@@ -67,13 +74,16 @@ class CartesiaTTS(TTS):
 
         Args:
             api_key: Cartesia API key. Falls back to CARTESIA_API_KEY env var.
-            model: Cartesia model id. Defaults to "sonic-2".
+            model: Cartesia model id. Defaults to "sonic-3.5". Use a dated snapshot
+                (e.g. "sonic-3.5-2026-05-04") to pin a version, or "sonic-latest" for
+                the newest beta (not recommended for production).
             voice_id: Either a Cartesia voice id (str) or a voice embedding (list of floats).
-            language: BCP-47 language tag.
+            language: BCP-47 language tag (Sonic 3.5 supports 42 languages, e.g. "en",
+                "hi", "es", "ja", "he"; use the same value for every chunk in a context).
             base_url: Cartesia base URL.
-            generation_config: Voice generation params (sonic-3 only). Only fields you set
-                are forwarded; defaults are not sent so they don't override Cartesia's
-                model defaults on older models.
+            generation_config: Voice generation params (sonic-3+ / sonic-latest only).
+                Only fields you set are forwarded; defaults are not sent so they don't
+                override Cartesia's model defaults on older models.
             pronunciation_dict_id: Custom pronunciation dictionary id.
             max_buffer_delay_ms: Deprecated. Sentence-paced flushing now drives buffer
                 behavior; this value is no longer forwarded.

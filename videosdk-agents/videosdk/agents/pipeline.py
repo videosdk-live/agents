@@ -57,6 +57,7 @@ class EOUConfig:
     """Configuration for end-of-utterance detection behavior and speech wait timeouts."""
     mode: Literal["ADAPTIVE", "DEFAULT"] = "DEFAULT"
     min_max_speech_wait_timeout: List[float] | Tuple[float, float] = field(default_factory=lambda: [0.5, 0.8])
+    backchannel_classification: bool | None = None
 
     def __post_init__(self):
         if not (isinstance(self.min_max_speech_wait_timeout, (list, tuple)) and len(self.min_max_speech_wait_timeout) == 2):
@@ -101,7 +102,7 @@ class RealtimeConfig:
     response_modalities: List[str] | None = None
 
 
-class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "content_generated", "synthesis_complete", "recording_started", "recording_stopped", "recording_failed"]]):
+class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "content_generated", "synthesis_complete", "backchannel_detected", "recording_started", "recording_stopped", "recording_failed"]]):
     """
     Unified Pipeline class supporting multiple component configurations.
     
@@ -499,6 +500,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                 chunker=self.chunker,
                 text_filter=self.text_filter,
                 chunking_language=self.chunking_language,
+                backchannel_classification=self.eou_config.backchannel_classification,
             )
             
             self.orchestrator.on("transcript_ready", self._wrap_async(self._on_transcript_ready_hybrid_stt))
@@ -561,12 +563,14 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                 chunker=self.chunker,
                 text_filter=self.text_filter,
                 chunking_language=self.chunking_language,
+                backchannel_classification=self.eou_config.backchannel_classification,
             )
             
             self.orchestrator.on("transcript_ready", lambda data: self.emit("transcript_ready", data))
             self.orchestrator.on("content_generated", lambda data: self.emit("content_generated", data))
             self.orchestrator.on("synthesis_complete", lambda data: self.emit("synthesis_complete", data))
             self.orchestrator.on("voicemail_result", lambda data: self.emit("voicemail_result", data))
+            self.orchestrator.on("backchannel_detected", lambda data: self.emit("backchannel_detected", data))
     
     def _set_loop_and_audio_track(self, loop: asyncio.AbstractEventLoop, audio_track: CustomAudioStreamTrack) -> None:
         """Set the event loop and audio output track, then configure all pipeline components."""

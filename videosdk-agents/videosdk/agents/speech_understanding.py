@@ -8,7 +8,8 @@ from .event_emitter import EventEmitter
 from .stt.stt import STT, STTResponse, SpeechEventType
 from .vad import VAD, VADResponse, VADEventType
 from .eou import EOU
-from .llm.chat_context import ChatRole
+from .llm.chat_context import ChatContext, ChatRole
+from .utils import TurnResult
 from .denoise import Denoise
 from .metrics import metrics_collector
 from .utils import UserState, AgentState
@@ -19,6 +20,8 @@ if TYPE_CHECKING:
     from .pipeline_hooks import PipelineHooks
 
 logger = logging.getLogger(__name__)
+
+_STT_FLUSH = object()
 
 
 class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript_final", "speech_started", "speech_stopped", "eou_detected"]]):
@@ -43,7 +46,7 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
         mode: Literal["ADAPTIVE", "DEFAULT"] = "DEFAULT",
         min_speech_wait_timeout: float = 0.5,
         max_speech_wait_timeout: float = 0.8,
-        eou_certainty_threshold: float = 0.85,
+        eou_certainty_threshold: float = 0.75,
         hooks: "PipelineHooks | None" = None,
     ) -> None:
         super().__init__()
@@ -81,6 +84,16 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
         self._stt_stream_task: asyncio.Task | None = None
         self._stt_stream_queue: asyncio.Queue | None = None
 
+        self._vad_queue: asyncio.Queue[bytes | None] | None = None
+        self._stt_queue: asyncio.Queue | None = None
+        self._vad_consumer_task: asyncio.Task | None = None
+        self._stt_consumer_task: asyncio.Task | None = None
+        self._vad_queue_max = 50
+        self._stt_queue_max = 100
+        self._vad_dropped = 0
+        self._stt_dropped = 0
+        self._consumers_started = False
+
         # VAD speech context — carries metadata from VAD events for downstream use
         self._last_speech_audio: bytes | None = None
         self._last_speech_confidence: float = 0.0
@@ -90,6 +103,9 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
         self._current_vad_probability: float = 0.0
         self._current_vad_energy: float = 0.0
         self._current_vad_speaking: bool = False
+        
+        # Turn result from the most recent EOU call this turn.
+        self._last_turn_result: TurnResult | None = None
 
         # Setup event handlers
         if self.stt:
@@ -111,44 +127,138 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
         logger.info("SpeechUnderstanding started")
     
     async def process_audio(self, audio_data: bytes) -> None:
-        """
-        Process incoming audio data through denoise, STT, and VAD.
-        
-        Note: speech_in hook is processed at the input stream level before this method.
-        
+        """Denoise the chunk inline, then hand it to the VAD and STT consumers.
+
+        Returns without waiting on inference: the chunk is enqueued onto bounded
+        per-consumer queues that background tasks drain at their own pace, so VAD/STT
+        processing never blocks the room recv loop. The STT-stream-hook path bypasses
+        the queues and feeds its own generator instead.
+
+        Note: the speech_in hook is processed at the input stream level before this method.
+
         Args:
-            audio_data: Raw audio bytes (already processed through speech_in hook)
+            audio_data: Raw audio bytes (already processed through the speech_in hook).
         """
         try:
             if self.hooks and self.hooks.has_stt_stream_hook():
                 if self._stt_stream_task is None:
                     self._stt_stream_queue = asyncio.Queue()
                     self._stt_stream_task = asyncio.create_task(self._run_stt_stream())
-                
+
                 await self._stt_stream_queue.put(audio_data)
                 return
 
             if self.denoise:
-                audio_data = await self.denoise.denoise(audio_data)
+                async with self.denoise_lock:
+                    audio_data = await self.denoise.denoise(audio_data)
 
-            tasks = []
-            if self.stt:
-                async def _stt_process():
-                    async with self.stt_lock:
-                        await self.stt.process_audio(audio_data)
-                tasks.append(_stt_process())
-            if self.vad:
-                tasks.append(self.vad.process_audio(audio_data))
+            if not self._consumers_started:
+                self._start_consumers()
 
-            if tasks:
-                results = await asyncio.gather(*tasks, return_exceptions=True)
-                for r in results:
-                    if isinstance(r, Exception):
-                        logger.error(f"Audio processing component failed: {r}")
+            if self.vad and self._vad_queue is not None:
+                self._enqueue_with_drop_oldest(
+                    self._vad_queue, audio_data, "_vad_dropped", "VAD"
+                )
+
+            if self.stt and self._stt_queue is not None:
+                self._enqueue_with_drop_oldest(
+                    self._stt_queue, audio_data, "_stt_dropped", "STT"
+                )
 
         except Exception as e:
             logger.error(f"Audio processing failed: {str(e)}")
             self.emit("error", f"Audio processing failed: {str(e)}")
+
+    def _enqueue_with_drop_oldest(
+        self, queue: asyncio.Queue, chunk: bytes, counter_attr: str, label: str
+    ) -> None:
+        """Non-blocking enqueue. On overflow, drop the oldest chunk to preserve recent audio."""
+        try:
+            queue.put_nowait(chunk)
+        except asyncio.QueueFull:
+            try:
+                queue.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+            try:
+                queue.put_nowait(chunk)
+            except asyncio.QueueFull:
+                return
+            dropped = getattr(self, counter_attr) + 1
+            setattr(self, counter_attr, dropped)
+            if dropped % 25 == 1:
+                logger.warning(
+                    f"{label} queue overflow: dropped {dropped} chunks so far"
+                )
+
+    def _enqueue_stt_flush(self) -> None:
+        """Queue a flush request behind the audio already buffered for STT."""
+        queue = self._stt_queue
+        if queue is None:
+            return
+        try:
+            queue.put_nowait(_STT_FLUSH)
+        except asyncio.QueueFull:
+            try:
+                queue.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+            try:
+                queue.put_nowait(_STT_FLUSH)
+            except asyncio.QueueFull:
+                pass
+
+    def _start_consumers(self) -> None:
+        """Lazily start VAD/STT consumer tasks on first audio chunk."""
+        if self.vad and self._vad_queue is None:
+            self._vad_queue = asyncio.Queue(maxsize=self._vad_queue_max)
+            self._vad_consumer_task = asyncio.create_task(self._run_vad_consumer())
+        if self.stt and self._stt_queue is None:
+            self._stt_queue = asyncio.Queue(maxsize=self._stt_queue_max)
+            self._stt_consumer_task = asyncio.create_task(self._run_stt_consumer())
+        self._consumers_started = True
+
+    async def _run_vad_consumer(self) -> None:
+        """Drain the VAD queue, forwarding chunks to the configured VAD instance."""
+        queue = self._vad_queue
+        if queue is None:
+            return
+        while True:
+            chunk = await queue.get()
+            if chunk is None:
+                return
+            vad = self.vad
+            if vad is None:
+                continue
+            try:
+                await vad.process_audio(chunk)
+            except asyncio.CancelledError:
+                return
+            except Exception as e:
+                logger.error(f"VAD consumer error: {e}")
+
+    async def _run_stt_consumer(self) -> None:
+        """Drain the STT queue, forwarding chunks (and flush requests) to the STT instance."""
+        queue = self._stt_queue
+        if queue is None:
+            return
+        while True:
+            item = await queue.get()
+            if item is None:
+                return
+            try:
+                async with self.stt_lock:
+                    stt = self.stt
+                    if stt is None:
+                        continue
+                    if item is _STT_FLUSH:
+                        await stt.flush()
+                    else:
+                        await stt.process_audio(item)
+            except asyncio.CancelledError:
+                return
+            except Exception as e:
+                logger.error(f"STT consumer error: {e}")
 
     async def _run_stt_stream(self) -> None:
         """Run the STT stream hook loop"""
@@ -216,7 +326,10 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
 
             try:
                 if self.stt:
-                    await self.stt.flush()
+                    if self._stt_queue is not None:
+                        self._enqueue_stt_flush()
+                    else:
+                        await self.stt.flush()
             except Exception as e:
                 logger.error(f"Error flushing STT: {e}")
             metrics_collector.on_user_speech_end()
@@ -295,7 +408,8 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
                     "text": text,
                     "is_preemptive": True,
                     "confidence": confidence,
-                    "metadata": stt_response.metadata
+                    "metadata": stt_response.metadata,
+                    "turn_state": None,
                 })
             else:
                 await self._process_transcript_with_eou(text)
@@ -337,29 +451,30 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
                 self._accumulated_transcript += " " + new_transcript
             else:
                 self._accumulated_transcript = new_transcript
-            
+
             delay = self.min_speech_wait_timeout
-            
-            if self.mode == 'DEFAULT':
-                if self.turn_detector and self.agent:
-                    metrics_collector.on_eou_start()
-                    eou_probability = await asyncio.to_thread(
-                        self.turn_detector.get_eou_probability, self.agent.chat_context
-                    )
-                    metrics_collector.on_eou_complete()
-                    logger.info(f"EOU probability: {eou_probability}")
+            self._last_turn_result = None
+
+            if self.turn_detector and self.agent:
+                eou_context = ChatContext(items=list(self.agent.chat_context.items))
+                eou_context.add_message(
+                    role=ChatRole.USER, content=self._accumulated_transcript
+                )
+
+                metrics_collector.on_eou_start()
+                result = await asyncio.to_thread(
+                    self.turn_detector.get_turn_result, eou_context
+                )
+                metrics_collector.on_eou_complete()
+                self._last_turn_result = result
+                eou_probability = result.eou_probability
+                logger.info(f"EOU probability: {eou_probability} (state={result.state})")
+
+                if self.mode == 'DEFAULT':
                     if eou_probability < self.eou_certainty_threshold:
                         delay = self.max_speech_wait_timeout
                     metrics_collector.on_wait_for_additional_speech(delay, eou_probability)
-
-            elif self.mode == 'ADAPTIVE':
-                if self.turn_detector and self.agent:
-                    metrics_collector.on_eou_start()
-                    eou_probability = await asyncio.to_thread(
-                        self.turn_detector.get_eou_probability, self.agent.chat_context
-                    )
-                    metrics_collector.on_eou_complete()
-                    logger.info(f"EOU probability: {eou_probability}")
+                elif self.mode == 'ADAPTIVE':
                     delay_range = self.max_speech_wait_timeout - self.min_speech_wait_timeout
                     wait_factor = 1.0 - eou_probability
                     delay = self.min_speech_wait_timeout + (delay_range * wait_factor)
@@ -414,13 +529,18 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
         
         final_transcript = self._accumulated_transcript.strip()
         logger.info(f"Finalizing transcript: '{final_transcript}'")
-        
+
+        result = self._last_turn_result
+        turn_state = result.state.value if result and result.state else None
+
         self._accumulated_transcript = ""
-        
+        self._last_turn_result = None
+
         self.emit("transcript_final", {
             "text": final_transcript,
             "is_preemptive": False,
-            "eou_detected": True
+            "eou_detected": True,
+            "turn_state": turn_state,
         })
         
         self.emit("eou_detected", {
@@ -435,7 +555,8 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
 
         self._record_wait_elapsed()
         self._waiting_for_more_speech = False
-    
+        self._last_turn_result = None
+
     async def _handle_turn_resumed(self, resumed_text: str) -> None:
         """Handle TurnResumed event (user continued speaking)"""
         if self._accumulated_transcript:
@@ -490,11 +611,40 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
             self._stt_stream_task = None
             self._stt_stream_queue = None
 
+        for queue in (self._vad_queue, self._stt_queue):
+            if queue is None:
+                continue
+            try:
+                queue.put_nowait(None)
+            except asyncio.QueueFull:
+                try:
+                    queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
+                try:
+                    queue.put_nowait(None)
+                except asyncio.QueueFull:
+                    pass
+
+        for task_attr in ("_vad_consumer_task", "_stt_consumer_task"):
+            task = getattr(self, task_attr)
+            if task and not task.done():
+                try:
+                    await asyncio.wait_for(task, timeout=1.0)
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    task.cancel()
+            setattr(self, task_attr, None)
+
+        self._vad_queue = None
+        self._stt_queue = None
+        self._consumers_started = False
+
         if self._wait_timer:
             self._wait_timer.cancel()
             self._wait_timer = None
 
         self._accumulated_transcript = ""
+        self._last_turn_result = None
         self._waiting_for_more_speech = False
         self._wait_started_at = None
         self._preemptive_transcript = None

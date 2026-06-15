@@ -946,3 +946,93 @@ def reset_metrics_formatter_state() -> None:
     suppressed by the flag that latched during the first turn.
     """
     format_metrics._is_first = True   
+class TurnState(enum.Enum):
+    """Classification of a completed user-utterance window.Only For TurnV2.
+
+    - ``COMPLETE``    — user finished a thought; the agent should respond.
+    - ``INCOMPLETE``  — user paused mid-thought; keep waiting for more speech.
+    - ``BACKCHANNEL`` — acknowledgement ("uh-huh", "right") while the agent is
+      speaking; do NOT interrupt and do NOT respond.
+    - ``WAIT``        — explicit hold/stop ("wait", "hold on"); interrupt the
+      agent immediately but do not generate a reply.
+
+    The enum values equal the turn server's wire strings.
+    """
+
+    COMPLETE = "Complete"
+    INCOMPLETE = "Incomplete"
+    BACKCHANNEL = "Backchannel"
+    WAIT = "Wait"
+
+    @classmethod
+    def from_wire(cls, raw: Optional[str]) -> Optional["TurnState"]:
+        """Map a raw wire string to a :class:`TurnState` (``None`` if unknown)."""
+        if raw is None:
+            return None
+        try:
+            return cls(raw)
+        except ValueError:
+            return None
+
+
+@dataclass(frozen=True)
+class TurnResult:
+    """Structured result of a turn-detection call.
+
+    ``eou_probability`` is always present so the wait-delay math keeps working
+    for every detector; ``state`` is populated only by detectors that classify
+    the four turn states (``None`` otherwise, including on error).
+    """
+
+    state: Optional[TurnState]
+    eou_probability: float
+    finalizes_turn: bool
+    raw_state: Optional[str] = None
+    latency_ms: Optional[int] = None
+    model_id: Optional[str] = None
+
+
+def is_backchannel_aware(detector: object) -> bool:
+    """Return True if ``detector`` advertises 4-state turn classification."""
+    return bool(getattr(detector, "supports_backchannel_classification", False))
+
+class TurnAction(enum.Enum):
+    """What the pipeline should do given a classified turn."""
+
+    PROCEED = "proceed"
+    """Run the existing logic unchanged (legacy word-count interrupt / respond)."""
+
+    IGNORE_BACKCHANNEL = "ignore_backchannel"
+    """Drop the utterance: no interrupt, no user message, no response."""
+
+    INTERRUPT_STOP = "interrupt_stop"
+    """Stop the agent immediately, but do not generate a reply (explicit "wait")."""
+
+
+@dataclass(frozen=True)
+class TurnDecisionInput:
+    turn_state: Optional[TurnState]
+    agent_active: bool
+    word_count: int
+    interrupt_min_words: int
+    backchannel_aware: bool
+
+
+def decide_turn_action(inp: TurnDecisionInput) -> TurnAction:
+    """Decide the action for a finalized transcript. Pure function.
+
+    Backchannel and Wait only have meaning WHILE the agent is speaking: a
+    backchannel is an acknowledgement OF agent speech, and "wait/stop" needs
+    agent speech to stop. When the agent is idle the utterance is ordinary user
+    input, so fall through to the normal pipeline (PROCEED).
+    """
+    if not inp.backchannel_aware or inp.turn_state is None:
+        return TurnAction.PROCEED
+    if not inp.agent_active:
+        return TurnAction.PROCEED
+    if inp.turn_state is TurnState.BACKCHANNEL:
+        return TurnAction.IGNORE_BACKCHANNEL
+    if inp.turn_state is TurnState.WAIT:
+        return TurnAction.INTERRUPT_STOP
+    return TurnAction.PROCEED
+    
