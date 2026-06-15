@@ -27,6 +27,8 @@ from .job import (
     RunningJobInfo,
     _set_current_job_context,
     _reset_current_job_context,
+    _enter_session_scope,
+    _exit_session_scope,
 )
 from .backend import (
     BackendConnection,
@@ -73,8 +75,11 @@ async def _execute_job_entrypoint(
 
         ctx.notify_meeting_joined = _notify_with_mp_event
 
-    # Set context var
+    # Set context var + per-session metrics/event scope (this executor slot runs
+    # one job; a thread executor can run several jobs in one process, so the scope
+    # keeps their metrics collector + event bus isolated).
     token = _set_current_job_context(ctx)
+    session_token = _enter_session_scope()
     try:
         # Wrap in a task so the watchdog can cancel it
         entrypoint_task = asyncio.ensure_future(entrypoint(ctx))
@@ -85,6 +90,10 @@ async def _execute_job_entrypoint(
         logger.error(f"Error in job entrypoint: {e}")
         raise
     finally:
+        try:
+            _exit_session_scope(session_token)
+        except Exception:
+            pass
         try:
             _reset_current_job_context(token)
         except ValueError:

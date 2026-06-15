@@ -15,7 +15,7 @@ from .event_bus import global_event_emitter
 from .background_audio import BackgroundAudioHandler,BackgroundAudioHandlerConfig
 from .dtmf_handler import DTMFHandler
 from .voice_mail_detector import VoiceMailDetector
-from .metrics import metrics_collector
+from .metrics import metrics_collector, get_current_metrics_collector
 import logging
 import av
 
@@ -57,6 +57,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         self.wake_up = wake_up
         self.on_wake_up: Optional[Callable[[], None] | Callable[[], Any]] = None
         self._wake_up_task: Optional[asyncio.Task] = None
+        self._session_metrics_collector = get_current_metrics_collector()
         self._wake_up_timer_active = False
         self._closed: bool = False
         self._reply_in_progress: bool = False
@@ -251,6 +252,10 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             )
             ```
         """
+        # Re-pin the per-session collector resolved in THIS task (covers the case
+        # where __init__ ran outside the session scope).
+        self._session_metrics_collector = get_current_metrics_collector()
+
         if observability is not None:
             ctx = None
             try:
@@ -300,38 +305,38 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             await self.dtmf_handler.start()
 
         # Configure metrics with session info
-        metrics_collector.set_system_instructions(self.agent.instructions)
+        self._session_metrics_collector.set_system_instructions(self.agent.instructions)
 
         # Set provider info based on pipeline components
 
         if not self.pipeline.config.is_realtime:
             if self.pipeline.stt:
                 p_class, p_model = self._get_provider_info(self.pipeline.stt, 'stt')
-                metrics_collector.set_provider_info("stt", p_class, p_model)
+                self._session_metrics_collector.set_provider_info("stt", p_class, p_model)
             if self.pipeline.llm:
                 p_class, p_model = self._get_provider_info(self.pipeline.llm, 'llm')
-                metrics_collector.set_provider_info("llm", p_class, p_model)
+                self._session_metrics_collector.set_provider_info("llm", p_class, p_model)
             if self.pipeline.tts:
                 p_class, p_model = self._get_provider_info(self.pipeline.tts, 'tts')
-                metrics_collector.set_provider_info("tts", p_class, p_model)
+                self._session_metrics_collector.set_provider_info("tts", p_class, p_model)
             if hasattr(self.pipeline, 'vad') and self.pipeline.vad:
                 p_class, p_model = self._get_provider_info(self.pipeline.vad, 'vad')
-                metrics_collector.set_provider_info("vad", p_class, p_model)
+                self._session_metrics_collector.set_provider_info("vad", p_class, p_model)
             if hasattr(self.pipeline, 'turn_detector') and self.pipeline.turn_detector:
                 p_class, p_model = self._get_provider_info(self.pipeline.turn_detector, 'eou')
-                metrics_collector.set_provider_info("eou", p_class, p_model)
+                self._session_metrics_collector.set_provider_info("eou", p_class, p_model)
         else:
             if self.pipeline._realtime_model:
-                metrics_collector.set_provider_info("realtime", format_provider_class(self.pipeline._realtime_model), getattr(self.pipeline._realtime_model, 'model', ''))
+                self._session_metrics_collector.set_provider_info("realtime", format_provider_class(self.pipeline._realtime_model), getattr(self.pipeline._realtime_model, 'model', ''))
             if self.pipeline.stt:
                 p_class, p_model = self._get_provider_info(self.pipeline.stt, 'stt')
-                metrics_collector.set_provider_info("stt", p_class, p_model)
+                self._session_metrics_collector.set_provider_info("stt", p_class, p_model)
             if self.pipeline.tts:
                 p_class, p_model = self._get_provider_info(self.pipeline.tts, 'tts')
-                metrics_collector.set_provider_info("tts", p_class, p_model)
+                self._session_metrics_collector.set_provider_info("tts", p_class, p_model)
 
         # Traces flow manager setup
-        traces_flow_manager = metrics_collector.traces_flow_manager
+        traces_flow_manager = self._session_metrics_collector.traces_flow_manager
         if traces_flow_manager:
             config_attributes = {
                 "system_instructions": self.agent.instructions,
@@ -348,7 +353,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
                 ] if self.agent.mcp_manager else [],
                 "pipeline": self.pipeline.__class__.__name__,
                 "pipeline_mode": self.pipeline.config.pipeline_mode.value,
-                "transport_mode": metrics_collector.transport_mode
+                "transport_mode": self._session_metrics_collector.transport_mode
             }
             start_time = time.perf_counter()
             config_attributes["start_time"] = start_time
@@ -452,7 +457,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
                 self.current_utterance.interrupt()
             self.current_utterance = handle
 
-        traces_flow_manager = metrics_collector.traces_flow_manager
+        traces_flow_manager = self._session_metrics_collector.traces_flow_manager
         if traces_flow_manager:
             traces_flow_manager.agent_say_called(message)
 
@@ -490,7 +495,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             
             await self._background_audio_player.start()
             # Track background audio start for metrics
-            metrics_collector.on_background_audio_start(
+            self._session_metrics_collector.on_background_audio_start(
                 file_path=config.file_path,
                 looping=config.looping
             )
@@ -502,7 +507,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             await self._background_audio_player.stop()
             self._background_audio_player = None
             # Track background audio stop for metrics
-            metrics_collector.on_background_audio_stop()
+            self._session_metrics_collector.on_background_audio_stop()
 
         self._override_thinking = False
 
@@ -545,7 +550,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             self._thinking_audio_player = BackgroundAudioHandler(self.agent._thinking_background_config, audio_track)
             await self._thinking_audio_player.start()
             # Track thinking audio start for metrics
-            metrics_collector.on_thinking_audio_start(
+            self._session_metrics_collector.on_thinking_audio_start(
                 file_path=self.agent._thinking_background_config.file_path,
                 looping=self.agent._thinking_background_config.looping
             )
@@ -556,7 +561,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
             await self._thinking_audio_player.stop()
             self._thinking_audio_player = None
             # Track thinking audio stop for metrics
-            metrics_collector.on_thinking_audio_stop()
+            self._session_metrics_collector.on_thinking_audio_stop()
     
 
     async def reply(self, instructions: str, wait_for_playback: bool = True, frames: list[av.VideoFrame] | None = None, interruptible: bool = True) -> UtteranceHandle:
@@ -664,8 +669,8 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         self._closed = True
         self._emit_agent_state(AgentState.CLOSING)
 
-        metrics_collector.finalize_session()
-        traces_flow_manager = metrics_collector.traces_flow_manager
+        self._session_metrics_collector.finalize_session()
+        traces_flow_manager = self._session_metrics_collector.traces_flow_manager
         if traces_flow_manager:
             start_time = time.perf_counter()
             await traces_flow_manager.start_agent_session_closed({"start_time": start_time})
@@ -699,6 +704,7 @@ class AgentSession(EventEmitter[Literal["user_state_changed", "agent_state_chang
         self.pipeline = None
         self.on_wake_up = None
         self._wake_up_task = None
+        self._session_metrics_collector = None
         logger.info("Agent session cleaned up")
 
     async def leave(self) -> None:

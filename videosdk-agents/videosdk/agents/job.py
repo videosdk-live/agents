@@ -496,11 +496,14 @@ class WorkerJob:
                 else:
                     job_context = self.jobctx
 
-                # Set the current job context and run the entrypoint
+                # Set the current job context + per-session metrics/event scope,
+                # then run the entrypoint.
                 token = _set_current_job_context(job_context)
+                session_token = _enter_session_scope()
                 try:
                     asyncio.run(self.entrypoint(job_context))
                 finally:
+                    _exit_session_scope(session_token)
                     _reset_current_job_context(token)
             else:
                 # No job context provided, run worker normally
@@ -1021,6 +1024,39 @@ def _set_current_job_context(ctx: "JobContext") -> Any:
 def _reset_current_job_context(token: Any) -> None:
     """Reset the current job context (used by Worker)"""
     _current_job_context.reset(token)
+
+
+def _enter_session_scope() -> Any:
+    """Bind fresh per-session metrics collector + event bus to the current context.
+
+    Call at a TRUE session boundary (one agent call), inside the same task that
+    builds the pipeline/agent — so every component registers handlers on the
+    session bus and runtime tasks snapshot the right instances. Returns an opaque
+    token for ``_exit_session_scope``. Multi-session hosts run many sessions in one
+    process, so this keeps their metrics/events isolated; single-session usage just
+    gets a fresh scope harmlessly.
+
+    NOTE: deliberately separate from ``_set_current_job_context`` so warm-transfer
+    briefing sub-contexts (which re-set the job context) do NOT spawn throwaway
+    metrics/event scopes.
+    """
+    from .metrics import new_session_metrics_collector, set_current_metrics_collector
+    from .event_bus import new_session_event_bus, set_current_event_bus
+
+    m_token = set_current_metrics_collector(new_session_metrics_collector())
+    e_token = set_current_event_bus(new_session_event_bus())
+    return (m_token, e_token)
+
+
+def _exit_session_scope(token: Any) -> None:
+    """Reset the per-session metrics collector + event bus. Must run in the same
+    task that called ``_enter_session_scope`` (ContextVar token semantics)."""
+    from .metrics import reset_current_metrics_collector
+    from .event_bus import reset_current_event_bus
+
+    m_token, e_token = token
+    reset_current_metrics_collector(m_token)
+    reset_current_event_bus(e_token)
 
 
 @unique
