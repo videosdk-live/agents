@@ -66,17 +66,6 @@ _RETRYABLE_CODES = frozenset({
     grpc.StatusCode.INTERNAL,
 })
 
-TURN_STATE_INCOMPLETE = "Incomplete"
-TURN_STATE_COMPLETE = "Complete"
-TURN_STATE_BACKCHANNEL = "Backchannel"
-TURN_STATE_WAIT = "Wait"
-
-_KNOWN_TURN_STATES: frozenset[str] = frozenset(
-    {TURN_STATE_INCOMPLETE, TURN_STATE_COMPLETE, TURN_STATE_BACKCHANNEL, TURN_STATE_WAIT}
-)
-
-_FINALIZING_TURN_STATES: frozenset[str] = frozenset({TURN_STATE_COMPLETE})
-
 class Turn(EOU):
     """
     VideoSDK Inference Gateway Turn Detection Plugin.
@@ -450,7 +439,6 @@ class TurnV2(EOU):
         host: ``host:port`` of the turn server. Falls back to the
             ``VIDEOSDK_TURN_GRPC_HOST`` env var, then to
             ``inference-gateway.videosdk.live:50053``.
-        threshold: EOU probability threshold (default ``0.7``).
         timeout: Per-request timeout in seconds (default ``2.0``).
         token: Bearer token for the ``authorization`` metadata header.
             Falls back to the ``VIDEOSDK_AUTH_TOKEN`` env var. If unset,
@@ -465,11 +453,10 @@ class TurnV2(EOU):
         *,
         model_id: str = "echo-small",
         host: Optional[str] = None,
-        threshold: float = 0.7,
         timeout: float = DEFAULT_GRPC_TIMEOUT_SECONDS,
         token: Optional[str] = None,
     ) -> None:
-        super().__init__(threshold=threshold)
+        super().__init__()
         self.model_id = model_id
         self.host = host or os.getenv("VIDEOSDK_TURN_GRPC_HOST") or DEFAULT_GRPC_HOST
         self.timeout = timeout
@@ -482,38 +469,29 @@ class TurnV2(EOU):
         self._channel: Optional[grpc.Channel] = None
         self._stub: Optional[turn_detection_pb2_grpc.TurnDetectionStub] = None
         self._stub_lock = threading.Lock()
-        self._last_state: Optional[str] = None
-
-        threading.Thread(
-            target=self._warmup, name="TurnV2-warmup", daemon=True
-        ).start()
 
     @staticmethod
     def echo_small(
         *,
         host: Optional[str] = None,
-        threshold: float = 0.7,
         timeout: float = DEFAULT_GRPC_TIMEOUT_SECONDS,
         token: Optional[str] = None,
     ) -> "TurnV2":
         """ONNX-based echo-small turn detector."""
         return TurnV2(
-            model_id="echo-small", host=host, threshold=threshold,
-            timeout=timeout, token=token,
+            model_id="echo-small", host=host, timeout=timeout, token=token,
         )
 
     @staticmethod
     def echo_large(
         *,
         host: Optional[str] = None,
-        threshold: float = 0.7,
         timeout: float = DEFAULT_GRPC_TIMEOUT_SECONDS,
         token: Optional[str] = None,
     ) -> "TurnV2":
         """Higher-accuracy echo-large turn detector."""
         return TurnV2(
-            model_id="echo-large", host=host, threshold=threshold,
-            timeout=timeout, token=token,
+            model_id="echo-large", host=host, timeout=timeout, token=token,
         )
 
     def _format_chat_ctx(self, chat_context: ChatContext) -> str:
@@ -560,16 +538,14 @@ class TurnV2(EOU):
         legacy behavior). ``eou_probability`` stays binary (1.0 for Complete,
         0.0 otherwise) for back-compat with the wait-delay logic.
         """
-        self._last_state = None
         text = self._format_chat_ctx(chat_context)
         if not text:
-            return TurnResult(state=None, eou_probability=0.0, finalizes_turn=False)
+            return TurnResult(state=None, eou_probability=0.0)
 
         response = self._predict(text)
         if response is None:
-            return TurnResult(state=None, eou_probability=0.0, finalizes_turn=False)
+            return TurnResult(state=None, eou_probability=0.0)
 
-        self._last_state = response.state
         state = TurnState.from_wire(response.state)
         logger.info(f"[TurnV2] state={response.state!r} for text={text!r}")
         if state is None:
@@ -580,34 +556,10 @@ class TurnV2(EOU):
         return TurnResult(
             state=state,
             eou_probability=1.0 if finalizes else 0.0,
-            finalizes_turn=finalizes,
-            raw_state=response.state,
-            latency_ms=getattr(response, "latency_ms", None) or None,
-            model_id=getattr(response, "model_id", None) or None,
         )
 
     def get_eou_probability(self, chat_context: ChatContext) -> float:
         return self.get_turn_result(chat_context).eou_probability
-
-    @property
-    def last_state(self) -> Optional[str]:
-        """Raw state from the last successful Predict, or None.
-        One of ``Incomplete | Complete | Backchannel | Wait``."""
-        return self._last_state
-
-    @staticmethod
-    def _state_to_probability(state: str) -> float:
-        """Map state label to the binary EOU probability.
-
-        Only ``Complete`` finalizes the turn (1.0). ``Incomplete``,
-        ``Backchannel`` and ``Wait`` all return 0.0
-        """
-        if state in _FINALIZING_TURN_STATES:
-            return 1.0
-        if state in _KNOWN_TURN_STATES:
-            return 0.0
-        logger.warning(f"[TurnV2] Unknown state {state!r} — treating as incomplete")
-        return 0.0
 
     def _get_stub(self) -> turn_detection_pb2_grpc.TurnDetectionStub:
         if self._stub is None:
@@ -629,16 +581,6 @@ class TurnV2(EOU):
                     logger.debug(f"[TurnV2] error closing channel: {e}")
             self._channel = None
             self._stub = None
-
-    def _warmup(self) -> None:
-        try:
-            stub = self._get_stub()
-            stub.Health(turn_detection_pb2.HealthRequest(), timeout=self.timeout)
-            logger.info(
-                f"[TurnV2] warmup OK (host={self.host}, model={self.model_id})"
-            )
-        except Exception:
-            pass
 
     async def aclose(self) -> None:
         self._reset_channel()
