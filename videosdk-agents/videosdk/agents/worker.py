@@ -27,6 +27,8 @@ from .job import (
     RunningJobInfo,
     _set_current_job_context,
     _reset_current_job_context,
+    _enter_session_scope,
+    _exit_session_scope,
 )
 from .backend import (
     BackendConnection,
@@ -60,10 +62,6 @@ async def _execute_job_entrypoint(
 ):
     """Execute job entrypoint in a separate process/thread."""
 
-    if agent_id:
-        from .metrics import metrics_collector
-        metrics_collector.analytics_client.set_agent_id(agent_id)
-
     # Create job context
     ctx = JobContext(room_options=room_options, metadata=metadata)
     ctx._wait_for_meeting_join = wait_for_meeting_join
@@ -78,8 +76,12 @@ async def _execute_job_entrypoint(
 
         ctx.notify_meeting_joined = _notify_with_mp_event
 
-    # Set context var
+    # Set context var + per-session metrics/event scope
     token = _set_current_job_context(ctx)
+    session_token = _enter_session_scope()
+    if agent_id:
+        from .metrics import metrics_collector
+        metrics_collector.analytics_client.set_agent_id(agent_id)
     try:
         # Wrap in a task so the watchdog can cancel it
         entrypoint_task = asyncio.ensure_future(entrypoint(ctx))
@@ -90,6 +92,10 @@ async def _execute_job_entrypoint(
         logger.error(f"Error in job entrypoint: {e}")
         raise
     finally:
+        try:
+            _exit_session_scope(session_token)
+        except Exception:
+            pass
         try:
             _reset_current_job_context(token)
         except ValueError:
