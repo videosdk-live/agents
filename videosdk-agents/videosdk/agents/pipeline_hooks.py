@@ -45,9 +45,10 @@ class PipelineHooks:
         self._user_turn_end_hooks: list[Callable[[], Awaitable[None]]] = []
         self._agent_turn_start_hooks: list[Callable[[], Awaitable[None]]] = []
         self._agent_turn_end_hooks: list[Callable[[], Awaitable[None]]] = []
+        self._turn_state_hooks: list[Callable[[dict], Awaitable[None]]] = []
     def on(
         self,
-        event: Literal["stt", "tts", "llm", "vision_frame", "user_turn_start", "user_turn_end", "agent_turn_start", "agent_turn_end", "error", "recording_started", "recording_stopped", "recording_failed"]
+        event: Literal["stt", "tts", "llm", "vision_frame", "user_turn_start", "user_turn_end", "agent_turn_start", "agent_turn_end", "turn_state", "error", "recording_started", "recording_stopped", "recording_failed"]
     ) -> Callable:
         """
         Decorator to register a hook for a specific event.
@@ -76,6 +77,17 @@ class PipelineHooks:
             async def on_user_turn_start(transcript: str) -> None:
                 '''Log when user starts speaking'''
                 print(f"User said: {transcript}")
+
+            @pipeline.on("turn_state")
+            async def on_turn_state(data: dict) -> None:
+                '''Observe a backchannel-aware detector's classification (TurnV2 only).
+
+                data = {"text": str, "state": "Complete" | "Incomplete" |
+                        "Backchannel" | "Wait" | None, "eou_probability": float}
+                Fires once per EOU evaluation (observation only). Does not fire for
+                the base Turn/TurnDetector, which only emit Complete/Incomplete.
+                '''
+                print(f"Turn state: {data['state']}")
 
             @pipeline.on("llm")
             async def strip_markdown(text_stream):
@@ -118,6 +130,8 @@ class PipelineHooks:
                 self._agent_turn_start_hooks.append(func)
             elif event == "agent_turn_end":
                 self._agent_turn_end_hooks.append(func)
+            elif event == "turn_state":
+                self._turn_state_hooks.append(func)
             else:
                 raise ValueError(f"Unknown event: {event}")
 
@@ -194,7 +208,22 @@ class PipelineHooks:
                 await hook()
             except Exception as e:
                 logger.error(f"Error in agent_turn_end hook: {e}", exc_info=True)
-                
+
+    async def trigger_turn_state(self, data: dict) -> None:
+        """
+        Trigger all turn_state hooks.
+
+        Args:
+            data: Dictionary with "text", "state", and "eou_probability" keys
+                describing the turn detector's classification of the current
+                utterance.
+        """
+        for hook in self._turn_state_hooks:
+            try:
+                await hook(data)
+            except Exception as e:
+                logger.error(f"Error in turn_state hook: {e}", exc_info=True)
+
     def has_vision_frame_hooks(self) -> bool:
         """Check if any vision_frame hooks are registered."""
         return len(self._vision_frame_hooks) > 0
@@ -222,6 +251,10 @@ class PipelineHooks:
     def has_agent_turn_end_hooks(self) -> bool:
         """Check if any agent_turn_end hooks are registered."""
         return len(self._agent_turn_end_hooks) > 0
+
+    def has_turn_state_hooks(self) -> bool:
+        """Check if any turn_state hooks are registered."""
+        return len(self._turn_state_hooks) > 0
 
     async def trigger_llm(self, data: dict) -> str | None:
         """
@@ -347,6 +380,7 @@ class PipelineHooks:
         self._user_turn_end_hooks.clear()
         self._agent_turn_start_hooks.clear()
         self._agent_turn_end_hooks.clear()
+        self._turn_state_hooks.clear()
         logger.info("Cleared all pipeline hooks")
 
 class PipelineMetricsHooks:

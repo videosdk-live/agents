@@ -403,7 +403,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
     
     def on(
         self,
-        event: Literal["speech_in", "speech_out", "stt", "llm", "tts", "vision_frame", "user_turn_start", "user_turn_end", "agent_turn_start", "agent_turn_end"] | str,
+        event: Literal["speech_in", "speech_out", "stt", "llm", "tts", "vision_frame", "user_turn_start", "user_turn_end", "agent_turn_start", "agent_turn_end", "turn_state"] | str,
         callback: Callable | None = None
     ) -> Callable:
         """
@@ -420,6 +420,10 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         - user_turn_end: Called when user turn ends
         - agent_turn_start: Called when agent processing starts
         - agent_turn_end: Called when agent finishes speaking
+        - turn_state: Called on every classification of a user utterance by a
+          backchannel-aware turn detector (TurnV2 only). Receives a dict
+          {"text", "state", "eou_probability"} where state is
+          "Complete"/"Incomplete"/"Backchannel"/"Wait"/None. Observation only.
 
         Supported events (listener):
         - transcript_ready
@@ -436,7 +440,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                 text = data.get("text", "")
                 yield text.replace("SSN", "[REDACTED]")
         """
-        if event in ["stt", "tts", "llm", "vision_frame", "user_turn_start", "user_turn_end", "agent_turn_start", "agent_turn_end"]:
+        if event in ["stt", "tts", "llm", "vision_frame", "user_turn_start", "user_turn_end", "agent_turn_start", "agent_turn_end", "turn_state"]:
             return self.hooks.on(event)(callback) if callback else self.hooks.on(event)
             
         return super().on(event, callback)

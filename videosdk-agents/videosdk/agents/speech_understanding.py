@@ -9,7 +9,7 @@ from .stt.stt import STT, STTResponse, SpeechEventType
 from .vad import VAD, VADResponse, VADEventType
 from .eou import EOU
 from .llm.chat_context import ChatContext, ChatRole
-from .utils import TurnResult, TurnState
+from .utils import TurnResult, TurnState, is_backchannel_aware
 from .denoise import Denoise
 from .metrics import metrics_collector
 from .utils import UserState, AgentState
@@ -469,6 +469,17 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
                 self._last_turn_result = result
                 eou_probability = result.eou_probability
                 logger.info(f"EOU probability: {eou_probability} (state={result.state})")
+
+                if (
+                    self.hooks
+                    and self.hooks.has_turn_state_hooks()
+                    and is_backchannel_aware(self.turn_detector)
+                ):
+                    asyncio.create_task(self.hooks.trigger_turn_state({
+                        "text": self._accumulated_transcript,
+                        "state": result.state.value if result.state else None,
+                        "eou_probability": eou_probability,
+                    }))
 
                 if result.state in (TurnState.WAIT, TurnState.BACKCHANNEL):
                     delay = 0.0

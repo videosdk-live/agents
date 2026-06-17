@@ -70,6 +70,16 @@ async def entrypoint(ctx: JobContext):
         turn_detector=TurnV2.echo_large(),   # or TurnV2.echo_small() for lower latency
     )
 
+    # Observe the turn detector's classification of each user utterance.
+    # This hook is TurnV2-only — it fires for backchannel-aware detectors that
+    # emit the full 4-state classification (Complete / Incomplete / Backchannel /
+    # Wait).
+    @pipeline.on("turn_state")
+    async def on_turn_state(data: dict):
+        # data = {"text": str, "state": "Complete" | "Incomplete" |
+        #         "Backchannel" | "Wait" }
+        print(f"[TURN] state={data['state']} text={data['text']!r}")
+
     session = AgentSession(
         agent=agent,
         pipeline=pipeline,
