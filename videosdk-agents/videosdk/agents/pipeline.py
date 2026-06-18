@@ -57,6 +57,7 @@ class EOUConfig:
     """Configuration for end-of-utterance detection behavior and speech wait timeouts."""
     mode: Literal["ADAPTIVE", "DEFAULT"] = "DEFAULT"
     min_max_speech_wait_timeout: List[float] | Tuple[float, float] = field(default_factory=lambda: [0.5, 0.8])
+    eou_certainty_threshold: float = 0.75
     backchannel_classification: bool | None = None
 
     def __post_init__(self):
@@ -276,8 +277,10 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         return text_filter or BasicTextFilter.for_language(language)
 
     def _setup_global_listeners(self) -> None:
-        from .event_bus import global_event_emitter
-        
+        from .event_bus import get_current_event_bus
+
+        self._event_bus = get_current_event_bus()
+
         def handle_metric(data):
             if hasattr(self, 'loop') and self.loop and self.loop.is_running():
                 import asyncio
@@ -289,10 +292,10 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                     loop.create_task(self.metrics.trigger(data.get("component"), data.get("metrics")))
                 except RuntimeError:
                     pass
-        
-        global_event_emitter.on("COMPONENT_METRIC", handle_metric)
-        global_event_emitter.on("PIPELINE_ERROR", lambda data: self.emit("error", data))
-        
+        self._on_component_metric = handle_metric
+
+        self._on_pipeline_error = lambda data: self.emit("error", data)
+
         def handle_recording(data):
             status = data.get("status")
             if status == "started":
@@ -301,7 +304,11 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                 self.emit("recording_stopped", data)
             elif status == "failed":
                 self.emit("recording_failed", data)
-        global_event_emitter.on("RECORDING_STATUS", handle_recording)
+        self._on_recording_status = handle_recording
+
+        self._event_bus.on("COMPONENT_METRIC", self._on_component_metric)
+        self._event_bus.on("PIPELINE_ERROR", self._on_pipeline_error)
+        self._event_bus.on("RECORDING_STATUS", self._on_recording_status)
 
     def _auto_register(self) -> None:
         """Automatically register this pipeline with the current job context"""
@@ -396,7 +403,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
     
     def on(
         self,
-        event: Literal["speech_in", "speech_out", "stt", "llm", "tts", "vision_frame", "user_turn_start", "user_turn_end", "agent_turn_start", "agent_turn_end"] | str,
+        event: Literal["speech_in", "speech_out", "stt", "llm", "tts", "vision_frame", "user_turn_start", "user_turn_end", "agent_turn_start", "agent_turn_end", "turn_state"] | str,
         callback: Callable | None = None
     ) -> Callable:
         """
@@ -413,6 +420,10 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         - user_turn_end: Called when user turn ends
         - agent_turn_start: Called when agent processing starts
         - agent_turn_end: Called when agent finishes speaking
+        - turn_state: Called on every classification of a user utterance by a
+          backchannel-aware turn detector (TurnV2 only). Receives a dict
+          {"text", "state", "eou_probability"} where state is
+          "Complete"/"Incomplete"/"Backchannel"/"Wait"/None. Observation only.
 
         Supported events (listener):
         - transcript_ready
@@ -429,7 +440,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                 text = data.get("text", "")
                 yield text.replace("SSN", "[REDACTED]")
         """
-        if event in ["stt", "tts", "llm", "vision_frame", "user_turn_start", "user_turn_end", "agent_turn_start", "agent_turn_end"]:
+        if event in ["stt", "tts", "llm", "vision_frame", "user_turn_start", "user_turn_end", "agent_turn_start", "agent_turn_end", "turn_state"]:
             return self.hooks.on(event)(callback) if callback else self.hooks.on(event)
             
         return super().on(event, callback)
@@ -486,6 +497,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                 avatar=None,
                 mode=self.eou_config.mode,
                 min_speech_wait_timeout=self.eou_config.min_max_speech_wait_timeout,
+                eou_certainty_threshold=self.eou_config.eou_certainty_threshold,
                 interrupt_mode=self.interrupt_config.mode,
                 interrupt_min_duration=self.interrupt_config.interrupt_min_duration,
                 interrupt_min_words=self.interrupt_config.interrupt_min_words,
@@ -549,6 +561,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
                 avatar=self.avatar,
                 mode=self.eou_config.mode,
                 min_speech_wait_timeout=self.eou_config.min_max_speech_wait_timeout,
+                eou_certainty_threshold=self.eou_config.eou_certainty_threshold,
                 interrupt_mode=self.interrupt_config.mode,
                 interrupt_min_duration=self.interrupt_config.interrupt_min_duration,
                 interrupt_min_words=self.interrupt_config.interrupt_min_words,
@@ -1407,7 +1420,18 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
     async def cleanup(self) -> None:
         """Release all pipeline resources, close components, and reset internal state."""
         logger.info("Cleaning up pipeline")
-        
+
+        bus = getattr(self, "_event_bus", None)
+        if bus is not None:
+            for _evt, _cb in (
+                ("COMPONENT_METRIC", getattr(self, "_on_component_metric", None)),
+                ("PIPELINE_ERROR", getattr(self, "_on_pipeline_error", None)),
+                ("RECORDING_STATUS", getattr(self, "_on_recording_status", None)),
+            ):
+                if _cb is not None:
+                    bus.off(_evt, _cb)
+            self._event_bus = None
+
         if self.config.is_realtime:
             if self._realtime_model:
                 await self._realtime_model.aclose()

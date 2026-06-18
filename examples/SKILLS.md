@@ -68,7 +68,6 @@ Demonstrates **hybrid pipeline mode** — combining cascade components with a re
 
 | File | Description |
 |------|-------------|
-| `hybrid_custom_stt_realtime.py` | Uses **SarvamAI STT** (cascade) + **GeminiRealtime** (realtime LLM) + SileroVAD. Also integrates a custom `KnowledgeBase` with trigger-phrase-based retrieval. Pipeline: external STT feeds transcripts into the realtime model. |
 | `hybrid_realtime_custom_tts.py` | Uses **XAIRealtime** (Grok for STT+LLM) + **CartesiaTTS** (cascade TTS). The pipeline intercepts the realtime model's audio output and replaces it with CartesiaTTS, giving full voice customization. Demonstrates `XAIRealtimeConfig` with `enable_web_search=True`. |
 
 ### `composable_pipelines/`
@@ -227,17 +226,6 @@ Agent with **background audio** capabilities — thinking audio and background m
 **Call transfer** — transfers the ongoing call to a different phone number. Uses `self.session.call_transfer(transfer_to)` (auth token is resolved internally). Demonstrates `Options(agent_id=..., register=True)` for registered worker mode.
 
 **Plugins used:** `deepgram` (STT), `google` (LLM), `cartesia` (TTS), `silero` (VAD), `turn_detector` (EOU)
-
-### `custom_knowledge_base.py`
-
-**RAG with custom knowledge base** — extends the `KnowledgeBase` base class with custom retrieval logic. Demonstrates:
-
-- `allow_retrieval(transcript)` — trigger-phrase-based gating (only retrieves when user mentions specific keywords)
-- `pre_process_query(transcript)` — cleans queries before sending to vector DB
-- `format_context(documents)` — formats retrieved documents for LLM context injection
-- `KnowledgeBaseConfig(id=kb_id, top_k=3)` — configuration
-
-**Plugins used:** `google` (LLM, TTS), `sarvamai` (STT), `silero` (VAD), `turn_detector` (EOU)
 
 ### `dtmf_voicemail.py`
 

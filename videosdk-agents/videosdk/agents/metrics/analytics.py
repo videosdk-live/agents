@@ -1,8 +1,9 @@
-import os
 import asyncio
 from typing import Dict, Any, Optional
 import aiohttp
 import logging
+
+from ..utils import resolve_videosdk_auth_token
 
 logger = logging.getLogger(__name__)
 
@@ -10,23 +11,12 @@ logger = logging.getLogger(__name__)
 class AnalyticsClient:
     """Client for sending analytics data to external endpoints"""
 
-    _instance: Optional["AnalyticsClient"] = None
-    _initialized: bool = False
-
-    def __new__(cls, *args, **kwargs) -> "AnalyticsClient":
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
-
     def __init__(self, session_id: Optional[str] = None):
-        if self._initialized:
-            return
-
         self.session_id = session_id
         self.base_url = "https://api.videosdk.live"
-        self._initialized = True
         self.turn_count = 0
         self.metrics_options = None
+        self.agent_id = None
 
     def configure(self, metrics_options: Any, signaling_base_url: Optional[str] = None) -> None:
         """Configure analytics client with metrics options and signaling base URL"""
@@ -41,6 +31,10 @@ class AnalyticsClient:
     def set_session_id(self, session_id: str) -> None:
         """Set the session ID for analytics tracking"""
         self.session_id = session_id
+
+    def set_agent_id(self, agent_id: str) -> None:
+        """Set the agent ID for analytics tracking"""
+        self.agent_id = agent_id
 
     async def send_interaction_analytics(
         self, interaction_data: Dict[str, Any]
@@ -71,11 +65,16 @@ class AnalyticsClient:
         session_id_from_payload = interaction_data.get("sessionId")
         current_session_id = self.session_id or session_id_from_payload
         data =  {"data": [interaction_data]}
+
+        if self.agent_id:
+            data["agentId"] = self.agent_id
+
         if not current_session_id:
             logger.error("Failed sending session data : No session ID")
             return
 
-        auth_token = os.getenv("VIDEOSDK_AUTH_TOKEN")
+        auth_token = resolve_videosdk_auth_token()
+
         if not auth_token:
             logger.error("Failed sending session data : No auth token")
             return
@@ -90,6 +89,10 @@ class AnalyticsClient:
     ) -> None:
         """Send turn analytics to a custom endpoint"""
         data = {"data": [interaction_data]}
+
+        if self.agent_id:
+            data["agentId"] = self.agent_id
+
         headers = {"Content-Type": "application/json"}
         if custom_headers:
             headers.update(custom_headers)

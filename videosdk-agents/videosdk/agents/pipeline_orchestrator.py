@@ -123,6 +123,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
         avatar: Any | None = None,
         mode: Literal["ADAPTIVE", "DEFAULT"] = "DEFAULT",
         min_speech_wait_timeout: tuple[float, float] = (0.5, 0.8),
+        eou_certainty_threshold: float = 0.75,
         interrupt_mode: Literal["VAD_ONLY", "STT_ONLY", "HYBRID"] = "HYBRID",
         interrupt_min_duration: float = 0.5,
         interrupt_min_words: int = 2,
@@ -191,6 +192,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
                 mode=mode,
                 min_speech_wait_timeout=min_speech_wait_timeout[0],
                 max_speech_wait_timeout=min_speech_wait_timeout[1],
+                eou_certainty_threshold=eou_certainty_threshold,
                 hooks=hooks,
             )
             # Setup event listeners with sync wrappers

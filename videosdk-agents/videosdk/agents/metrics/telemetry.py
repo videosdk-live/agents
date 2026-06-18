@@ -77,10 +77,8 @@ class VideoSDKTelemetry:
             batch_processor = BatchSpanProcessor(otlp_exporter)
             self.tracer_provider = TracerProvider(resource=resource)
             self.tracer_provider.add_span_processor(batch_processor)
-            
-            trace.set_tracer_provider(self.tracer_provider)
-            
-            self.tracer = trace.get_tracer(self.peer_id)
+
+            self.tracer = self.tracer_provider.get_tracer(self.peer_id)
             
         except Exception as e:
             print(f"[TELEMETRY ERROR] Failed to initialize telemetry: {e}")
@@ -98,10 +96,10 @@ class VideoSDKTelemetry:
  
             ctx = trace.set_span_in_context(parent_span) if parent_span else None
             
-            attiribute_id = generate_id()
+            attribute_id = generate_id()
             
             attributes = {} if attributes is None else attributes
-            attributes["attiribute_id"] = attiribute_id
+            attributes["attribute_id"] = attribute_id
             span_kwargs = {"context": ctx}
             
             current_perf = time.perf_counter()
@@ -114,7 +112,7 @@ class VideoSDKTelemetry:
                 diff_ns = int((current_perf - start_time) * 1_000_000_000)
                 start_absolute_time = current_abs - diff_ns
 
-            self.span_details[attiribute_id] = {
+            self.span_details[attribute_id] = {
                 "start_time": start_time, # perf_counter
                 "start_absolute_time": start_absolute_time # absolute ns
             }
@@ -154,9 +152,9 @@ class VideoSDKTelemetry:
             attribute_id = None  
             if hasattr(span, '_attributes'):  
             
-                attribute_id = span._attributes.get("attiribute_id")  
+                attribute_id = span._attributes.get("attribute_id")  
             elif hasattr(span, 'attributes'):  
-                attribute_id = span.attributes.get("attiribute_id")  
+                attribute_id = span.attributes.get("attribute_id")  
 
             data = self.span_details.get(attribute_id) if attribute_id else None  
 
@@ -176,6 +174,21 @@ class VideoSDKTelemetry:
             print(f"[TELEMETRY ERROR] Failed to complete span: {e}")
             traceback.print_exc()
     
+    def force_flush_spans(self, timeout_millis: int = 5000) -> None:
+        """Force-export any buffered spans WITHOUT shutting the provider down.
+
+        Called on session end so spans created right before close (final turn,
+        the "session closed" span) are exported — the BatchSpanProcessor would
+        otherwise drop its last un-flushed batch when the session tears down.
+        Non-destructive (unlike flush()), so it stays safe if the OTel tracer
+        provider happens to be shared across sessions."""
+        if not self.traces_enabled or not self.tracer_provider:
+            return
+        try:
+            self.tracer_provider.force_flush(timeout_millis)
+        except Exception as e:
+            print(f"[TELEMETRY ERROR] force_flush failed: {e}")
+
     def flush(self):
         """Flush and shutdown the tracer provider"""
         if self.traces_enabled and self.tracer_provider:
@@ -193,7 +206,21 @@ _telemetry_instance: Optional[VideoSDKTelemetry] = None
 
 
 def get_telemetry() -> Optional[VideoSDKTelemetry]:
-    """Get the global telemetry instance"""
+    """Return the telemetry instance for the active session.
+
+    Resolved per-session from the current JobContext so concurrent sessions in
+    one process don't share one telemetry (it was a process-wide global that each
+    session's room-connect overwrote). Falls back to the module-level instance
+    when there is no active JobContext (tests / pre-session usage)."""
+    try:
+        from ..job import get_current_job_context
+        ctx = get_current_job_context()
+    except Exception:
+        ctx = None
+    if ctx is not None:
+        inst = getattr(ctx, "telemetry", None)
+        if inst is not None:
+            return inst
     return _telemetry_instance
 
 
@@ -212,22 +239,32 @@ def initialize_telemetry(room_id: str, peer_id: str, sdk_name: str = "agents",
         metadata: Additional metadata
     """
     global _telemetry_instance
-    
+
     if not observability_jwt:
         observability_jwt = ""
-    
+
     if not traces_config:
         traces_config = {"enabled": False, "endPoint": ""}
-    
+
     if not metadata:
         metadata = {}
-    
-    _telemetry_instance = VideoSDKTelemetry(
+
+    instance = VideoSDKTelemetry(
         room_id=room_id,
-        peer_id=peer_id, 
+        peer_id=peer_id,
         sdk_name=sdk_name,
         observability_jwt=observability_jwt,
         traces_config=traces_config,
         metadata=metadata,
         sdk_metadata=sdk_metadata
     )
+
+    try:
+        from ..job import get_current_job_context
+        ctx = get_current_job_context()
+    except Exception:
+        ctx = None
+    if ctx is not None:
+        ctx.telemetry = instance
+    _telemetry_instance = instance
+    return instance

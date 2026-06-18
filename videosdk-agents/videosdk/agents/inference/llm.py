@@ -20,7 +20,6 @@ Example:
 from __future__ import annotations
 
 import json
-import os
 import logging
 import traceback
 from typing import Any, AsyncIterator, Dict, List, Literal, Optional, Union
@@ -43,6 +42,7 @@ from videosdk.agents import (
     ChatContent,
     ImageContent,
 )
+from videosdk.agents.utils import resolve_videosdk_auth_token
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +82,7 @@ class LLM(BaseLLM):
         wiki_grounding: bool = False,
         reasoning_effort: Optional[Literal["low", "medium", "high"]] = None,
         stop: Optional[Union[str, List[str]]] = None,
+        auth_token: Optional[str] = None,
     ) -> None:
         """
         Initialize the VideoSDK Inference LLM plugin.
@@ -100,10 +101,13 @@ class LLM(BaseLLM):
             wiki_grounding: Enable Wikipedia search grounding — Sarvam only
             reasoning_effort: Reasoning depth "low"|"medium"|"high" — Sarvam only
             stop: Up to 4 stop sequences — Sarvam only
+            auth_token: VideoSDK auth token. Falls back to the resolved token
+                (RoomOptions/WorkerOptions, VIDEOSDK_AUTH_TOKEN, or
+                VIDEOSDK_API_KEY + VIDEOSDK_SECRET_KEY) when not provided.
         """
         super().__init__()
 
-        self._videosdk_token = os.getenv("VIDEOSDK_AUTH_TOKEN")
+        self._videosdk_token = resolve_videosdk_auth_token(auth_token)
         if not self._videosdk_token:
             raise ValueError(
                 "VIDEOSDK_AUTH_TOKEN environment variable must be set for authentication"

@@ -58,10 +58,10 @@ class VoiceAgent(Agent):
             temperature = data["current"]["temperature_2m"]
 
             # --- Correct Way: Using UtteranceHandle with await ---
-            handle1 = self.session.say(f"The current temperature is {temperature}°C.")
+            handle1 = await self.session.say(f"The current temperature is {temperature}°C.")
             await handle1  # Ensures this TTS finishes before starting next speech
 
-            handle2 = self.session.say("Do you live in this city?")
+            handle2 = await self.session.say("Do you live in this city?")
             await handle2  # Ensures sequential speech
 
             # --- Incorrect Way: Using create_task (commented out) ---

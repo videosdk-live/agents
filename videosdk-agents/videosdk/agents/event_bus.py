@@ -1,4 +1,5 @@
-from typing import TypeVar, Literal
+from typing import TypeVar, Literal, Optional
+from contextvars import ContextVar
 from .event_emitter import EventEmitter
 
 EventTypes = Literal[
@@ -17,7 +18,10 @@ EventTypes = Literal[
 T = TypeVar('T')
 
 class EventBus(EventEmitter[EventTypes]):
-    """Singleton event emitter for broadcasting and subscribing to global agent lifecycle events."""
+    """Process-wide default event bus. Constructing ``EventBus()`` always returns
+    this one instance; per-session buses are plain ``EventEmitter`` instances bound
+    via the ContextVar below. Consumers should use ``global_event_emitter`` (the
+    proxy), which resolves to the current session's bus, not ``EventBus()`` directly."""
 
     _instance = None
 
@@ -37,4 +41,52 @@ class EventBus(EventEmitter[EventTypes]):
         """Return the singleton EventBus instance, creating it if necessary."""
         return cls()
     
-global_event_emitter = EventBus()
+_default_event_bus = EventBus()
+
+_current_event_bus: ContextVar[Optional[EventEmitter]] = ContextVar(
+    "current_event_bus", default=None
+)
+
+
+def get_current_event_bus() -> EventEmitter:
+    """Return the current session's event bus, or the process default."""
+    return _current_event_bus.get() or _default_event_bus
+
+
+def set_current_event_bus(bus: EventEmitter):
+    """Bind a per-session event bus to the current context. Returns a reset token."""
+    return _current_event_bus.set(bus)
+
+
+def reset_current_event_bus(token) -> None:
+    _current_event_bus.reset(token)
+
+
+def new_session_event_bus() -> EventEmitter:
+    """Create a fresh per-session bus (same on/off/emit interface as EventBus)."""
+    return EventEmitter()
+
+
+class _EventBusProxy:
+    """Forwards on/off/emit to the current session's event bus, preserving the
+    public ``global_event_emitter`` import while scoping the instance per-session.
+    """
+
+    __slots__ = ()
+
+    def __getattr__(self, name):
+        return getattr(get_current_event_bus(), name)
+
+
+global_event_emitter = _EventBusProxy()
+
+
+__all__ = [
+    "EventBus",
+    "EventTypes",
+    "global_event_emitter",
+    "get_current_event_bus",
+    "set_current_event_bus",
+    "reset_current_event_bus",
+    "new_session_event_bus",
+]
