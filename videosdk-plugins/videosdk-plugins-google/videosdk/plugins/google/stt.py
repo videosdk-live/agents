@@ -234,7 +234,6 @@ class SpeechStream:
                     features=speech_types.RecognitionFeatures(
                         enable_automatic_punctuation=self._config["punctuate"],
                         profanity_filter=self._config["profanity_filter"],
-                        enable_spoken_punctuation=True
                     ),
                 ),
                 streaming_features=speech_types.StreamingRecognitionFeatures(
