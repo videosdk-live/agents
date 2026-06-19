@@ -5,6 +5,7 @@ from typing import Any
 
 _REGISTRY: dict[str, str] = {
     "AWSPollyTTS": "videosdk.plugins.aws",
+    "AWSBedrockLLM": "videosdk.plugins.aws",
     "NovaSonicConfig": "videosdk.plugins.aws",
     "NovaSonicRealtime": "videosdk.plugins.aws",
     "AnamAvatar": "videosdk.plugins.anam",

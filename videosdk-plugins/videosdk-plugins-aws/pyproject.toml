@@ -10,7 +10,7 @@ readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.12"
 authors = [{ name = "videosdk" }]
-keywords = ["video", "audio", "ai", "aws", "videosdk", "nova-sonic"]
+keywords = ["video", "audio", "ai", "aws", "videosdk", "nova-sonic", "bedrock", "llm"]
 classifiers = [
     "Intended Audience :: Developers",
     "Development Status :: 4 - Beta",
