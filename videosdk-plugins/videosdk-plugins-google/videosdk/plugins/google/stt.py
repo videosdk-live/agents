@@ -410,9 +410,10 @@ class SpeechStream:
 
             is_final = response.results[0].is_final
             confidence = alt.confidence
+            duration = 0
             if is_final:
                 duration = self.extract(response)
-            if confidence >= self._config["min_confidence_threshold"]:
+            if confidence == 0.0 or confidence >= self._config["min_confidence_threshold"]:
                 if self._transcript_callback:
                     event = STTResponse(
                         event_type=SpeechEventType.FINAL if is_final else SpeechEventType.INTERIM,
