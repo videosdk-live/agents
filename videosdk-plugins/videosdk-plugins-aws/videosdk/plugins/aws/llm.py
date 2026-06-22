@@ -125,16 +125,9 @@ class _ThinkingStripper:
 def _parse_tool_call_expression(
     text: str, tool_params: dict[str, list[str]]
 ) -> dict | None:
-    """Parse a text-form function call into ``{"name", "arguments"}`` or None.
-
-    Models without native Converse tool use (e.g. Google Gemma) emit function
-    calls as plain text such as ``end_call(message="...")`` rather than as
-    Bedrock ``toolUse`` blocks. This tolerates a surrounding markdown code fence
-    and a ``print(...)`` / list wrapper, and uses the ``ast`` module so quoted
-    arguments — including non-ASCII (Hindi) strings with commas — parse safely.
-
-    Returns None when the text does not (yet) contain a complete, balanced call
-    to one of the known tools, which lets the streaming sniffer keep buffering.
+    """Parse a text-form call (e.g. ``some_tool(arg="...")``, optionally fenced
+    or ``print()``-wrapped) into ``{"name", "arguments"}``; None until it is a
+    complete call to a known tool.
     """
     if not text or not tool_params:
         return None
@@ -187,19 +180,10 @@ def _parse_tool_call_expression(
 
 
 class _ToolCallSniffer:
-    """Convert a model's text-form function calls into structured tool calls.
+    """Detect a model's text-form tool calls in the stream and convert them to
+    structured calls, suppressing them from spoken output.
 
-    Models like Google Gemma do not emit Bedrock ``toolUse`` content blocks.
-    When prompted with available functions they print the call as plain text,
-    e.g. ``end_call(message="...")`` (optionally inside a ```tool_code``` fence
-    or wrapped in ``print(...)``). Without interception that text streams to TTS
-    and is spoken aloud instead of executing the tool.
-
-    This buffers the start of an assistant turn while the text could still be
-    such a call. If it resolves to a call to a known tool, the call is parsed
-    and the text is suppressed; otherwise the buffered text is released
-    unchanged, so ordinary responses stream with negligible added latency. Only
-    the *start* of a turn is held back — once disarmed the turn streams as-is.
+    Only the start of a turn is buffered, so ordinary responses stream as-is.
     """
 
     def __init__(self, tool_params: dict[str, list[str]]) -> None:
@@ -347,7 +331,7 @@ class AWSBedrockLLM(LLM):
                 chain-of-thought in these tags, which would otherwise be read
                 aloud by TTS. Defaults to True.
             text_tool_calls: Parse function calls that the model prints as plain
-                text (e.g. ``end_call(message="...")``) instead of emitting
+                text (e.g. ``some_tool(arg="...")``) instead of emitting
                 Bedrock ``toolUse`` blocks, and convert them into real tool
                 calls. Required for models without native Converse tool use such
                 as Google Gemma. Defaults to None, which auto-enables it for
@@ -505,20 +489,14 @@ class AWSBedrockLLM(LLM):
 
     @staticmethod
     def _model_uses_text_tool_calls(model: str) -> bool:
-        """Whether a model emits tool calls as plain text rather than as
-        Converse ``toolUse`` blocks (i.e. it lacks native tool use on Bedrock).
-        """
+        """Whether a model emits tool calls as text rather than Converse ``toolUse`` blocks."""
         return "gemma" in (model or "").lower()
 
     @staticmethod
     def _build_tool_params(
         tools: list[FunctionTool] | None,
     ) -> dict[str, list[str]]:
-        """Map each tool name to its parameter names in declaration order.
-
-        Used to interpret text-form function calls (positional args are mapped
-        back to parameter names) when the model lacks native tool use.
-        """
+        """Map each tool name to its parameter names in declaration order."""
         tool_params: dict[str, list[str]] = {}
         for tool in tools or []:
             if not is_function_tool(tool):
@@ -797,12 +775,7 @@ class AWSBedrockLLM(LLM):
         sniffer: _ToolCallSniffer | None,
         usage_metadata: dict,
     ) -> list[LLMResponse]:
-        """Route streamed text through the tool-call sniffer.
-
-        Returns the LLMResponses to yield: spoken text and/or a parsed
-        text-form tool call. When no sniffer is active the text passes through
-        unchanged.
-        """
+        """Route streamed text through the sniffer; return the LLMResponses (text and/or tool call) to yield."""
         if sniffer is None:
             return [
                 LLMResponse(
@@ -829,11 +802,7 @@ class AWSBedrockLLM(LLM):
     def _text_tool_call_response(
         self, call: dict, usage_metadata: dict
     ) -> LLMResponse:
-        """Build a function-call LLMResponse from a parsed text-form tool call.
-
-        A synthetic id is generated because models without native tool use do
-        not supply a ``toolUseId``.
-        """
+        """Build a function-call LLMResponse from a parsed text-form tool call."""
         call_id = uuid.uuid4().hex
         return LLMResponse(
             content="",
