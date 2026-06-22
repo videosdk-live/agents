@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import ast
 import asyncio
 import base64
 import json
 import logging
 import os
+import uuid
 from typing import Any, AsyncIterator
 
 from videosdk.agents import (
@@ -120,6 +122,143 @@ class _ThinkingStripper:
         return remaining
 
 
+def _parse_tool_call_expression(
+    text: str, tool_params: dict[str, list[str]]
+) -> dict | None:
+    """Parse a text-form call (e.g. ``some_tool(arg="...")``, optionally fenced
+    or ``print()``-wrapped) into ``{"name", "arguments"}``; None until it is a
+    complete call to a known tool.
+    """
+    if not text or not tool_params:
+        return None
+
+    src = text.strip()
+    if src.startswith("```"):
+        nl = src.find("\n")
+        if nl != -1:
+            src = src[nl + 1:]
+        src = src.rstrip()
+        if src.endswith("```"):
+            src = src[:-3]
+    src = src.strip()
+    if not src:
+        return None
+
+    try:
+        tree: ast.AST = ast.parse(src, mode="eval")
+    except SyntaxError:
+        try:
+            tree = ast.parse(src)
+        except SyntaxError:
+            return None
+
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in tool_params
+        ):
+            arguments: dict[str, Any] = {}
+            try:
+                for kw in node.keywords:
+                    if kw.arg is None:
+                        continue
+                    arguments[kw.arg] = ast.literal_eval(kw.value)
+                positional = [ast.literal_eval(a) for a in node.args]
+            except Exception:
+                # Incomplete during streaming, or non-literal argument.
+                return None
+
+            param_names = tool_params[node.func.id]
+            for i, value in enumerate(positional):
+                if i < len(param_names):
+                    arguments.setdefault(param_names[i], value)
+
+            return {"name": node.func.id, "arguments": arguments}
+
+    return None
+
+
+class _ToolCallSniffer:
+    """Detect a model's text-form tool calls in the stream and convert them to
+    structured calls, suppressing them from spoken output.
+
+    Only the start of a turn is buffered, so ordinary responses stream as-is.
+    """
+
+    def __init__(self, tool_params: dict[str, list[str]]) -> None:
+        self._tool_params = tool_params
+        self._buffer = ""
+        self._armed = True   # still deciding whether this turn is a tool call
+        self._done = False   # a call was emitted; swallow any trailing text
+
+    def feed(self, text: str) -> tuple[str, dict | None]:
+        """Return ``(text_to_emit, parsed_call_or_None)`` for a chunk."""
+        if self._done:
+            return "", None
+        if not self._armed:
+            return text, None
+
+        self._buffer += text
+
+        call = _parse_tool_call_expression(self._buffer, self._tool_params)
+        if call is not None:
+            self._done = True
+            self._buffer = ""
+            return "", call
+
+        if self._could_be_call(self._buffer):
+            return "", None
+
+        # Definitely not a tool call → release everything and stream normally.
+        self._armed = False
+        out, self._buffer = self._buffer, ""
+        return out, None
+
+    def flush(self) -> tuple[str, dict | None]:
+        """Resolve whatever is still buffered once the stream ends."""
+        if self._done or not self._buffer:
+            self._buffer = ""
+            return "", None
+        call = _parse_tool_call_expression(self._buffer, self._tool_params)
+        out = self._buffer
+        self._buffer = ""
+        self._done = True
+        if call is not None:
+            return "", call
+        return out, None
+
+    def _could_be_call(self, buf: str) -> bool:
+        """Whether ``buf`` might still be building toward a known tool call."""
+        probe = buf.lstrip()
+        if not probe:
+            return True
+        # A partial or in-progress markdown code fence.
+        if probe.startswith("```"):
+            nl = probe.find("\n")
+            if nl == -1:
+                return True
+            probe = probe[nl + 1:].lstrip()
+            if not probe:
+                return True
+        elif probe.startswith("`"):
+            return True
+        # Wrappers some models add around the call (possibly still being typed).
+        for prefix in ("print(", "["):
+            if probe.startswith(prefix):
+                probe = probe[len(prefix):].lstrip()
+                break
+            if prefix.startswith(probe):
+                return True
+        if not probe:
+            return True
+        for name in self._tool_params:
+            opener = name + "("
+            if probe.startswith(opener) or opener.startswith(probe):
+                return True
+        return False
+
+
 class AWSBedrockLLM(LLM):
     """AWS Bedrock LLM (Converse API) plugin for VideoSDK Agents.
 
@@ -152,6 +291,7 @@ class AWSBedrockLLM(LLM):
         cache_system: bool = False,
         cache_tools: bool = False,
         strip_thinking: bool = True,
+        text_tool_calls: bool | None = None,
         client: Any | None = None,
     ) -> None:
         """Initialize the AWS Bedrock LLM plugin.
@@ -190,6 +330,12 @@ class AWSBedrockLLM(LLM):
                 streamed text before it is yielded. Amazon Nova models emit
                 chain-of-thought in these tags, which would otherwise be read
                 aloud by TTS. Defaults to True.
+            text_tool_calls: Parse function calls that the model prints as plain
+                text (e.g. ``some_tool(arg="...")``) instead of emitting
+                Bedrock ``toolUse`` blocks, and convert them into real tool
+                calls. Required for models without native Converse tool use such
+                as Google Gemma. Defaults to None, which auto-enables it for
+                model ids known to lack native tool use (e.g. Gemma).
             client: Optional pre-built boto3 ``bedrock-runtime`` client. When
                 provided, the credential/region arguments are ignored and the
                 caller retains ownership of the client.
@@ -218,6 +364,11 @@ class AWSBedrockLLM(LLM):
         self.cache_system = cache_system
         self.cache_tools = cache_tools
         self.strip_thinking = strip_thinking
+        self.text_tool_calls = (
+            text_tool_calls
+            if text_tool_calls is not None
+            else self._model_uses_text_tool_calls(self.model)
+        )
         self._cancelled = False
 
         self.region = region or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
@@ -335,6 +486,28 @@ class AWSBedrockLLM(LLM):
             logger.warning("AWS Bedrock: failed to decode image data")
             return None
         return {"image": {"format": fmt, "source": {"bytes": data}}}
+
+    @staticmethod
+    def _model_uses_text_tool_calls(model: str) -> bool:
+        """Whether a model emits tool calls as text rather than Converse ``toolUse`` blocks."""
+        return "gemma" in (model or "").lower()
+
+    @staticmethod
+    def _build_tool_params(
+        tools: list[FunctionTool] | None,
+    ) -> dict[str, list[str]]:
+        """Map each tool name to its parameter names in declaration order."""
+        tool_params: dict[str, list[str]] = {}
+        for tool in tools or []:
+            if not is_function_tool(tool):
+                continue
+            try:
+                schema = build_openai_schema(tool)
+            except Exception:
+                continue
+            props = (schema.get("parameters") or {}).get("properties") or {}
+            tool_params[schema["name"]] = list(props.keys())
+        return tool_params
 
     def _build_tool_config(self, tools: list[FunctionTool] | None) -> dict | None:
         """Build the Bedrock ``toolConfig`` from the agent's function tools."""
@@ -461,6 +634,12 @@ class AWSBedrockLLM(LLM):
 
         stripper = _ThinkingStripper() if self.strip_thinking else None
 
+        sniffer: _ToolCallSniffer | None = None
+        if self.text_tool_calls and tool_config:
+            tool_params = self._build_tool_params(tools)
+            if tool_params:
+                sniffer = _ToolCallSniffer(tool_params)
+
         try:
             response = await asyncio.to_thread(self._client.converse_stream, **params)
             usage_metadata["request_id"] = (
@@ -510,11 +689,10 @@ class AWSBedrockLLM(LLM):
                         if stripper is not None:
                             text = stripper.feed(text)
                         if text:
-                            yield LLMResponse(
-                                content=text,
-                                role=ChatRole.ASSISTANT,
-                                metadata={"usage": usage_metadata},
-                            )
+                            for resp in self._text_responses(
+                                text, sniffer, usage_metadata
+                            ):
+                                yield resp
                     elif "toolUse" in delta and index in tool_calls:
                         tool_calls[index]["arguments"] += delta["toolUse"].get("input", "")
 
@@ -542,11 +720,20 @@ class AWSBedrockLLM(LLM):
                 if stripper is not None:
                     tail = stripper.flush()
                     if tail:
+                        for resp in self._text_responses(
+                            tail, sniffer, usage_metadata
+                        ):
+                            yield resp
+                if sniffer is not None:
+                    emit_text, call = sniffer.flush()
+                    if emit_text:
                         yield LLMResponse(
-                            content=tail,
+                            content=emit_text,
                             role=ChatRole.ASSISTANT,
                             metadata={"usage": usage_metadata},
                         )
+                    if call is not None:
+                        yield self._text_tool_call_response(call, usage_metadata)
                 for tc in tool_calls.values():
                     yield self._emit_tool_call(tc, usage_metadata)
             tool_calls.clear()
@@ -577,6 +764,55 @@ class AWSBedrockLLM(LLM):
                     "name": tc.get("name", ""),
                     "arguments": args,
                     "call_id": tc.get("id", ""),
+                },
+                "usage": usage_metadata,
+            },
+        )
+
+    def _text_responses(
+        self,
+        text: str,
+        sniffer: _ToolCallSniffer | None,
+        usage_metadata: dict,
+    ) -> list[LLMResponse]:
+        """Route streamed text through the sniffer; return the LLMResponses (text and/or tool call) to yield."""
+        if sniffer is None:
+            return [
+                LLMResponse(
+                    content=text,
+                    role=ChatRole.ASSISTANT,
+                    metadata={"usage": usage_metadata},
+                )
+            ]
+
+        emit_text, call = sniffer.feed(text)
+        responses: list[LLMResponse] = []
+        if emit_text:
+            responses.append(
+                LLMResponse(
+                    content=emit_text,
+                    role=ChatRole.ASSISTANT,
+                    metadata={"usage": usage_metadata},
+                )
+            )
+        if call is not None:
+            responses.append(self._text_tool_call_response(call, usage_metadata))
+        return responses
+
+    def _text_tool_call_response(
+        self, call: dict, usage_metadata: dict
+    ) -> LLMResponse:
+        """Build a function-call LLMResponse from a parsed text-form tool call."""
+        call_id = uuid.uuid4().hex
+        return LLMResponse(
+            content="",
+            role=ChatRole.ASSISTANT,
+            metadata={
+                "function_call": {
+                    "id": call_id,
+                    "name": call["name"],
+                    "arguments": call["arguments"],
+                    "call_id": call_id,
                 },
                 "usage": usage_metadata,
             },
