@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import time
+from math import gcd
 from typing import Any, Optional, Union, AsyncGenerator
 import numpy as np
 from videosdk.agents import STT as BaseSTT, STTResponse, SpeechEventType, SpeechData,global_event_emitter
@@ -29,6 +30,8 @@ except ImportError:
 
 _MAX_SESSION_DURATION = 240  
 
+_FLUSH_SENTINEL = object()
+
 @dataclass
 class VoiceActivityConfig:
     speech_start_timeout:float = 1.0
@@ -41,7 +44,7 @@ class GoogleSTT(BaseSTT):
         api_key: Optional[str] = None,
         languages: Union[str, list[str]] = "en-US",
         model: str = "latest_long",
-        sample_rate: int = 16000,
+        sample_rate: int = 48000,
         interim_results: bool = True,
         punctuate: bool = True,
         min_confidence_threshold: float = 0.1,
@@ -57,7 +60,10 @@ class GoogleSTT(BaseSTT):
             api_key (Optional[str], optional): Google API key. Defaults to None.
             languages (Union[str, list[str]]): The languages to use for the STT plugin. Defaults to "en-US".
             model (str): The model to use for the STT plugin. Defaults to "latest_long".
-            sample_rate (int): The sample rate to use for the STT plugin. Defaults to 16000.
+            sample_rate (int): The sample rate to use for the STT plugin. Defaults to 48000,
+                which matches the framework's native input rate so audio is forwarded
+                without resampling. Set a lower value (e.g. 16000) only if you need
+                downsampling; resampling then runs off the event loop.
             interim_results (bool): Whether to use interim results for the STT plugin. Defaults to True.
             punctuate (bool): Whether to use punctuation for the STT plugin. Defaults to True.
             min_confidence_threshold (float): The minimum confidence threshold for the STT plugin. Defaults to 0.1.
@@ -119,23 +125,43 @@ class GoogleSTT(BaseSTT):
         try:
             if not self._stream:
                 await self._start_stream()
-            
-            if self._stream:
-                if SCIPY_AVAILABLE:
-                    try:
-                        audio_data = np.frombuffer(audio_frames, dtype=np.int16)
-                        resampled_data = signal.resample(audio_data, int(len(audio_data) * self.target_sample_rate / self.input_sample_rate))
-                        resampled_bytes = resampled_data.astype(np.int16).tobytes()
-                        await self._stream.push_audio(resampled_bytes)
-                    except Exception as e:
-                        logger.error("Error resampling audio", exc_info=True)
-                        self.emit("error", {"message": "Error resampling audio", "error": str(e)})
-                else:
-                    await self._stream.push_audio(audio_frames)
+
+            if not self._stream:
+                return
+
+            if self.target_sample_rate == self.input_sample_rate or not SCIPY_AVAILABLE:
+                await self._stream.push_audio(audio_frames)
+                return
+
+            try:
+                resampled_bytes = await self._resample(audio_frames)
+                await self._stream.push_audio(resampled_bytes)
+            except Exception as e:
+                logger.error("Error resampling audio", exc_info=True)
+                self.emit("error", {"message": "Error resampling audio", "error": str(e)})
         except Exception as e:
             logger.error("process_audio failed", exc_info=True)
             if self._stream:
                 self.emit("error", {"message": "Failed to process audio", "error": str(e)})
+
+    async def _resample(self, audio_frames: bytes) -> bytes:
+        """Downsample audio off the event loop so it never blocks the pipeline."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._resample_sync, audio_frames)
+
+    def _resample_sync(self, audio_frames: bytes) -> bytes:
+        audio_data = np.frombuffer(audio_frames, dtype=np.int16)
+
+        channels = 2
+        if channels > 1 and audio_data.size % channels == 0:
+            audio_data = audio_data.reshape(-1, channels)
+
+        divisor = gcd(self.target_sample_rate, self.input_sample_rate)
+        up = self.target_sample_rate // divisor
+        down = self.input_sample_rate // divisor
+
+        resampled = signal.resample_poly(audio_data, up, down, axis=0)
+        return resampled.astype(np.int16).tobytes()
 
     async def _start_stream(self):
         await self._ensure_client()
@@ -145,6 +171,16 @@ class GoogleSTT(BaseSTT):
         except Exception as e:
             logger.error("Failed to start SpeechStream", exc_info=True)
             raise e
+
+    async def flush(self) -> None:
+        """Force the active stream to finalize buffered audio immediately.
+
+        Called by the framework on end-of-turn. Without this, Google waits for
+        its own server-side endpointer to emit the final transcript, adding
+        several seconds of latency per turn.
+        """
+        if self._stream:
+            await self._stream.flush()
 
     async def aclose(self) -> None:
         try:
@@ -184,6 +220,14 @@ class SpeechStream:
             await self._audio_queue.put(audio_frames)
         except Exception as e:
             self.emit("error", {"message": "Failed to push audio", "error": str(e)})
+
+    async def flush(self) -> None:
+        """Queue a half-close request behind the audio already buffered so Google
+        finalizes the current turn immediately. The sentinel is processed in FIFO
+        order, after every audio chunk pushed for this turn, so no audio is lost.
+        """
+        if self._running:
+            self._audio_queue.put_nowait(_FLUSH_SENTINEL)
 
     async def _audio_generator(self) -> AsyncGenerator[speech_types.StreamingRecognizeRequest, None]:
         try:
@@ -252,20 +296,35 @@ class SpeechStream:
             self.emit("error", {"message": "Failed to configure streaming", "error": str(e)})
             return
 
+        audio_sent = False
         while self._running:
             try:
                 chunk = await asyncio.wait_for(self._audio_queue.get(), timeout=0.1)
-                yield speech_types.StreamingRecognizeRequest(audio=chunk)
             except asyncio.TimeoutError:
                 continue
             except Exception as e:
                 self.emit("error", {"message": "Audio chunk error", "error": str(e)})
+                continue
+
+            if chunk is _FLUSH_SENTINEL:
+                if audio_sent:
+                    return
+                continue
+
+            audio_sent = True
+            try:
+                yield speech_types.StreamingRecognizeRequest(audio=chunk)
+            except Exception as e:
+                self.emit("error", {"message": "Audio chunk error", "error": str(e)})
 
     async def _stream_loop(self):
-        session_started_at = 0
         while self._running:
+            # A flush half-closes the request stream, so each streaming session
+            # spans (at most) one turn before we open a fresh one. billed-duration
+            # is reported per-session, so reset the running total each time.
+            self._last_billed_sec = 0.0
+            session_started_at = time.time()
             try:
-                session_started_at = time.time()
                 stream = await self._client.streaming_recognize(requests=self._audio_generator())
                 async for response in stream:
                     if time.time() - session_started_at > _MAX_SESSION_DURATION:
@@ -274,18 +333,26 @@ class SpeechStream:
 
             except (DeadlineExceeded, asyncio.TimeoutError) as e:
                 self.emit("error", {"message": "Streaming timeout", "error": str(e)})
+                self._drain_audio_queue()
             except GoogleAPICallError as e:
                 self.emit("error", {"message": "Google API call error", "error": str(e)})
+                self._drain_audio_queue()
                 await asyncio.sleep(2)
             except Exception as e:
                 self.emit("error", {"message": "Google STT error", "error": str(e)})
+                self._drain_audio_queue()
                 await asyncio.sleep(2)
+            # On a clean half-close (flush) we do NOT drain: the next turn's audio
+            # may already be buffered and must survive into the new stream.
 
-            while not self._audio_queue.empty():
-                try:
-                    self._audio_queue.get_nowait()
-                except Exception as e:
-                    logger.warning("Failed to flush audio queue", exc_info=True)
+    def _drain_audio_queue(self) -> None:
+        """Discard buffered audio after an error so a failed session's backlog is
+        not replayed into the fresh stream."""
+        while not self._audio_queue.empty():
+            try:
+                self._audio_queue.get_nowait()
+            except Exception:
+                logger.warning("Failed to flush audio queue", exc_info=True)
 
     def _handle_response(self, response: speech_types.StreamingRecognizeResponse):
         try:
