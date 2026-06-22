@@ -106,7 +106,7 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
         """Start the content generation component"""
         logger.info("ContentGeneration started")
     
-    async def generate(self, user_text: str, context_prefix: str | None = None) -> AsyncIterator[ResponseChunk]:
+    async def generate(self, user_text: str, context_prefix: str | None = None, tool_gate: "asyncio.Event | None" = None) -> AsyncIterator[ResponseChunk]:
         """
         Process user text with LLM and yield response chunks.
 
@@ -114,6 +114,11 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
             user_text: User input text
             context_prefix: Optional temporary context (e.g. KB results) injected
                            for this LLM call only, not persisted in chat history.
+            tool_gate: Optional gate awaited immediately before each tool
+                           execution. When the generation runs ahead of turn
+                           confirmation, this holds side-effecting tools until the
+                           turn is committed; a cancelled turn is torn down before
+                           the gate opens, so no tool runs for an abandoned turn.
 
         Yields:
             ResponseChunk objects with generated content
@@ -240,6 +245,8 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                             agent_session._is_executing_tool = True
 
                         try:
+                            if tool_gate is not None:
+                                await tool_gate.wait()
                             result = await tool(**self._safe_tool_kwargs(tool, func_call["arguments"]))
 
                             if isinstance(result, Agent):
@@ -348,6 +355,8 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                                         None
                                     )
                                     if next_tool:
+                                        if tool_gate is not None:
+                                            await tool_gate.wait()
                                         next_result = await next_tool(**self._safe_tool_kwargs(next_tool, next_call["arguments"]))
                                         chat_context.add_function_output(
                                             name=next_call["name"],
@@ -372,6 +381,8 @@ class ContentGeneration(EventEmitter[Literal["generation_started", "generation_c
                                             None
                                         )
                                         if t:
+                                            if tool_gate is not None:
+                                                await tool_gate.wait()
                                             return nc, nc_id, await t(**self._safe_tool_kwargs(t, nc["arguments"])), False
                                         return nc, nc_id, {"error": f"Tool '{nc['name']}' not found"}, True
 

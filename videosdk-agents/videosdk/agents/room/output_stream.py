@@ -52,6 +52,8 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         self._accepting_audio = True
         self._manual_audio_control = False
 
+        self._playback_held = False
+
         # Fade-out on real interruption (seconds). 0 disables the fade and
         # restores the legacy instant buffer-clear.
         self.interrupt_fade_duration: float = 0.4
@@ -188,7 +190,6 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         self._last_speaking_time = 0.0
         self._synthesis_complete = False
         self._needs_last_audio_callback = False
-        
         # Handle manual audio control mode
         if self._manual_audio_control:
             self._accepting_audio = False
@@ -232,13 +233,46 @@ class CustomAudioStreamTrack(CustomAudioTrack):
         """
         Allow fresh audio data to be buffered. When manual_control is True,
         future interrupts will pause intake until this method is called again.
-        
+
         This is useful for preventing old audio from bleeding into new responses.
+
+        Note: intentionally does not touch ``_playback_held`` — synthesize()
+        calls this at the start of every turn, and a gated turn must keep its
+        playback held through that call until the turn is confirmed.
         """
         self._manual_audio_control = manual_control
         self._accepting_audio = True
         self._faded_tail_pending = False
         logger.debug(f"Audio input enabled (manual_control={manual_control})")
+
+    def hold_playback(self) -> None:
+        """Hold audio playback: synthesized audio buffers but is not played out
+        until release_playback() is called. Pacing is preserved via silence."""
+        self._playback_held = True
+        logger.debug("Audio playback held")
+
+    def release_playback(self) -> None:
+        """Release a held playback gate so buffered audio plays out immediately."""
+        self._playback_held = False
+        logger.debug("Audio playback released")
+
+    def discard_held_audio(self) -> None:
+        """Drop buffered-but-unplayed audio and release the gate without a fade.
+
+        Used when a gated (speculative) turn is abandoned: the audio was never
+        heard, so it is discarded cleanly rather than faded. Incoming bytes are
+        rejected until the next synthesize() re-enables input, preventing a
+        trailing chunk from the dying TTS stream from leaking out.
+        """
+        self.frame_buffer.clear()
+        self.audio_data_buffer.clear()
+        self._paused_frames.clear()
+        self._playback_held = False
+        self._accepting_audio = False
+        self._faded_tail_pending = False
+        self._synthesis_complete = False
+        self._needs_last_audio_callback = False
+        logger.info("Discarded held audio for abandoned turn")
 
     def on_last_audio_byte(self, callback: Callable[[], Awaitable[None]]) -> None:
         """Set callback for when the final audio byte of synthesis is produced"""
@@ -351,9 +385,7 @@ class CustomAudioStreamTrack(CustomAudioTrack):
 
             pts, time_base = self.next_timestamp()
 
-            # When paused, always produce silence but keep timing
-            # This allows smooth resume without timing jumps
-            if self._is_paused:
+            if self._is_paused or self._playback_held:
                 frame = AudioFrame(format="s16", layout="mono", samples=self.samples)
                 for p in frame.planes:
                     p.update(bytes(p.buffer_size))
@@ -494,14 +526,15 @@ class MixingCustomAudioStreamTrack(CustomAudioStreamTrack):
             pts, time_base = self.next_timestamp()
 
             primary_chunk = b''
-            has_primary = len(self.audio_data_buffer) >= self.chunk_size
+         
+            has_primary = (not self._playback_held) and len(self.audio_data_buffer) >= self.chunk_size
             if has_primary:
                 primary_chunk = self.audio_data_buffer[: self.chunk_size]
                 self.audio_data_buffer = self.audio_data_buffer[self.chunk_size :]
                 self._samples_played += self.samples
                 self._is_speaking = True
                 self._last_speaking_time = time()
-            elif getattr(self, "_is_speaking", False):
+            elif (not self._playback_held) and getattr(self, "_is_speaking", False):
                 # Apply grace period for mixing track as well
                 if (time() - self._last_speaking_time) >= self._speaking_grace_period:
                     self._is_speaking = False

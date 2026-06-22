@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 _STT_FLUSH = object()
 
 
-class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript_final", "speech_started", "speech_stopped", "eou_detected"]]):
+class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript_final", "transcript_speculative", "transcript_speculative_cancel", "speech_started", "speech_stopped", "eou_detected"]]):
     """
     Handles speech input processing through VAD, STT, and Turn Detection.
     
@@ -452,6 +452,8 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
             else:
                 self._accumulated_transcript = new_transcript
 
+            self.emit("transcript_speculative", {"text": self._accumulated_transcript})
+
             delay = self.min_speech_wait_timeout
             self._last_turn_result = None
 
@@ -570,6 +572,7 @@ class SpeechUnderstanding(EventEmitter[Literal["transcript_interim", "transcript
         self._record_wait_elapsed()
         self._waiting_for_more_speech = False
         self._last_turn_result = None
+        self.emit("transcript_speculative_cancel", {})
 
     async def _handle_turn_resumed(self, resumed_text: str) -> None:
         """Handle TurnResumed event (user continued speaking)"""

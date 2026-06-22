@@ -197,6 +197,8 @@ class PipelineOrchestrator(EventEmitter[Literal[
             )
             # Setup event listeners with sync wrappers
             self.speech_understanding.on("transcript_final", self._wrap_async(self._on_transcript_final))
+            self.speech_understanding.on("transcript_speculative", self._wrap_async(self._on_transcript_speculative))
+            self.speech_understanding.on("transcript_speculative_cancel", self._wrap_async(self._on_transcript_speculative_cancel))
             self.speech_understanding.on("transcript_preflight", self._wrap_async(self._on_transcript_preflight))
             self.speech_understanding.on("transcript_interim", self._wrap_async(self._on_transcript_interim))
             self.speech_understanding.on("speech_started", self._wrap_async(self._on_speech_started))
@@ -236,6 +238,12 @@ class PipelineOrchestrator(EventEmitter[Literal[
         self._preemptive_generation_task: asyncio.Task | None = None
         self._preemptive_authorized = asyncio.Event()
         self._preemptive_cancelled = False
+
+        self._speculative_generation_task: asyncio.Task | None = None
+        self._speculative_tool_gate: asyncio.Event | None = None
+        self._speculative_handle: UtteranceHandle | None = None
+        self._speculative_text: str | None = None
+        self._speculative_user_msg_added: bool = False
         
         # Backchannel classification only for TurnV2.
         self._backchannel_aware = (
@@ -400,6 +408,13 @@ class PipelineOrchestrator(EventEmitter[Literal[
         playback_counts_for_turn = is_playing_audio and not (cu is not None and cu.done())
         is_agent_active = (agent_state in (AgentState.SPEAKING, AgentState.THINKING)) or playback_counts_for_turn
 
+        spec_in_flight = (
+            self._speculative_generation_task is not None
+            and not self._speculative_generation_task.done()
+        )
+        if spec_in_flight:
+            is_agent_active = False
+
         turn_state = TurnState.from_wire(data.get("turn_state"))
         action = decide_turn_action(TurnDecisionInput(
             turn_state=turn_state,
@@ -410,6 +425,9 @@ class PipelineOrchestrator(EventEmitter[Literal[
         ))
 
         if action == TurnAction.IGNORE_BACKCHANNEL:
+
+            if spec_in_flight:
+                await self._cancel_speculative_generation(rollback=True)
 
             logger.info(
                 f"[orchestrator] Dropping {text!r} (state={turn_state}, action=IGNORE_BACKCHANNEL)"
@@ -430,6 +448,8 @@ class PipelineOrchestrator(EventEmitter[Literal[
             return
 
         if action == TurnAction.INTERRUPT_STOP:
+            if spec_in_flight:
+                await self._cancel_speculative_generation(rollback=True)
             logger.info(
                 f"[orchestrator] 'Wait' state for {text!r}; interrupting immediately (no reply)"
             )
@@ -616,7 +636,15 @@ class PipelineOrchestrator(EventEmitter[Literal[
         if not self.agent:
             logger.warning("No agent available")
             return
-        
+
+        spec_task = self._speculative_generation_task
+        if spec_task is not None and not spec_task.done():
+            if self._speculative_text is not None and self._speculative_text.strip() == user_text.strip():
+                await self._commit_speculative_generation()
+                return
+            # Stale speculation for different text — abandon it and regenerate.
+            await self._cancel_speculative_generation(rollback=True)
+
         if self.hooks and self.hooks.has_user_turn_start_hooks():
             await self.hooks.trigger_user_turn_start(user_text)
 
@@ -655,16 +683,180 @@ class PipelineOrchestrator(EventEmitter[Literal[
         self._current_generation_task = asyncio.create_task(
             self._generate_and_synthesize(final_user_text, handle, context_prefix=context_prefix)
         )
-    
-    
+
+    def _is_agent_busy(self) -> bool:
+        """True if the agent is actively producing or playing a committed reply.
+
+        Used to decide whether an incoming transcript should start a speculative
+        reply (idle agent) or flow through the normal barge-in path (busy agent).
+        An in-flight speculative turn does NOT count as busy — it may be replaced
+        by a fresher one — but a committed generation, greeting, or any other live
+        playback does.
+        """
+        if self._current_generation_task is not None and not self._current_generation_task.done():
+            return True
+        spec_in_flight = (
+            self._speculative_generation_task is not None
+            and not self._speculative_generation_task.done()
+        )
+        if spec_in_flight:
+            return False
+        agent_state = self.agent.session.agent_state if self.agent and self.agent.session else None
+        if agent_state in (AgentState.SPEAKING, AgentState.THINKING):
+            return True
+        if self.speech_generation and self.speech_generation.is_speaking:
+            return True
+        return False
+
+    async def _on_transcript_speculative(self, data: dict) -> None:
+        """Begin generating a reply for a candidate transcript before the turn is
+        confirmed. LLM text and TTS audio are produced during the end-of-utterance
+        wait, but audio playback and tool execution stay gated until commit."""
+        text = (data.get("text") or "").strip()
+        if not text or not self.agent or not self.content_generation:
+            return
+
+        if self._is_agent_busy():
+            return
+
+        # Drop any prior speculation (e.g. from an earlier burst of this turn).
+        if self._speculative_generation_task is not None and not self._speculative_generation_task.done():
+            await self._cancel_speculative_generation(rollback=True)
+
+        if not metrics_collector.current_turn:
+            metrics_collector.start_turn()
+        metrics_collector.set_user_transcript(text)
+
+        self.agent.chat_context.add_message(role=ChatRole.USER, content=text)
+        self._speculative_user_msg_added = True
+
+        handle = UtteranceHandle(utterance_id=f"utt_{uuid.uuid4().hex[:8]}")
+        if self.agent.session:
+            self.agent.session.current_utterance = handle
+
+        tool_gate = asyncio.Event()
+        track = self.speech_generation.audio_track if self.speech_generation else None
+        if track is not None and hasattr(track, "hold_playback"):
+            track.hold_playback()
+
+        self._speculative_tool_gate = tool_gate
+        self._speculative_handle = handle
+        self._speculative_text = text
+
+        async def _spec_runner() -> None:
+            if self.hooks and self.hooks.has_user_turn_start_hooks():
+                try:
+                    await self.hooks.trigger_user_turn_start(text)
+                except Exception as e:
+                    logger.error(f"user_turn_start hook failed (speculative): {e}")
+
+            context_prefix = None
+            if self.agent and self.agent.knowledge_base:
+                try:
+                    kb_context = await self.agent.knowledge_base.process_query(text)
+                    if kb_context:
+                        context_prefix = kb_context
+                except Exception as e:
+                    logger.error(f"Speculative KB query failed: {e}")
+
+            await self._generate_and_synthesize(
+                text, handle, context_prefix=context_prefix, tool_gate=tool_gate
+            )
+
+        self._speculative_generation_task = asyncio.create_task(_spec_runner())
+        logger.info(f"[orchestrator] Speculative generation started for {text!r}")
+
+    async def _on_transcript_speculative_cancel(self, data: dict | None = None) -> None:
+        """User continued speaking — abandon the in-flight speculative reply."""
+        await self._cancel_speculative_generation(rollback=True)
+
+    async def _cancel_speculative_generation(self, rollback: bool = True) -> None:
+        """Tear down an in-flight speculative generation without playing its audio.
+
+        The buffered (and never-heard) audio is discarded with no fade, the
+        speculative task is cancelled before its tool gate opens (so no tool runs
+        for the abandoned turn), and the provisional user message is rolled back
+        so the conversation history is unchanged.
+        """
+        task = self._speculative_generation_task
+        if task is None:
+            return
+
+        logger.info("[orchestrator] Cancelling speculative generation")
+
+        track = self.speech_generation.audio_track if self.speech_generation else None
+        if track is not None and hasattr(track, "discard_held_audio"):
+            track.discard_held_audio()
+
+        # Unblock anything awaiting the tool gate so the task can unwind cleanly.
+        if self._speculative_tool_gate is not None:
+            self._speculative_tool_gate.set()
+
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                logger.error(f"Speculative task error during cancel: {e}")
+
+        if rollback and self._speculative_user_msg_added and self.agent:
+            msgs = self.agent.chat_context.messages()
+            if msgs and msgs[-1].role == ChatRole.USER:
+                self.agent.chat_context._items.remove(msgs[-1])
+
+        # The abandoned turn produced no spoken reply; close its metrics turn.
+        if metrics_collector.current_turn:
+            metrics_collector.complete_turn()
+
+        # Reset the THINKING/SPEAKING state the speculative turn emitted; no audio
+        # was played, so nothing else will return the agent to idle. Leaving it
+        # non-idle would also wedge _is_agent_busy() and block future speculation.
+        if self.agent and self.agent.session:
+            self.agent.session._emit_agent_state(AgentState.IDLE)
+
+        self._speculative_generation_task = None
+        self._speculative_tool_gate = None
+        self._speculative_handle = None
+        self._speculative_text = None
+        self._speculative_user_msg_added = False
+
+    async def _commit_speculative_generation(self) -> None:
+        """Confirm the in-flight speculative turn: open the tool gate and release
+        buffered audio so it plays immediately, and promote the speculative task
+        to the active generation so a later barge-in interrupts it normally."""
+        logger.info("[orchestrator] Committing speculative generation")
+
+        if self._speculative_tool_gate is not None:
+            self._speculative_tool_gate.set()
+
+        track = self.speech_generation.audio_track if self.speech_generation else None
+        if track is not None and hasattr(track, "release_playback"):
+            track.release_playback()
+
+        self._current_generation_task = self._speculative_generation_task
+
+        self._speculative_generation_task = None
+        self._speculative_tool_gate = None
+        self._speculative_handle = None
+        self._speculative_text = None
+        self._speculative_user_msg_added = False
+
     async def _generate_and_synthesize(
         self,
         user_text: str,
         handle: UtteranceHandle,
         wait_for_authorization: bool = False,
-        context_prefix: str | None = None
+        context_prefix: str | None = None,
+        tool_gate: asyncio.Event | None = None
     ) -> None:
-        """Generate LLM response and synthesize with TTS"""
+        """Generate LLM response and synthesize with TTS.
+
+        ``tool_gate``, when provided, is awaited inside content generation before
+        each tool execution so a speculatively-dispatched turn never runs a
+        side-effecting tool until the turn is confirmed.
+        """
         self._generation_id += 1
         my_generation_id = self._generation_id
         self._is_interrupted = False
@@ -704,7 +896,7 @@ class PipelineOrchestrator(EventEmitter[Literal[
                             break
 
             self.agent.session._emit_agent_state(AgentState.THINKING)
-            llm_stream = self.content_generation.generate(user_text, context_prefix=context_prefix)
+            llm_stream = self.content_generation.generate(user_text, context_prefix=context_prefix, tool_gate=tool_gate)
             
             q = asyncio.Queue(maxsize=50)
             graph_response_text = None
@@ -1366,7 +1558,10 @@ class PipelineOrchestrator(EventEmitter[Literal[
     async def cleanup(self) -> None:
         """Cleanup all components"""
         logger.info("Cleaning up pipeline orchestrator")
-        
+
+        if self._speculative_generation_task and not self._speculative_generation_task.done():
+            self._speculative_generation_task.cancel()
+
         if self._vmd_check_task and not self._vmd_check_task.done():
             self._vmd_check_task.cancel()
         
