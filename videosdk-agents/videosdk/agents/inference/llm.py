@@ -15,7 +15,7 @@ Example:
     llm = LLM.sarvam(model_id="sarvam-30b")
 
     # AWS Bedrock
-    llm = LLM.bedrock(model_id="google.gemma-4-31b")
+    llm = LLM.aws_bedrock(model_id="google.gemma-4-31b")
 
     # Use with CascadingPipeline
     pipeline = CascadingPipeline(stt=stt, llm=llm, tts=tts)
@@ -65,7 +65,7 @@ class LLM(BaseLLM):
     Example:
         llm = LLM.google(model_id="gemini-2.0-flash")
         llm = LLM.sarvam(model_id="sarvam-30b")
-        llm = LLM.bedrock(model_id="google.gemma-4-31b")
+        llm = LLM.aws_bedrock(model_id="google.gemma-4-31b")
 
         pipeline = CascadingPipeline(stt=stt, llm=llm, tts=tts)
     """
@@ -238,7 +238,7 @@ class LLM(BaseLLM):
         )
 
     @staticmethod
-    def bedrock(
+    def aws_bedrock(
         *,
         model_id: str = "google.gemma-4-31b",
         config: Optional[Dict] = None,
@@ -276,7 +276,7 @@ class LLM(BaseLLM):
             resolved_config.update(config)
 
         return LLM(
-            provider="bedrock",
+            provider="aws_bedrock",
             model_id=model_id,
             temperature=temperature,
             tool_choice=tool_choice,
