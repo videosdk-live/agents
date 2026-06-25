@@ -37,6 +37,7 @@ CartesiaSTT = STT.cartesia
 # LLM
 GoogleLLM = LLM.google
 SarvamAILLM = LLM.sarvam
+VideoSDKLLM = LLM.videosdk
 
 # TTS
 GoogleTTS = TTS.google
@@ -73,6 +74,7 @@ __all__ = [
     "AssemblyAISTT",
     "GoogleLLM",
     "SarvamAILLM",
+    "VideoSDKLLM",
     "GoogleTTS",
     "SarvamAITTS",
     "CartesiaTTS",
