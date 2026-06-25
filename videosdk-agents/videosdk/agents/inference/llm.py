@@ -276,7 +276,7 @@ class LLM(BaseLLM):
             resolved_config.update(config)
 
         return LLM(
-            provider="aws_bedrock",
+            provider="videosdk",
             model_id=model_id,
             temperature=temperature,
             tool_choice=tool_choice,
