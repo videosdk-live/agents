@@ -2,7 +2,8 @@
 VideoSDK Inference Gateway LLM Plugin.
 
 HTTP-based LLM client that connects to VideoSDK's Inference Gateway.
-Supports Google Gemini and Sarvam AI through a unified interface for cascading pipelines.
+Supports Google Gemini, Sarvam AI, and AWS Bedrock through a unified interface
+for cascading pipelines.
 
 Example:
     from videosdk.inference import LLM
@@ -12,6 +13,9 @@ Example:
 
     # Sarvam AI
     llm = LLM.sarvam(model_id="sarvam-30b")
+
+    # AWS Bedrock
+    llm = LLM.bedrock(model_id="google.gemma-4-31b")
 
     # Use with CascadingPipeline
     pipeline = CascadingPipeline(stt=stt, llm=llm, tts=tts)
@@ -55,11 +59,13 @@ class LLM(BaseLLM):
     VideoSDK Inference Gateway LLM Plugin.
 
     A lightweight LLM client that connects to VideoSDK's Inference Gateway via HTTP.
-    Supports Google Gemini and Sarvam AI models through a unified interface.
+    Supports Google Gemini, Sarvam AI, and AWS Bedrock models through a unified
+    interface.
 
     Example:
         llm = LLM.google(model_id="gemini-2.0-flash")
         llm = LLM.sarvam(model_id="sarvam-30b")
+        llm = LLM.bedrock(model_id="google.gemma-4-31b")
 
         pipeline = CascadingPipeline(stt=stt, llm=llm, tts=tts)
     """
@@ -227,6 +233,57 @@ class LLM(BaseLLM):
             tool_choice=tool_choice,
             max_output_tokens=max_output_tokens,
             top_p=top_p,
+            base_url=base_url,
+            config=resolved_config,
+        )
+
+    @staticmethod
+    def bedrock(
+        *,
+        model_id: str = "google.gemma-4-31b",
+        config: Optional[Dict] = None,
+        temperature: float = 0.7,
+        tool_choice: ToolChoice = "auto",
+        max_output_tokens: Optional[int] = None,
+        top_p: Optional[float] = None,
+        presence_penalty: Optional[float] = None,
+        frequency_penalty: Optional[float] = None,
+        base_url: Optional[str] = None,
+    ) -> "LLM":
+        """
+        Create an LLM instance configured for AWS Bedrock.
+
+        Bedrock is served through its OpenAI-compatible chat-completions
+        surface, so it supports text (streaming and non-streaming) plus vision
+        (text + image) requests. Image parts are sent as inline data URLs.
+
+        Args:
+            model_id: Bedrock model identifier (default: "google.gemma-4-31b")
+            config: Optional extra config dict (merged on top of defaults)
+            temperature: Controls randomness in responses (0.0 to 1.0)
+            tool_choice: Tool calling mode ("auto", "required", "none")
+            max_output_tokens: Maximum tokens in model responses
+            top_p: Nucleus sampling parameter (0.0 to 1.0)
+            presence_penalty: Penalizes token presence (-2.0 to 2.0)
+            frequency_penalty: Penalizes token frequency (-2.0 to 2.0)
+            base_url: Custom inference gateway URL
+
+        Returns:
+            Configured LLM instance for AWS Bedrock
+        """
+        resolved_config: Dict[str, Any] = {"model_id": model_id}
+        if config:
+            resolved_config.update(config)
+
+        return LLM(
+            provider="bedrock",
+            model_id=model_id,
+            temperature=temperature,
+            tool_choice=tool_choice,
+            max_output_tokens=max_output_tokens,
+            top_p=top_p,
+            presence_penalty=presence_penalty,
+            frequency_penalty=frequency_penalty,
             base_url=base_url,
             config=resolved_config,
         )

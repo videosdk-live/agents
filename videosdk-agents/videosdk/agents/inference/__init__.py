@@ -37,6 +37,7 @@ CartesiaSTT = STT.cartesia
 # LLM
 GoogleLLM = LLM.google
 SarvamAILLM = LLM.sarvam
+BedrockLLM = LLM.bedrock
 
 # TTS
 GoogleTTS = TTS.google
@@ -73,6 +74,7 @@ __all__ = [
     "AssemblyAISTT",
     "GoogleLLM",
     "SarvamAILLM",
+    "BedrockLLM",
     "GoogleTTS",
     "SarvamAITTS",
     "CartesiaTTS",
