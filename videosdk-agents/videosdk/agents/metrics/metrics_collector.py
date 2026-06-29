@@ -567,9 +567,9 @@ class MetricsCollector:
             if stt.stt_preemptive_generation_enabled and stt.stt_preemptive_generation_occurred:
                 logger.info("STT preemptive generation occurred, skipping stt complete")
                 return
-
+            
         if not self.current_turn:
-            return
+            self.start_turn()
 
         if not self.current_turn.stt_metrics:
             self.current_turn.stt_metrics.append(SttMetrics())
@@ -578,8 +578,13 @@ class MetricsCollector:
         stt_end_time = time.perf_counter()
         stt.stt_end_time = stt_end_time
 
-        if self._stt_start_time:
-            stt_latency = self._round_latency(stt_end_time - self._stt_start_time)
+        candidates = [
+            t for t in (stt.stt_last_interim_time, stt.stt_start_time)
+            if t is not None and t < stt_end_time
+        ]
+        start_time = max(candidates) if candidates else None
+        if start_time and stt.stt_latency is None:
+            stt_latency = self._round_latency(stt_end_time - start_time)
             stt.stt_latency = stt_latency
             stt.stt_confidence = confidence
             stt.stt_duration = duration
@@ -611,10 +616,14 @@ class MetricsCollector:
         """Called when STT interim event is received."""
         if self.current_turn and self.current_turn.stt_metrics:
             stt = self.current_turn.stt_metrics[-1]
+            now = time.perf_counter()
+            stt.stt_last_interim_time = now
+            stt.stt_interim_count += 1
+
             if stt.stt_start_time and not stt.stt_interim_latency:
-                stt.stt_interim_end_time = time.perf_counter()
+                stt.stt_interim_end_time = now
                 stt.stt_interim_latency = self._round_latency(
-                    stt.stt_interim_end_time - stt.stt_start_time
+                    now - stt.stt_start_time
                 )
                 logger.info(f"stt interim latency: {stt.stt_interim_latency}ms")
 
@@ -1271,7 +1280,10 @@ class MetricsCollector:
 
         # Flatten the last STT metrics entry
         if turn.stt_metrics:
-            stt = turn.stt_metrics[-1]
+            stt = next(
+                (s for s in reversed(turn.stt_metrics) if s.stt_latency is not None),
+                turn.stt_metrics[-1],
+            )
             data["stt_latency"] = stt.stt_latency
             data["stt_start_time"] = stt.stt_start_time
             data["stt_end_time"] = stt.stt_end_time

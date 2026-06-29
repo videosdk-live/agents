@@ -71,6 +71,8 @@ class SttMetrics(BaseComponentMetrics):
     stt_preflight_latency: Optional[float] = None
     stt_interim_end_time: Optional[float] = None
     stt_interim_latency: Optional[float] = None
+    stt_last_interim_time: Optional[float] = None
+    stt_interim_count: int = 0
     stt_ttfw: Optional[float] = None
     stt_preemptive_generation_occurred: bool = False
     stt_preemptive_generation_enabled: bool = False
