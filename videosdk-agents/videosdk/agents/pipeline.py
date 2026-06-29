@@ -1249,9 +1249,11 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         """Handle agent speech ended in realtime mode"""
         metrics_collector.on_agent_speech_end()
         metrics_collector.schedule_turn_complete(timeout=1.0)
-        if self.agent:
+        if self.agent and self.agent.session:
             self.agent.session._emit_user_state(UserState.IDLE)
             self.agent.session._emit_agent_state(AgentState.IDLE)
+            self.agent.session._reply_in_progress = False
+            self.agent.session._reset_wake_up_timer()
 
         if self._current_utterance_handle and not self._current_utterance_handle.done():
             self._current_utterance_handle._mark_done()
