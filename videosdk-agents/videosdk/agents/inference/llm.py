@@ -41,7 +41,6 @@ from videosdk.agents import (
     FunctionTool,
     is_function_tool,
     build_openai_schema,
-    build_gemini_schema,
     ChatContent,
     ImageContent,
 )
@@ -727,21 +726,14 @@ class LLM(BaseLLM):
                 continue
 
             try:
-                # build_gemini_schema returns a types.FunctionDeclaration
-                # whose ``parameters`` field is itself a types.Schema
-                # (both Pydantic-v2 objects). Use model_dump to flatten
-                # the entire thing to plain dicts in one pass; the
-                # gateway request body is JSON-serialized by aiohttp and
-                # chokes on typed objects otherwise.
-                gemini_schema = build_gemini_schema(tool)
-                schema_dict = gemini_schema.model_dump(exclude_none=True)
+                openai_schema = build_openai_schema(tool)
                 formatted_tools.append(
                     {
                         "type": "function",
                         "function": {
-                            "name": schema_dict.get("name", ""),
-                            "description": schema_dict.get("description", ""),
-                            "parameters": schema_dict.get("parameters", {}),
+                            "name": openai_schema.get("name", ""),
+                            "description": openai_schema.get("description", ""),
+                            "parameters": openai_schema.get("parameters", {}),
                         },
                     }
                 )
