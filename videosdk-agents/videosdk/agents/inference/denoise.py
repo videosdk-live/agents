@@ -101,6 +101,7 @@ class Denoise(BaseDenoise):
         self._session: Optional[aiohttp.ClientSession] = None
         self._ws: Optional[aiohttp.ClientWebSocketResponse] = None
         self._ws_task: Optional[asyncio.Task] = None
+        self._connect_task: Optional[asyncio.Task] = None
         self._config_sent: bool = False
         self.connected: bool = False
         self._shutting_down: bool = False
@@ -359,51 +360,15 @@ class Denoise(BaseDenoise):
         if self._denoise_disabled:
             return audio_frames
         try:
-            if self._connect_lock is None:
-                self._connect_lock = asyncio.Lock()
-
             frame_size = len(audio_frames)
 
             if self._shutting_down:
                 return audio_frames
 
             if not self._ws or self._ws.closed:
-                if self._connect_lock.locked():
-                    return audio_frames
-
-                async with self._connect_lock:
-                    if not self._ws or self._ws.closed:
-                        try:
-                            await self._connect_ws()
-                            self.connected = True
-                            self._stats["errors"] = 0
-                            await self._send_config()
-
-                            chunk_size = (
-                                (self.chunk_ms * self.sample_rate // 1000)
-                                * self.channels
-                                * 2
-                            )
-                            self._send_buffer.extend(audio_frames)
-                            if len(self._send_buffer) >= chunk_size:
-                                first_chunk = bytes(self._send_buffer[:chunk_size])
-                                del self._send_buffer[:chunk_size]
-                                await self._send_audio(first_chunk)
-
-                            if not self._ws_task or self._ws_task.done():
-                                self._ws_task = asyncio.create_task(
-                                    self._listen_for_responses()
-                                )
-                            logger.info(
-                                f"[InferenceDenoise] Ready (provider={self.provider})"
-                            )
-                        except Exception as e:
-                            logger.error(f"[InferenceDenoise] Setup failed: {e}")
-                            self._ws = None
-                            self._config_sent = False
-                            self._send_buffer.clear()
-                            self._record_connect_failure()
-                            return audio_frames
+                if self._connect_task is None or self._connect_task.done():
+                    self._connect_task = asyncio.create_task(self._background_connect())
+                return audio_frames
 
             if not self._config_sent:
                 return audio_frames
@@ -418,7 +383,6 @@ class Denoise(BaseDenoise):
                     await self._send_audio(chunk)
                 except Exception as e:
                     logger.error(f"[InferenceDenoise] Send failed: {e} — resetting")
-                    await asyncio.sleep(0.5)
                     self._ws = None
                     self._config_sent = False
                     self._send_buffer.clear()
@@ -462,6 +426,31 @@ class Denoise(BaseDenoise):
             logger.error(f"[InferenceDenoise] Error in denoise: {e}", exc_info=True)
             self._stats["errors"] += 1
             return audio_frames
+
+    async def _background_connect(self) -> None:
+        """Connect and configure the denoise WebSocket, serialized by
+        ``_connect_lock``. Failures feed the circuit breaker."""
+        if self._connect_lock is None:
+            self._connect_lock = asyncio.Lock()
+        if self._connect_lock.locked():
+            return
+        async with self._connect_lock:
+            if self._shutting_down or (self._ws and not self._ws.closed):
+                return
+            try:
+                await self._connect_ws()
+                self.connected = True
+                self._stats["errors"] = 0
+                await self._send_config()
+                if not self._ws_task or self._ws_task.done():
+                    self._ws_task = asyncio.create_task(self._listen_for_responses())
+                logger.info(f"[InferenceDenoise] Ready (provider={self.provider})")
+            except Exception as e:
+                logger.error(f"[InferenceDenoise] Setup failed: {e}")
+                self._ws = None
+                self._config_sent = False
+                self._send_buffer.clear()
+                self._record_connect_failure()
 
     # ==================== WebSocket ====================
 
@@ -771,6 +760,14 @@ class Denoise(BaseDenoise):
                 f"min={lat['min_ms']}ms  max={lat['max_ms']}ms  "
                 f"over {lat['samples']} samples"
             )
+
+        if self._connect_task and not self._connect_task.done():
+            self._connect_task.cancel()
+            try:
+                await asyncio.wait_for(self._connect_task, timeout=2.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
+            self._connect_task = None
 
         if self._ws_task and not self._ws_task.done():
             self._ws_task.cancel()

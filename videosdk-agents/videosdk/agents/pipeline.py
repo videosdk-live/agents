@@ -219,7 +219,7 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
         self._max_frames_buffer = 5
         self._vision_lock = asyncio.Lock()
         self._current_utterance_handle: UtteranceHandle | None = None
-        
+
         self._setup_error_handlers()
 
         self._auto_register()
@@ -1082,6 +1082,9 @@ class Pipeline(EventEmitter[Literal["start", "error", "transcript_ready", "conte
             await self.orchestrator.process_audio(audio_data)
         elif self.config.is_realtime:
             if isinstance(self.llm, RealtimeLLMAdapter):
+                denoise = self.denoise
+                if denoise:
+                    audio_data = await denoise.denoise(audio_data)
                 await self.llm.handle_audio_input(audio_data)
         else:
             if self.orchestrator:

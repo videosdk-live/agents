@@ -812,11 +812,7 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
             if raw_audio.size == 0:
                 return b''
 
-            if self.vertexai:
-                stereo_audio = raw_audio.reshape(-1, 2)
-                mono_audio = stereo_audio.astype(np.float32).mean(axis=1)
-            else:
-                mono_audio = raw_audio.astype(np.float32)
+            mono_audio = raw_audio.astype(np.float32)
 
             if self.input_sample_rate != self.target_sample_rate:
                 output_length = int(len(mono_audio) * self.target_sample_rate / self.input_sample_rate)
@@ -844,12 +840,11 @@ class GeminiRealtime(RealtimeBaseModel[GeminiEventTypes]):
         if "AUDIO" not in self.config.response_modalities:
             return
 
-        AUDIO_SAMPLE_RATE = 24000 if self.vertexai else 48000
         self.target_sample_rate = 16000 if self.vertexai else self.target_sample_rate
         audio_data = self._resample_audio(audio_data)
         try:
             await self._session.session.send_realtime_input(
-                audio=Blob(data=audio_data, mime_type=f"audio/pcm;rate={AUDIO_SAMPLE_RATE}")
+                audio=Blob(data=audio_data, mime_type=f"audio/pcm;rate={self.target_sample_rate}")
             )
         except Exception as e:
             if "1011" in str(e) or "closed" in str(e).lower():

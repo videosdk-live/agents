@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import numpy as np
 from videosdk import Stream
 from ..event_bus import global_event_emitter
 from typing import Optional
@@ -20,21 +19,28 @@ class InputStreamManager:
         """
         Add audio listener for a participant stream.
         """
+        resampler = None
         while True:
             try:
                 frame = await stream.track.recv()
 
                 global_event_emitter.emit("ON_SPEECH_IN", {"frame": frame, "stream": stream})
 
-                audio_data = frame.to_ndarray()[0]
-                if audio_data.dtype != np.int16 or not audio_data.flags.c_contiguous:
-                    audio_data = np.ascontiguousarray(audio_data, dtype=np.int16)
-                pcm_frame = audio_data.tobytes()
+                if resampler is None:
+                    import av
+                    resampler = av.AudioResampler(
+                        format="s16", layout="mono", rate=48000
+                    )
+                resampled = resampler.resample(frame)
+                if not isinstance(resampled, list):
+                    resampled = [resampled] if resampled is not None else []
 
-                if self.pipeline:
-                    await self.pipeline.on_audio_delta(pcm_frame)
-                else:
-                    logger.warning("No pipeline available for audio processing")
+                for out_frame in resampled:
+                    pcm_frame = out_frame.to_ndarray().tobytes()
+                    if self.pipeline:
+                        await self.pipeline.on_audio_delta(pcm_frame)
+                    else:
+                        logger.warning("No pipeline available for audio processing")
 
             except asyncio.CancelledError:
                 break
